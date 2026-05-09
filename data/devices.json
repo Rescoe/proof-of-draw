@@ -1,0 +1,25 @@
+[
+  {
+    "id": "esp-2-9inch-192168117",
+    "name": "ESP-2.9inch",
+    "ip": "192.168.1.17",
+    "port": 80,
+    "screens": [
+      "eink29bwr"
+    ],
+    "framesSent": 0,
+    "lastPing": 1778256854653
+  },
+  {
+    "id": "oled-espcadre-192168118",
+    "name": "Oled_EspCadre",
+    "ip": "192.168.1.18",
+    "port": 80,
+    "screens": [
+      "oled096",
+      "eink27bw"
+    ],
+    "framesSent": 0,
+    "lastPing": 1778250659123
+  }
+]

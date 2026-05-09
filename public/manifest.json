@@ -1,0 +1,16 @@
+{
+  "name": "ESP Canvas",
+  "short_name": "ESPCanvas",
+  "description": "Draw & send frames to ESP8266 displays",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#0a0a0f",
+  "theme_color": "#0a0a0f",
+  "icons": [
+    {
+      "src": "/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    }
+  ]
+}
