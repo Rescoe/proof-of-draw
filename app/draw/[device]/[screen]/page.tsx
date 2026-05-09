@@ -9,10 +9,15 @@ import { canvasToScreenPayload  } from "@/lib/canvasToScreen"; // ← AJOUT
 
 
 export default function DrawCanvasPage() {
-  const params = useParams();
-  const router = useRouter();
-  const deviceId = params.device as string;
-  const screenId = params.screen as ScreenId;
+const params = useParams();
+const router = useRouter();
+
+const rawDevice = params.device;
+const rawScreen = params.screen;
+
+const deviceId = Array.isArray(rawDevice) ? rawDevice[0] : rawDevice;
+const screenId = (Array.isArray(rawScreen) ? rawScreen[0] : rawScreen) as ScreenId;
+
 
   const profile = SCREEN_PROFILES[screenId];
   const [device, setDevice] = useState<Device | null>(null);
@@ -29,16 +34,47 @@ export default function DrawCanvasPage() {
     pixelRatio: profile?.pixelRatio ?? 2,
   });
 
-  useEffect(() => {
-    if (!profile) { router.push("/draw"); return; }
-    fetch("/api/devices")
-      .then(r => r.json())
-      .then((devices: Device[]) => {
-        const d = devices.find(d => d.id === deviceId);
-        if (!d) router.push("/draw");
-        else setDevice(d);
-      });
-  }, [deviceId, profile, router]);
+
+useEffect(() => {
+  if (!profile || !deviceId || !screenId) { 
+    router.push("/draw"); 
+    return; 
+  }
+
+  let cancelled = false;
+
+async function loadDevice(attempt = 0) {
+  try {
+    const res = await fetch("/api/devices");
+    const data = await res.json();
+    if (cancelled) return;
+
+    const d = data.devices?.find(
+      (d: Device) => String(d.deviceId).trim() === String(deviceId).trim()
+    );
+
+    if (!d || !d.screens?.includes(screenId)) {
+      // Retry max 5× (le device peut arriver avec un léger délai après register)
+      if (attempt < 5 && !cancelled) {
+        setTimeout(() => loadDevice(attempt + 1), 1000);
+      } else if (!cancelled) {
+        router.push("/draw");
+      }
+      return;
+    }
+
+    setDevice(d);
+  } catch (err) {
+    console.error("[LOAD DEVICE]", err);
+    if (!cancelled) router.push("/draw");
+  }
+}
+
+loadDevice();
+
+  return () => { cancelled = true; };
+}, [deviceId, screenId, profile, router]);
+
 
 
 
@@ -49,86 +85,49 @@ const handleSend = useCallback(async () => {
   setStatus(null);
 
   try {
-    const payload = canvasToScreenPayload(
-      canvasRef.current,
-      screenId
-    );
+const payload = canvasToScreenPayload(canvasRef.current, screenId);
 
-    // ✅ Debug LOCAL avec stats (extraites du payload si présentes)
-    // console.log("[SEND]", payload.stats);  ← ERREUR : stats supprimées du payload réseau
-    if ("stats" in payload) {
-      console.log("[SEND DEBUG]", (payload as any).stats);
-    } else {
-      // Debug générique pour tous les écrans
-// ✅ Debug SÉCURISÉ (remplace ton bloc existant)
-if ("buffer" in payload && (payload as any).buffer) {
-  try {
-    const bufferSize = atob((payload as any).buffer).length;
-    console.log(`[SEND] ${payload.screen}: buffer ${bufferSize} bytes`);
-  } catch {
-    console.warn("[SEND] base64 buffer invalide, skip size");
-  }
-} else if ("black" in payload && (payload as any).black && (payload as any).red) {
-  try {
-    const blackSize = atob((payload as any).black).length;
-    const redSize = atob((payload as any).red).length;
-    console.log(`[SEND] eink29bwr: black ${blackSize}B, red ${redSize}B`);
-  } catch {
-    console.warn("[SEND] base64 black/red invalide, skip size");
-  }
-} else {
-  console.log(`[SEND] ${payload.screen}: payload OK`);
-}
-    }
+console.log("[SEND PAYLOAD]", payload);
+console.log("[SEND SCREEN]", payload.screen, screenId);
 
-    const espUrl = `http://${device.ip}:${device.port}/frame`;
-
-    const res = await fetch(espUrl, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify(payload),  // ✅ Payload PURE (sans stats)
-    });
-
-    // ✅ Ne PAS parser json si pas OK (évite les erreurs)
-    let errorMsg = "ESP error";
-    if (!res.ok) {
-      try {
-        const json = await res.json();
-        errorMsg = json.error || `HTTP ${res.status}`;
-      } catch {
-        // JSON invalide → juste le status
-        errorMsg = `HTTP ${res.status}`;
+const body =
+  screenId === "eink29bwr"
+    ? {
+        screen: screenId,
+        deviceId,
+        black: (payload as any).black,
+        red: (payload as any).red,
       }
-      setStatus({ type: "error", msg: errorMsg });
-      return;
+    : {
+        screen: screenId,
+        deviceId,
+        buffer: (payload as any).buffer,
+      };
+
+console.log("[SEND BODY]", body);
+
+const res = await fetch("/api/draw", {
+  method: "POST",
+  headers: {
+    "Content-Type": "application/json"
+  },
+  body: JSON.stringify(body),
+});
+
+    if (!res.ok) {
+      const errorData = await res.json().catch(() => ({}));
+      throw new Error(errorData.error || `HTTP ${res.status}`);
     }
 
-    // ✅ Succès
-    setStatus({
-      type: "ok",
-      msg: "✓ envoyé"
-    });
-
+    setStatus({ type: "ok", msg: `✓ envoyé à ${device.artistName || deviceId}` });
   } catch (err: any) {
     console.error("[SEND ERROR]", err);
-    setStatus({
-      type: "error",
-      msg: err.message || "Network error"
-    });
+    setStatus({ type: "error", msg: err.message || "Erreur réseau" });
   } finally {
     setSending(false);
-    setTimeout(() => {
-      setStatus(null);
-    }, 4000);
+    setTimeout(() => setStatus(null), 4000);
   }
-}, [
-  device,
-  sending,
-  canvasRef,
-  screenId
-]);
+}, [device, sending, canvasRef, screenId, deviceId]);
 
 
 
@@ -162,7 +161,7 @@ if ("buffer" in payload && (payload as any).buffer) {
         }}>←</button>
         <div>
           <div style={{ fontWeight: 700, fontSize: "0.9rem" }}>
-            {device?.name || deviceId}
+{device?.artistName || deviceId}
           </div>
           <div style={{ color: "var(--text3)", fontSize: "0.7rem", fontFamily: "JetBrains Mono, monospace" }}>
             {profile.name} · {profile.width}×{profile.height}

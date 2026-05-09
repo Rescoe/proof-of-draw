@@ -1,83 +1,70 @@
+// app/api/draw/route.ts
+// Reçoit le frame dessiné depuis l'UI web et le stocke en mémoire serveur.
+// L'ESP le récupère ensuite via GET /api/pull.
+// ⚠ MODIFIÉ : suppression COMPLÈTE de l'envoi HTTP vers device.ip/device.port
+
 import { NextRequest, NextResponse } from "next/server";
-import { getDevice, incrementFrameCount } from "@/lib/deviceStore";
-import { checkAuth, rateLimit, quotaDaily } from "@/lib/security";
-import { sendFrameNow } from "@/lib/queue";
+import { storeFrame, FramePayload } from "@/lib/queue";
 
 export async function POST(req: NextRequest) {
-  if (!(await checkAuth(req))) {
-    return NextResponse.json(
-      { error: "Unauthorized" },
-      { status: 401 }
-    );
+  try {
+    const body = await req.json();
+
+    // Payload attendu depuis canvasToScreen.ts :
+    // { screen: "eink29bwr", black: "...", red: "..." }
+    // { screen: "oled096",   buffer: "..." }
+    // { screen: "eink27bw",  buffer: "..." }
+    // Optionnel : deviceId pour ciblage précis d'un device
+
+    const { screen, deviceId, ...rest } = body;
+
+
+if (deviceId) {
+  const { getDevice } = await import("@/lib/deviceStore");
+  const device = getDevice(deviceId);
+  if (!device) {
+    return NextResponse.json({ error: "device inconnu" }, { status: 404 });
   }
-
-  const body = await req.json();
-
-  const { deviceId, payload } = body;
-
-  if (!deviceId || !payload) {
+  if (!device.screens.includes(screen)) {
     return NextResponse.json(
-      { error: "Missing required fields" },
+      { error: `Ce device ne supporte pas l'écran ${screen}` },
       { status: 400 }
     );
   }
+}
 
-  if (!(await rateLimit(`draw:${deviceId}`))) {
-    return NextResponse.json(
-      { error: "Rate limit exceeded (15 min)" },
-      { status: 429 }
-    );
-  }
 
-  if (!(await quotaDaily("default-user"))) {
-    return NextResponse.json(
-      { error: "Daily quota exceeded" },
-      { status: 429 }
-    );
-  }
-
-  const device = getDevice(deviceId);
-
-  if (!device) {
-    return NextResponse.json(
-      { error: "Device not found" },
-      { status: 404 }
-    );
-  }
-
-  try {
-const result = await sendFrameNow(
-  device.ip,
-  device.port,
-  payload
-);
-
-    if (result.ok) {
-      incrementFrameCount(deviceId);
-
-      return NextResponse.json({
-        ok: true,
-        message: "Frame sent",
-      });
+    if (!screen || typeof screen !== "string") {
+      return NextResponse.json({ error: "screen requis" }, { status: 400 });
     }
 
-    return NextResponse.json(
-      {
-        ok: false,
-        error: result.error || `HTTP ${result.status}`,
-      },
-      { status: 502 }
-    );
+    // Validation basique du payload selon le type d'écran
+    if (screen === "eink29bwr") {
+      if (!rest.black || !rest.red) {
+        return NextResponse.json(
+          { error: "eink29bwr requiert black + red (base64)" },
+          { status: 400 }
+        );
+      }
+    } else {
+      if (!rest.buffer) {
+        return NextResponse.json(
+          { error: `${screen} requiert buffer (base64)` },
+          { status: 400 }
+        );
+      }
+    }
 
-  } catch (error: any) {
-    console.error("[DRAW ROUTE ERROR]", error);
+    const payload: FramePayload = { screen, ...rest } as FramePayload;
 
-    return NextResponse.json(
-      {
-        ok: false,
-        error: error.message || "Unknown error",
-      },
-      { status: 500 }
-    );
+    // Stocker le frame — l'ESP viendra le puller
+    storeFrame(screen, payload, deviceId ?? undefined);
+
+    console.log(`[/api/draw] frame stockée screen=${screen}${deviceId ? ` → device=${deviceId}` : " (broadcast)"}`);
+
+    return NextResponse.json({ ok: true, screen, stored: true });
+  } catch (err) {
+    console.error("[/api/draw] erreur:", err);
+    return NextResponse.json({ error: "Erreur serveur" }, { status: 500 });
   }
 }

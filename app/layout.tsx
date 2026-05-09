@@ -22,7 +22,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             ◈ ESP<span style={{color:"var(--accent)"}}>Canvas</span>
           </a>
           <div style={{marginLeft:"auto",display:"flex",gap:"0.5rem"}}>
-            {[{href:"/onboard",label:"+ Onboard"},{href:"/draw",label:"Dessiner"},{href:"/admin",label:"Admin"}].map(l=>(
+            {[{href:"/onboard",label:"+ Onboard"},{href:"/draw",label:"Dessiner"},{href:"/admin",label:"Admin"},{href:"/my-devices",label:"Mes ESP"}].map(l=>(
               <a key={l.href} href={l.href} style={{
                 padding:"0.3rem 0.8rem",borderRadius:"6px",fontSize:"0.85rem",
                 color:"var(--text2)",textDecoration:"none",border:"1px solid var(--border)",

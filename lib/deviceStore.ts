@@ -1,67 +1,133 @@
-import fs from "fs";
-import path from "path";
-import { ScreenId } from "./screenProfiles";
+// lib/deviceStore.ts — FIXED: globalThis singleton pour dev Next.js
+// Modèle device pull-based : plus d'IP/port, identification par MAC
+// Cleanup automatique des devices inactifs depuis 48h
 
 export interface Device {
-  id: string;
-  name: string;
-  ip: string;
-  port: number;
-  screens: ScreenId[];
-  lastPing?: number;
-  lastDraw?: number;
+  deviceId: string;
+  mac: string;
+  screens: string[];
+  firmware: string;
+  artistName?: string;
+  pairCode: string;
+  lastSeen: number;
+  lastPing: number;
   framesSent: number;
+  createdAt: number;
 }
 
-const DATA_PATH = path.join(process.cwd(), "data", "devices.json");
-
-function ensureDataDir() {
-  const dir = path.dirname(DATA_PATH);
-  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-  if (!fs.existsSync(DATA_PATH)) fs.writeFileSync(DATA_PATH, "[]");
+// ✅ FIX CRITIQUE : globalThis singleton (survit hot reload)
+declare global {
+  // eslint-disable-next-line no-var
+  var __deviceStore: Map<string, Device> | undefined;
 }
 
-export function getDevices(): Device[] {
-  ensureDataDir();
-  try {
-    return JSON.parse(fs.readFileSync(DATA_PATH, "utf-8"));
-  } catch {
-    return [];
+const devices = globalThis.__deviceStore ?? new Map<string, Device>();
+
+if (!globalThis.__deviceStore) {
+  globalThis.__deviceStore = devices;
+  console.log("[deviceStore] ✅ globalThis singleton initialisé");
+}
+
+// ─── CLEANUP 48h ────────────────────────────────────────────────────────────
+const CLEANUP_INTERVAL_MS = 10 * 60 * 1000;
+const INACTIVE_TTL_MS = 48 * 60 * 60 * 1000;
+
+function runCleanup() {
+  const now = Date.now();
+  for (const [id, device] of devices.entries()) {
+    if (now - device.lastSeen > INACTIVE_TTL_MS) {
+      console.log(`[deviceStore] cleanup: ${id} (mac: ${device.mac})`);
+      devices.delete(id);
+    }
   }
 }
 
-export function saveDevices(devices: Device[]) {
-  ensureDataDir();
-  fs.writeFileSync(DATA_PATH, JSON.stringify(devices, null, 2));
+if (typeof setInterval !== "undefined") {
+  setInterval(runCleanup, CLEANUP_INTERVAL_MS);
 }
 
-export function getDevice(id: string): Device | undefined {
-  return getDevices().find((d) => d.id === id);
+// ─── HELPERS (inchangés) ───────────────────────────────────────────────────
+function generateDeviceId(): string {
+  return "dev_" + Math.random().toString(36).slice(2, 10).toUpperCase();
 }
 
-export function upsertDevice(device: Device) {
-  const devices = getDevices();
-  const idx = devices.findIndex((d) => d.id === device.id);
-  if (idx >= 0) devices[idx] = device;
-  else devices.push(device);
-  saveDevices(devices);
+function generatePairCode(): string {
+  const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+  const part = (n: number) =>
+    Array.from({ length: n }, () => chars[Math.floor(Math.random() * chars.length)]).join("");
+  return `${part(4)}-${part(4)}`;
 }
 
-export function updateDevicePing(id: string) {
-  const devices = getDevices();
-  const d = devices.find((d) => d.id === id);
-  if (d) {
-    d.lastPing = Date.now();
-    saveDevices(devices);
+// ─── API PUBLIQUE (inchangée) ──────────────────────────────────────────────
+export function registerDevice(mac: string, screens: string[], firmware: string): Device {
+  const existing = getDeviceByMac(mac);
+  if (existing) {
+    existing.firmware = firmware;
+    existing.screens = screens;
+    existing.lastSeen = Date.now();
+    devices.set(existing.deviceId, existing);
+    console.log(`[deviceStore] register: update ${existing.deviceId} (mac: ${mac})`);
+    return existing;
+  }
+
+  const device: Device = {
+    deviceId: generateDeviceId(),
+    mac,
+    screens,
+    firmware,
+    pairCode: generatePairCode().replace(/-/g, ''), // ✅ ENLEVE TOUS les tirets
+    lastSeen: Date.now(),
+    lastPing: Date.now(),
+    framesSent: 0,
+    createdAt: Date.now(),
+  };
+
+  devices.set(device.deviceId, device);
+  console.log(`[deviceStore] register: NEW ${device.deviceId} (mac: ${mac}, code: ${device.pairCode})`);
+  return device;
+}
+
+export function pingDevice(deviceId: string): Device | null {
+  const device = devices.get(deviceId);
+  if (!device) return null;
+  device.lastSeen = Date.now();
+  device.lastPing = Date.now();
+  devices.set(deviceId, device);
+  return device;
+}
+
+export function setArtistName(deviceId: string, artistName: string): Device | null {
+  const device = devices.get(deviceId);
+  if (!device) return null;
+  device.artistName = artistName;
+  devices.set(deviceId, device);
+  console.log(`[deviceStore] artistName: ${deviceId} → "${artistName}"`);
+  return device;
+}
+
+export function incrementFramesSent(deviceId: string): void {
+  const device = devices.get(deviceId);
+  if (device) {
+    device.framesSent += 1;
+    devices.set(deviceId, device);
   }
 }
 
-export function incrementFrameCount(id: string) {
-  const devices = getDevices();
-  const d = devices.find((d) => d.id === id);
-  if (d) {
-    d.framesSent = (d.framesSent || 0) + 1;
-    d.lastDraw = Date.now();
-    saveDevices(devices);
+export function getDevice(deviceId: string): Device | undefined {
+  return devices.get(deviceId);
+}
+
+export function getDeviceByMac(mac: string): Device | undefined {
+  for (const d of devices.values()) {
+    if (d.mac === mac) return d;
   }
+  return undefined;
+}
+
+export function getAllDevices(): Device[] {
+  return Array.from(devices.values());
+}
+
+export function deleteDevice(deviceId: string): boolean {
+  return devices.delete(deviceId);
 }

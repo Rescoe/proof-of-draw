@@ -1,559 +1,454 @@
-/**
- * @file    esp_canvas_receiver.ino
- * @brief   ESP8266 — Récepteur WiFi pour ESPCanvas (Next.js)
- *          Écran : E-Ink 2.9" BWR Waveshare (epd2in9b_V4)
- *
- * ══════════════════════════════════════════════════════════════
- *  PINOUT — identique au projet generative-seed-BWR
- * ══════════════════════════════════════════════════════════════
- *  EPD_SCK    D5  GPIO14
- *  EPD_MOSI   D7  GPIO13
- *  EPD_CS     D8  GPIO15
- *  EPD_DC     D2  GPIO4
- *  EPD_RST    D1  GPIO5
- *  EPD_BUSY   D0  GPIO16
- *
- * ══════════════════════════════════════════════════════════════
- *  LIBRAIRIES REQUISES (Arduino Library Manager)
- * ══════════════════════════════════════════════════════════════
- *  - ESP8266WiFi       (built-in board package)
- *  - ESP8266WebServer  (built-in board package)
- *  - ArduinoJson       v6.x  (Benoit Blanchon)
- *  + les fichiers driver Waveshare déjà dans ton projet :
- *    epd2in9b_V4.h / epd2in9b_V4.cpp / epdif.h / epdif.cpp
- *    (copie-les dans le même dossier que ce .ino)
- *
- * ══════════════════════════════════════════════════════════════
- *  PROTOCOLE REÇU depuis Next.js  POST /frame
- * ══════════════════════════════════════════════════════════════
- *  Content-Type: application/json
- *  {
- *    "screen": "eink29bwr",
- *    "data":   "<base64 PNG — 296×128 px, RGB ou RGBA>"
- *  }
- *
- *  L'app envoie un PNG dessiné sur canvas HTML.
- *  On le décode et on le convertit en deux buffers 1-bit :
- *    • blackBuf  : pixels noirs  (luminosité < THRESH_BLACK)
- *    • redBuf    : pixels rouges (teinte rouge dominante)
- *    • reste     : blanc (rien dans aucun buffer)
- *
- * ══════════════════════════════════════════════════════════════
- *  ENDPOINTS HTTP
- * ══════════════════════════════════════════════════════════════
- *  GET  /ping   → {"ok":true,"screen":"eink29bwr","ip":"..."}
- *  POST /frame  → reçoit JSON, affiche sur l'écran
- *  GET  /status → état actuel (last frame, free heap, etc.)
- */
-
+// esp_canvas_pull_waveshare.ino — v1.4 — Pull-based + QR + Waveshare driver
 #include <Arduino.h>
 #include <ESP8266WiFi.h>
-#include <ESP8266WebServer.h>
+#include <ESP8266HTTPClient.h>
+#include <WiFiClient.h>
 #include <ArduinoJson.h>
-#include <SPI.h>
+#include <qrcode.h>
 #include "epd2in9b_V4.h"
+#include "epdif.h"
 
-// ╔══════════════════════════════════════════════════════════════╗
-// ║  ⚙  CONFIGURATION — MODIFIE ICI                            ║
-// ╚══════════════════════════════════════════════════════════════╝
+// ─── CONFIG ────────────────────────────────────────────────────────────────
+const char* WIFI_SSID     = "Livebox-D190";
+const char* WIFI_PASSWORD = "Q2gueWg3UaYJo2VN7C";
+#define SERVER_URL      "http://192.168.1.13:3000"
+#define SCREEN_TYPE     "eink29bwr"
+#define PING_INTERVAL   300000UL   // 5 min
+#define PULL_INTERVAL   60000UL    // 1 min
+#define EINK_MIN_REFRESH_MS 10000UL
 
-const char* WIFI_SSID     = "";
-const char* WIFI_PASSWORD = "";
-
-// Port HTTP (80 par défaut — doit correspondre au port saisi dans /onboard)
-const uint16_t HTTP_PORT = 80;
-
-// Délai minimum entre deux refresh e-ink (ms).
-// Waveshare recommande 180s en production pour préserver l'écran.
-// Mettre 10000 (10s) pour les tests, 180000 pour la prod.
-const unsigned long EINK_MIN_REFRESH_MS = 10000UL;
-
-// ╔══════════════════════════════════════════════════════════════╗
-// ║  CONSTANTES ÉCRAN                                           ║
-// ╚══════════════════════════════════════════════════════════════╝
-
-// Résolution logique du driver Waveshare epd2in9b_V4
-// L'écran physique est 296×128, mais le driver gère les buffers
-// en largeur = 128 (axe rapide en SPI), hauteur = 296.
-// Notre canvas Next.js envoie une image 296×128 px (paysage).
-// On la transpose ici pour correspondre à l'orientation driver.
-
-#define IMG_W    296   // largeur image reçue (canvas HTML)
-#define IMG_H    128   // hauteur image reçue (canvas HTML)
-
-// Taille d'un buffer 1-bit pour le driver
-// Le driver attend EPD_WIDTH=128 bits/ligne × EPD_HEIGHT=296 lignes
-// = 128*296/8 = 4736 octets
-#define BUF_SIZE  ((EPD_WIDTH * EPD_HEIGHT) / 8)   // 4736
-
-// Seuils de détection couleur (sur valeurs 0-255)
-#define THRESH_BLACK  80    // luminosité <= seuil → pixel noir
-#define THRESH_RED_R  150   // canal rouge minimum pour "rouge"
-#define THRESH_RED_G  80    // canal vert maximum pour "rouge"
-#define THRESH_RED_B  80    // canal bleu maximum pour "rouge"
-
-// ╔══════════════════════════════════════════════════════════════╗
-// ║  GLOBALS                                                    ║
-// ╚══════════════════════════════════════════════════════════════╝
+// ─── ÉCRAN WAVESHARE 2.9" BWR ──────────────────────────────────────────────
+// Driver portrait interne : 128 colonnes × 296 lignes
+// epd.Display(black, red) attend deux buffers de 128*296/8 = 4736 bytes
+// Dans chaque buffer : byte[x * 16 + y/8], bit = 0x80 >> (y%8)
+// 0 = pixel actif, 1 = blanc
+#define IMG_W    296
+#define IMG_H    128
+#define BUF_SIZE ((IMG_H * IMG_W) / 8)   // 4736
 
 Epd epd;
-ESP8266WebServer server(HTTP_PORT);
+uint8_t blackBuf[BUF_SIZE];
+uint8_t redBuf[BUF_SIZE];
+unsigned long lastRefreshMs = 0;
 
-// Buffers e-ink : 0xFF = tout blanc (bit à 1 = UNCOLORED dans Waveshare)
-static uint8_t blackBuf[BUF_SIZE];
-static uint8_t redBuf[BUF_SIZE];
+// ─── STATE ─────────────────────────────────────────────────────────────────
+String deviceId, pairCode, canvasUrl;
+bool   registered  = false;
+bool   frameReady  = false;   // true quand un frame pull a été chargé dans les buffers
+unsigned long lastPingMs = 0, lastPullMs = 0;
 
-// État
-unsigned long lastRefreshMs  = 0;
-unsigned long framesReceived = 0;
-bool          displayReady   = false;
-String        lastError      = "";
+// ─── PIXEL HELPERS ────────────────────────────────────────────────────────
+// L'écran physique est paysage 296×128.
+// Le driver Waveshare epd2in9b_V4 attend les buffers en mode portrait (128×296)
+// organisés ainsi :
+//   byte index = col * (IMG_H/8) + (row/8)   où col ∈ [0,127], row ∈ [0,295]
+//   bit mask   = 0x80 >> (row % 8)
+// Pour afficher en paysage : on pose x ∈ [0,295], y ∈ [0,127]
+//   → col = 127 - y,  row = x
+inline void setPixel(uint8_t* buf, int x, int y) {
+  if (x < 0 || x >= IMG_W || y < 0 || y >= IMG_H) return;
+  int col       = 127 - y;
+  int row       = x;
+  int byteIndex = col * (IMG_H / 8) + (row / 8);
+  uint8_t mask  = 0x80 >> (row % 8);
+  if (byteIndex >= 0 && byteIndex < BUF_SIZE)
+    buf[byteIndex] &= ~mask;
+}
 
-// ╔══════════════════════════════════════════════════════════════╗
-// ║  BASE64 DECODER                                             ║
-// ║  Décode inline dans un buffer fourni.                       ║
-// ║  Retourne le nombre d'octets écrits, ou 0 si erreur.       ║
-// ╚══════════════════════════════════════════════════════════════╝
+// ─── FONT 5×7 ─────────────────────────────────────────────────────────────
+// Chaque char : 5 colonnes de 7 bits (bit 6 = haut, bit 0 = bas)
+// Index 0-9 → '0'-'9', 10-35 → 'A'-'Z', 36 → ':'  37 → '.'  38 → '-'  39 → '/'  40 → ' '
+static const uint8_t FONT_5x7[][5] PROGMEM = {
+  {0x3E,0x51,0x49,0x45,0x3E}, // 0
+  {0x00,0x42,0x7F,0x40,0x00}, // 1
+  {0x42,0x61,0x51,0x49,0x46}, // 2
+  {0x21,0x41,0x45,0x4B,0x31}, // 3
+  {0x18,0x14,0x12,0x7F,0x10}, // 4
+  {0x27,0x45,0x45,0x45,0x39}, // 5
+  {0x3C,0x4A,0x49,0x49,0x30}, // 6
+  {0x01,0x71,0x09,0x05,0x03}, // 7
+  {0x36,0x49,0x49,0x49,0x36}, // 8
+  {0x06,0x49,0x49,0x29,0x1E}, // 9
+  {0x7C,0x12,0x11,0x12,0x7C}, // A
+  {0x7F,0x49,0x49,0x49,0x36}, // B
+  {0x3E,0x41,0x41,0x41,0x22}, // C
+  {0x7F,0x41,0x41,0x22,0x1C}, // D
+  {0x7F,0x49,0x49,0x49,0x41}, // E
+  {0x7F,0x09,0x09,0x09,0x01}, // F
+  {0x3E,0x41,0x49,0x49,0x7A}, // G
+  {0x7F,0x08,0x08,0x08,0x7F}, // H
+  {0x00,0x41,0x7F,0x41,0x00}, // I
+  {0x20,0x40,0x41,0x3F,0x01}, // J
+  {0x7F,0x08,0x14,0x22,0x41}, // K
+  {0x7F,0x40,0x40,0x40,0x40}, // L
+  {0x7F,0x02,0x0C,0x02,0x7F}, // M
+  {0x7F,0x04,0x08,0x10,0x7F}, // N
+  {0x3E,0x41,0x41,0x41,0x3E}, // O
+  {0x7F,0x09,0x09,0x09,0x06}, // P
+  {0x3E,0x41,0x51,0x21,0x5E}, // Q
+  {0x7F,0x09,0x19,0x29,0x46}, // R
+  {0x46,0x49,0x49,0x49,0x31}, // S
+  {0x01,0x01,0x7F,0x01,0x01}, // T
+  {0x3F,0x40,0x40,0x40,0x3F}, // U
+  {0x1F,0x20,0x40,0x20,0x1F}, // V
+  {0x3F,0x40,0x38,0x40,0x3F}, // W
+  {0x63,0x14,0x08,0x14,0x63}, // X
+  {0x07,0x08,0x70,0x08,0x07}, // Y
+  {0x61,0x51,0x49,0x45,0x43}, // Z
+  {0x00,0x36,0x36,0x00,0x00}, // : (36)
+  {0x00,0x60,0x60,0x00,0x00}, // . (37)
+  {0x08,0x08,0x08,0x08,0x08}, // - (38)
+  {0x02,0x01,0x02,0x04,0x02}, // / (39) 
+  {0x00,0x00,0x00,0x00,0x00}, // ' ' (40)
+};
 
+int charIndex(char c) {
+  if (c >= '0' && c <= '9') return c - '0';
+  if (c >= 'A' && c <= 'Z') return c - 'A' + 10;
+  if (c >= 'a' && c <= 'z') return c - 'a' + 10; // minuscules → majuscules
+  if (c == ':') return 36;
+  if (c == '.') return 37;
+  if (c == '-') return 38;
+  if (c == '/') return 39;
+  return 40; // espace par défaut
+}
+
+// Dessine un caractère en x,y (coin supérieur gauche) dans buf
+// Chaque char = 5px large + 1px espace = 6px total
+void drawChar(uint8_t* buf, int x, int y, char c) {
+  int idx = charIndex(c);
+  for (int col = 0; col < 5; col++) {
+    uint8_t bits = pgm_read_byte(&FONT_5x7[idx][col]);
+    for (int row = 0; row < 7; row++) {
+      if (bits & (0x40 >> row))          // bit 6 = haut
+        setPixel(buf, x + col, y + row);
+    }
+  }
+}
+
+void drawText(uint8_t* buf, int x, int y, const String& text) {
+  int cx = x;
+  for (unsigned int i = 0; i < text.length(); i++) {
+    drawChar(buf, cx, y, text.charAt(i));
+    cx += 6;   // 5px + 1px espace
+  }
+}
+
+// Retourne la largeur en pixels d'un texte (pour centrage)
+int textWidth(const String& text) {
+  return text.length() * 6;
+}
+
+// ─── BASE64 ────────────────────────────────────────────────────────────────
 static const int8_t B64_TABLE[256] PROGMEM = {
-  -1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,  // 0-15
-  -1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,  // 16-31
-  -1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,62,-1,-1,-1,63,  // 32-47  (+, /)
-  52,53,54,55,56,57,58,59,60,61,-1,-1,-1, 0,-1,-1,  // 48-63  (0-9, =)
-  -1, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9,10,11,12,13,14, // 64-79  (A-O)
-  15,16,17,18,19,20,21,22,23,24,25,-1,-1,-1,-1,-1,  // 80-95  (P-Z)
-  -1,26,27,28,29,30,31,32,33,34,35,36,37,38,39,40, // 96-111 (a-o)
-  41,42,43,44,45,46,47,48,49,50,51,-1,-1,-1,-1,-1,  // 112-127 (p-z)
-  -1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,  // 128-143
-  -1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,  // 144-159
-  -1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,  // 160-175
-  -1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,  // 176-191
-  -1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,  // 192-207
-  -1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,  // 208-223
-  -1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,  // 224-239
-  -1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1   // 240-255
+  -1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,
+  -1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,
+  -1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,62,-1,-1,-1,63,
+  52,53,54,55,56,57,58,59,60,61,-1,-1,-1, 0,-1,-1,
+  -1, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9,10,11,12,13,14,
+  15,16,17,18,19,20,21,22,23,24,25,-1,-1,-1,-1,-1,
+  -1,26,27,28,29,30,31,32,33,34,35,36,37,38,39,40,
+  41,42,43,44,45,46,47,48,49,50,51,-1,-1,-1,-1,-1,
+  -1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,
+  -1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,
+  -1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,
+  -1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,
+  -1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,
+  -1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,
+  -1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,
+  -1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1
 };
 
 size_t base64Decode(const char* src, size_t srcLen, uint8_t* dst, size_t dstMax) {
-  size_t out = 0;
-  int buf = 0, bits = 0;
+  size_t out = 0; int buf = 0, bits = 0;
   for (size_t i = 0; i < srcLen && out < dstMax; i++) {
     int8_t val = (int8_t)pgm_read_byte(&B64_TABLE[(uint8_t)src[i]]);
-    if (val < 0) continue;   // skip whitespace / padding / invalid
-    buf = (buf << 6) | val;
-    bits += 6;
-    if (bits >= 8) {
-      bits -= 8;
-      dst[out++] = (buf >> bits) & 0xFF;
-    }
+    if (val < 0) continue;
+    buf = (buf << 6) | val; bits += 6;
+    if (bits >= 8) { bits -= 8; dst[out++] = (buf >> bits) & 0xFF; }
   }
   return out;
 }
 
-// ╔══════════════════════════════════════════════════════════════╗
-// ║  PNG PARSER MINIMAL                                         ║
-// ║                                                             ║
-// ║  On ne décode PAS le PNG complet (zlib = trop lourd).      ║
-// ║  À la place, le canvas Next.js DOIT envoyer un PNG         ║
-// ║  non compressé (compression level 0) ou on utilise         ║
-// ║  une autre stratégie :                                      ║
-// ║                                                             ║
-// ║  STRATÉGIE RETENUE pour le MVP :                           ║
-// ║  Le serveur Next.js convertit le PNG en données brutes      ║
-// ║  RGB (3 octets/pixel) avant d'encoder en base64.           ║
-// ║  → payload = base64(rawRGB : 296×128×3 octets)             ║
-// ║  → 113664 octets bruts → ~151552 chars base64              ║
-// ║                                                             ║
-// ║  L'ESP reçoit et décode directement les pixels RGB.        ║
-// ║  Pas besoin de décompresseur PNG.                          ║
-// ║                                                             ║
-// ║  Voir api/draw/route.ts : convertir canvas en rawRGB       ║
-// ╚══════════════════════════════════════════════════════════════╝
-
-// Convertit un pixel RGB en couleur e-ink
-// Retourne : 0 = blanc, 1 = noir, 2 = rouge
-uint8_t classifyPixel(uint8_t r, uint8_t g, uint8_t b) {
-  // Rouge dominant ?
-  if (r >= THRESH_RED_R && g <= THRESH_RED_G && b <= THRESH_RED_B) {
-    return 2;  // rouge
-  }
-  // Luminosité (approximation rapide sans float)
-  // lum = 0.299R + 0.587G + 0.114B ≈ (3R + 6G + B) / 10
-  uint16_t lum = ((uint16_t)r * 3 + (uint16_t)g * 6 + (uint16_t)b) / 10;
-  if (lum <= THRESH_BLACK) {
-    return 1;  // noir
-  }
-  return 0;  // blanc
-}
-
-// Écrire un pixel dans un buffer 1-bit
-// Convention Waveshare : 0 = COLORED, 1 = UNCOLORED (blanc)
-// Les buffers sont initialisés à 0xFF (tout blanc)
-// Pour colorier un pixel : mettre le bit à 0
-inline void setPixelBuf(uint8_t* buf, int byteX, int y, int bitInByte) {
-  // byteX = index byte dans la ligne, y = ligne, bitInByte = bit 7..0
-  int idx = y * (EPD_WIDTH / 8) + byteX;
-  if (idx >= (int)BUF_SIZE) return;
-  buf[idx] &= ~(1 << bitInByte);   // mettre bit à 0 = COLORED
-}
-
-// ── Convertit les pixels RGB bruts en blackBuf + redBuf ─────────────────
-// L'image reçue est en orientation PAYSAGE : 296 colonnes × 128 lignes.
-// Le driver Waveshare epd2in9b_V4 attend les buffers en orientation
-// PORTRAIT : EPD_WIDTH=128 octets/ligne × EPD_HEIGHT=296 lignes,
-// avec les bits MSB-first sur l'axe X.
-//
-// Mapping :
-//   pixel(col, row) dans l'image  →  bit dans le buffer driver
-//   Le driver affiche en rotation 90°, ce qui donne l'orientation paysage
-//   sur l'écran physique 296×128.
-//
-//   Si l'image apparaît tournée de 90°, décommenter le bloc "rotation"
-//   et commenter le bloc "direct". Tout dépend de comment tu tiens l'écran.
-
-void rgbToEinkBuffers(const uint8_t* rgb, size_t rgbLen) {
-  // Vider les buffers (tout blanc)
-  memset(blackBuf, 0xFF, BUF_SIZE);
-  memset(redBuf,   0xFF, BUF_SIZE);
-
-  // Nombre de pixels attendus
-  const int totalPixels = IMG_W * IMG_H;   // 296×128 = 37888
-  const int maxPixels   = (int)(rgbLen / 3);
-  const int pixels      = min(totalPixels, maxPixels);
-
-  for (int i = 0; i < pixels; i++) {
-    uint8_t r = rgb[i * 3 + 0];
-    uint8_t g = rgb[i * 3 + 1];
-    uint8_t b = rgb[i * 3 + 2];
-
-    uint8_t color = classifyPixel(r, g, b);
-    if (color == 0) continue;   // blanc → rien à faire
-
-    // Position dans l'image source (paysage 296×128)
-    int col = i % IMG_W;   // 0..295
-    int row = i / IMG_W;   // 0..127
-
-    // ── Mapping vers le buffer driver (portrait EPD_WIDTH=128, EPD_HEIGHT=296)
-    // Option A : rotation 90° sens horaire
-    //   bufCol = (IMG_H - 1 - row)    → 0..127
-    //   bufRow = col                   → 0..295
-    // Option B : rotation 90° sens anti-horaire
-    //   bufCol = row                   → 0..127
-    //   bufRow = (IMG_W - 1 - col)    → 0..295
-    //
-    // Essaie A en premier. Si l'image est retournée, passe à B.
-    // Si l'image est à l'endroit mais miroir, inverse juste un axe.
-
-    // ── Option A (rotation 90° CW) ──────────────────────────────
-    int bufCol = (IMG_H - 1 - row);   // 0..127
-    int bufRow = col;                  // 0..295
-
-    // ── Option B (rotation 90° CCW) — décommenter si besoin ────
-    // int bufCol = row;
-    // int bufRow = (IMG_W - 1 - col);
-
-    // Position bit dans le buffer
-    int byteX    = bufCol / 8;      // 0..15  (EPD_WIDTH/8 = 16)
-    int bitInByte = 7 - (bufCol % 8);  // MSB-first
-
-    if (color == 1) setPixelBuf(blackBuf, byteX, bufRow, bitInByte);
-    else            setPixelBuf(redBuf,   byteX, bufRow, bitInByte);
-  }
-}
-
-// ╔══════════════════════════════════════════════════════════════╗
-// ║  AFFICHAGE E-INK                                           ║
-// ╚══════════════════════════════════════════════════════════════╝
-
+// ─── AFFICHAGE E-INK ───────────────────────────────────────────────────────
 bool refreshDisplay() {
-  // Garde-fou : respecter le délai minimum
-  if (lastRefreshMs > 0) {
-    unsigned long elapsed = millis() - lastRefreshMs;
-    if (elapsed < EINK_MIN_REFRESH_MS) {
-      unsigned long wait = EINK_MIN_REFRESH_MS - elapsed;
-      Serial.printf("[EINK] Délai minimum non atteint, attente %lu ms\n", wait);
-      // On attend (bloquant) — pour le MVP c'est acceptable
-      // En prod : mettre en queue non-bloquante
-      delay(wait);
-    }
+  unsigned long elapsed = millis() - lastRefreshMs;
+  if (elapsed < EINK_MIN_REFRESH_MS) {
+    delay(EINK_MIN_REFRESH_MS - elapsed);
   }
-
-  Serial.println(F("[EINK] Init..."));
-  if (epd.Init() != 0) {
-    lastError = "epd.Init() failed";
-    Serial.println(F("[EINK] INIT FAILED"));
-    return false;
-  }
-
-  Serial.println(F("[EINK] Display..."));
+  if (epd.Init() != 0) { Serial.println("[EINK] Init failed"); return false; }
   epd.Display(blackBuf, redBuf);
-
-  Serial.println(F("[EINK] Sleep..."));
   epd.Sleep();
-
   lastRefreshMs = millis();
-  framesReceived++;
-
-  Serial.printf("[EINK] Refresh OK (#%lu)\n", framesReceived);
   return true;
 }
 
-// ╔══════════════════════════════════════════════════════════════╗
-// ║  HELPERS HTTP                                               ║
-// ╚══════════════════════════════════════════════════════════════╝
-
-void setCORS() {
-  server.sendHeader("Access-Control-Allow-Origin",  "*");
-  server.sendHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
-  server.sendHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
-}
-
-void sendJSON(int code, const String& json) {
-  setCORS();
-  server.send(code, "application/json", json);
-}
-
-// ╔══════════════════════════════════════════════════════════════╗
-// ║  HANDLERS HTTP                                              ║
-// ╚══════════════════════════════════════════════════════════════╝
-
-// ── GET /ping ────────────────────────────────────────────────────────────
-void handlePing() {
-  String ip = WiFi.localIP().toString();
-  String json = "{\"ok\":true,\"screen\":\"eink29bwr\","
-                "\"ip\":\"" + ip + "\","
-                "\"frames\":" + String(framesReceived) + ","
-                "\"heap\":" + String(ESP.getFreeHeap()) + "}";
-  sendJSON(200, json);
-  Serial.println(F("[HTTP] GET /ping → 200"));
-}
-
-// ── GET /status ──────────────────────────────────────────────────────────
-void handleStatus() {
-  unsigned long sinceRefresh = lastRefreshMs > 0 ? (millis() - lastRefreshMs) / 1000 : 0;
-  String json = "{"
-    "\"screen\":\"eink29bwr\","
-    "\"frames\":" + String(framesReceived) + ","
-    "\"lastRefreshSec\":" + String(sinceRefresh) + ","
-    "\"heap\":" + String(ESP.getFreeHeap()) + ","
-    "\"uptime\":" + String(millis() / 1000) + ","
-    "\"lastError\":\"" + lastError + "\""
-    "}";
-  sendJSON(200, json);
-}
-
-// ── OPTIONS (CORS preflight) ─────────────────────────────────────────────
-void handleOptions() {
-  setCORS();
-  server.send(204);
-}
-
-// ── POST /frame ──────────────────────────────────────────────────────────
+// ─── AFFICHAGE QR CODE ─────────────────────────────────────────────────────
+// Layout écran paysage 296×128 :
+//   Zone QR  : partie gauche/centre (carré centré verticalement)
+//   Zone texte: bande droite ~100px ou bande basse selon la taille du QR
 //
-// Flux de traitement :
-//  1. Lire le body JSON (peut être volumineux !)
-//  2. Parser JSON : {screen, data}
-//  3. Décoder le base64 → octets RGB bruts
-//  4. Convertir RGB → blackBuf + redBuf
-//  5. Appeler refreshDisplay()
-//
-// ATTENTION MÉMOIRE :
-//  L'image 296×128 RGB = 113664 octets bruts
-//  Encodée en base64 = ~151552 caractères
-//  + overhead JSON  ≈ 152000 octets
-//  L'ESP8266 a 80KB RAM libre après le stack WiFi.
-//  → On NE peut PAS charger tout le body en String.
-//
-//  SOLUTION : on lit le body en streaming et on décode
-//  le base64 à la volée dans un buffer statique RGB partagé.
-//  Le buffer RGB fait 113664 octets → trop grand pour la RAM !
-//
-//  SOLUTION FINALE (MVP) :
-//  Réduire la résolution dans l'app Next.js à ce qui est
-//  transmissible : on envoie les données déjà binarisées
-//  (1 bit/pixel) depuis Next.js, pas du RGB.
-//
-//  FORMAT OPTIMISÉ :
-//  {
-//    "screen": "eink29bwr",
-//    "black":  "<base64 de blackBuf : 4736 octets → ~6316 chars>",
-//    "red":    "<base64 de redBuf   : 4736 octets → ~6316 chars>"
-//  }
-//  Total JSON ≈ 13000 caractères → CONFORTABLE pour l'ESP.
-//
-//  L'app Next.js fait la conversion couleur→1bit (on implémente ça côté JS).
-//  L'ESP reçoit directement les buffers prêts à envoyer à l'écran.
-//
-// ─────────────────────────────────────────────────────────────────────────
+// On choisit un layout simple :
+//   - QR à gauche, carré le plus grand possible en hauteur (128px)
+//   - Texte à droite du QR : MAC sur une ligne, CODE sur la suivante
+void displayQR(const String& onboardUrl, const String& code, const String& mac) {
+  memset(blackBuf, 0xFF, BUF_SIZE);
+  memset(redBuf,   0xFF, BUF_SIZE);
 
-// Buffer statique pour décoder les données base64 → buffers 1-bit
-// On réutilise blackBuf/redBuf directement (4736 octets chacun)
+  Serial.println("[QR] URL : " + onboardUrl);
+  Serial.println("[QR] CODE: " + code);
+  Serial.println("[QR] MAC : " + mac);
 
-void handleFrame() {
-  setCORS();
-  Serial.println(F("[HTTP] POST /frame reçu"));
+  // ── Génération du QR ──────────────────────────────────────────
+  QRCode qrcode;
+  uint8_t qrcodeData[qrcode_getBufferSize(5)];
 
-  // ── 1. Lire le body ──────────────────────────────────────────
-  if (!server.hasArg("plain") || server.arg("plain").length() == 0) {
-    sendJSON(400, "{\"error\":\"No body\"}");
-    return;
-  }
-
-  const String& body = server.arg("plain");
-  Serial.printf("[HTTP] Body size: %u bytes\n", body.length());
-
-  // ── 2. Parser JSON ───────────────────────────────────────────
-  // On utilise un JsonDocument en mode streaming pour économiser la RAM
-  // ArduinoJson v6 : DynamicJsonDocument
-  // Taille du document : on a besoin de stocker 2 strings base64 ~6300 chars chacune
-  // + overhead JSON. On alloue 16KB sur le tas.
-  DynamicJsonDocument doc(16384);
-  DeserializationError err = deserializeJson(doc, body);
-  if (err) {
-    lastError = String("JSON: ") + err.c_str();
-    sendJSON(400, "{\"error\":\"JSON parse error: " + String(err.c_str()) + "\"}");
-    Serial.println("[HTTP] JSON error: " + String(err.c_str()));
-    return;
-  }
-
-  const char* screen    = doc["screen"];
-  const char* blackB64  = doc["black"];
-  const char* redB64    = doc["red"];
-
-  if (!screen) {
-    sendJSON(400, "{\"error\":\"Missing field: screen\"}");
-    return;
-  }
-  if (!blackB64 || !redB64) {
-    sendJSON(400, "{\"error\":\"Missing fields: black / red (expected pre-converted 1-bit buffers)\"}");
-    return;
-  }
-
-  Serial.printf("[HTTP] screen=%s  black_b64_len=%u  red_b64_len=%u\n",
-                screen, strlen(blackB64), strlen(redB64));
-
-  // ── 3. Vérifier que c'est bien pour nous ─────────────────────
-  if (strcmp(screen, "eink29bwr") != 0) {
-    sendJSON(400, "{\"error\":\"Wrong screen type, expected eink29bwr\"}");
-    return;
-  }
-
-  // ── 4. Décoder les buffers base64 → buffers 1-bit ────────────
-  size_t blackLen = base64Decode(blackB64, strlen(blackB64), blackBuf, BUF_SIZE);
-  size_t redLen   = base64Decode(redB64,   strlen(redB64),   redBuf,   BUF_SIZE);
-
-  Serial.printf("[B64] black: %u octets  red: %u octets\n", blackLen, redLen);
-
-  if (blackLen < BUF_SIZE / 2 || redLen < BUF_SIZE / 2) {
-    // Données trop courtes — probablement une erreur d'encodage
-    lastError = "Buffer too short after decode";
-    sendJSON(400, "{\"error\":\"Decoded buffers too short\","
-                  "\"blackLen\":" + String(blackLen) + ","
-                  "\"redLen\":"   + String(redLen)   + ","
-                  "\"expected\":" + String(BUF_SIZE)  + "}");
-    return;
-  }
-
-  // ── 5. Afficher ───────────────────────────────────────────────
-  Serial.println(F("[EINK] Lancement refresh..."));
-  bool ok = refreshDisplay();
-
-  if (ok) {
-    lastError = "";
-    sendJSON(200, "{\"ok\":true,\"frames\":" + String(framesReceived) + "}");
-  } else {
-    sendJSON(500, "{\"ok\":false,\"error\":\"" + lastError + "\"}");
-  }
-}
-
-// ── 404 ──────────────────────────────────────────────────────────────────
-void handleNotFound() {
-  setCORS();
-  server.send(404, "application/json", "{\"error\":\"Not found\"}");
-}
-
-// ╔══════════════════════════════════════════════════════════════╗
-// ║  SETUP                                                      ║
-// ╚══════════════════════════════════════════════════════════════╝
-
-void setup() {
-  Serial.begin(115200);
-  delay(200);
-  Serial.println(F("\n\n╔══════════════════════════════╗"));
-  Serial.println(F(  "║  ESP Canvas Receiver  v1.0   ║"));
-  Serial.println(F(  "║  E-Ink 2.9\" BWR              ║"));
-  Serial.println(F(  "╚══════════════════════════════╝\n"));
-
-  // ── Mémoire dispo ─────────────────────────────────────────────
-  Serial.printf("[MEM] Free heap: %u bytes\n", ESP.getFreeHeap());
-  Serial.printf("[MEM] blackBuf: %u  redBuf: %u  total: %u bytes\n",
-                (unsigned)sizeof(blackBuf), (unsigned)sizeof(redBuf),
-                (unsigned)(sizeof(blackBuf) + sizeof(redBuf)));
-
-  // ── Init buffers (tout blanc) inutile ca bousille l'ecran pour rien ─────────────────────────────────
-  //memset(blackBuf, 0xFF, BUF_SIZE);
-  //memset(redBuf,   0xFF, BUF_SIZE);
-
-  // ── WiFi ──────────────────────────────────────────────────────
-  Serial.printf("[WiFi] Connexion à %s ...\n", WIFI_SSID);
-  WiFi.mode(WIFI_STA);
-  WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
-
-  int attempt = 0;
-  while (WiFi.status() != WL_CONNECTED) {
-    delay(500);
-    Serial.print(".");
-    if (++attempt > 40) {
-      // Timeout 20s — redémarrer
-      Serial.println(F("\n[WiFi] TIMEOUT — reboot"));
-      ESP.restart();
+  int qrResult = qrcode_initText(&qrcode, qrcodeData, 4, ECC_MEDIUM, onboardUrl.c_str());
+  if (qrResult < 0) {
+    qrResult = qrcode_initText(&qrcode, qrcodeData, 5, ECC_MEDIUM, onboardUrl.c_str());
+    if (qrResult < 0) {
+      Serial.println("[QR] Erreur génération QR");
+      refreshDisplay();
+      return;
     }
   }
 
-  Serial.println();
-  Serial.println("[WiFi] Connecté !");
-  Serial.printf("[WiFi] IP : %s\n", WiFi.localIP().toString().c_str());
-  Serial.printf("[WiFi] RSSI : %d dBm\n", WiFi.RSSI());
+  // ── Préparation du texte ──────────────────────────────────────
+  String macShort = mac;
+  macShort.replace(":", "");
+  macShort.toUpperCase();
 
-  // ── Init e-ink ────────────────────────────────────────────────
-  Serial.println(F("[EINK] Init..."));
-  if (epd.Init() != 0) {
-    Serial.println(F("[EINK] INIT FAILED — check wiring:"));
-    Serial.println(F("  SCK=D5  MOSI=D7  CS=D8  DC=D2  RST=D1  BUSY=D0"));
-    // On n'arrête pas — le WiFi reste actif pour le diagnostic
-    displayReady = false;
-  } else {
-    Serial.println(F("[EINK] Init OK"));
+  String macLine  = "MAC:" + macShort;
+  String codeLine = "CODE:" + code;
+  codeLine.toUpperCase();
 
-    Serial.println(F("[EINK] Prêt"));
-    displayReady = true;
-    lastRefreshMs = millis();
+  // ── Layout écran paysage 296×128 ──────────────────────────────
+  // QR centré horizontalement, texte dessous
+  const int marginTop   = 4;
+  const int marginSide  = 4;
+  const int marginBot   = 4;
+  const int quietZone   = 2;   // modules
+  const int gapQrText   = 4;   // px
+  const int lineGap     = 3;   // px
+  const int textH       = 7;
+  const int textBlockH  = textH + lineGap + textH;
+
+  int totalModules = qrcode.size + quietZone * 2;
+
+  // On réserve la hauteur du texte en bas,
+  // le QR prend le reste sans jamais sortir de l’écran.
+  int maxQrW = IMG_W - marginSide * 2;
+  int maxQrH = IMG_H - marginTop - gapQrText - textBlockH - marginBot;
+
+  int scaleX = maxQrW / totalModules;
+  int scaleY = maxQrH / totalModules;
+  int scale  = min(scaleX, scaleY);
+  if (scale < 1) scale = 1;
+
+  int qrPx = totalModules * scale;
+
+  // QR centré horizontalement
+  int qrX0 = (IMG_W - qrPx) / 2;
+  int qrY0 = marginTop;
+
+  // ── Dessin du QR ──────────────────────────────────────────────
+  for (int my = 0; my < qrcode.size; my++) {
+    for (int mx = 0; mx < qrcode.size; mx++) {
+      if (!qrcode_getModule(&qrcode, mx, my)) continue;
+
+      int px0 = qrX0 + (mx + quietZone) * scale;
+      int py0 = qrY0 + (my + quietZone) * scale;
+
+      for (int dy = 0; dy < scale; dy++) {
+        for (int dx = 0; dx < scale; dx++) {
+          setPixel(blackBuf, px0 + dx, py0 + dy);
+        }
+      }
+    }
   }
 
-  // ── Serveur HTTP ──────────────────────────────────────────────
-  server.on("/ping",        HTTP_GET,     handlePing);
-  server.on("/status",      HTTP_GET,     handleStatus);
-  server.on("/frame",       HTTP_POST,    handleFrame);
-  server.on("/frame",       HTTP_OPTIONS, handleOptions);
-  server.on("/ping",        HTTP_OPTIONS, handleOptions);
-  server.on("/status",      HTTP_OPTIONS, handleOptions);
-  server.onNotFound(handleNotFound);
+  // ── Texte sous le QR ──────────────────────────────────────────
+  int textY1 = qrY0 + qrPx + gapQrText;
+  int textY2 = textY1 + textH + lineGap;
 
-  server.begin();
-  Serial.printf("[HTTP] Serveur démarré sur port %u\n", HTTP_PORT);
-  Serial.println(F("──────────────────────────────────"));
-  Serial.println("[READY] POST http://" + WiFi.localIP().toString() + "/frame");
-  Serial.println("[READY] GET  http://" + WiFi.localIP().toString() + "/ping");
-  Serial.println(F("──────────────────────────────────\n"));
+  // Tronquage si une ligne dépasse la largeur écran
+  int maxChars = IMG_W / 6;  // 1 char = 6 px avec ta font 5x7 + 1 espace
+  if ((int)macLine.length() > maxChars) {
+    macLine = macLine.substring(0, maxChars);
+  }
+  if ((int)codeLine.length() > maxChars) {
+    codeLine = codeLine.substring(0, maxChars);
+  }
+
+  int macX  = (IMG_W - textWidth(macLine)) / 2;
+  int codeX = (IMG_W - textWidth(codeLine)) / 2;
+
+  drawText(blackBuf, macX,  textY1, macLine);
+  drawText(blackBuf, codeX, textY2, codeLine);
+
+  refreshDisplay();
 }
 
-// ╔══════════════════════════════════════════════════════════════╗
-// ║  LOOP                                                       ║
-// ╚══════════════════════════════════════════════════════════════╝
+// ─── HTTP HELPERS ──────────────────────────────────────────────────────────
+bool httpPost(const String& path, const String& body, String& resp) {
+  WiFiClient client; HTTPClient http;
+  http.begin(client, SERVER_URL + path);
+  http.addHeader("Content-Type", "application/json");
+  int code = http.POST(body);
+  resp = http.getString();
+  http.end();
+  Serial.printf("[HTTP POST] %s → %d\n", path.c_str(), code);
+  return code == 200;
+}
+
+bool httpGet(const String& path, String& resp) {
+  WiFiClient client; HTTPClient http;
+  http.begin(client, SERVER_URL + path);
+  int code = http.GET();
+  resp = http.getString();
+  http.end();
+  Serial.printf("[HTTP GET] %s → %d\n", path.c_str(), code);
+  return code == 200;
+}
+
+// ─── REGISTER ──────────────────────────────────────────────────────────────
+bool doRegister() {
+  String mac = WiFi.macAddress();
+  mac.toLowerCase();
+
+  String body = "{\"mac\":\"" + mac + "\",\"screens\":[\"" + SCREEN_TYPE + "\"],\"firmware\":\"1.4\"}";
+  String resp;
+  if (!httpPost("/api/register", body, resp)) return false;
+
+  DynamicJsonDocument doc(1024);
+  if (deserializeJson(doc, resp)) {
+    Serial.println("[REGISTER] JSON error");
+    return false;
+  }
+
+  deviceId  = doc["deviceId"].as<String>();
+  pairCode  = doc["pairCode"].as<String>();
+  // canvasUrl contient déjà /draw/deviceId/eink29bwr depuis le serveur
+  canvasUrl = doc["canvasUrl"].as<String>();
+
+  registered = true;
+
+  // L'URL affiché dans le QR → page onboard avec le code
+  String onboardUrl = String(SERVER_URL) + "/onboard?code=" + pairCode;
+
+  Serial.println("[REGISTER] deviceId : " + deviceId);
+  Serial.println("[REGISTER] pairCode : " + pairCode);
+  Serial.println("[REGISTER] canvasUrl: " + canvasUrl);
+  Serial.println("[REGISTER] QR URL   : " + onboardUrl);
+
+  displayQR(onboardUrl, pairCode, mac);
+  return true;
+}
+
+// ─── PING ──────────────────────────────────────────────────────────────────
+void doPing() {
+  String body = "{\"deviceId\":\"" + deviceId + "\"}";
+  String resp;
+  httpPost("/api/ping", body, resp);
+}
+
+// ─── PULL ──────────────────────────────────────────────────────────────────
+void doPull() {
+  String resp;
+  String path = "/api/pull?deviceId=" + deviceId;
+
+  WiFiClient client;
+  HTTPClient http;
+  http.begin(client, String(SERVER_URL) + path);
+  int code = http.GET();
+  resp = http.getString();
+  http.end();
+  Serial.printf("[HTTP GET] %s → %d\n", path.c_str(), code);
+
+  if (code == 404) {
+    Serial.println("[PULL] device inconnu → re-register");
+    registered = false;
+    deviceId = pairCode = canvasUrl = "";
+    return;
+  }
+  if (code != 200) return;
+
+  // ── Parse JSON ────────────────────────────────────────────────
+  // Réponse attendue : { "frame": { "screen":"eink29bwr", "black":"...", "red":"..." } }
+  // ou               : { "frame": null }
+  //
+  // Sur ESP8266 la mémoire est limitée : on alloue juste ce qu'il faut.
+  // Les chaînes base64 font ~6315 chars chacune (4736 bytes encodés).
+  // On utilise des pointeurs directs dans le String resp pour éviter la copie.
+
+  // Vérification rapide : frame null ?
+  if (resp.indexOf("\"frame\":null") >= 0 || resp.indexOf("\"frame\": null") >= 0) {
+    Serial.println("[PULL] Aucun frame disponible");
+    return;
+  }
+
+  // Extraction manuelle des champs base64 pour économiser la RAM
+  // (ArduinoJson avec 2×6315 chars dépasse facilement les 32KB d'ESP8266)
+  auto extractB64 = [&](const String& key) -> String {
+    String search = "\"" + key + "\":\"";
+    int start = resp.indexOf(search);
+    if (start < 0) return "";
+    start += search.length();
+    int end = resp.indexOf("\"", start);
+    if (end < 0) return "";
+    return resp.substring(start, end);
+  };
+
+  String blackB64 = extractB64("black");
+  String redB64   = extractB64("red");
+
+  if (blackB64.length() == 0 || redB64.length() == 0) {
+    Serial.println("[PULL] Champs black/red manquants");
+    return;
+  }
+
+  Serial.printf("[PULL] black=%d  red=%d  chars\n", blackB64.length(), redB64.length());
+
+  size_t blackLen = base64Decode(blackB64.c_str(), blackB64.length(), blackBuf, BUF_SIZE);
+  size_t redLen   = base64Decode(redB64.c_str(),   redB64.length(),   redBuf,   BUF_SIZE);
+
+  Serial.printf("[PULL] décodé black=%zu red=%zu bytes\n", blackLen, redLen);
+
+  if (blackLen == 0 || redLen == 0) {
+    Serial.println("[PULL] Décodage base64 échoué");
+    return;
+  }
+
+  frameReady = true;
+  refreshDisplay();
+  Serial.println("[PULL] ✅ Frame affichée");
+}
+
+// ─── SETUP / LOOP ──────────────────────────────────────────────────────────
+void setup() {
+  Serial.begin(115200);
+  Serial.println("\n[BOOT] ESP Canvas Pull v1.4");
+
+  WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+  Serial.print("[WIFI] Connexion");
+  int i = 0;
+  while (WiFi.status() != WL_CONNECTED && i++ < 40) { delay(500); Serial.print("."); }
+  Serial.println("\n[WIFI] IP: " + WiFi.localIP().toString());
+
+  if (epd.Init() != 0) { Serial.println("[EINK] INIT FAILED"); return; }
+  Serial.println("[EINK] OK");
+
+  while (!registered) { doRegister(); if (!registered) delay(5000); }
+  lastPingMs = lastPullMs = millis();
+}
 
 void loop() {
-  server.handleClient();
+  unsigned long now = millis();
 
-  // Yield pour éviter le watchdog reset sur ESP8266
-  yield();
+  if (!registered) { doRegister(); delay(5000); return; }
+
+  if (now - lastPingMs >= PING_INTERVAL) { doPing(); lastPingMs = now; }
+  if (now - lastPullMs >= PULL_INTERVAL) { doPull(); lastPullMs = now; }
+
+  delay(100);
 }
