@@ -32,27 +32,109 @@ uint8_t redBuf[BUF_SIZE];
 unsigned long lastRefreshMs = 0;
 
 // ─── STATE ─────────────────────────────────────────────────────────────────
+// ─── PATCH esp_canvas_pull_waveshare.ino ───────────────────────────────────
+// Remplace uniquement les variables d'état + la fonction doRegister()
+// Le reste du fichier est inchangé.
+
+// ─── STATE (remplace le bloc STATE existant) ────────────────────────────────
 String deviceId, pairCode, canvasUrl;
 bool   registered  = false;
-bool   frameReady  = false;   // true quand un frame pull a été chargé dans les buffers
+bool   paired      = false;   // ← NOUVEAU : true si déjà onboardé côté serveur
+bool   frameReady  = false;
 unsigned long lastPingMs = 0, lastPullMs = 0;
 
+String lastFrameId = "";
+bool hasDisplayedFrame = false;
+
+uint8_t nextBlackBuf[BUF_SIZE];
+uint8_t nextRedBuf[BUF_SIZE];
+
+
+
+
 // ─── PIXEL HELPERS ────────────────────────────────────────────────────────
-// L'écran physique est paysage 296×128.
-// Le driver Waveshare epd2in9b_V4 attend les buffers en mode portrait (128×296)
-// organisés ainsi :
-//   byte index = col * (IMG_H/8) + (row/8)   où col ∈ [0,127], row ∈ [0,295]
-//   bit mask   = 0x80 >> (row % 8)
-// Pour afficher en paysage : on pose x ∈ [0,295], y ∈ [0,127]
-//   → col = 127 - y,  row = x
+/*
+  ============================================================
+  ORIENTATION E-PAPER WAVESHARE 2.9" B V4 (296x128)
+  Écran utilisé en HORIZONTAL, nappe/câble à GAUCHE.
+  ============================================================
+
+  REPÈRE LOGIQUE UTILISÉ PAR LE CODE :
+  - x = 0 .. 295  (largeur logique)
+  - y = 0 .. 127  (hauteur logique)
+
+  PROBLÈME RENCONTRÉ :
+  - Le driver/buffer natif de l'écran n'est pas dans le même repère
+    que notre mise en page logique.
+  - Si on dessine directement sans transformation, l'image apparaît
+    mal orientée.
+  - Attention : un MIROIR n'est PAS une rotation.
+    Un miroir retourne aussi les lettres (texte illisible / inversé).
+    Ici on veut une vraie rotation, pas du texte en miroir.
+
+  SOLUTION VALIDÉE POUR L'AFFICHAGE CORRECT EN HORIZONTAL
+  (écran horizontal, nappe à gauche) :
+  - Appliquer une rotation de 90° vers la gauche (antihoraire)
+    lors de l'écriture des pixels dans le buffer.
+  - Transformation validée :
+        xr = y;
+        yr = x;
+
+  Implémentation :
+
+    inline void setPixel(uint8_t* buf, int x, int y) {
+      if (x < 0 || x >= IMG_W || y < 0 || y >= IMG_H) return;
+      int xr = y;
+      int yr = x;
+      int byteIndex = (yr * 16) + (xr / 8);   // 16 = 128 / 8
+      int bitMask = 0x80 >> (xr & 7);
+      buf[byteIndex] &= ~bitMask;
+    }
+
+  POURQUOI ÇA MARCHE :
+  - Notre layout (textes, QR, etc.) est pensé en 296x128.
+  - Le buffer physique de l'écran attend les pixels dans un repère
+    différent.
+  - Cette transformation équivaut à une rotation gauche de 90°
+    adaptée au packing mémoire du panneau.
+  - Résultat : QR + texte affichés dans le bon sens, sans miroir.
+
+  SI ON VEUT PASSER L'ÉCRAN EN PORTRAIT "DROIT" PLUS TARD :
+  - Depuis cette base horizontale correcte, il faudra encore faire
+    une rotation de 90° vers la gauche.
+  - Donc : PORTRAIT DROIT = encore 90° antihoraire par rapport
+    au rendu horizontal validé ici.
+  - Important : il faudra faire une vraie rotation du repère,
+    PAS un flip/mirror, sinon le texte redeviendra inversé.
+
+  RÈGLE PRATIQUE À RETENIR :
+  - Rotation = texte lisible.
+  - Mirror/flip = texte inversé.
+  - Si les lettres deviennent à l'envers, ce n'est pas la bonne
+    transformation : on a introduit un miroir au lieu d'une rotation.
+
+  MÉMO RAPIDE :
+  - Horizontal nappe à gauche : setPixel() avec
+        xr = y;
+        yr = x;
+  - Portrait droit depuis cette config :
+        encore 90° à gauche à partir de ce repère
+        (à recalculer proprement si on change tout le layout).
+*/
 inline void setPixel(uint8_t* buf, int x, int y) {
   if (x < 0 || x >= IMG_W || y < 0 || y >= IMG_H) return;
-  int col       = 127 - y;
-  int row       = x;
-  int byteIndex = col * (IMG_H / 8) + (row / 8);
-  uint8_t mask  = 0x80 >> (row % 8);
-  if (byteIndex >= 0 && byteIndex < BUF_SIZE)
-    buf[byteIndex] &= ~mask;
+
+  // Base correcte : rotation 90° antihoraire
+  int xr = y;
+  int yr = IMG_W - 1 - x;   // 295 - x
+
+  // Correction du miroir restant sur Y
+  yr = IMG_W - 1 - yr;      // revient à yr = x
+
+  int byteIndex = (yr * (IMG_H / 8)) + (xr / 8);
+  int bitMask   = 0x80 >> (xr & 7);
+
+  buf[byteIndex] &= ~bitMask;
 }
 
 // ─── FONT 5×7 ─────────────────────────────────────────────────────────────
@@ -171,35 +253,62 @@ size_t base64Decode(const char* src, size_t srcLen, uint8_t* dst, size_t dstMax)
 }
 
 // ─── AFFICHAGE E-INK ───────────────────────────────────────────────────────
-bool refreshDisplay() {
+bool initDisplayForRefresh() {
   unsigned long elapsed = millis() - lastRefreshMs;
   if (elapsed < EINK_MIN_REFRESH_MS) {
     delay(EINK_MIN_REFRESH_MS - elapsed);
   }
-  if (epd.Init() != 0) { Serial.println("[EINK] Init failed"); return false; }
+
+  if (epd.Init() != 0) {
+    Serial.println("[EINK] Init failed");
+    return false;
+  }
+
+  return true;
+}
+
+bool refreshDisplay() {
+  if (!initDisplayForRefresh()) return false;
+
   epd.Display(blackBuf, redBuf);
   epd.Sleep();
   lastRefreshMs = millis();
   return true;
 }
 
+bool clearDisplayWhite() {
+  if (!initDisplayForRefresh()) return false;
+
+  memset(blackBuf, 0xFF, BUF_SIZE);
+  memset(redBuf,   0xFF, BUF_SIZE);
+
+  epd.Display(blackBuf, redBuf);
+  epd.Sleep();
+  lastRefreshMs = millis();
+  return true;
+}
+
+bool ackFrame(const String& frameId) {
+  if (frameId.length() == 0) return false;
+
+  String body = "{\"deviceId\":\"" + deviceId + "\",\"frameId\":\"" + frameId + "\"}";
+  String resp;
+  bool ok = httpPost("/api/ack-frame", body, resp);
+  Serial.printf("[ACK] frameId=%s -> %s\n", frameId.c_str(), ok ? "OK" : "FAIL");
+  return ok;
+}
+
 // ─── AFFICHAGE QR CODE ─────────────────────────────────────────────────────
-// Layout écran paysage 296×128 :
-//   Zone QR  : partie gauche/centre (carré centré verticalement)
-//   Zone texte: bande droite ~100px ou bande basse selon la taille du QR
-//
-// On choisit un layout simple :
-//   - QR à gauche, carré le plus grand possible en hauteur (128px)
-//   - Texte à droite du QR : MAC sur une ligne, CODE sur la suivante
+// Orientation validée : écran horizontal, nappe à gauche.
+// Pour afficher correctement sans miroir : rotation 90° à gauche
+// du repère logique vers le buffer physique.
+// NE PAS utiliser de flip/mirror : ça inverse le texte.
+// Si passage en portrait droit plus tard : refaire encore une
+// rotation 90° à gauche à partir de cette base.
 void displayQR(const String& onboardUrl, const String& code, const String& mac) {
   memset(blackBuf, 0xFF, BUF_SIZE);
   memset(redBuf,   0xFF, BUF_SIZE);
 
-  Serial.println("[QR] URL : " + onboardUrl);
-  Serial.println("[QR] CODE: " + code);
-  Serial.println("[QR] MAC : " + mac);
-
-  // ── Génération du QR ──────────────────────────────────────────
   QRCode qrcode;
   uint8_t qrcodeData[qrcode_getBufferSize(5)];
 
@@ -213,52 +322,60 @@ void displayQR(const String& onboardUrl, const String& code, const String& mac) 
     }
   }
 
-  // ── Préparation du texte ──────────────────────────────────────
-  String macShort = mac;
-  macShort.replace(":", "");
+  String title    = "RESCOE - PROOF-OF-DRAW";
+  String subtitle = "TECHNOLOGY";
+  String macShort = mac; 
+  macShort.replace(":", ""); 
   macShort.toUpperCase();
-
   String macLine  = "MAC:" + macShort;
-  String codeLine = "CODE:" + code;
+  String codeLine = "CODE:" + code; 
   codeLine.toUpperCase();
 
-  // ── Layout écran paysage 296×128 ──────────────────────────────
-  // QR centré horizontalement, texte dessous
-  const int marginTop   = 4;
-  const int marginSide  = 4;
-  const int marginBot   = 4;
-  const int quietZone   = 2;   // modules
-  const int gapQrText   = 4;   // px
-  const int lineGap     = 3;   // px
-  const int textH       = 7;
-  const int textBlockH  = textH + lineGap + textH;
+  const int screenW = IMG_W;   // 296
+  const int screenH = IMG_H;   // 128
+  const int textH = 7;
+  const int lineGap = 3;
+  const int quietZone = 2;
+
+  const int topPad = 4;
+  const int sidePad = 6;
+  const int bottomPad = 4;
+  const int gapTitleToQr = 6;
+  const int gapQrToText = 6;
+
+  const int titleBlockH = textH + 2 + textH;
+  const int infoBlockH  = textH + lineGap + textH;
 
   int totalModules = qrcode.size + quietZone * 2;
+  int usableW = screenW - sidePad * 2;
+  int usableH = screenH - topPad - titleBlockH - gapTitleToQr - gapQrToText - infoBlockH - bottomPad;
 
-  // On réserve la hauteur du texte en bas,
-  // le QR prend le reste sans jamais sortir de l’écran.
-  int maxQrW = IMG_W - marginSide * 2;
-  int maxQrH = IMG_H - marginTop - gapQrText - textBlockH - marginBot;
-
-  int scaleX = maxQrW / totalModules;
-  int scaleY = maxQrH / totalModules;
-  int scale  = min(scaleX, scaleY);
+  int scale = min(usableW / totalModules, usableH / totalModules);
   if (scale < 1) scale = 1;
 
   int qrPx = totalModules * scale;
 
-  // QR centré horizontalement
-  int qrX0 = (IMG_W - qrPx) / 2;
-  int qrY0 = marginTop;
+  int titleY1 = topPad;
+  int titleY2 = titleY1 + textH + 2;
 
-  // ── Dessin du QR ──────────────────────────────────────────────
+  int qrX0 = (screenW - qrPx) / 2;
+  int qrY0 = topPad + titleBlockH + gapTitleToQr;
+
+  int textY1 = qrY0 + qrPx + gapQrToText;
+  int textY2 = textY1 + textH + lineGap;
+
+  auto centerText = [&](const String& s) -> int {
+    return (screenW - textWidth(s)) / 2;
+  };
+
+  drawText(blackBuf, centerText(title),    titleY1, title);
+  drawText(blackBuf, centerText(subtitle), titleY2, subtitle);
+
   for (int my = 0; my < qrcode.size; my++) {
     for (int mx = 0; mx < qrcode.size; mx++) {
       if (!qrcode_getModule(&qrcode, mx, my)) continue;
-
       int px0 = qrX0 + (mx + quietZone) * scale;
       int py0 = qrY0 + (my + quietZone) * scale;
-
       for (int dy = 0; dy < scale; dy++) {
         for (int dx = 0; dx < scale; dx++) {
           setPixel(blackBuf, px0 + dx, py0 + dy);
@@ -267,27 +384,13 @@ void displayQR(const String& onboardUrl, const String& code, const String& mac) 
     }
   }
 
-  // ── Texte sous le QR ──────────────────────────────────────────
-  int textY1 = qrY0 + qrPx + gapQrText;
-  int textY2 = textY1 + textH + lineGap;
-
-  // Tronquage si une ligne dépasse la largeur écran
-  int maxChars = IMG_W / 6;  // 1 char = 6 px avec ta font 5x7 + 1 espace
-  if ((int)macLine.length() > maxChars) {
-    macLine = macLine.substring(0, maxChars);
-  }
-  if ((int)codeLine.length() > maxChars) {
-    codeLine = codeLine.substring(0, maxChars);
-  }
-
-  int macX  = (IMG_W - textWidth(macLine)) / 2;
-  int codeX = (IMG_W - textWidth(codeLine)) / 2;
-
-  drawText(blackBuf, macX,  textY1, macLine);
-  drawText(blackBuf, codeX, textY2, codeLine);
+  drawText(blackBuf, centerText(macLine),  textY1, macLine);
+  drawText(blackBuf, centerText(codeLine), textY2, codeLine);
 
   refreshDisplay();
 }
+
+
 
 // ─── HTTP HELPERS ──────────────────────────────────────────────────────────
 bool httpPost(const String& path, const String& body, String& resp) {
@@ -312,6 +415,7 @@ bool httpGet(const String& path, String& resp) {
 }
 
 // ─── REGISTER ──────────────────────────────────────────────────────────────
+
 bool doRegister() {
   String mac = WiFi.macAddress();
   mac.toLowerCase();
@@ -328,22 +432,38 @@ bool doRegister() {
 
   deviceId  = doc["deviceId"].as<String>();
   pairCode  = doc["pairCode"].as<String>();
-  // canvasUrl contient déjà /draw/deviceId/eink29bwr depuis le serveur
   canvasUrl = doc["canvasUrl"].as<String>();
+  paired    = doc["paired"] | false;   // ← NOUVEAU : lu depuis la réponse serveur
 
   registered = true;
 
-  // L'URL affiché dans le QR → page onboard avec le code
-  String onboardUrl = String(SERVER_URL) + "/onboard?code=" + pairCode;
-
   Serial.println("[REGISTER] deviceId : " + deviceId);
   Serial.println("[REGISTER] pairCode : " + pairCode);
-  Serial.println("[REGISTER] canvasUrl: " + canvasUrl);
-  Serial.println("[REGISTER] QR URL   : " + onboardUrl);
+  Serial.println("[REGISTER] paired   : " + String(paired ? "oui" : "non"));
 
-  displayQR(onboardUrl, pairCode, mac);
+  if (!paired) {
+    // Pas encore appairé → afficher le QR pour que l'artiste scanne
+    String onboardUrl = String(SERVER_URL) + "/onboard?code=" + pairCode;
+    Serial.println("[REGISTER] QR URL   : " + onboardUrl);
+    displayQR(onboardUrl, pairCode, mac);
+  } else {
+    // Déjà appairé → juste un message texte discret, pas de QR
+    Serial.println("[REGISTER] Device deja appaire, pas de QR");
+    // Optionnel : afficher un écran "prêt" minimal plutôt que le QR
+    // Si tu veux garder l'affichage précédent intact, ne fais rien ici.
+    // Si tu veux indiquer visuellement que l'écran est prêt, décommente :
+    //
+    // memset(blackBuf, 0xFF, BUF_SIZE);
+    // memset(redBuf,   0xFF, BUF_SIZE);
+    // String readyMsg = "PRET - " + String(doc["artistName"] | "");
+    // drawText(blackBuf, (IMG_W - textWidth(readyMsg)) / 2, IMG_H / 2 - 4, readyMsg);
+    // refreshDisplay();
+  }
+
   return true;
 }
+
+
 
 // ─── PING ──────────────────────────────────────────────────────────────────
 void doPing() {
@@ -353,6 +473,12 @@ void doPing() {
 }
 
 // ─── PULL ──────────────────────────────────────────────────────────────────
+void clearToWhiteAndRefresh() {
+  memset(blackBuf, 0xFF, BUF_SIZE);
+  memset(redBuf,   0xFF, BUF_SIZE);
+  refreshDisplay();
+}
+
 void doPull() {
   String resp;
   String path = "/api/pull?deviceId=" + deviceId;
@@ -363,33 +489,27 @@ void doPull() {
   int code = http.GET();
   resp = http.getString();
   http.end();
-  Serial.printf("[HTTP GET] %s → %d\n", path.c_str(), code);
+
+  Serial.printf("[HTTP GET] %s -> %d\n", path.c_str(), code);
 
   if (code == 404) {
-    Serial.println("[PULL] device inconnu → re-register");
+    Serial.println("[PULL] device inconnu -> re-register");
     registered = false;
     deviceId = pairCode = canvasUrl = "";
     return;
   }
-  if (code != 200) return;
 
-  // ── Parse JSON ────────────────────────────────────────────────
-  // Réponse attendue : { "frame": { "screen":"eink29bwr", "black":"...", "red":"..." } }
-  // ou               : { "frame": null }
-  //
-  // Sur ESP8266 la mémoire est limitée : on alloue juste ce qu'il faut.
-  // Les chaînes base64 font ~6315 chars chacune (4736 bytes encodés).
-  // On utilise des pointeurs directs dans le String resp pour éviter la copie.
+  if (code != 200) {
+    Serial.println("[PULL] HTTP non-200, skip");
+    return;
+  }
 
-  // Vérification rapide : frame null ?
   if (resp.indexOf("\"frame\":null") >= 0 || resp.indexOf("\"frame\": null") >= 0) {
     Serial.println("[PULL] Aucun frame disponible");
     return;
   }
 
-  // Extraction manuelle des champs base64 pour économiser la RAM
-  // (ArduinoJson avec 2×6315 chars dépasse facilement les 32KB d'ESP8266)
-  auto extractB64 = [&](const String& key) -> String {
+  auto extractField = [&](const String& key) -> String {
     String search = "\"" + key + "\":\"";
     int start = resp.indexOf(search);
     if (start < 0) return "";
@@ -399,29 +519,67 @@ void doPull() {
     return resp.substring(start, end);
   };
 
-  String blackB64 = extractB64("black");
-  String redB64   = extractB64("red");
+  String frameId  = extractField("frameId");
+  String screen   = extractField("screen");
+  String blackB64 = extractField("black");
+  String redB64   = extractField("red");
+
+  if (screen != SCREEN_TYPE) {
+    Serial.println("[PULL] screen incompatible ou absent");
+    return;
+  }
+
+  if (frameId.length() > 0 && frameId == lastFrameId) {
+    Serial.println("[PULL] frame deja affichee, skip");
+    return;
+  }
 
   if (blackB64.length() == 0 || redB64.length() == 0) {
     Serial.println("[PULL] Champs black/red manquants");
     return;
   }
 
-  Serial.printf("[PULL] black=%d  red=%d  chars\n", blackB64.length(), redB64.length());
+  memset(nextBlackBuf, 0xFF, BUF_SIZE);
+  memset(nextRedBuf,   0xFF, BUF_SIZE);
 
-  size_t blackLen = base64Decode(blackB64.c_str(), blackB64.length(), blackBuf, BUF_SIZE);
-  size_t redLen   = base64Decode(redB64.c_str(),   redB64.length(),   redBuf,   BUF_SIZE);
+  size_t blackLen = base64Decode(blackB64.c_str(), blackB64.length(), nextBlackBuf, BUF_SIZE);
+  size_t redLen   = base64Decode(redB64.c_str(),   redB64.length(),   nextRedBuf,   BUF_SIZE);
 
-  Serial.printf("[PULL] décodé black=%zu red=%zu bytes\n", blackLen, redLen);
+  Serial.printf("[PULL] frameId=%s decode black=%u red=%u bytes\n",
+                frameId.c_str(), (unsigned)blackLen, (unsigned)redLen);
 
-  if (blackLen == 0 || redLen == 0) {
-    Serial.println("[PULL] Décodage base64 échoué");
+  if (blackLen != BUF_SIZE || redLen != BUF_SIZE) {
+    Serial.println("[PULL] Taille decode invalide -> abandon");
+    return;
+  }
+
+  if (hasDisplayedFrame) {
+    Serial.println("[PULL] Hard clear avant nouveau dessin");
+    if (!clearDisplayWhite()) {
+      Serial.println("[PULL] Echec clearDisplayWhite()");
+      return;
+    }
+    delay(3000);
+  }
+
+  memcpy(blackBuf, nextBlackBuf, BUF_SIZE);
+  memcpy(redBuf,   nextRedBuf,   BUF_SIZE);
+
+  if (!refreshDisplay()) {
+    Serial.println("[PULL] Echec refreshDisplay()");
     return;
   }
 
   frameReady = true;
-  refreshDisplay();
-  Serial.println("[PULL] ✅ Frame affichée");
+  hasDisplayedFrame = true;
+  if (frameId.length() > 0) lastFrameId = frameId;
+
+  if (!ackFrame(frameId)) {
+    Serial.println("[PULL] WARNING: frame affichee mais ack echoue");
+    return;
+  }
+
+  Serial.println("[PULL] ✅ Frame affichee + ack envoyee");
 }
 
 // ─── SETUP / LOOP ──────────────────────────────────────────────────────────
@@ -435,8 +593,7 @@ void setup() {
   while (WiFi.status() != WL_CONNECTED && i++ < 40) { delay(500); Serial.print("."); }
   Serial.println("\n[WIFI] IP: " + WiFi.localIP().toString());
 
-  if (epd.Init() != 0) { Serial.println("[EINK] INIT FAILED"); return; }
-  Serial.println("[EINK] OK");
+Serial.println("[EINK] Driver pret");
 
   while (!registered) { doRegister(); if (!registered) delay(5000); }
   lastPingMs = lastPullMs = millis();

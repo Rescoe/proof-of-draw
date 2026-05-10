@@ -4,23 +4,22 @@ import { useParams, useRouter } from "next/navigation";
 import { useEffect, useState, useCallback } from "react";
 import { SCREEN_PROFILES, ScreenId } from "@/lib/screenProfiles";
 import { useCanvasDrawing, Tool } from "@/hooks/useCanvasDrawing";
-import { Device } from "@/lib/deviceStore";
-import { canvasToScreenPayload  } from "@/lib/canvasToScreen"; // ← AJOUT
+import { OwnedDevice } from "@/lib/deviceStore";
+import { canvasToScreenPayload } from "@/lib/canvasToScreen";
 
 
 export default function DrawCanvasPage() {
-const params = useParams();
-const router = useRouter();
+  const params = useParams();
+  const router = useRouter();
 
-const rawDevice = params.device;
-const rawScreen = params.screen;
+  const rawDevice = params.device;
+  const rawScreen = params.screen;
 
-const deviceId = Array.isArray(rawDevice) ? rawDevice[0] : rawDevice;
-const screenId = (Array.isArray(rawScreen) ? rawScreen[0] : rawScreen) as ScreenId;
-
+  const deviceId = Array.isArray(rawDevice) ? rawDevice[0] : rawDevice;
+  const screenId = (Array.isArray(rawScreen) ? rawScreen[0] : rawScreen) as ScreenId;
 
   const profile = SCREEN_PROFILES[screenId];
-  const [device, setDevice] = useState<Device | null>(null);
+  const [device, setDevice] = useState<OwnedDevice | null>(null);
   const [sending, setSending] = useState(false);
   const [status, setStatus] = useState<{ type: "ok" | "error"; msg: string } | null>(null);
 
@@ -34,107 +33,97 @@ const screenId = (Array.isArray(rawScreen) ? rawScreen[0] : rawScreen) as Screen
     pixelRatio: profile?.pixelRatio ?? 2,
   });
 
-
-useEffect(() => {
-  if (!profile || !deviceId || !screenId) { 
-    router.push("/draw"); 
-    return; 
-  }
-
-  let cancelled = false;
-
-async function loadDevice(attempt = 0) {
-  try {
-    const res = await fetch("/api/devices");
-    const data = await res.json();
-    if (cancelled) return;
-
-    const d = data.devices?.find(
-      (d: Device) => String(d.deviceId).trim() === String(deviceId).trim()
-    );
-
-    if (!d || !d.screens?.includes(screenId)) {
-      // Retry max 5× (le device peut arriver avec un léger délai après register)
-      if (attempt < 5 && !cancelled) {
-        setTimeout(() => loadDevice(attempt + 1), 1000);
-      } else if (!cancelled) {
-        router.push("/draw");
-      }
+  useEffect(() => {
+    if (!profile || !deviceId || !screenId) {
+      router.push("/draw");
       return;
     }
 
-    setDevice(d);
-  } catch (err) {
-    console.error("[LOAD DEVICE]", err);
-    if (!cancelled) router.push("/draw");
-  }
-}
+    let cancelled = false;
 
-loadDevice();
+    async function loadDevice(attempt = 0) {
+      try {
+        // ✅ ?mine=1 → vue privée avec deviceId, screens, etc.
+        const res = await fetch("/api/devices?mine=1");
+        const data = await res.json();
+        if (cancelled) return;
 
-  return () => { cancelled = true; };
-}, [deviceId, screenId, profile, router]);
+        const d = (data.devices ?? []).find(
+          (d: OwnedDevice) => String(d.deviceId).trim() === String(deviceId).trim()
+        );
 
+        if (!d || !d.screens?.includes(screenId)) {
+          if (attempt < 5 && !cancelled) {
+            setTimeout(() => loadDevice(attempt + 1), 1000);
+          } else if (!cancelled) {
+            router.push("/draw");
+          }
+          return;
+        }
 
-
-
-const handleSend = useCallback(async () => {
-  if (!device || sending || !canvasRef.current) return;
-
-  setSending(true);
-  setStatus(null);
-
-  try {
-const payload = canvasToScreenPayload(canvasRef.current, screenId);
-
-console.log("[SEND PAYLOAD]", payload);
-console.log("[SEND SCREEN]", payload.screen, screenId);
-
-const body =
-  screenId === "eink29bwr"
-    ? {
-        screen: screenId,
-        deviceId,
-        black: (payload as any).black,
-        red: (payload as any).red,
+        setDevice(d);
+      } catch (err) {
+        console.error("[LOAD DEVICE]", err);
+        if (!cancelled) router.push("/draw");
       }
-    : {
-        screen: screenId,
-        deviceId,
-        buffer: (payload as any).buffer,
-      };
-
-console.log("[SEND BODY]", body);
-
-const res = await fetch("/api/draw", {
-  method: "POST",
-  headers: {
-    "Content-Type": "application/json"
-  },
-  body: JSON.stringify(body),
-});
-
-    if (!res.ok) {
-      const errorData = await res.json().catch(() => ({}));
-      throw new Error(errorData.error || `HTTP ${res.status}`);
     }
 
-    setStatus({ type: "ok", msg: `✓ envoyé à ${device.artistName || deviceId}` });
-  } catch (err: any) {
-    console.error("[SEND ERROR]", err);
-    setStatus({ type: "error", msg: err.message || "Erreur réseau" });
-  } finally {
-    setSending(false);
-    setTimeout(() => setStatus(null), 4000);
-  }
-}, [device, sending, canvasRef, screenId, deviceId]);
+    loadDevice();
+    return () => { cancelled = true; };
+  }, [deviceId, screenId, profile, router]);
 
+
+  const handleSend = useCallback(async () => {
+    if (!device || sending || !canvasRef.current) return;
+
+    setSending(true);
+    setStatus(null);
+
+    try {
+      const payload = canvasToScreenPayload(canvasRef.current, screenId);
+
+      const body =
+        screenId === "eink29bwr"
+          ? {
+              screen: screenId,
+              deviceId,
+              black: (payload as any).black,
+              red: (payload as any).red,
+            }
+          : {
+              screen: screenId,
+              deviceId,
+              buffer: (payload as any).buffer,
+            };
+
+      const res = await fetch("/api/draw", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+
+      if (!res.ok) {
+        const errorData = await res.json().catch(() => ({}));
+        throw new Error(errorData.error || `HTTP ${res.status}`);
+      }
+
+      setStatus({ type: "ok", msg: `✓ envoyé à ${device.artistName || deviceId}` });
+    } catch (err: any) {
+      console.error("[SEND ERROR]", err);
+      setStatus({ type: "error", msg: err.message || "Erreur réseau" });
+    } finally {
+      setSending(false);
+      setTimeout(() => setStatus(null), 4000);
+    }
+  }, [device, sending, canvasRef, screenId, deviceId]);
 
 
   if (!profile) return null;
 
-  // Canvas display size (capped for screen fit)
-  const maxW = Math.min(profile.width * profile.pixelRatio, typeof window !== "undefined" ? window.innerWidth - 80 : 900);
+  const maxW = Math.min(
+    profile.width * profile.pixelRatio,
+    typeof window !== "undefined" ? window.innerWidth - 80 : 900
+  );
   const scale = maxW / profile.width;
   const displayW = Math.floor(profile.width * scale);
   const displayH = Math.floor(profile.height * scale);
@@ -161,7 +150,7 @@ const res = await fetch("/api/draw", {
         }}>←</button>
         <div>
           <div style={{ fontWeight: 700, fontSize: "0.9rem" }}>
-{device?.artistName || deviceId}
+            {device?.artistName || deviceId}
           </div>
           <div style={{ color: "var(--text3)", fontSize: "0.7rem", fontFamily: "JetBrains Mono, monospace" }}>
             {profile.name} · {profile.width}×{profile.height}
@@ -222,7 +211,6 @@ const res = await fetch("/api/draw", {
 
           <div style={{ width: "80%", height: 1, background: "var(--border)", margin: "0.25rem 0" }} />
 
-          {/* Brush sizes */}
           {brushSizes.map(s => (
             <button key={s} onClick={() => setBrushSize(s)} title={`${s}px`}
               style={{

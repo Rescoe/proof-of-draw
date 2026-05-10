@@ -1,10 +1,18 @@
 "use client";
-// app/my-devices/page.tsx  (ou remplace /admin/page.tsx si tu préfères)
-// Panel utilisateur : liste ses écrans connectés, accès rapide au canvas
+// app/my-devices/page.tsx
+// Affiche uniquement les devices de la session courante (?mine=1)
+// Pas d'exposition de MAC ni de pairCode brut
+// Permet de régénérer un pairCode si nécessaire
 
 import { useEffect, useState } from "react";
-import { Device } from "@/lib/deviceStore";
+import { OwnedDevice } from "@/lib/deviceStore";
 import { SCREEN_PROFILES } from "@/lib/screenProfiles";
+
+function isKnownScreen(
+  sid: string
+): sid is keyof typeof SCREEN_PROFILES {
+  return sid in SCREEN_PROFILES;
+}
 
 function timeSince(ts?: number): string {
   if (!ts) return "jamais";
@@ -14,24 +22,25 @@ function timeSince(ts?: number): string {
   return `il y a ${Math.floor(s / 3600)}h`;
 }
 
-// Petit badge de statut : vert si ping < 10min, orange < 1h, gris sinon
-function statusColor(lastPing?: number): string {
+function statusColor(isOnline: boolean, lastPing?: number): string {
+  if (isOnline) return "#4ade80";
   if (!lastPing) return "var(--text3)";
   const s = Math.floor((Date.now() - lastPing) / 1000);
-  if (s < 600)  return "#4ade80";   // vert  < 10min
-  if (s < 3600) return "#fb923c";   // orange < 1h
-  return "var(--text3)";            // gris
+  if (s < 3600) return "#fb923c";
+  return "var(--text3)";
 }
 
 export default function MyDevicesPage() {
-  const [devices, setDevices] = useState<Device[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [devices, setDevices]       = useState<OwnedDevice[]>([]);
+  const [loading, setLoading]       = useState(true);
+  const [rotating, setRotating]     = useState<string | null>(null);
+  const [newCode, setNewCode]       = useState<Record<string, string>>({});
+  const [copyMsg, setCopyMsg]       = useState<Record<string, string>>({});
 
   const load = async () => {
     try {
-      const res  = await fetch("/api/devices");
+      const res  = await fetch("/api/devices?mine=1");
       const data = await res.json();
-      // /api/devices renvoie { devices: [...] }
       setDevices(data.devices ?? []);
     } finally {
       setLoading(false);
@@ -40,9 +49,38 @@ export default function MyDevicesPage() {
 
   useEffect(() => {
     load();
-    const t = setInterval(load, 10000);
+    const t = setInterval(load, 10_000);
     return () => clearInterval(t);
   }, []);
+
+  async function handleRotateCode(deviceId: string) {
+    if (!confirm("Générer un nouveau code ? L'ancien ne fonctionnera plus.")) return;
+    setRotating(deviceId);
+    try {
+      const res = await fetch("/api/devices/rotate-code", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ deviceId }),
+      });
+      const data = await res.json();
+      if (data.ok && data.pairCode) {
+        setNewCode((prev) => ({ ...prev, [deviceId]: data.pairCode }));
+      } else {
+        alert(data.error ?? "Erreur lors de la rotation");
+      }
+    } finally {
+      setRotating(null);
+    }
+  }
+
+  async function copyCode(deviceId: string, code: string) {
+    await navigator.clipboard.writeText(code);
+    setCopyMsg((prev) => ({ ...prev, [deviceId]: "Copié !" }));
+    setTimeout(
+      () => setCopyMsg((prev) => ({ ...prev, [deviceId]: "" })),
+      2000
+    );
+  }
 
   return (
     <div style={{ maxWidth: 720, margin: "0 auto", padding: "2rem 1rem" }}>
@@ -82,9 +120,12 @@ export default function MyDevicesPage() {
         }}>
           <div style={{ fontSize: "3rem", marginBottom: "1rem" }}>📡</div>
           <p style={{ color: "var(--text2)", marginBottom: "1rem" }}>
-            Aucun écran enregistré pour l'instant.
+            Aucun écran associé à cette session.
           </p>
-          <a href="/onboard" style={{ color: "var(--accent)", textDecoration: "none", fontWeight: 600 }}>
+          <a
+            href="/onboard"
+            style={{ color: "var(--accent)", textDecoration: "none", fontWeight: 600 }}
+          >
             Connecter mon premier écran →
           </a>
         </div>
@@ -92,7 +133,10 @@ export default function MyDevicesPage() {
         <div style={{ display: "flex", flexDirection: "column", gap: "1rem" }}>
           {devices.map((d) => {
             const primaryScreen = d.screens?.[0];
-            const drawUrl = primaryScreen ? `/draw/${d.deviceId}/${primaryScreen}` : null;
+            const drawUrl = primaryScreen
+              ? `/draw/${d.deviceId}/${primaryScreen}`
+              : null;
+            const displayCode = newCode[d.deviceId];
 
             return (
               <div
@@ -108,30 +152,27 @@ export default function MyDevicesPage() {
                   justifyContent: "space-between", gap: "1rem",
                 }}>
                   <div>
-                    {/* Nom + statut */}
                     <div style={{
                       display: "flex", alignItems: "center",
                       gap: "0.5rem", marginBottom: "0.25rem",
                     }}>
                       <div style={{
                         width: 8, height: 8, borderRadius: "50%",
-                        background: statusColor(d.lastPing),
+                        background: statusColor(d.isOnline, d.lastPing),
                         flexShrink: 0,
                       }} />
                       <span style={{ fontWeight: 700, fontSize: "1rem" }}>
                         {d.artistName || "Sans nom"}
                       </span>
                     </div>
-                    {/* MAC */}
                     <div style={{
                       fontFamily: "JetBrains Mono, monospace",
-                      fontSize: "0.75rem", color: "var(--text3)",
+                      fontSize: "0.7rem", color: "var(--text3)",
                     }}>
-                      {d.mac}
+                      {d.firmware ?? "firmware inconnu"}
                     </div>
                   </div>
 
-                  {/* Bouton Dessiner */}
                   {drawUrl && (
                     <a
                       href={drawUrl}
@@ -139,8 +180,7 @@ export default function MyDevicesPage() {
                         padding: "0.5rem 1.1rem", borderRadius: "6px",
                         background: "var(--accent)", color: "#fff",
                         textDecoration: "none", fontWeight: 600,
-                        fontSize: "0.875rem", whiteSpace: "nowrap",
-                        flexShrink: 0,
+                        fontSize: "0.875rem", whiteSpace: "nowrap", flexShrink: 0,
                       }}
                     >
                       ✏️ Dessiner
@@ -185,8 +225,8 @@ export default function MyDevicesPage() {
                   gap: "0.5rem", flexWrap: "wrap",
                 }}>
                   {d.screens?.map((sid) => {
+                    if (!isKnownScreen(sid)) return null;
                     const p = SCREEN_PROFILES[sid];
-                    if (!p) return null;
                     return (
                       <a
                         key={sid}
@@ -195,13 +235,12 @@ export default function MyDevicesPage() {
                           display: "flex", alignItems: "center", gap: "0.5rem",
                           padding: "0.3rem 0.75rem", borderRadius: "6px",
                           border: "1px solid var(--border)", background: "var(--bg)",
-                          textDecoration: "none", color: "var(--text2)",
-                          fontSize: "0.78rem",
+                          textDecoration: "none", color: "var(--text2)", fontSize: "0.78rem",
                         }}
                       >
                         {p.name}
                         <div style={{ display: "flex", gap: 3 }}>
-                          {p.colors.map((c) => (
+                          {p.colors.map((c: string) => (
                             <div
                               key={c}
                               style={{
@@ -217,13 +256,87 @@ export default function MyDevicesPage() {
                   })}
                 </div>
 
-                {/* Device ID (debug) */}
+                {/* Zone sécurité */}
                 <div style={{
-                  marginTop: "0.75rem",
-                  color: "var(--text3)", fontSize: "0.68rem",
-                  fontFamily: "JetBrains Mono, monospace",
+                  marginTop: "1.25rem",
+                  paddingTop: "1rem",
+                  borderTop: "1px solid var(--border)",
+                  display: "flex", flexDirection: "column", gap: "0.5rem",
                 }}>
-                  ID: {d.deviceId}
+                  <div style={{
+                    fontSize: "0.72rem", color: "var(--text3)",
+                    textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: "0.25rem",
+                  }}>
+                    Sécurité
+                  </div>
+
+                  {/* Nouveau code généré */}
+                  {displayCode && (
+                    <div style={{
+                      display: "flex", alignItems: "center", gap: "0.75rem",
+                      padding: "0.6rem 0.9rem", borderRadius: "6px",
+                      background: "var(--bg3)", border: "1px solid var(--border)",
+                    }}>
+                      <span style={{
+                        fontFamily: "JetBrains Mono, monospace",
+                        fontSize: "1rem", fontWeight: 700, letterSpacing: "0.08em",
+                        color: "#4ade80",
+                      }}>
+                        {displayCode}
+                      </span>
+                      <button
+                        onClick={() => copyCode(d.deviceId, displayCode)}
+                        style={{
+                          marginLeft: "auto", fontSize: "0.75rem",
+                          padding: "0.3rem 0.7rem", borderRadius: "4px",
+                          border: "1px solid var(--border)", background: "var(--bg)",
+                          color: "var(--text2)", cursor: "pointer",
+                        }}
+                      >
+                        {copyMsg[d.deviceId] || "Copier"}
+                      </button>
+                      <span style={{ fontSize: "0.72rem", color: "var(--text3)" }}>
+                        Nouveau code — à noter !
+                      </span>
+                    </div>
+                  )}
+
+                  <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap" }}>
+                    {/* Régénérer le code */}
+                    <button
+                      onClick={() => handleRotateCode(d.deviceId)}
+                      disabled={rotating === d.deviceId}
+                      style={{
+                        padding: "0.4rem 0.9rem", borderRadius: "6px",
+                        border: "1px solid var(--border)", background: "var(--bg)",
+                        color: "var(--text2)", fontSize: "0.78rem",
+                        cursor: "pointer", opacity: rotating === d.deviceId ? 0.5 : 1,
+                      }}
+                    >
+                      🔄 {rotating === d.deviceId ? "En cours…" : "Nouveau code de jumelage"}
+                    </button>
+
+                    {/* Lien partage onboard */}
+                    <a
+                      href="/onboard"
+                      style={{
+                        padding: "0.4rem 0.9rem", borderRadius: "6px",
+                        border: "1px solid var(--border)", background: "var(--bg)",
+                        color: "var(--text2)", fontSize: "0.78rem",
+                        textDecoration: "none",
+                      }}
+                    >
+                      📲 Connecter un autre appareil
+                    </a>
+                  </div>
+
+                  <p style={{ fontSize: "0.7rem", color: "var(--text3)", marginTop: "0.25rem" }}>
+                    Pour reprendre le contrôle depuis un autre appareil, utilisez{" "}
+                    <a href="/onboard" style={{ color: "var(--accent)" }}>
+                      /onboard
+                    </a>{" "}
+                    avec le code affiché sur l&apos;écran.
+                  </p>
                 </div>
               </div>
             );

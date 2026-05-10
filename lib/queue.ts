@@ -109,4 +109,25 @@ export function clearFrameForDevice(deviceId: string, screens: string[]): void {
   }
 }
 
+export function clearFrameForDeviceAck(
+  deviceId: string,
+  screens: string[],
+  frameId: string
+): boolean {
+  for (const [key, frame] of frameStore.entries()) {
+    if (frame.deviceId === deviceId && frame.frameId === frameId) {
+      frameStore.delete(key);
+      return true;
+    }
+  }
 
+  for (const screenId of screens) {
+    const frame = frameStore.get(screenId);
+    if (frame && frame.frameId === frameId) {
+      frameStore.delete(screenId);
+      return true;
+    }
+  }
+
+  return false;
+}

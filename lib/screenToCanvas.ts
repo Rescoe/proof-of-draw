@@ -135,7 +135,10 @@ export function screenPayloadToCanvas(payload: ScreenPayload): ImageData {
       return eink27bwToCanvas(payload.buffer);
     case "eink29bwr":
       return eink29bwrToCanvas(payload.black, payload.red);
-    default:
-      throw new Error(`screenToCanvas: screen inconnu "${payload.screen}"`);
+
+          default: {
+      const _exhaustive: never = payload;
+      throw new Error("screenToCanvas: screen inconnu");
+    }
   }
 }

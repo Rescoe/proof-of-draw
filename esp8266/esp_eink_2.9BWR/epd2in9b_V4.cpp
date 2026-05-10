@@ -163,16 +163,23 @@ void Epd::SendData(unsigned char data) {
  *  @brief: Wait until the busy_pin goes HIGH
  */
 void Epd::ReadBusy(void) {
-  unsigned char busy;
-  Serial.print("e-Paper busy \r\n ");
-  while(1)
-  {
-    if(DigitalRead(busy_pin) == 0)
-      break;
-    DelayMs(50);
+  static unsigned long lastBusyPrint = 0;
+  unsigned long now = millis();
+  
+  if (now - lastBusyPrint > 1000) {  // 1s cooldown
+    Serial.print("e-Paper busy\r\n");
+    lastBusyPrint = now;
   }
-  Serial.print("e-Paper busy release \r\n ");
-  DelayMs(200);
+  
+  while(1) {
+    if(DigitalRead(busy_pin) == 0) break;
+    DelayMs(10);  // Plus réactif que 50ms
+  }
+  
+  if (now - lastBusyPrint > 1000) {
+    Serial.print("e-Paper busy release\r\n");
+  }
+  DelayMs(50);  // Réduit de 200ms
 }
 
 /**
