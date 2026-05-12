@@ -23,8 +23,8 @@ const char* WIFI_PASSWORD = "Q2gueWg3UaYJo2VN7C";
 //#define SERVER_URL      "http://192.168.1.13:3000"
 
 #define SCREEN_TYPE     "eink29bwr"
-#define PING_INTERVAL   300000UL   // 5 min
-#define PULL_INTERVAL   60000UL    // 1 min
+#define PING_INTERVAL   0UL          // ping désactivé — le pull suffit
+#define PULL_INTERVAL   60000UL         // 15 min (cohérent avec rotation des œuvres)
 #define EINK_MIN_REFRESH_MS 10000UL
 
 // ─── ÉCRAN WAVESHARE 2.9" BWR ──────────────────────────────────────────────
@@ -543,7 +543,8 @@ void doPull() {
 
   String resp;
   bool ok = httpGet("/api/pull?deviceId=" + deviceId, resp);
-
+  Serial.println("[RAW] " + resp.substring(0, 200));
+  
   // Réalloue immédiatement, qu'on ait une frame ou non
   blackBuf = (uint8_t*)malloc(BUF_SIZE);
   redBuf   = (uint8_t*)malloc(BUF_SIZE);
@@ -645,7 +646,7 @@ void setup() {
 void loop() {
   unsigned long now = millis();
   if (!registered) { doRegister(); delay(5000); return; }
-  if (now - lastPingMs >= PING_INTERVAL) { doPing(); lastPingMs = now; }
+  // if (now - lastPingMs >= PING_INTERVAL) { doPing(); lastPingMs = now; } // ← supprime
   if (now - lastPullMs >= PULL_INTERVAL) { doPull(); lastPullMs = now; }
   delay(100);
 }
