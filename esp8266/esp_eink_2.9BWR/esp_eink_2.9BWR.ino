@@ -24,7 +24,8 @@ const char* WIFI_PASSWORD = "Q2gueWg3UaYJo2VN7C";
 
 #define SCREEN_TYPE     "eink29bwr"
 #define PING_INTERVAL   0UL          // ping désactivé — le pull suffit
-#define PULL_INTERVAL   60000UL         // 15 min (cohérent avec rotation des œuvres)
+//#define PULL_INTERVAL   60000UL // 1 min pour dev
+#define PULL_INTERVAL  900000UL  // 15 min         // 15 min (cohérent avec rotation des œuvres)
 #define EINK_MIN_REFRESH_MS 10000UL
 
 // ─── ÉCRAN WAVESHARE 2.9" BWR ──────────────────────────────────────────────
@@ -424,11 +425,35 @@ bool httpGet(const String& path, String& resp) {
   client.setInsecure();
   HTTPClient http;
   http.begin(client, String(SERVER_URL) + path);
-  http.setTimeout(10000);
+  http.setTimeout(15000);
+
   int code = http.GET();
-  resp = (code > 0) ? http.getString() : "";
+
+  if (code > 0) {
+    // Lecture robuste — readString() échoue silencieusement avec WiFiClientSecure
+    // on lit octet par octet avec timeout
+    int contentLength = http.getSize();
+    resp = "";
+    if (contentLength > 0) resp.reserve(contentLength);
+
+    WiFiClient* stream = http.getStreamPtr();
+    unsigned long timeout = millis();
+
+    while ((millis() - timeout) < 10000) {
+      if (stream->available()) {
+        char c = stream->read();
+        resp += c;
+        timeout = millis(); // reset timeout à chaque octet reçu
+        if (contentLength > 0 && (int)resp.length() >= contentLength) break;
+      } else if (!http.connected()) {
+        break;
+      }
+      yield();
+    }
+  }
+
   http.end();
-  Serial.printf("[HTTP GET] %s → %d\n", path.c_str(), code);
+  Serial.printf("[HTTP GET] %s → %d (%u bytes)\n", path.c_str(), code, resp.length());
   return code == 200;
 }
 
@@ -544,7 +569,7 @@ void doPull() {
   String resp;
   bool ok = httpGet("/api/pull?deviceId=" + deviceId, resp);
   Serial.println("[RAW] " + resp.substring(0, 200));
-  
+
   // Réalloue immédiatement, qu'on ait une frame ou non
   blackBuf = (uint8_t*)malloc(BUF_SIZE);
   redBuf   = (uint8_t*)malloc(BUF_SIZE);
