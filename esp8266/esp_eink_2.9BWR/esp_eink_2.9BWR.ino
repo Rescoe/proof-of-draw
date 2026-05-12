@@ -491,11 +491,17 @@ bool doRegister() {
     Serial.printf("[HEAP] après malloc: %u bytes\n", ESP.getFreeHeap());
   }
 
-  if (!paired) {
-    String onboardUrl = String(SERVER_URL) + "/onboard?code=" + pairCode;
-    Serial.println("[REGISTER] QR → " + onboardUrl);
-    displayQR(onboardUrl, pairCode, mac);
-  } else {
+// Dans doRegister(), tout à la fin, après displayQR() :
+if (!paired) {
+  String onboardUrl = String(SERVER_URL) + "/onboard?code=" + pairCode;
+  displayQR(onboardUrl, pairCode, mac);
+  
+  // Redémarre proprement après avoir affiché le QR
+  // Le prochain boot verra paired=true et aura un heap propre pour les pulls
+  Serial.println("[REGISTER] Restart dans 3s pour libérer heap TLS...");
+  delay(3000);
+  ESP.restart();
+} else {
     Serial.println("[REGISTER] Deja appaire, pas de QR");
   }
 
@@ -504,13 +510,20 @@ bool doRegister() {
 
 
 // ─── PING ──────────────────────────────────────────────────────────────────
+// Libère les buffers image pendant le handshake TLS puis les réalloue
 void doPing() {
-  // Le pull met déjà à jour lastPing côté serveur.
-  // Ce ping n'est là que pour les longues périodes sans frame.
+  free(blackBuf); blackBuf = nullptr;
+  free(redBuf);   redBuf   = nullptr;
+
   String body = "{\"deviceId\":\"" + deviceId + "\"}";
   String resp;
   httpPost("/api/ping", body, resp);
+
+  blackBuf = (uint8_t*)malloc(BUF_SIZE);
+  redBuf   = (uint8_t*)malloc(BUF_SIZE);
+  if (!blackBuf || !redBuf) { Serial.println("[PING] malloc failed"); ESP.restart(); }
 }
+
 
 // ─── PULL ──────────────────────────────────────────────────────────────────
 void clearToWhiteAndRefresh() {
@@ -518,9 +531,29 @@ void clearToWhiteAndRefresh() {
   memset(redBuf,   0xFF, BUF_SIZE);
   refreshDisplay();
 }
+
+
+// ─── PULL ──────────────────────────────────────────────────────────────────
 void doPull() {
+  // Libère les buffers image pour donner de la RAM au handshake TLS (~9.5KB récupérés)
+  free(blackBuf); blackBuf = nullptr;
+  free(redBuf);   redBuf   = nullptr;
+
+  Serial.printf("[HEAP] avant pull: %u bytes\n", ESP.getFreeHeap());
+
   String resp;
-  if (!httpGet("/api/pull?deviceId=" + deviceId, resp)) {
+  bool ok = httpGet("/api/pull?deviceId=" + deviceId, resp);
+
+  // Réalloue immédiatement, qu'on ait une frame ou non
+  blackBuf = (uint8_t*)malloc(BUF_SIZE);
+  redBuf   = (uint8_t*)malloc(BUF_SIZE);
+  if (!blackBuf || !redBuf) {
+    Serial.println("[PULL] malloc failed après requête");
+    ESP.restart();
+    return;
+  }
+
+  if (!ok) {
     Serial.println("[PULL] Echec HTTP");
     return;
   }
@@ -530,7 +563,7 @@ void doPull() {
     return;
   }
 
-  // Extraction manuelle des champs (évite DynamicJsonDocument sur grosse réponse)
+  // Extraction manuelle — évite DynamicJsonDocument sur grosse réponse
   auto extractField = [&](const String& key) -> String {
     String search = "\"" + key + "\":\"";
     int start = resp.indexOf(search);
@@ -555,43 +588,41 @@ void doPull() {
     return;
   }
 
-  // Buffers temporaires en static local — pas sur le heap global
-  // Évite la fragmentation mémoire pendant le décodage
-  static uint8_t nextBlackBuf[BUF_SIZE];
-  static uint8_t nextRedBuf[BUF_SIZE];
+  // Décode directement dans blackBuf/redBuf — pas de buffers temporaires supplémentaires
+  // (ils viennent d'être réalloués proprement, ils sont vides)
+  memset(blackBuf, 0xFF, BUF_SIZE);
+  memset(redBuf,   0xFF, BUF_SIZE);
 
-  memset(nextBlackBuf, 0xFF, BUF_SIZE);
-  memset(nextRedBuf,   0xFF, BUF_SIZE);
-
-  size_t blackLen = base64Decode(blackB64.c_str(), blackB64.length(), nextBlackBuf, BUF_SIZE);
-  size_t redLen   = base64Decode(redB64.c_str(),   redB64.length(),   nextRedBuf,   BUF_SIZE);
+  size_t blackLen = base64Decode(blackB64.c_str(), blackB64.length(), blackBuf, BUF_SIZE);
+  size_t redLen   = base64Decode(redB64.c_str(),   redB64.length(),   redBuf,   BUF_SIZE);
 
   Serial.printf("[PULL] decode black=%u red=%u\n", (unsigned)blackLen, (unsigned)redLen);
 
   if (blackLen != BUF_SIZE || redLen != BUF_SIZE) {
     Serial.println("[PULL] Taille invalide");
+    memset(blackBuf, 0xFF, BUF_SIZE);
+    memset(redBuf,   0xFF, BUF_SIZE);
     return;
   }
 
   if (hasDisplayedFrame) {
+    Serial.println("[PULL] Hard clear avant nouveau dessin");
     if (!clearDisplayWhite()) return;
     delay(3000);
   }
 
-  memcpy(blackBuf, nextBlackBuf, BUF_SIZE);
-  memcpy(redBuf,   nextRedBuf,   BUF_SIZE);
-
   if (!refreshDisplay()) return;
 
-  frameReady = true;
+  frameReady       = true;
   hasDisplayedFrame = true;
-  lastFrameId = frameId;
+  lastFrameId      = frameId;
 
   if (!ackFrame(frameId))
     Serial.println("[PULL] WARNING: ack échoué");
   else
     Serial.println("[PULL] ✅ Frame affichée + ack");
 }
+
 
 // ─── SETUP / LOOP ──────────────────────────────────────────────────────────
 void setup() {

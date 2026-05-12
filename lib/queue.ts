@@ -19,11 +19,22 @@ export type FramePayload =
   | { screen: "eink29bwr"; black: string; red: string }
   | { screen: string; buffer?: string; black?: string; red?: string };
 
-const FRAME_TTL = 15 * 60; // 15 minutes — cohérent avec rotation des œuvres
+const FRAME_TTL = 15 * 60;
 
 function frameKey(deviceId: string) { return `frame:${deviceId}`; }
 
-// Stocke la frame pour un device (écrase la précédente)
+// Upstash peut retourner un objet déjà parsé OU une string JSON — on gère les deux
+function parseFrame(raw: unknown): StoredFrame | null {
+  try {
+    if (!raw) return null;
+    if (typeof raw === "string") return JSON.parse(raw) as StoredFrame;
+    if (typeof raw === "object") return raw as StoredFrame;
+    return null;
+  } catch {
+    return null;
+  }
+}
+
 export function storeFrame(
   screenId: string,
   payload: FramePayload,
@@ -38,45 +49,33 @@ export function storeFrame(
   };
 
   if (deviceId) {
-    // Frame ciblée : stockée par deviceId avec TTL 15min
     redis.set(frameKey(deviceId), JSON.stringify(frame), { ex: FRAME_TTL });
     console.log(`[queue] frame stockée device=${deviceId} screen=${screenId}`);
   }
 }
 
-// Récupère la frame d'un device (sans la supprimer — l'ack s'en charge)
 export async function getFrameForDevice(
   deviceId: string,
   _screens: string[]
 ): Promise<StoredFrame | null> {
-  const raw = await redis.get<string>(frameKey(deviceId));
-  if (!raw) return null;
-  try {
-    return typeof raw === "string" ? JSON.parse(raw) : raw as StoredFrame;
-  } catch {
-    return null;
-  }
+  const raw = await redis.get(frameKey(deviceId));
+  return parseFrame(raw);
 }
 
-// Supprime la frame après ack de l'ESP
 export async function clearFrameForDeviceAck(
   deviceId: string,
   _screens: string[],
   frameId: string
 ): Promise<boolean> {
-  const raw = await redis.get<string>(frameKey(deviceId));
-  if (!raw) return false;
-  try {
-    const frame: StoredFrame = typeof raw === "string" ? JSON.parse(raw) : raw;
-    if (frame.frameId !== frameId) return false;
-    await redis.del(frameKey(deviceId));
-    return true;
-  } catch {
-    return false;
-  }
+  const raw = await redis.get(frameKey(deviceId));
+  const frame = parseFrame(raw);
+  if (!frame) return false;
+  if (frame.frameId !== frameId) return false;
+  await redis.del(frameKey(deviceId));
+  return true;
 }
 
-// Compat legacy — non utilisé en prod Redis mais garde la signature
+// Compat legacy
 export function getFrameForScreen(_screenId: string): StoredFrame | null { return null; }
 export function clearFrame(_screenId: string): void {}
 export function clearFrameForDevice(_deviceId: string, _screens: string[]): void {}
