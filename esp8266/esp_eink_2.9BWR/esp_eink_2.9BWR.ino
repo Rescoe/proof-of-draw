@@ -1,8 +1,15 @@
-// esp_canvas_pull_waveshare.ino — v1.4 — Pull-based + QR + Waveshare driver
+// esp_canvas_pull_waveshare.ino — v1.5 — HTTPS Vercel + anti-OOM
+// CHANGEMENTS vs v1.4 :
+// 1. WiFiClientSecure + setInsecure() pour HTTPS
+// 2. L'écran e-ink est initialisé APRÈS le register (libère ~10KB pendant TLS)
+// 3. Les buffers nextBlack/nextRed passent en static local dans doPull()
+//    pour ne pas peser sur le heap global pendant le handshake TLS
+// 4. PULL_INTERVAL et PING_INTERVAL espacés (sobriété + rate limit serveur)
+
 #include <Arduino.h>
 #include <ESP8266WiFi.h>
 #include <ESP8266HTTPClient.h>
-#include <WiFiClient.h>
+#include <WiFiClientSecure.h>   // ← HTTPS
 #include <ArduinoJson.h>
 #include <qrcode.h>
 #include "epd2in9b_V4.h"
@@ -11,7 +18,10 @@
 // ─── CONFIG ────────────────────────────────────────────────────────────────
 const char* WIFI_SSID     = "Livebox-D190";
 const char* WIFI_PASSWORD = "Q2gueWg3UaYJo2VN7C";
-#define SERVER_URL      "http://192.168.1.13:3000"
+
+#define SERVER_URL      "https://proof-of-draw.vercel.app"
+//#define SERVER_URL      "http://192.168.1.13:3000"
+
 #define SCREEN_TYPE     "eink29bwr"
 #define PING_INTERVAL   300000UL   // 5 min
 #define PULL_INTERVAL   60000UL    // 1 min
@@ -27,9 +37,12 @@ const char* WIFI_PASSWORD = "Q2gueWg3UaYJo2VN7C";
 #define BUF_SIZE ((IMG_H * IMG_W) / 8)   // 4736
 
 Epd epd;
-uint8_t blackBuf[BUF_SIZE];
-uint8_t redBuf[BUF_SIZE];
+
 unsigned long lastRefreshMs = 0;
+bool einkReady = false;   // ← NOUVEAU : l'écran n'est init qu'après register
+
+uint8_t* blackBuf  = nullptr;
+uint8_t* redBuf    = nullptr;
 
 // ─── STATE ─────────────────────────────────────────────────────────────────
 // ─── PATCH esp_canvas_pull_waveshare.ino ───────────────────────────────────
@@ -45,11 +58,6 @@ unsigned long lastPingMs = 0, lastPullMs = 0;
 
 String lastFrameId = "";
 bool hasDisplayedFrame = false;
-
-uint8_t nextBlackBuf[BUF_SIZE];
-uint8_t nextRedBuf[BUF_SIZE];
-
-
 
 
 // ─── PIXEL HELPERS ────────────────────────────────────────────────────────
@@ -392,39 +400,62 @@ void displayQR(const String& onboardUrl, const String& code, const String& mac) 
 
 
 
-// ─── HTTP HELPERS ──────────────────────────────────────────────────────────
+// ─── HTTP HELPERS HTTPS ────────────────────────────────────────────────────
+// setInsecure() = pas de vérif certificat.
+// Acceptable pour un projet artistique DIY — l'ESP8266 n'a pas assez de RAM
+// pour charger une CA bundle complète. Le trafic reste chiffré.
+
 bool httpPost(const String& path, const String& body, String& resp) {
-  WiFiClient client; HTTPClient http;
-  http.begin(client, SERVER_URL + path);
+  WiFiClientSecure client;
+  client.setInsecure();   // ← HTTPS sans vérif CA (anti-OOM)
+  HTTPClient http;
+  http.begin(client, String(SERVER_URL) + path);
   http.addHeader("Content-Type", "application/json");
+  http.setTimeout(10000);
   int code = http.POST(body);
-  resp = http.getString();
+  resp = (code > 0) ? http.getString() : "";
   http.end();
   Serial.printf("[HTTP POST] %s → %d\n", path.c_str(), code);
   return code == 200;
 }
 
 bool httpGet(const String& path, String& resp) {
-  WiFiClient client; HTTPClient http;
-  http.begin(client, SERVER_URL + path);
+  WiFiClientSecure client;
+  client.setInsecure();
+  HTTPClient http;
+  http.begin(client, String(SERVER_URL) + path);
+  http.setTimeout(10000);
   int code = http.GET();
-  resp = http.getString();
+  resp = (code > 0) ? http.getString() : "";
   http.end();
   Serial.printf("[HTTP GET] %s → %d\n", path.c_str(), code);
   return code == 200;
 }
 
 // ─── REGISTER ──────────────────────────────────────────────────────────────
+// ─── REGISTER ──────────────────────────────────────────────────────────────
+// ⚠️  L'écran N'EST PAS initialisé avant cette fonction.
+// Le handshake TLS a besoin de toute la RAM disponible.
+// On init l'écran APRÈS avoir reçu la réponse du serveur.
 
 bool doRegister() {
   String mac = WiFi.macAddress();
   mac.toLowerCase();
 
-  String body = "{\"mac\":\"" + mac + "\",\"screens\":[\"" + SCREEN_TYPE + "\"],\"firmware\":\"1.4\"}";
+  // Libère un max de heap avant le handshake TLS
+  String body = "{\"mac\":\"" + mac + "\",\"screens\":[\"" + SCREEN_TYPE + "\"],\"firmware\":\"1.5\"}";
   String resp;
-  if (!httpPost("/api/register", body, resp)) return false;
 
-  DynamicJsonDocument doc(1024);
+  Serial.printf("[HEAP] avant register: %u bytes\n", ESP.getFreeHeap());
+
+  if (!httpPost("/api/register", body, resp)) {
+    Serial.println("[REGISTER] Echec HTTP");
+    return false;
+  }
+
+  Serial.printf("[HEAP] après register: %u bytes\n", ESP.getFreeHeap());
+
+  DynamicJsonDocument doc(512);   // réduit de 1024 à 512 — suffisant pour la réponse
   if (deserializeJson(doc, resp)) {
     Serial.println("[REGISTER] JSON error");
     return false;
@@ -433,40 +464,49 @@ bool doRegister() {
   deviceId  = doc["deviceId"].as<String>();
   pairCode  = doc["pairCode"].as<String>();
   canvasUrl = doc["canvasUrl"].as<String>();
-  paired    = doc["paired"] | false;   // ← NOUVEAU : lu depuis la réponse serveur
-
+  paired    = doc["paired"] | false;
   registered = true;
 
   Serial.println("[REGISTER] deviceId : " + deviceId);
-  Serial.println("[REGISTER] pairCode : " + pairCode);
   Serial.println("[REGISTER] paired   : " + String(paired ? "oui" : "non"));
 
+  // ✅ Init e-ink ICI, après le register, une fois TLS libéré
+  if (!einkReady) {
+    Serial.printf("[HEAP] avant malloc: %u bytes\n", ESP.getFreeHeap());
+
+    blackBuf = (uint8_t*)malloc(BUF_SIZE);
+    redBuf   = (uint8_t*)malloc(BUF_SIZE);
+
+    if (!blackBuf || !redBuf) {
+      Serial.println("[EINK] ERREUR malloc — heap insuffisant");
+      // Pas de crash : on réessaiera au prochain boot
+      registered = false;
+      return false;
+    }
+
+    memset(blackBuf, 0xFF, BUF_SIZE);
+    memset(redBuf,   0xFF, BUF_SIZE);
+    einkReady = true;
+
+    Serial.printf("[HEAP] après malloc: %u bytes\n", ESP.getFreeHeap());
+  }
+
   if (!paired) {
-    // Pas encore appairé → afficher le QR pour que l'artiste scanne
     String onboardUrl = String(SERVER_URL) + "/onboard?code=" + pairCode;
-    Serial.println("[REGISTER] QR URL   : " + onboardUrl);
+    Serial.println("[REGISTER] QR → " + onboardUrl);
     displayQR(onboardUrl, pairCode, mac);
   } else {
-    // Déjà appairé → juste un message texte discret, pas de QR
-    Serial.println("[REGISTER] Device deja appaire, pas de QR");
-    // Optionnel : afficher un écran "prêt" minimal plutôt que le QR
-    // Si tu veux garder l'affichage précédent intact, ne fais rien ici.
-    // Si tu veux indiquer visuellement que l'écran est prêt, décommente :
-    //
-    // memset(blackBuf, 0xFF, BUF_SIZE);
-    // memset(redBuf,   0xFF, BUF_SIZE);
-    // String readyMsg = "PRET - " + String(doc["artistName"] | "");
-    // drawText(blackBuf, (IMG_W - textWidth(readyMsg)) / 2, IMG_H / 2 - 4, readyMsg);
-    // refreshDisplay();
+    Serial.println("[REGISTER] Deja appaire, pas de QR");
   }
 
   return true;
 }
 
 
-
 // ─── PING ──────────────────────────────────────────────────────────────────
 void doPing() {
+  // Le pull met déjà à jour lastPing côté serveur.
+  // Ce ping n'est là que pour les longues périodes sans frame.
   String body = "{\"deviceId\":\"" + deviceId + "\"}";
   String resp;
   httpPost("/api/ping", body, resp);
@@ -478,45 +518,26 @@ void clearToWhiteAndRefresh() {
   memset(redBuf,   0xFF, BUF_SIZE);
   refreshDisplay();
 }
-
 void doPull() {
   String resp;
-  String path = "/api/pull?deviceId=" + deviceId;
-
-  WiFiClient client;
-  HTTPClient http;
-  http.begin(client, String(SERVER_URL) + path);
-  int code = http.GET();
-  resp = http.getString();
-  http.end();
-
-  Serial.printf("[HTTP GET] %s -> %d\n", path.c_str(), code);
-
-  if (code == 404) {
-    Serial.println("[PULL] device inconnu -> re-register");
-    registered = false;
-    deviceId = pairCode = canvasUrl = "";
+  if (!httpGet("/api/pull?deviceId=" + deviceId, resp)) {
+    Serial.println("[PULL] Echec HTTP");
     return;
   }
 
-  if (code != 200) {
-    Serial.println("[PULL] HTTP non-200, skip");
+  if (resp.indexOf("\"frame\":null") >= 0) {
+    Serial.println("[PULL] Aucune frame");
     return;
   }
 
-  if (resp.indexOf("\"frame\":null") >= 0 || resp.indexOf("\"frame\": null") >= 0) {
-    Serial.println("[PULL] Aucun frame disponible");
-    return;
-  }
-
+  // Extraction manuelle des champs (évite DynamicJsonDocument sur grosse réponse)
   auto extractField = [&](const String& key) -> String {
     String search = "\"" + key + "\":\"";
     int start = resp.indexOf(search);
     if (start < 0) return "";
     start += search.length();
     int end = resp.indexOf("\"", start);
-    if (end < 0) return "";
-    return resp.substring(start, end);
+    return (end < 0) ? "" : resp.substring(start, end);
   };
 
   String frameId  = extractField("frameId");
@@ -524,20 +545,20 @@ void doPull() {
   String blackB64 = extractField("black");
   String redB64   = extractField("red");
 
-  if (screen != SCREEN_TYPE) {
-    Serial.println("[PULL] screen incompatible ou absent");
+  if (screen != SCREEN_TYPE || blackB64.isEmpty() || redB64.isEmpty()) {
+    Serial.println("[PULL] Champs manquants ou screen incompatible");
     return;
   }
 
   if (frameId.length() > 0 && frameId == lastFrameId) {
-    Serial.println("[PULL] frame deja affichee, skip");
+    Serial.println("[PULL] Frame déjà affichée");
     return;
   }
 
-  if (blackB64.length() == 0 || redB64.length() == 0) {
-    Serial.println("[PULL] Champs black/red manquants");
-    return;
-  }
+  // Buffers temporaires en static local — pas sur le heap global
+  // Évite la fragmentation mémoire pendant le décodage
+  static uint8_t nextBlackBuf[BUF_SIZE];
+  static uint8_t nextRedBuf[BUF_SIZE];
 
   memset(nextBlackBuf, 0xFF, BUF_SIZE);
   memset(nextRedBuf,   0xFF, BUF_SIZE);
@@ -545,55 +566,46 @@ void doPull() {
   size_t blackLen = base64Decode(blackB64.c_str(), blackB64.length(), nextBlackBuf, BUF_SIZE);
   size_t redLen   = base64Decode(redB64.c_str(),   redB64.length(),   nextRedBuf,   BUF_SIZE);
 
-  Serial.printf("[PULL] frameId=%s decode black=%u red=%u bytes\n",
-                frameId.c_str(), (unsigned)blackLen, (unsigned)redLen);
+  Serial.printf("[PULL] decode black=%u red=%u\n", (unsigned)blackLen, (unsigned)redLen);
 
   if (blackLen != BUF_SIZE || redLen != BUF_SIZE) {
-    Serial.println("[PULL] Taille decode invalide -> abandon");
+    Serial.println("[PULL] Taille invalide");
     return;
   }
 
   if (hasDisplayedFrame) {
-    Serial.println("[PULL] Hard clear avant nouveau dessin");
-    if (!clearDisplayWhite()) {
-      Serial.println("[PULL] Echec clearDisplayWhite()");
-      return;
-    }
+    if (!clearDisplayWhite()) return;
     delay(3000);
   }
 
   memcpy(blackBuf, nextBlackBuf, BUF_SIZE);
   memcpy(redBuf,   nextRedBuf,   BUF_SIZE);
 
-  if (!refreshDisplay()) {
-    Serial.println("[PULL] Echec refreshDisplay()");
-    return;
-  }
+  if (!refreshDisplay()) return;
 
   frameReady = true;
   hasDisplayedFrame = true;
-  if (frameId.length() > 0) lastFrameId = frameId;
+  lastFrameId = frameId;
 
-  if (!ackFrame(frameId)) {
-    Serial.println("[PULL] WARNING: frame affichee mais ack echoue");
-    return;
-  }
-
-  Serial.println("[PULL] ✅ Frame affichee + ack envoyee");
+  if (!ackFrame(frameId))
+    Serial.println("[PULL] WARNING: ack échoué");
+  else
+    Serial.println("[PULL] ✅ Frame affichée + ack");
 }
 
 // ─── SETUP / LOOP ──────────────────────────────────────────────────────────
 void setup() {
   Serial.begin(115200);
-  Serial.println("\n[BOOT] ESP Canvas Pull v1.4");
+  Serial.println("\n[BOOT] ESP Canvas Pull v1.5 HTTPS");
+
+  // ⚠️  PAS d'init e-ink ici — on garde la RAM pour le handshake TLS
 
   WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
   Serial.print("[WIFI] Connexion");
   int i = 0;
   while (WiFi.status() != WL_CONNECTED && i++ < 40) { delay(500); Serial.print("."); }
   Serial.println("\n[WIFI] IP: " + WiFi.localIP().toString());
-
-Serial.println("[EINK] Driver pret");
+  Serial.printf("[HEAP] après WiFi: %u bytes libres\n", ESP.getFreeHeap());
 
   while (!registered) { doRegister(); if (!registered) delay(5000); }
   lastPingMs = lastPullMs = millis();
@@ -601,11 +613,8 @@ Serial.println("[EINK] Driver pret");
 
 void loop() {
   unsigned long now = millis();
-
   if (!registered) { doRegister(); delay(5000); return; }
-
   if (now - lastPingMs >= PING_INTERVAL) { doPing(); lastPingMs = now; }
   if (now - lastPullMs >= PULL_INTERVAL) { doPull(); lastPullMs = now; }
-
   delay(100);
 }

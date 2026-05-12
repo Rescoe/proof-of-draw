@@ -1,93 +1,71 @@
 // app/api/onboard/route.ts
-// Lie un pairCode (ou MAC) à un artistName
-// → met à jour le device dans le store
-// → pose un cookie de session pour autoriser ce client sur ce device
-// → renvoie canvasUrl
-//
-// Transfert d'appareil : repasser par ici avec le même pairCode depuis un autre navigateur
-// suffit pour transférer le contrôle (le cookie est posé sur le nouvel appareil).
-
 import { NextRequest, NextResponse } from "next/server";
-import { getAllDevices, getDeviceByMac, setArtistName } from "@/lib/deviceStore";
+import { getDeviceByMac, getDeviceByPairCode, setArtistName } from "@/lib/deviceStore";
 import { addDeviceToSession } from "@/lib/session";
+import {
+  checkRateLimit, isBlacklisted,
+  getIP, tooManyRequests, forbidden,
+} from "@/lib/rateLimit";
 
 export async function POST(req: NextRequest) {
+  const ip = getIP(req);
+
+  if (await isBlacklisted(ip)) return forbidden("Accès refusé");
+
+  const rl = await checkRateLimit({
+    route: "onboard", id: ip,
+    limit: parseInt(process.env.ONBOARD_LIMIT_PER_MINUTE ?? "10"),
+    windowSec: 60, strikeId: ip, strikeType: "ip",
+  });
+  if (!rl.allowed) return tooManyRequests(rl.retryAfter);
+
   try {
     const body = await req.json();
     const { pairCode, mac, artistName } = body;
 
-    if (!artistName?.trim()) {
+    if (!artistName?.trim())
       return NextResponse.json({ error: "artistName requis" }, { status: 400 });
-    }
 
     let device = null;
 
     if (pairCode) {
       const code = pairCode.replace(/-/g, "").toUpperCase().trim();
-      const all = getAllDevices();
-      device =
-        all.find(
-          (d) => d.pairCode.replace(/-/g, "").toUpperCase() === code
-        ) ?? null;
-
-      if (!device) {
+      // Lookup direct par clé pair: — une seule lecture Redis
+      device = await getDeviceByPairCode(code);
+      if (!device)
         return NextResponse.json(
-          {
-            error: `Aucun device avec le code "${code}". Vérifiez le code affiché sur l'écran.`,
-          },
+          { error: `Aucun device avec le code "${code}".` },
           { status: 404 }
         );
-      }
     } else if (mac) {
-      device = getDeviceByMac(mac.toLowerCase().trim()) ?? null;
-      if (!device) {
+      device = await getDeviceByMac(mac.toLowerCase().trim());
+      if (!device)
         return NextResponse.json(
-          {
-            error:
-              "Aucun device avec cette adresse MAC. L'ESP est-il allumé et connecté ?",
-          },
+          { error: "Aucun device avec cette adresse MAC." },
           { status: 404 }
         );
-      }
     } else {
-      return NextResponse.json(
-        { error: "pairCode ou mac requis" },
-        { status: 400 }
-      );
+      return NextResponse.json({ error: "pairCode ou mac requis" }, { status: 400 });
     }
 
-    // Associe l'artistName
-    const updated = setArtistName(device.deviceId, artistName.trim());
-    if (!updated) {
-      return NextResponse.json(
-        { error: "Erreur mise à jour device" },
-        { status: 500 }
-      );
-    }
+    const updated = await setArtistName(device.deviceId, artistName.trim());
+    if (!updated)
+      return NextResponse.json({ error: "Erreur mise à jour device" }, { status: 500 });
 
     const primaryScreen = device.screens[0];
     const canvasUrl = `/draw/${device.deviceId}/${primaryScreen}`;
 
-    console.log(
-      `[/api/onboard] device=${device.deviceId} artist="${artistName}" → ${canvasUrl}`
-    );
-
-    // Prépare la réponse
     const res = NextResponse.json({
       ok: true,
-      // On renvoie deviceId au frontend pour qu'il puisse construire les URLs
-      // mais on ne renvoie PAS le pairCode ni la MAC
       deviceId: device.deviceId,
-      screen: primaryScreen,
+      screen:   primaryScreen,
       canvasUrl,
     });
 
-    // Pose le cookie de session — ajoute ce deviceId aux devices autorisés
     await addDeviceToSession(res, device.deviceId);
-
     return res;
   } catch (err) {
-    console.error("[/api/onboard] erreur:", err);
+    console.error("[/api/onboard]", err);
     return NextResponse.json({ error: "Erreur serveur" }, { status: 500 });
   }
 }

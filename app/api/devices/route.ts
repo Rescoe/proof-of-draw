@@ -1,10 +1,6 @@
 // app/api/devices/route.ts
-//
-// GET /api/devices          → liste PUBLIQUE (artistName, isOnline, screens) — aucune donnée sensible
-// GET /api/devices?mine=1   → liste PRIVÉE des devices de la session courante (OwnedDevice)
-//
-// La séparation public/privé se fait via le query param "mine".
-// Les données sensibles (mac, pairCode, deviceId brut) ne sont jamais dans la vue publique.
+// GET /api/devices        → vue publique (artistName, isOnline) — sans données sensibles
+// GET /api/devices?mine=1 → vue privée scoped à la session
 
 import { NextRequest, NextResponse } from "next/server";
 import { getAllDevices, getDevice, toPublicDevice, toOwnedDevice } from "@/lib/deviceStore";
@@ -15,30 +11,26 @@ export async function GET(req: NextRequest) {
     const mine = req.nextUrl.searchParams.get("mine");
 
     if (mine === "1") {
-      // ── Vue privée : uniquement les devices de la session ──────────────────
       const session = await getSession();
+      if (session.deviceIds.length === 0) return NextResponse.json({ devices: [] });
 
-      if (session.deviceIds.length === 0) {
-        return NextResponse.json({ devices: [] });
-      }
-
-      const owned = session.deviceIds
-        .map((id) => getDevice(id))
+      const owned = (
+        await Promise.all(session.deviceIds.map((id) => getDevice(id)))
+      )
         .filter(Boolean)
         .map((d) => toOwnedDevice(d!));
 
       return NextResponse.json({ devices: owned });
     }
 
-    // ── Vue publique : tous les devices, sans données sensibles ───────────────
-    const all = getAllDevices();
+    const all = await getAllDevices();
     const publicList = all
-      .filter((d) => d.artistName) // ne lister que les devices onboardés
+      .filter((d) => d.artistName)
       .map((d) => toPublicDevice(d));
 
     return NextResponse.json({ devices: publicList });
   } catch (err) {
-    console.error("[/api/devices] erreur:", err);
+    console.error("[/api/devices]", err);
     return NextResponse.json({ error: "Erreur serveur" }, { status: 500 });
   }
 }

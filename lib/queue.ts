@@ -1,133 +1,83 @@
 // lib/queue.ts
-// Frame store en mémoire, groupé par screenId.
-// L'ESP pull ses frames via GET /api/pull?deviceId=xxx
-// Plus aucune logique HTTP vers IP device.
+// Frame store via Upstash Redis
+// Une seule frame par device (la dernière) — pas de queue longue
+// TTL 15min : si l'ESP ne pull pas dans ce délai, la frame expire seule
+
+import { redis } from "@/lib/redis";
 
 export interface StoredFrame {
-  screen: string;
-  payload: FramePayload;
-  storedAt: number;
+  screen:    string;
+  payload:   FramePayload;
+  storedAt:  number;
   deviceId?: string;
-  frameId: string;  // ← AJOUTÉ
+  frameId:   string;
 }
 
 export type FramePayload =
-  | { screen: "oled096"; buffer: string }
-  | { screen: "eink27bw"; buffer: string }
+  | { screen: "oled096";   buffer: string }
+  | { screen: "eink27bw";  buffer: string }
   | { screen: "eink29bwr"; black: string; red: string }
-  | { screen: string; buffer?: string; black?: string; red?: string }; // fallback générique
+  | { screen: string; buffer?: string; black?: string; red?: string };
 
-// Store principal : screenId → dernière frame
-// On ne garde que la DERNIÈRE frame par écran (display réseau — pas de queue)
-const frameStore = new Map<string, StoredFrame>();
+const FRAME_TTL = 15 * 60; // 15 minutes — cohérent avec rotation des œuvres
 
-// ─── API PUBLIQUE ────────────────────────────────────────────────────────────
+function frameKey(deviceId: string) { return `frame:${deviceId}`; }
 
-/**
- * Ancienne signature : sendFrameNow(ip, port, payload)  →  SUPPRIMÉE
- * Nouvelle signature : storeFrame(screenId, payload, deviceId?)
- *
- * Stocke le dernier frame pour un type d'écran.
- * L'ESP récupèrera ce frame au prochain poll /api/pull
- */
+// Stocke la frame pour un device (écrase la précédente)
 export function storeFrame(
   screenId: string,
   payload: FramePayload,
   deviceId?: string
 ): void {
-const frame: StoredFrame = {
-  screen: screenId,
-  payload,
-  storedAt: Date.now(),
-  deviceId,
-  frameId: Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
-};
-  frameStore.set(screenId, frame);
-  console.log(`[queue] frame stockée pour screen=${screenId}${deviceId ? ` device=${deviceId}` : ""}`);
-}
+  const frame: StoredFrame = {
+    screen:   screenId,
+    payload,
+    storedAt: Date.now(),
+    deviceId,
+    frameId:  Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
+  };
 
-/**
- * Récupère la dernière frame pour un screenId donné.
- * Utilisé par /api/pull
- */
-export function getFrameForScreen(screenId: string): StoredFrame | null {
-  return frameStore.get(screenId) ?? null;
-}
-
-/**
- * Récupère la meilleure frame pour un device donné.
- * Priorité : frame ciblée deviceId → frame générique pour ce screen
- * Le device doit fournir sa liste de screens.
- */
-export function getFrameForDevice(deviceId: string, screens: string[]): StoredFrame | null {
-  // 1. Chercher une frame explicitement ciblée sur ce device
-  for (const frame of frameStore.values()) {
-    if (frame.deviceId === deviceId) return frame;
-  }
-
-  // 2. Chercher la frame la plus récente parmi les screens supportés
-  let best: StoredFrame | null = null;
-  for (const screenId of screens) {
-    const frame = frameStore.get(screenId);
-    if (frame && (!best || frame.storedAt > best.storedAt)) {
-      best = frame;
-    }
-  }
-  return best;
-}
-
-/**
- * Efface la frame d'un screen (optionnel — pour reset manuel)
- */
-export function clearFrame(screenId: string): void {
-  frameStore.delete(screenId);
-}
-
-/**
- * Liste toutes les frames en attente (pour debug /admin)
- */
-export function listFrames(): StoredFrame[] {
-  return Array.from(frameStore.values());
-}
-
-/* evite qu'on renvoie la frame a l'infini*/
-
-export function clearFrameForDevice(deviceId: string, screens: string[]): void {
-  // Supprime la frame ciblée sur ce device
-  for (const [key, frame] of frameStore.entries()) {
-    if (frame.deviceId === deviceId) {
-      frameStore.delete(key);
-      return;
-    }
-  }
-  // Supprime la frame générique pour ses screens
-  for (const screenId of screens) {
-    if (frameStore.has(screenId)) {
-      frameStore.delete(screenId);
-      return;
-    }
+  if (deviceId) {
+    // Frame ciblée : stockée par deviceId avec TTL 15min
+    redis.set(frameKey(deviceId), JSON.stringify(frame), { ex: FRAME_TTL });
+    console.log(`[queue] frame stockée device=${deviceId} screen=${screenId}`);
   }
 }
 
-export function clearFrameForDeviceAck(
+// Récupère la frame d'un device (sans la supprimer — l'ack s'en charge)
+export async function getFrameForDevice(
   deviceId: string,
-  screens: string[],
-  frameId: string
-): boolean {
-  for (const [key, frame] of frameStore.entries()) {
-    if (frame.deviceId === deviceId && frame.frameId === frameId) {
-      frameStore.delete(key);
-      return true;
-    }
+  _screens: string[]
+): Promise<StoredFrame | null> {
+  const raw = await redis.get<string>(frameKey(deviceId));
+  if (!raw) return null;
+  try {
+    return typeof raw === "string" ? JSON.parse(raw) : raw as StoredFrame;
+  } catch {
+    return null;
   }
-
-  for (const screenId of screens) {
-    const frame = frameStore.get(screenId);
-    if (frame && frame.frameId === frameId) {
-      frameStore.delete(screenId);
-      return true;
-    }
-  }
-
-  return false;
 }
+
+// Supprime la frame après ack de l'ESP
+export async function clearFrameForDeviceAck(
+  deviceId: string,
+  _screens: string[],
+  frameId: string
+): Promise<boolean> {
+  const raw = await redis.get<string>(frameKey(deviceId));
+  if (!raw) return false;
+  try {
+    const frame: StoredFrame = typeof raw === "string" ? JSON.parse(raw) : raw;
+    if (frame.frameId !== frameId) return false;
+    await redis.del(frameKey(deviceId));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+// Compat legacy — non utilisé en prod Redis mais garde la signature
+export function getFrameForScreen(_screenId: string): StoredFrame | null { return null; }
+export function clearFrame(_screenId: string): void {}
+export function clearFrameForDevice(_deviceId: string, _screens: string[]): void {}
+export function listFrames(): StoredFrame[] { return []; }
