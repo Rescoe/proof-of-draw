@@ -1,10 +1,18 @@
 // app/api/register/route.ts
+// Ajout : indexation dans pool:screen:{screenId} pour le broadcast inter-devices
+
 import { NextRequest, NextResponse } from "next/server";
 import { registerDevice } from "@/lib/deviceStore";
 import {
   checkRateLimit, isBlacklisted, isDeviceCapReached,
   getIP, tooManyRequests, forbidden,
 } from "@/lib/rateLimit";
+import { redis } from "@/lib/redis";
+
+// TTL du Set de pool = durée de vie max d'un device inactif
+// Si un device ne se re-register pas pendant 48h son entrée device: expire,
+// mais il reste dans le pool Set. Le draw broadcast gère les devices introuvables.
+const POOL_MEMBER_TTL_SEC = 48 * 3600; // 48h — cohérent avec TTL device:
 
 export async function POST(req: NextRequest) {
   const ip = getIP(req);
@@ -31,19 +39,56 @@ export async function POST(req: NextRequest) {
     const macNorm = mac.toLowerCase().trim();
 
     // 3. Device cap — vérifié seulement pour les nouveaux devices
-    // (les re-register existants passent toujours)
     const capReached = await isDeviceCapReached();
-
     const { device, isNew } = await registerDevice(macNorm, screens, firmware ?? "unknown");
 
     if (isNew && capReached) {
-      // On a enregistré trop tôt — rollback (edge case rare)
-      // En pratique registerDevice vérifie d'abord l'existant donc ce cas est très rare
       return NextResponse.json(
         { error: "Capacité maximale atteinte. Réessayez plus tard." },
         { status: 503 }
       );
     }
+
+    // ── 4. Indexation dans les pools par type d'écran ────────────────────────
+    // On met à jour les pools à chaque register (re-register inclus) pour :
+    // - gérer les changements de screens (firmware update)
+    // - rafraîchir la présence du device dans la pool
+    //
+    // Stratégie :
+    // a) Récupérer les screens précédemment enregistrés pour ce device (depuis l'objet device)
+    //    → si les screens ont changé, retirer le deviceId des anciennes pools
+    // b) Ajouter le deviceId dans les nouvelles pools
+    //
+    // Note : on utilise des Redis Sets (SADD/SREM) — idempotent, pas de doublons.
+
+    // Screens précédents stockés dans le device (disponibles après registerDevice)
+    // Si le device est nouveau, device.screens === screens (pas de diff à faire)
+    const prevScreens: string[] = device.screens ?? [];
+    const nextScreens: string[] = screens;
+
+    const removedScreens = prevScreens.filter((s) => !nextScreens.includes(s));
+    const addedScreens   = nextScreens.filter((s) => !prevScreens.includes(s));
+    // Screens inchangés : on refresh quand même le score pour que le Set reste frais
+    const unchangedScreens = nextScreens.filter((s) => prevScreens.includes(s));
+
+    const poolOps: Promise<unknown>[] = [];
+
+    // Retirer des anciennes pools si les screens ont changé
+    for (const screenId of removedScreens) {
+      poolOps.push(redis.srem(`pool:screen:${screenId}`, device.deviceId));
+    }
+
+    // Ajouter dans les nouvelles pools (SADD est idempotent)
+    for (const screenId of [...addedScreens, ...unchangedScreens]) {
+      poolOps.push(redis.sadd(`pool:screen:${screenId}`, device.deviceId));
+    }
+
+    // Fire-and-forget — ne bloque pas la réponse au firmware
+    // Si Redis est down ici le device se register quand même, la pool sera incomplète
+    // mais se reconstruira au prochain boot de chaque ESP
+    Promise.all(poolOps).catch((err) =>
+      console.error("[/api/register] pool update error:", err)
+    );
 
     const host =
       process.env.NEXT_PUBLIC_BASE_URL ??
