@@ -130,7 +130,7 @@ function OnboardForm() {
               type="text"
               value={mac}
               onChange={(e) => setMac(e.target.value)}
-              placeholder="84:0d:8e:b4:cb:65"
+              placeholder="Aa:Bb:Cc:Dd:Ee:Dd"
               autoFocus
               className="w-full bg-gray-900 border border-gray-700 rounded px-4 py-3
                          font-mono text-sm focus:border-white outline-none"
@@ -149,7 +149,7 @@ function OnboardForm() {
             type="text"
             value={artistName}
             onChange={(e) => setArtist(e.target.value)}
-            placeholder="ex: Rescoe"
+            placeholder="Artiste"
             maxLength={64}
             className="w-full bg-gray-900 border border-gray-700 rounded px-4 py-3
                        focus:border-white outline-none"
