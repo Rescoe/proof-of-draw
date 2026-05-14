@@ -1,13 +1,11 @@
 {
-  "name": "esp-canvas",
+  "name": "proof-of-draw",
   "version": "0.1.0",
   "private": true,
-  "scripts": {
-    "dev": "next dev",
-    "build": "next build",
-    "start": "next start",
-    "lint": "eslint"
-  },
+"scripts": {
+  "dev": "next dev",
+  "build": "next build"
+},
   "dependencies": {
     "@upstash/redis": "^1.38.0",
     "lucide-react": "^1.14.0",

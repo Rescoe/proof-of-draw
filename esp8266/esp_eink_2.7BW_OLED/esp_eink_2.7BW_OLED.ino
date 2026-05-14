@@ -1,11 +1,19 @@
-// esp_multiscreen_pull.ino — v1.0
+// esp_multiscreen_pull.ino — v1.2 stable onboarding
 // Supporte : oled096 (128x64) + eink27bw (176x264)
-// Même architecture que esp_eink_2.9BWR v1.5 :
-// - Pull-based (pas de serveur HTTP sur l'ESP)
-// - HTTPS Vercel
-// - Anti-OOM : malloc post-register, free/malloc autour de TLS
-// - Rate limit respecté côté firmware (pull toutes les 15min)
-// - paired : pas de QR si déjà onboardé
+//
+// Philosophie v1.2 :
+// - Même logique pratique que le modèle e29 qui fonctionne
+// - HTTPS pull-based Vercel
+// - Anti-OOM : pas d'init e-ink au boot, pas de buffer e27 persistant
+// - OLED init après register
+// - E27 init à la demande uniquement
+// - Onboarding affiché UNE SEULE FOIS sur OLED + E27 si non paired
+// - Aucun restart automatique après onboarding
+// - Aucun spam de /api/register : un seul register au boot, puis attente calme
+// - Après appairage : redémarrage manuel / reboot externe conseillé pour repartir proprement
+//
+// Remarque : cette version n'a pas besoin de /api/device-status.
+// Elle s'aligne sur ton workflow e29 : on affiche, on attend, puis on reboote quand l'appairage est fait.
 
 #include <Arduino.h>
 #include <ESP8266WiFi.h>
@@ -17,56 +25,55 @@
 #include <Wire.h>
 #include <Adafruit_GFX.h>
 #include <Adafruit_SSD1306.h>
+#include <qrcode.h>
 #include "epd2in7_V2.h"
 
 // ─── CONFIG ────────────────────────────────────────────────────────────────
-const char* WIFI_SSID     = "TON_SSID";
-const char* WIFI_PASSWORD = "TON_MOT_DE_PASSE";
+const char* WIFI_SSID     = "Livebox-D190";
+const char* WIFI_PASSWORD = "Q2gueWg3UaYJo2VN7C";
 
 #define SERVER_URL       "https://proof-of-draw.vercel.app"
-#define FIRMWARE_VERSION "multiscreen-1.0"
+#define FIRMWARE_VERSION "multiscreen-1.2"
 
-// Screens déclarés au register — l'app proposera les deux
-// L'utilisateur choisit lequel dessiner depuis /draw
-#define SCREEN_OLED  "oled096"
-#define SCREEN_E27   "eink27bw"
+#define SCREEN_OLED "oled096"
+#define SCREEN_E27  "eink27bw"
 
-#define PULL_INTERVAL  900000UL   // 15 min — cohérent avec rate limit serveur
-#define PING_INTERVAL  0UL        // désactivé — le pull fait le ping implicitement
+#define PULL_INTERVAL        900000UL   // 15 min
+#define E27_MIN_REFRESH_MS   10000UL    // comme le e29, sécurité refresh
+#define IDLE_DELAY_MS        250UL
 
 // ─── OLED 128×64 ───────────────────────────────────────────────────────────
-#define OLED_SDA     D6
-#define OLED_SCL     D4
-#define OLED_RST     -1
-#define OLED_WIDTH   128
-#define OLED_HEIGHT  64
-#define OLED_BUF_SIZE ((OLED_WIDTH * OLED_HEIGHT) / 8)   // 1024 bytes
+#define OLED_SDA      D6
+#define OLED_SCL      D4
+#define OLED_RST      -1
+#define OLED_WIDTH    128
+#define OLED_HEIGHT   64
+#define OLED_BUF_SIZE ((OLED_WIDTH * OLED_HEIGHT) / 8)
 
 Adafruit_SSD1306 oled(OLED_WIDTH, OLED_HEIGHT, &Wire, OLED_RST);
 bool oledReady = false;
+uint8_t* oledBuf = nullptr;
 
 // ─── EINK 2.7" BW ──────────────────────────────────────────────────────────
-#define E27_WIDTH    176
-#define E27_HEIGHT   264
-#define E27_BUF_SIZE ((E27_WIDTH * E27_HEIGHT) / 8)   // 5808 bytes
+#define E27_WIDTH     176
+#define E27_HEIGHT    264
+#define E27_BUF_SIZE  ((E27_WIDTH * E27_HEIGHT) / 8)
 
 Epd epd27;
-bool e27Ready = false;
-
-// ─── Buffers alloués dynamiquement post-register ───────────────────────────
-// Libérés pendant les handshakes TLS pour éviter OOM
-uint8_t* oledBuf = nullptr;
-uint8_t* e27Buf  = nullptr;
+unsigned long lastE27RefreshMs = 0;
 
 // ─── STATE ─────────────────────────────────────────────────────────────────
 String deviceId, pairCode, canvasUrl;
 bool   registered        = false;
 bool   paired            = false;
-bool   screensReady      = false;
+bool   onboardingShown   = false;
 unsigned long lastPullMs = 0;
 String lastFrameId       = "";
-bool   hasDisplayedFrame = false;
 String lastScreen        = "";
+
+unsigned long lastRegisterRetryMs = 0;
+unsigned long registerRetryIntervalMs = 300000UL; // 5 min
+bool waitingForPairing = false;
 
 // ─── BASE64 ────────────────────────────────────────────────────────────────
 static const int8_t B64_TABLE[256] PROGMEM = {
@@ -89,12 +96,18 @@ static const int8_t B64_TABLE[256] PROGMEM = {
 };
 
 size_t base64Decode(const char* src, size_t srcLen, uint8_t* dst, size_t dstMax) {
-  size_t out = 0; int buf = 0, bits = 0;
+  size_t out = 0;
+  int buf = 0, bits = 0;
   for (size_t i = 0; i < srcLen && out < dstMax; i++) {
     int8_t val = (int8_t)pgm_read_byte(&B64_TABLE[(uint8_t)src[i]]);
     if (val < 0) continue;
-    buf = (buf << 6) | val; bits += 6;
-    if (bits >= 8) { bits -= 8; dst[out++] = (buf >> bits) & 0xFF; }
+    buf = (buf << 6) | val;
+    bits += 6;
+    if (bits >= 8) {
+      bits -= 8;
+      dst[out++] = (buf >> bits) & 0xFF;
+    }
+    yield();
   }
   return out;
 }
@@ -103,30 +116,38 @@ size_t base64Decode(const char* src, size_t srcLen, uint8_t* dst, size_t dstMax)
 bool httpPost(const String& path, const String& body, String& resp) {
   WiFiClientSecure client;
   client.setInsecure();
+
   HTTPClient http;
   http.begin(client, String(SERVER_URL) + path);
   http.addHeader("Content-Type", "application/json");
   http.setTimeout(10000);
+
   int code = http.POST(body);
   resp = (code > 0) ? http.getString() : "";
+
   http.end();
-  Serial.printf("[HTTP POST] %s → %d\n", path.c_str(), code);
+  Serial.printf("[HTTP POST] %s -> %d\n", path.c_str(), code);
   return code == 200;
 }
 
 bool httpGet(const String& path, String& resp) {
   WiFiClientSecure client;
   client.setInsecure();
+
   HTTPClient http;
   http.begin(client, String(SERVER_URL) + path);
   http.setTimeout(15000);
+
   int code = http.GET();
+
   if (code > 0) {
     int contentLength = http.getSize();
     resp = "";
     if (contentLength > 0) resp.reserve(contentLength);
+
     WiFiClient* stream = http.getStreamPtr();
     unsigned long timeout = millis();
+
     while ((millis() - timeout) < 10000) {
       if (stream->available()) {
         resp += (char)stream->read();
@@ -138,50 +159,41 @@ bool httpGet(const String& path, String& resp) {
       yield();
     }
   }
+
   http.end();
-  Serial.printf("[HTTP GET] %s → %d (%u bytes)\n", path.c_str(), code, resp.length());
+  Serial.printf("[HTTP GET] %s -> %d (%u bytes)\n", path.c_str(), code, resp.length());
   return code == 200;
 }
 
-// ─── INIT ÉCRANS ──────────────────────────────────────────────────────────
-// Appelé UNE SEULE FOIS après le register — buffers alloués ici
-bool initScreens() {
-  Serial.printf("[HEAP] avant init écrans: %u bytes\n", ESP.getFreeHeap());
+// ─── OLED ──────────────────────────────────────────────────────────────────
+bool ensureOLEDReady() {
+  if (oledReady) return true;
 
-  // Alloue les buffers
-  oledBuf = (uint8_t*)malloc(OLED_BUF_SIZE);
-  e27Buf  = (uint8_t*)malloc(E27_BUF_SIZE);
+  if (!oledBuf) {
+    oledBuf = (uint8_t*)malloc(OLED_BUF_SIZE);
+    if (!oledBuf) {
+      Serial.println("[OLED] malloc failed");
+      return false;
+    }
+    memset(oledBuf, 0x00, OLED_BUF_SIZE);
+  }
 
-  if (!oledBuf || !e27Buf) {
-    Serial.println("[INIT] ERREUR malloc buffers");
+  Wire.begin(OLED_SDA, OLED_SCL);
+  Wire.setClock(100000);
+
+  oledReady = oled.begin(SSD1306_SWITCHCAPVCC, 0x3C);
+  if (!oledReady) {
+    Serial.println("[OLED] init failed");
     return false;
   }
 
-  memset(oledBuf, 0x00, OLED_BUF_SIZE);
-  memset(e27Buf,  0xFF, E27_BUF_SIZE);
-
-  // Init OLED
-  Wire.begin(OLED_SDA, OLED_SCL);
-  oledReady = oled.begin(SSD1306_SWITCHCAPVCC, 0x3C);
-  if (!oledReady) Serial.println("[OLED] init failed");
-  else            Serial.println("[OLED] ready");
-
-  // Init E27
-  SPI.begin();
-  e27Ready = (epd27.Init() == 0);
-  if (!e27Ready) Serial.println("[E27] init failed");
-  else           Serial.println("[E27] ready");
-
-  Serial.printf("[HEAP] après init écrans: %u bytes\n", ESP.getFreeHeap());
-  screensReady = true;
+  Serial.println("[OLED] ready");
   return true;
 }
 
-// ─── AFFICHAGE OLED ────────────────────────────────────────────────────────
-void displayOLED() {
-  if (!oledReady) return;
+void displayOLEDFromBuffer() {
+  if (!oledReady || !oledBuf) return;
 
-  // Si on venait de l'eink, SPI a pris le bus — on relance I2C
   if (lastScreen == SCREEN_E27) {
     SPI.end();
     delay(20);
@@ -190,31 +202,36 @@ void displayOLED() {
     delay(20);
   }
 
-  uint8_t* fb = oled.getBuffer();
-  memcpy(fb, oledBuf, OLED_BUF_SIZE);
+  memcpy(oled.getBuffer(), oledBuf, OLED_BUF_SIZE);
   oled.display();
   Serial.println("[OLED] displayed");
 }
 
-// ─── AFFICHAGE E27 ─────────────────────────────────────────────────────────
-void displayE27() {
-  if (!e27Ready) return;
+void displayQROnOLED(const String& code, const String& mac) {
+  if (!ensureOLEDReady()) return;
 
-  SPI.begin();
-  delay(10);
+  oled.clearDisplay();
+  oled.setTextSize(1);
+  oled.setTextColor(SSD1306_WHITE);
+  oled.setCursor(0, 0);
+  oled.println("PROOF-OF-DRAW");
+  oled.println("Scannez / saisissez:");
+  oled.println("");
+  oled.setTextSize(2);
+  oled.println(code);
+  oled.setTextSize(1);
+  oled.println("");
 
-  if (epd27.Init() != 0) {
-    Serial.println("[E27] reinit failed");
-    return;
-  }
+  String macShort = mac;
+  macShort.replace(":", "");
+  macShort.toUpperCase();
+  oled.println("MAC:" + macShort);
 
-  epd27.Display(e27Buf);
-  epd27.Sleep();
-  SPI.end();
-  Serial.println("[E27] displayed");
+  oled.display();
+  Serial.println("[OLED] onboarding displayed");
 }
 
-// ─── FONT 5×7 (pour QR text) ───────────────────────────────────────────────
+// ─── FONT 5x7 + DRAW E27 ───────────────────────────────────────────────────
 static const uint8_t FONT_5x7[][5] PROGMEM = {
   {0x3E,0x51,0x49,0x45,0x3E},{0x00,0x42,0x7F,0x40,0x00},{0x42,0x61,0x51,0x49,0x46},
   {0x21,0x41,0x45,0x4B,0x31},{0x18,0x14,0x12,0x7F,0x10},{0x27,0x45,0x45,0x45,0x39},
@@ -236,32 +253,152 @@ int charIndex(char c) {
   if (c >= '0' && c <= '9') return c - '0';
   if (c >= 'A' && c <= 'Z') return c - 'A' + 10;
   if (c >= 'a' && c <= 'z') return c - 'a' + 10;
-  if (c == ':') return 36; if (c == '.') return 37;
-  if (c == '-') return 38; if (c == '/') return 39;
+  if (c == ':') return 36;
+  if (c == '.') return 37;
+  if (c == '-') return 38;
+  if (c == '/') return 39;
   return 40;
 }
 
-// Affiche le QR + infos sur l'OLED au lieu de l'e-ink
-// (l'OLED est plus rapide et toujours disponible pour l'onboarding)
-void displayQROnOLED(const String& code, const String& mac) {
-  if (!oledReady) return;
-  oled.clearDisplay();
-  oled.setTextSize(1);
-  oled.setTextColor(SSD1306_WHITE);
-  oled.setCursor(0, 0);
-  oled.println("PROOF-OF-DRAW");
-  oled.println("Scannez ou saisissez:");
-  oled.println("");
-  oled.setTextSize(2);
-  oled.println(code);
-  oled.setTextSize(1);
-  oled.println("");
+// Mapping simple pour buffer 176x264 du driver utilisé
+inline void setPixelE27(uint8_t* buf, int x, int y) {
+  if (!buf) return;
+  if (x < 0 || x >= E27_WIDTH || y < 0 || y >= E27_HEIGHT) return;
+
+  int xr = E27_WIDTH - 1 - x;   // miroir horizontal
+  int byteIndex = (xr / 8) + y * (E27_WIDTH / 8);
+  int bitMask   = 0x80 >> (xr & 7);
+
+  buf[byteIndex] &= ~bitMask;
+}
+
+void drawCharE27(uint8_t* buf, int x, int y, char c, int scale = 1) {
+  int idx = charIndex(c);
+  for (int col = 0; col < 5; col++) {
+    uint8_t bits = pgm_read_byte(&FONT_5x7[idx][col]);
+    for (int row = 0; row < 7; row++) {
+      if (bits & (0x40 >> row)) {
+        for (int dx = 0; dx < scale; dx++) {
+          for (int dy = 0; dy < scale; dy++) {
+            setPixelE27(buf, x + col * scale + dx, y + row * scale + dy);
+          }
+        }
+      }
+    }
+  }
+}
+
+void drawTextE27(uint8_t* buf, int x, int y, const String& text, int scale = 1) {
+  int cx = x;
+  for (unsigned int i = 0; i < text.length(); i++) {
+    drawCharE27(buf, cx, y, text.charAt(i), scale);
+    cx += 6 * scale;
+    yield();
+  }
+}
+
+int textWidthE27(const String& text, int scale = 1) {
+  return text.length() * 6 * scale;
+}
+
+// ─── E27 DISPLAY ───────────────────────────────────────────────────────────
+bool initE27ForRefresh() {
+  unsigned long elapsed = millis() - lastE27RefreshMs;
+  if (elapsed < E27_MIN_REFRESH_MS) {
+    delay(E27_MIN_REFRESH_MS - elapsed);
+  }
+
+  SPI.begin();
+  delay(10);
+
+  if (epd27.Init() != 0) {
+    Serial.println("[E27] init failed");
+    SPI.end();
+    return false;
+  }
+
+  return true;
+}
+
+bool displayE27Buffer(uint8_t* buf) {
+  if (!buf) return false;
+  if (!initE27ForRefresh()) return false;
+
+  epd27.Display(buf);
+  epd27.Sleep();
+  SPI.end();
+  lastE27RefreshMs = millis();
+
+  Serial.println("[E27] displayed");
+  return true;
+}
+
+void displayOnboardingOnE27(const String& onboardUrl, const String& code, const String& mac) {
+  uint8_t* buf = (uint8_t*)malloc(E27_BUF_SIZE);
+  if (!buf) {
+    Serial.println("[E27] onboarding malloc failed");
+    return;
+  }
+
+  memset(buf, 0xFF, E27_BUF_SIZE);
+
+  QRCode qrcode;
+  uint8_t qrcodeData[qrcode_getBufferSize(5)];
+
+  int qrResult = qrcode_initText(&qrcode, qrcodeData, 4, ECC_MEDIUM, onboardUrl.c_str());
+  if (qrResult < 0) {
+    qrResult = qrcode_initText(&qrcode, qrcodeData, 5, ECC_MEDIUM, onboardUrl.c_str());
+  }
+
+  String title = "PROOF-OF-DRAW";
+  String subtitle = "EINK27BW";
+  String codeLine = "CODE:" + code;
+  codeLine.toUpperCase();
+
   String macShort = mac;
   macShort.replace(":", "");
   macShort.toUpperCase();
-  oled.println("MAC:" + macShort);
-  oled.display();
-  Serial.println("[OLED] QR code displayed");
+  String macLine = "MAC:" + macShort;
+
+  drawTextE27(buf, (E27_WIDTH - textWidthE27(title, 2)) / 2, 10, title, 2);
+  drawTextE27(buf, (E27_WIDTH - textWidthE27(subtitle, 1)) / 2, 32, subtitle, 1);
+
+  if (qrResult >= 0) {
+    const int quietZone = 2;
+    int totalModules = qrcode.size + quietZone * 2;
+    int scale = 4;
+    int qrPx = totalModules * scale;
+    int qrX0 = (E27_WIDTH - qrPx) / 2;
+    int qrY0 = 54;
+
+    for (int my = 0; my < qrcode.size; my++) {
+      for (int mx = 0; mx < qrcode.size; mx++) {
+        if (!qrcode_getModule(&qrcode, mx, my)) continue;
+        int px0 = qrX0 + (mx + quietZone) * scale;
+        int py0 = qrY0 + (my + quietZone) * scale;
+        for (int dy = 0; dy < scale; dy++) {
+          for (int dx = 0; dx < scale; dx++) {
+            setPixelE27(buf, px0 + dx, py0 + dy);
+          }
+        }
+      }
+      yield();
+    }
+  } else {
+    drawTextE27(buf, 24, 80, "QR ERROR", 2);
+  }
+
+  drawTextE27(buf, (E27_WIDTH - textWidthE27(codeLine, 2)) / 2, 198, codeLine, 2);
+  drawTextE27(buf, (E27_WIDTH - textWidthE27(macLine, 1)) / 2, 224, macLine, 1);
+  drawTextE27(buf, 10, 244, "ONBOARD VIA SITE", 1);
+
+  if (!displayE27Buffer(buf)) {
+    Serial.println("[E27] onboarding display failed");
+  } else {
+    Serial.println("[E27] onboarding displayed");
+  }
+
+  free(buf);
 }
 
 // ─── ACK ───────────────────────────────────────────────────────────────────
@@ -269,22 +406,23 @@ bool ackFrame(const String& frameId) {
   if (frameId.length() == 0) return false;
   String body = "{\"deviceId\":\"" + deviceId + "\",\"frameId\":\"" + frameId + "\"}";
   String resp;
-  return httpPost("/api/ack-frame", body, resp);
+  bool ok = httpPost("/api/ack-frame", body, resp);
+  Serial.printf("[ACK] %s -> %s\n", frameId.c_str(), ok ? "OK" : "FAIL");
+  return ok;
 }
 
 // ─── REGISTER ──────────────────────────────────────────────────────────────
-// ⚠️  Écrans NON initialisés avant cette fonction — RAM réservée pour TLS
 bool doRegister() {
   String mac = WiFi.macAddress();
   mac.toLowerCase();
 
-  // Déclare les deux écrans supportés
   String body =
     "{\"mac\":\"" + mac + "\","
-    "\"screens\":[\"" + SCREEN_OLED + "\",\"" + SCREEN_E27 + "\"],"
-    "\"firmware\":\"" + FIRMWARE_VERSION + "\"}";
+    "\"screens\":[\"" + String(SCREEN_OLED) + "\",\"" + String(SCREEN_E27) + "\"],"
+    "\"firmware\":\"" + String(FIRMWARE_VERSION) + "\"}";
 
   String resp;
+
   Serial.printf("[HEAP] avant register: %u bytes\n", ESP.getFreeHeap());
 
   if (!httpPost("/api/register", body, resp)) {
@@ -300,61 +438,61 @@ bool doRegister() {
     return false;
   }
 
-  deviceId  = doc["deviceId"].as<String>();
-  pairCode  = doc["pairCode"].as<String>();
-  canvasUrl = doc["canvasUrl"].as<String>();
-  paired    = doc["paired"] | false;
+  deviceId   = doc["deviceId"].as<String>();
+  pairCode   = doc["pairCode"].as<String>();
+  canvasUrl  = doc["canvasUrl"].as<String>();
+  paired     = doc["paired"] | false;
   registered = true;
 
   Serial.println("[REGISTER] deviceId : " + deviceId);
   Serial.println("[REGISTER] paired   : " + String(paired ? "oui" : "non"));
 
-  // Init écrans APRÈS le register — TLS a libéré sa RAM
-  if (!screensReady) {
-    if (!initScreens()) {
-      registered = false;
-      return false;
-    }
+  if (!ensureOLEDReady()) {
+    Serial.println("[REGISTER] OLED init failed");
+    registered = false;
+    return false;
   }
 
-  if (!paired) {
-    // Affiche le code sur l'OLED pour onboarding
+if (!paired) {
+  if (!onboardingShown) {
+    String onboardUrl = String(SERVER_URL) + "/onboard?code=" + pairCode;
     displayQROnOLED(pairCode, mac);
-    Serial.println("[REGISTER] code affiché sur OLED, restart dans 3s...");
-    delay(3000);
-    ESP.restart();
+    displayOnboardingOnE27(onboardUrl, pairCode, mac);
+    onboardingShown = true;
+    waitingForPairing = true;
+    Serial.println("[REGISTER] onboarding affiché une seule fois, attente appairage");
   } else {
-    Serial.println("[REGISTER] déjà appairé, pas d'affichage QR");
+    Serial.println("[REGISTER] toujours non appairé, attente...");
   }
+} else {
+  Serial.println("[REGISTER] déjà appairé");
+}
 
   return true;
 }
 
 // ─── PULL ──────────────────────────────────────────────────────────────────
 void doPull() {
-  // Libère les buffers pour TLS
-  free(oledBuf); oledBuf = nullptr;
-  free(e27Buf);  e27Buf  = nullptr;
+  if (oledBuf) {
+    free(oledBuf);
+    oledBuf = nullptr;
+  }
 
   Serial.printf("[HEAP] avant pull: %u bytes\n", ESP.getFreeHeap());
 
   String resp;
   bool ok = httpGet("/api/pull?deviceId=" + deviceId, resp);
 
-  // Réalloue immédiatement
-  oledBuf = (uint8_t*)malloc(OLED_BUF_SIZE);
-  e27Buf  = (uint8_t*)malloc(E27_BUF_SIZE);
-
-  if (!oledBuf || !e27Buf) {
-    Serial.println("[PULL] malloc failed");
-    ESP.restart();
+  if (!ok) {
+    Serial.println("[PULL] Echec HTTP");
     return;
   }
 
-  if (!ok) { Serial.println("[PULL] Echec HTTP"); return; }
-  if (resp.indexOf("\"frame\":null") >= 0) { Serial.println("[PULL] Aucune frame"); return; }
+  if (resp.indexOf("\"frame\":null") >= 0) {
+    Serial.println("[PULL] Aucune frame");
+    return;
+  }
 
-  // Extraction des champs
   auto extractField = [&](const String& key) -> String {
     String search = "\"" + key + "\":\"";
     int start = resp.indexOf(search);
@@ -366,9 +504,9 @@ void doPull() {
 
   String frameId  = extractField("frameId");
   String screen   = extractField("screen");
-  String bufB64   = extractField("buffer");   // OLED + E27
-  String blackB64 = extractField("black");    // E29 (ignoré ici)
-  String redB64   = extractField("red");      // E29 (ignoré ici)
+  String bufB64   = extractField("buffer");
+  String blackB64 = extractField("black");
+  String redB64   = extractField("red");
 
   if (frameId.length() > 0 && frameId == lastFrameId) {
     Serial.println("[PULL] frame déjà affichée");
@@ -377,39 +515,87 @@ void doPull() {
 
   Serial.println("[PULL] screen=" + screen + " frameId=" + frameId);
 
-  // ── OLED ──────────────────────────────────────────────────────────────────
   if (screen == SCREEN_OLED) {
-    if (bufB64.isEmpty()) { Serial.println("[PULL] buffer manquant pour OLED"); return; }
+    if (bufB64.isEmpty()) {
+      Serial.println("[PULL] buffer manquant pour OLED");
+      return;
+    }
+
+    oledBuf = (uint8_t*)malloc(OLED_BUF_SIZE);
+    if (!oledBuf) {
+      Serial.println("[OLED] malloc failed");
+      return;
+    }
 
     memset(oledBuf, 0x00, OLED_BUF_SIZE);
     size_t len = base64Decode(bufB64.c_str(), bufB64.length(), oledBuf, OLED_BUF_SIZE);
-    Serial.printf("[OLED] decoded=%u expected=%u\n", len, OLED_BUF_SIZE);
+    Serial.printf("[OLED] decoded=%u expected=%u\n", (unsigned)len, (unsigned)OLED_BUF_SIZE);
 
-    if (len != OLED_BUF_SIZE) { Serial.println("[PULL] taille OLED invalide"); return; }
+    if (len != OLED_BUF_SIZE) {
+      Serial.println("[PULL] taille OLED invalide");
+      free(oledBuf);
+      oledBuf = nullptr;
+      return;
+    }
 
-    displayOLED();
+    if (!ensureOLEDReady()) {
+      Serial.println("[OLED] init impossible");
+      free(oledBuf);
+      oledBuf = nullptr;
+      return;
+    }
+
+    displayOLEDFromBuffer();
     lastScreen = SCREEN_OLED;
     lastFrameId = frameId;
+
+    free(oledBuf);
+    oledBuf = nullptr;
+
     ackFrame(frameId);
-    Serial.println("[PULL] ✅ OLED affiché + ack");
+    Serial.println("[PULL] OLED affiche + ack");
     return;
   }
 
-  // ── E27 ───────────────────────────────────────────────────────────────────
   if (screen == SCREEN_E27) {
-    if (bufB64.isEmpty()) { Serial.println("[PULL] buffer manquant pour E27"); return; }
+    if (bufB64.isEmpty()) {
+      Serial.println("[PULL] buffer manquant pour E27");
+      return;
+    }
+
+    uint8_t* e27Buf = (uint8_t*)malloc(E27_BUF_SIZE);
+    if (!e27Buf) {
+      Serial.println("[E27] malloc failed");
+      return;
+    }
 
     memset(e27Buf, 0xFF, E27_BUF_SIZE);
     size_t len = base64Decode(bufB64.c_str(), bufB64.length(), e27Buf, E27_BUF_SIZE);
-    Serial.printf("[E27] decoded=%u expected=%u\n", len, E27_BUF_SIZE);
+    Serial.printf("[E27] decoded=%u expected=%u\n", (unsigned)len, (unsigned)E27_BUF_SIZE);
 
-    if (len != E27_BUF_SIZE) { Serial.println("[PULL] taille E27 invalide"); return; }
+    if (len != E27_BUF_SIZE) {
+      Serial.println("[PULL] taille E27 invalide");
+      free(e27Buf);
+      return;
+    }
 
-    displayE27();
+    if (!displayE27Buffer(e27Buf)) {
+      free(e27Buf);
+      return;
+    }
+
+    free(e27Buf);
+
     lastScreen = SCREEN_E27;
     lastFrameId = frameId;
+
     ackFrame(frameId);
-    Serial.println("[PULL] ✅ E27 affiché + ack");
+    Serial.println("[PULL] E27 affiche + ack");
+    return;
+  }
+
+  if (!blackB64.isEmpty() || !redB64.isEmpty()) {
+    Serial.println("[PULL] payload black/red reçu mais écran attendu = E27 BW/OLED");
     return;
   }
 
@@ -419,24 +605,60 @@ void doPull() {
 // ─── SETUP / LOOP ──────────────────────────────────────────────────────────
 void setup() {
   Serial.begin(115200);
-  Serial.println("\n[BOOT] ESP Multiscreen Pull v1.0");
-
-  // ⚠️  Pas d'init écrans ici — RAM réservée pour TLS
+  Serial.println("\n[BOOT] ESP Multiscreen Pull v1.2 stable onboarding");
 
   WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
   Serial.print("[WIFI] Connexion");
   int i = 0;
-  while (WiFi.status() != WL_CONNECTED && i++ < 40) { delay(500); Serial.print("."); }
+  while (WiFi.status() != WL_CONNECTED && i++ < 40) {
+    delay(500);
+    Serial.print(".");
+    yield();
+  }
+
   Serial.println("\n[WIFI] IP: " + WiFi.localIP().toString());
   Serial.printf("[HEAP] après WiFi: %u bytes\n", ESP.getFreeHeap());
 
-  while (!registered) { doRegister(); if (!registered) delay(5000); }
+  while (!registered) {
+    doRegister();
+    if (!registered) delay(5000);
+  }
+
   lastPullMs = millis();
 }
-
 void loop() {
   unsigned long now = millis();
-  if (!registered) { doRegister(); delay(5000); return; }
-  if (now - lastPullMs >= PULL_INTERVAL) { doPull(); lastPullMs = now; }
-  delay(100);
+
+  if (!registered) {
+    doRegister();
+    delay(5000);
+    return;
+  }
+
+  if (!paired) {
+    if (now - lastRegisterRetryMs >= registerRetryIntervalMs) {
+      Serial.println("[PAIRING] recheck register...");
+      bool wasPaired = paired;
+      doRegister();
+      lastRegisterRetryMs = now;
+
+      if (!wasPaired && paired) {
+        Serial.println("[PAIRING] appairage detecté -> restart propre dans 2s");
+        delay(2000);
+        ESP.restart();
+      }
+    }
+
+    delay(250);
+    yield();
+    return;
+  }
+
+  if (now - lastPullMs >= PULL_INTERVAL) {
+    doPull();
+    lastPullMs = now;
+  }
+
+  delay(250);
+  yield();
 }

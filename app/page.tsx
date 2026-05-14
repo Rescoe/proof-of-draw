@@ -11,7 +11,6 @@ export default function Home() {
       <div style={{display:"flex",gap:"1rem",flexWrap:"wrap",justifyContent:"center"}}>
         <a href="/onboard" style={{padding:"0.75rem 1.5rem",borderRadius:"8px",fontWeight:600,background:"var(--accent)",color:"#fff",textDecoration:"none"}}>+ Ajouter un device</a>
         <a href="/draw" style={{padding:"0.75rem 1.5rem",borderRadius:"8px",fontWeight:600,border:"1px solid var(--border)",color:"var(--text)",textDecoration:"none",background:"var(--bg3)"}}>Dessiner →</a>
-        <a href="/admin" style={{padding:"0.75rem 1.5rem",borderRadius:"8px",fontWeight:600,border:"1px solid var(--border)",color:"var(--text2)",textDecoration:"none",background:"var(--bg2)"}}>Admin</a>
         <a href="/my-devices" style={{padding:"0.75rem 1.5rem",borderRadius:"8px",fontWeight:600,border:"1px solid var(--border)",color:"var(--text2)",textDecoration:"none",background:"var(--bg2)"}}>Mes esp</a>
 
       </div>
