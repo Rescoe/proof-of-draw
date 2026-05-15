@@ -67,7 +67,6 @@ async function broadcastDirect(
 
   const members = (await redis.smembers(`pool:screen:${screen}`)) as string[];
   const targets = members.length > 0 ? members : [deviceId];
-
   await Promise.all(targets.map((dId) => redis.set(`frame:${dId}`, stored, { ex: DRAW_WINDOW_SEC })));
 }
 
@@ -176,17 +175,17 @@ export async function POST(req: NextRequest) {
 
     const candidateData = await candidateRes.json().catch(() => ({}));
 
-    if (!candidateRes.ok) {
-      if (candidateRes.status === 409) {
-        return NextResponse.json({
-          ok: true,
-          nextDrawIn: DRAW_WINDOW_SEC,
-          validation: "queued_behind",
-          message: "Un dessin est déjà en cours de validation. Le vôtre sera soumis à la prochaine fenêtre.",
-          candidateId: candidateData.candidateId,
-        });
-      }
+    if (candidateRes.status === 409) {
+      return NextResponse.json({
+        ok: true,
+        nextDrawIn: DRAW_WINDOW_SEC,
+        validation: "queued_behind",
+        message: "Un dessin est déjà en cours de validation. Le vôtre sera soumis à la prochaine fenêtre.",
+        candidateId: candidateData.candidateId,
+      });
+    }
 
+    if (!candidateRes.ok) {
       throw new Error(candidateData.error ?? `submit-candidate failed (${candidateRes.status})`);
     }
 

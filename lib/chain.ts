@@ -24,74 +24,77 @@
 //   candidate:current   → JSON(Candidate)      dessin en cours de validation
 //   candidate:votes     → JSON(VoteMap)        votes reçus pour le candidat
 
+// lib/chain.ts
+// Chaîne de blocs légère Proof-of-Draw
+// Stockée entièrement dans Redis — les ESP ne stockent que le hash courant.
+
 import { redis } from "@/lib/redis";
 import { sha256Hex, computeDisplayTime } from "@/lib/crypto";
 import { FramePayload } from "@/lib/queue";
 
-// ─── Types ────────────────────────────────────────────────────────────────────
-
 export interface Block {
-  blockIndex:   number;
-  blockHash:    string;
-  parentHash:   string;
-  drawingHash:  string;
-  deviceId:     string;
-  artistName:   string;
-  poolScreen:   string;
+  blockIndex: number;
+  blockHash: string;
+  parentHash: string;
+  drawingHash: string;
+  deviceId: string;
+  artistName: string;
+  poolScreen: string;
   validatorIds: string[];
-  score:        number;
-  displayTime:  number;  // secondes
-  minedAt:      number;
-  frameId:      string;
+  score: number;
+  displayTime: number;
+  minedAt: number;
+  frameId: string;
 }
 
 export interface Candidate {
-  candidateId:  string;   // UUID
-  deviceId:     string;
-  artistName:   string;
-  poolScreen:   string;
-  payload:      FramePayload;
-  drawingHash:  string;
-  score:        number;   // pré-calculé côté serveur
-  submittedAt:  number;
-  expiresAt:    number;   // timestamp — candidat expiré si non validé
-  poolSize:     number;   // nb d'ESP actifs dans la pool au moment de la soumission
+  candidateId: string;
+  deviceId: string;
+  artistName: string;
+  poolScreen: string;
+  payload: FramePayload;
+  drawingHash: string;
+  score: number;
+  submittedAt: number;
+  expiresAt: number;
+  poolSize: number;
+  warning?: string | null;
 }
 
 export interface ValidationVote {
-  deviceId:    string;
-  entropy:     number;
+  deviceId: string;
+  entropy: number;
   transitions: number;
-  rle:         number;
-  score:       number;
-  signature:   string;   // "deviceId:candidateId:score" signé (simplifié pour V1)
-  votedAt:     number;
+  rle: number;
+  score: number;
+  signature: string;
+  votedAt: number;
 }
 
 export interface VoteMap {
   candidateId: string;
-  votes:       Record<string, ValidationVote>;  // deviceId → vote
+  votes: Record<string, ValidationVote>;
 }
 
-// ─── Clés Redis ───────────────────────────────────────────────────────────────
-
-const KEY_HEAD          = "chain:head";
-const KEY_LENGTH        = "chain:length";
-const KEY_CANDIDATE     = "candidate:current";
-const KEY_VOTES         = "candidate:votes";
-const blockKey  = (hash: string)  => `chain:block:${hash}`;
-const indexKey  = (n: number)     => `chain:index:${n}`;
+const KEY_HEAD = "chain:head";
+const KEY_LENGTH = "chain:length";
+const KEY_CANDIDATE = "candidate:current";
+const KEY_VOTES = "candidate:votes";
+const blockKey = (hash: string) => `chain:block:${hash}`;
+const indexKey = (n: number) => `chain:index:${n}`;
 
 const GENESIS_HASH = "0".repeat(64);
-const CANDIDATE_TTL_SEC = parseInt(process.env.CANDIDATE_TTL_SEC ?? "600"); // 10min pour valider
-const QUORUM_RATIO      = parseFloat(process.env.QUORUM_RATIO    ?? "0.51");
-
-// ─── Lecture état chaîne ──────────────────────────────────────────────────────
+const CANDIDATE_TTL_SEC = parseInt(process.env.CANDIDATE_TTL_SEC ?? "600");
+const QUORUM_RATIO = parseFloat(process.env.QUORUM_RATIO ?? "0.51");
 
 export async function getChainHead(): Promise<Block | null> {
   const raw = await redis.get(KEY_HEAD);
   if (!raw) return null;
-  try { return typeof raw === "string" ? JSON.parse(raw) : raw as Block; } catch { return null; }
+  try {
+    return typeof raw === "string" ? JSON.parse(raw) : (raw as Block);
+  } catch {
+    return null;
+  }
 }
 
 export async function getChainLength(): Promise<number> {
@@ -102,24 +105,27 @@ export async function getChainLength(): Promise<number> {
 export async function getBlockByHash(hash: string): Promise<Block | null> {
   const raw = await redis.get(blockKey(hash));
   if (!raw) return null;
-  try { return typeof raw === "string" ? JSON.parse(raw) : raw as Block; } catch { return null; }
+  try {
+    return typeof raw === "string" ? JSON.parse(raw) : (raw as Block);
+  } catch {
+    return null;
+  }
 }
-
-// ─── Candidat courant ─────────────────────────────────────────────────────────
 
 export async function getCurrentCandidate(): Promise<Candidate | null> {
   const raw = await redis.get(KEY_CANDIDATE);
   if (!raw) return null;
   try {
     const c: Candidate = typeof raw === "string" ? JSON.parse(raw) : raw;
-    // Vérifie expiration
     if (Date.now() > c.expiresAt) {
       await redis.del(KEY_CANDIDATE);
       await redis.del(KEY_VOTES);
       return null;
     }
     return c;
-  } catch { return null; }
+  } catch {
+    return null;
+  }
 }
 
 export async function setCandidate(candidate: Candidate): Promise<void> {
@@ -130,24 +136,19 @@ export async function setCandidate(candidate: Candidate): Promise<void> {
 }
 
 export async function clearCandidate(): Promise<void> {
-  await Promise.all([
-    redis.del(KEY_CANDIDATE),
-    redis.del(KEY_VOTES),
-  ]);
+  await Promise.all([redis.del(KEY_CANDIDATE), redis.del(KEY_VOTES)]);
 }
-
-// ─── Votes ────────────────────────────────────────────────────────────────────
 
 export async function getVotes(): Promise<VoteMap | null> {
   const raw = await redis.get(KEY_VOTES);
   if (!raw) return null;
-  try { return typeof raw === "string" ? JSON.parse(raw) : raw as VoteMap; } catch { return null; }
+  try {
+    return typeof raw === "string" ? JSON.parse(raw) : (raw as VoteMap);
+  } catch {
+    return null;
+  }
 }
 
-/**
- * Enregistre un vote d'un ESP validateur.
- * Retourne true si le quorum est atteint après ce vote.
- */
 export async function castVote(
   vote: ValidationVote,
   candidate: Candidate,
@@ -157,12 +158,11 @@ export async function castVote(
     return { quorumReached: false, voteCount: 0, needed: 0 };
   }
 
-  // Un device ne vote qu'une fois
   if (voteMap.votes[vote.deviceId]) {
     return {
       quorumReached: false,
-      voteCount:     Object.keys(voteMap.votes).length,
-      needed:        Math.ceil(candidate.poolSize * QUORUM_RATIO),
+      voteCount: Object.keys(voteMap.votes).length,
+      needed: Math.ceil(candidate.poolSize * QUORUM_RATIO),
     };
   }
 
@@ -170,98 +170,84 @@ export async function castVote(
   await redis.set(KEY_VOTES, JSON.stringify(voteMap), { ex: CANDIDATE_TTL_SEC });
 
   const voteCount = Object.keys(voteMap.votes).length;
-  const needed    = Math.ceil(candidate.poolSize * QUORUM_RATIO);
-
-  // Quorum minimal absolu : au moins 1 vote (réseau solo possible)
+  const needed = Math.ceil(candidate.poolSize * QUORUM_RATIO);
   const quorumReached = voteCount >= Math.max(1, needed);
 
   return { quorumReached, voteCount, needed };
 }
 
-// ─── Finalisation d'un bloc ───────────────────────────────────────────────────
-
-/**
- * Crée et persiste un nouveau bloc à partir d'un candidat validé.
- * Retourne le bloc créé.
- */
 export async function finalizeBlock(
   candidate: Candidate,
   votes: ValidationVote[],
   frameId: string,
 ): Promise<Block> {
-  const head   = await getChainHead();
+  const head = await getChainHead();
   const length = await getChainLength();
-
   const parentHash = head?.blockHash ?? GENESIS_HASH;
 
-  // Score final = moyenne des votes (robuste aux outliers)
   const avgScore = votes.reduce((s, v) => s + v.score, 0) / votes.length;
-  const finalScore = (candidate.score + avgScore) / 2; // moyenne serveur + validateurs
-
+  const finalScore = (candidate.score + avgScore) / 2;
   const displayTime = computeDisplayTime(finalScore, parentHash);
 
-  // Contenu canonique du bloc pour le hash
   const canonical = JSON.stringify({
     parentHash,
-    drawingHash:  candidate.drawingHash,
-    deviceId:     candidate.deviceId,
-    poolScreen:   candidate.poolScreen,
-    validatorIds: votes.map(v => v.deviceId).sort(),
-    score:        finalScore,
-    minedAt:      Date.now(),
+    drawingHash: candidate.drawingHash,
+    deviceId: candidate.deviceId,
+    poolScreen: candidate.poolScreen,
+    validatorIds: votes.map((v) => v.deviceId).sort(),
+    score: finalScore,
+    minedAt: Date.now(),
   });
 
   const blockHash = await sha256Hex(canonical);
 
   const block: Block = {
-    blockIndex:   length,
+    blockIndex: length,
     blockHash,
     parentHash,
-    drawingHash:  candidate.drawingHash,
-    deviceId:     candidate.deviceId,
-    artistName:   candidate.artistName,
-    poolScreen:   candidate.poolScreen,
-    validatorIds: votes.map(v => v.deviceId).sort(),
-    score:        finalScore,
+    drawingHash: candidate.drawingHash,
+    deviceId: candidate.deviceId,
+    artistName: candidate.artistName,
+    poolScreen: candidate.poolScreen,
+    validatorIds: votes.map((v) => v.deviceId).sort(),
+    score: finalScore,
     displayTime,
-    minedAt:      Date.now(),
+    minedAt: Date.now(),
     frameId,
   };
 
-  // Persistance : head + archive par hash + index
   await Promise.all([
-    redis.set(KEY_HEAD,           JSON.stringify(block)),         // permanent — la head n'expire pas
-    redis.set(blockKey(blockHash), JSON.stringify(block), { ex: 30 * 24 * 3600 }), // 30 jours
-    redis.set(indexKey(length),   blockHash, { ex: 30 * 24 * 3600 }),
-    redis.set(KEY_LENGTH,         String(length + 1)),
+    redis.set(KEY_HEAD, JSON.stringify(block)),
+    redis.set(blockKey(blockHash), JSON.stringify(block), { ex: 30 * 24 * 3600 }),
+    redis.set(indexKey(length), blockHash, { ex: 30 * 24 * 3600 }),
+    redis.set(KEY_LENGTH, String(length + 1)),
   ]);
 
-  console.log(`[chain] BLOC #${length} hash=${blockHash.slice(0, 12)}... score=${finalScore.toFixed(3)} display=${displayTime}s`);
+  console.log(
+    `[chain] BLOC #${length} hash=${blockHash.slice(0, 12)}... score=${finalScore.toFixed(3)} display=${displayTime}s`,
+  );
 
   return block;
 }
 
-// ─── Infos résumées pour les ESP ──────────────────────────────────────────────
-// L'ESP reçoit ça après chaque pull pour synchroniser son état de chaîne
-
 export interface ChainSummary {
-  blockIndex:   number;
-  blockHash:    string;  // les ESP stockent ça en EEPROM
-  displayTime:  number;
-  artistName:   string;
-  poolScreen:   string;
-  minedAt:      number;
+  blockIndex: number;
+  blockHash: string;
+  displayTime: number;
+  artistName: string;
+  poolScreen: string;
+  minedAt: number;
 }
 
 export async function getChainSummary(): Promise<ChainSummary | null> {
   const head = await getChainHead();
   if (!head) return null;
   return {
-    blockIndex:  head.blockIndex,
-    blockHash:   head.blockHash,
+    blockIndex: head.blockIndex,
+    blockHash: head.blockHash,
     displayTime: head.displayTime,
-    artistName:  head.artistName,
-    poolScreen:  head.poolScreen,
-    minedAt:     head.minedAt,
+    artistName: head.artistName,
+    poolScreen: head.poolScreen,
+    minedAt: head.minedAt,
   };
 }
