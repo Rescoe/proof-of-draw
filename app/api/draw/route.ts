@@ -8,7 +8,7 @@ import { sessionOwnsDevice } from "@/lib/session";
 import { getIP, forbidden } from "@/lib/rateLimit";
 import { redis } from "@/lib/redis";
 
-const DRAW_WINDOW_SEC = parseInt(process.env.DRAW_WINDOW_SEC ?? "900");
+const DRAW_WINDOW_SEC = parseInt(process.env.DRAW_WINDOW_SEC ?? "60");
 const ABUSE_STRIKES = parseInt(process.env.DRAW_LIMIT_PER_ROUND ?? "3");
 const BLACKLIST_TTL = parseInt(process.env.BLACKLIST_TTL_SECONDS ?? "604800");
 const MAX_BODY_BYTES = 20_000;
