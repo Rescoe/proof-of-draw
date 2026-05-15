@@ -63,16 +63,13 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ candidate: null });
   }
 
-  // ── 5. Vérifier que ce device fait partie de la pool concernée ─────────────
-  const poolMembers = await redis.smembers(`pool:screen:${candidate.poolScreen}`) as string[];
-  const isInPool = poolMembers.includes(deviceId);
+  // ── 5. Vérifier pool + vote en parallèle (O(1) chacun) ───────────────────
+  const [isInPool, voteMap] = await Promise.all([
+    redis.sismember(`pool:screen:${candidate.poolScreen}`, deviceId),
+    getVotes(),
+  ]);
 
-  // Si l'ESP n'est pas dans la pool du candidat, il peut quand même valider
-  // en tant que "témoin externe" mais avec un poids réduit (V1 : on les inclut)
-  // Note pour V2 : filtrer strictement par pool
-
-  // ── 6. Vérifier que ce device n'a pas déjà voté ───────────────────────────
-  const voteMap = await getVotes();
+  // ── 6. Déjà voté ? ────────────────────────────────────────────────────────
   if (voteMap && voteMap.candidateId === candidate.candidateId && voteMap.votes[deviceId]) {
     return NextResponse.json({
       candidate: null,
@@ -81,24 +78,20 @@ export async function GET(req: NextRequest) {
     });
   }
 
-  // ── 7. Retourner le candidat (sans le payload complet si externe à la pool) ─
-  // Pour économiser la bande passante, on envoie le payload complet uniquement
-  // aux ESP de la pool — les autres reçoivent juste le hash pour vérification.
+  // ── 7. Retourner le candidat ───────────────────────────────────────────────
+  // Payload complet uniquement pour les membres de la pool.
+  // Les non-membres ne reçoivent jamais pendingValidation via /api/pull,
+  // donc ce cas ne devrait pas se produire en pratique (garde-fou).
 
   const expiresIn = Math.ceil((candidate.expiresAt - Date.now()) / 1000);
 
   return NextResponse.json({
     candidate: {
-      candidateId: candidate.candidateId,
-      poolScreen:  candidate.poolScreen,
-      drawingHash: candidate.drawingHash,
+      candidateId:  candidate.candidateId,
+      poolScreen:   candidate.poolScreen,
       score_server: candidate.score,
-      submittedAt: candidate.submittedAt,
       expiresIn,
-      // Payload complet pour les membres de la pool (ils doivent afficher si validé)
-      // Payload null pour les témoins externes (ils valident sur hash uniquement)
-      payload: isInPool ? candidate.payload : null,
-      isPoolMember: isInPool,
+      payload:      isInPool ? candidate.payload : null,
     },
   });
 }

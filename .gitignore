@@ -58,3 +58,6 @@ next-env.d.ts
 # local temp files
 *.swp
 *.swo
+
+#Claude
+.claude

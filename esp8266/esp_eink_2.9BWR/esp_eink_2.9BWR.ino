@@ -45,8 +45,8 @@ const char* WIFI_PASSWORD = "Q2gueWg3UaYJo2VN7C";
 
 #define SERVER_URL      "https://proof-of-draw.vercel.app"
 #define SCREEN_TYPE     "eink29bwr"
-#define PULL_INTERVAL   60000UL // 1min// 900000UL   // 15 min
-#define VALIDATE_INTERVAL 120000UL // 2 min — check si candidat en attente
+#define PULL_INTERVAL   60000UL  // 1min
+#define VALIDATE_INTERVAL 30000UL // 30s — check si candidat en attente
 #define EINK_MIN_REFRESH_MS 10000UL
 
 // ─── EEPROM layout ─────────────────────────────────────────────────────────
@@ -891,128 +891,181 @@ void doValidate() {
     return;
   }
 
-  Serial.println("[VALIDATE] Début validation candidat: " + pendingCandidateId);
+  Serial.println("[VALIDATE] Début validation: " + pendingCandidateId);
+  Serial.printf("[VALIDATE] heap avant: %u\n", ESP.getFreeHeap());
 
+  // Libérer les buffers d'affichage pour maximiser le heap disponible
   free(blackBuf); blackBuf = nullptr;
   free(redBuf);   redBuf   = nullptr;
 
-  String resp;
-  bool ok = httpGet("/api/validate-candidate?deviceId=" + deviceId, resp);
+  // ─── Phase 1 : fetch + parsing streaming (évite une String de 13KB) ────────
+  // La réponse contient deux buffers base64 d'env. 6316 chars chacun (~13KB).
+  // On lit directement depuis le stream TLS au lieu de stocker dans une String,
+  // et on utilise un filtre ArduinoJson pour ne charger que les champs nécessaires.
 
-  if (!ok || resp.length() == 0) {
-    Serial.println("[VALIDATE] Echec fetch candidat ou réponse vide");
-    pendingCandidateId = "";
-    return;
-  }
+  String  candidateId  = "";
+  float   entropy      = 0.5f;
+  float   transitions  = 0.5f;
+  float   rle          = 0.5f;
+  float   score        = 0.5f;
+  bool    doVote       = false;
 
-  DynamicJsonDocument doc(4096);
-  DeserializationError err = deserializeJson(doc, resp);
-  if (err) {
-    Serial.print("[VALIDATE] JSON error: ");
-    Serial.println(err.c_str());
-    pendingCandidateId = "";
-    return;
-  }
+  {
+    WiFiClientSecure client;
+    client.setInsecure();
+    HTTPClient http;
 
-  if (doc["candidate"].isNull()) {
+    String url = String(SERVER_URL) + "/api/validate-candidate?deviceId=" + deviceId;
+    if (!http.begin(client, url)) {
+      Serial.println("[VALIDATE] begin() failed");
+      goto realloc_and_return;
+    }
+    http.setTimeout(20000);
+
+    int code = http.GET();
+    Serial.printf("[VALIDATE] GET → %d\n", code);
+
+    if (code != 200) {
+      http.end();
+      if (code == 429) {
+        Serial.println("[VALIDATE] Rate limit — retry plus tard");
+      } else {
+        Serial.printf("[VALIDATE] Echec HTTP code=%d\n", code);
+        pendingCandidateId = "";
+      }
+      goto realloc_and_return;
+    }
+
+    // Filtre : on ne charge que les champs utiles (évite d'allouer les strings inutiles)
+    StaticJsonDocument<128> filter;
+    filter["candidate"]["candidateId"]     = true;
+    filter["candidate"]["payload"]["black"] = true;
+    filter["candidate"]["payload"]["red"]   = true;
+    filter["alreadyVoted"]                  = true;
+
+    // ~14KB pour candidateId(36) + black(~6316) + red(~6316) + overhead ArduinoJson.
+    // Le document est dans ce scope : il est libéré avant le httpPost du vote.
+    DynamicJsonDocument doc(14336);
+    DeserializationError err = deserializeJson(doc, http.getStream(),
+                                               DeserializationOption::Filter(filter));
+    http.end();
+
+    Serial.printf("[VALIDATE] heap après parse: %u\n", ESP.getFreeHeap());
+
+    if (err) {
+      Serial.print("[VALIDATE] JSON error: ");
+      Serial.println(err.c_str());
+      pendingCandidateId = "";
+      goto realloc_and_return;
+    }
+
     if (doc["alreadyVoted"] | false) {
       Serial.println("[VALIDATE] Déjà voté pour ce candidat");
-    } else {
-      Serial.println("[VALIDATE] Plus de candidat actif");
-    }
-    pendingCandidateId = "";
-    return;
-  }
-
-  JsonObject cand = doc["candidate"];
-
-  if (cand["payload"].isNull()) {
-    Serial.println("[VALIDATE] Payload absent");
-    pendingCandidateId = "";
-    return;
-  }
-
-  String candidateId = cand["candidateId"] | "";
-  String blackB64 = cand["payload"]["black"] | "";
-  String redB64   = cand["payload"]["red"] | "";
-
-  if (candidateId.length() == 0) {
-    Serial.println("[VALIDATE] candidateId manquant");
-    pendingCandidateId = "";
-    return;
-  }
-
-  float score = 0.0f;
-  float entropy = 0.0f, transitions = 0.0f, rle = 0.0f;
-
-  if (blackB64.length() > 0 && redB64.length() > 0) {
-    static uint8_t tmpBlack[BUF_SIZE];
-    static uint8_t tmpRed[BUF_SIZE];
-
-    size_t bLen = base64Decode(blackB64.c_str(), blackB64.length(), tmpBlack, BUF_SIZE);
-    size_t rLen = base64Decode(redB64.c_str(),   redB64.length(),   tmpRed,   BUF_SIZE);
-
-    if (bLen == BUF_SIZE && rLen == BUF_SIZE) {
-      static uint8_t merged[BUF_SIZE];
-      for (size_t i = 0; i < BUF_SIZE; i++) merged[i] = tmpBlack[i] & tmpRed[i];
-
-      entropy     = computeEntropy(merged, BUF_SIZE);
-      transitions = computeTransitions(merged, IMG_W, IMG_H);
-      rle         = computeRLE(merged, BUF_SIZE);
-      score       = min(1.0f, entropy * 0.4f + transitions * 0.4f + rle * 0.2f);
-    } else {
-      Serial.println("[VALIDATE] Base64 invalide ou taille incorrecte");
-      score = 0.5f;
-      entropy = transitions = rle = 0.5f;
-    }
-  } else {
-    Serial.println("[VALIDATE] Payload absent, score neutre");
-    score = 0.5f;
-    entropy = transitions = rle = 0.5f;
-  }
-
-  String signature = signV1(candidateId, score);
-
-  char scoreStr[8], entStr[8], transStr[8], rleStr[8];
-  dtostrf(score, 1, 3, scoreStr);
-  dtostrf(entropy, 1, 3, entStr);
-  dtostrf(transitions, 1, 3, transStr);
-  dtostrf(rle, 1, 3, rleStr);
-
-  String body = "{\"deviceId\":\"" + deviceId + "\","
-                "\"candidateId\":\"" + candidateId + "\","
-                "\"entropy\":" + String(entStr) + ","
-                "\"transitions\":" + String(transStr) + ","
-                "\"rle\":" + String(rleStr) + ","
-                "\"score\":" + String(scoreStr) + ","
-                "\"signature\":\"" + signature + "\"}";
-
-  free(blackBuf); blackBuf = nullptr;
-  free(redBuf);   redBuf   = nullptr;
-
-  String vResp;
-  bool vOk = httpPost("/api/validation-result", body, vResp);
-
-  blackBuf = (uint8_t*)malloc(BUF_SIZE);
-  redBuf   = (uint8_t*)malloc(BUF_SIZE);
-  if (!blackBuf || !redBuf) {
-    ESP.restart();
-    return;
-  }
-
-  if (vOk) {
-    Serial.println("[VALIDATE] Vote soumis avec succès");
-    if (vResp.indexOf("\"blockMined\":true") >= 0) {
-      Serial.println("[VALIDATE] 🎉 BLOC MINÉ !");
-      consensusJustDisplayed = true;
       pendingCandidateId = "";
-      frameReady = true;
+      goto realloc_and_return;
     }
-  } else {
-    Serial.println("[VALIDATE] Echec envoi vote");
+
+    if (doc["candidate"].isNull()) {
+      Serial.println("[VALIDATE] Pas de candidat actif");
+      pendingCandidateId = "";
+      goto realloc_and_return;
+    }
+
+    JsonObject cand = doc["candidate"];
+    candidateId = cand["candidateId"] | "";
+
+    if (candidateId.length() == 0) {
+      Serial.println("[VALIDATE] candidateId absent dans la réponse");
+      pendingCandidateId = "";
+      goto realloc_and_return;
+    }
+
+    // Si le candidat a changé depuis le pull, on continue avec le nouveau
+    if (candidateId != pendingCandidateId) {
+      Serial.println("[VALIDATE] candidateId mis à jour: " + candidateId);
+    }
+
+    // ── Calcul métriques sur les buffers e-ink ──────────────────────────────
+    // Buffers statiques : dans .bss, pas dans le heap — pas d'impact sur malloc
+    String blackB64 = cand["payload"]["black"] | "";
+    String redB64   = cand["payload"]["red"]   | "";
+
+    if (blackB64.length() > 0 && redB64.length() > 0) {
+      static uint8_t tmpBlack[BUF_SIZE];
+      static uint8_t tmpRed[BUF_SIZE];
+      static uint8_t merged[BUF_SIZE];
+
+      size_t bLen = base64Decode(blackB64.c_str(), blackB64.length(), tmpBlack, BUF_SIZE);
+      size_t rLen = base64Decode(redB64.c_str(),   redB64.length(),   tmpRed,   BUF_SIZE);
+
+      if (bLen == BUF_SIZE && rLen == BUF_SIZE) {
+        for (size_t i = 0; i < BUF_SIZE; i++) merged[i] = tmpBlack[i] & tmpRed[i];
+
+        entropy     = computeEntropy(merged, BUF_SIZE);
+        transitions = computeTransitions(merged, IMG_W, IMG_H);
+        rle         = computeRLE(merged, BUF_SIZE);
+        score       = min(1.0f, entropy * 0.4f + transitions * 0.4f + rle * 0.2f);
+
+        Serial.printf("[VALIDATE] metrics entropy=%.3f transitions=%.3f rle=%.3f score=%.3f\n",
+                      entropy, transitions, rle, score);
+      } else {
+        Serial.printf("[VALIDATE] Base64 invalide bLen=%u rLen=%u expected=%u → score neutre\n",
+                      (unsigned)bLen, (unsigned)rLen, (unsigned)BUF_SIZE);
+      }
+    } else {
+      Serial.println("[VALIDATE] Payload absent → score neutre");
+    }
+
+    doVote = true;
+  }  // ← doc (14KB) libéré ici avant le POST
+
+  // ─── Phase 2 : soumission du vote ──────────────────────────────────────────
+  if (doVote) {
+    Serial.printf("[VALIDATE] heap avant vote: %u\n", ESP.getFreeHeap());
+
+    String signature = signV1(candidateId, score);
+
+    char scoreStr[8], entStr[8], transStr[8], rleStr[8];
+    dtostrf(score,       1, 3, scoreStr);
+    dtostrf(entropy,     1, 3, entStr);
+    dtostrf(transitions, 1, 3, transStr);
+    dtostrf(rle,         1, 3, rleStr);
+
+    String body = String("{\"deviceId\":\"")   + deviceId    + "\","
+                  "\"candidateId\":\""          + candidateId + "\","
+                  "\"entropy\":"                + entStr      + ","
+                  "\"transitions\":"            + transStr    + ","
+                  "\"rle\":"                    + rleStr      + ","
+                  "\"score\":"                  + scoreStr    + ","
+                  "\"signature\":\""            + signature   + "\"}";
+
+    String vResp;
+    bool vOk = httpPost("/api/validation-result", body, vResp);
+
+    if (vOk) {
+      Serial.println("[VALIDATE] Vote soumis");
+      if (vResp.indexOf("\"blockMined\":true") >= 0) {
+        Serial.println("[VALIDATE] BLOC MINE — pull immediat pour la frame");
+        consensusJustDisplayed = false;
+        frameReady = true;
+        lastPullMs = 0;  // force un pull immédiat dans le prochain loop()
+      }
+    } else {
+      Serial.println("[VALIDATE] Echec envoi vote");
+    }
   }
 
   pendingCandidateId = "";
+
+realloc_and_return:
+  blackBuf = (uint8_t*)malloc(BUF_SIZE);
+  redBuf   = (uint8_t*)malloc(BUF_SIZE);
+  if (!blackBuf || !redBuf) {
+    Serial.println("[VALIDATE] malloc failed — restart");
+    ESP.restart();
+  }
+  memset(blackBuf, 0xFF, BUF_SIZE);
+  memset(redBuf,   0xFF, BUF_SIZE);
 }
 
 

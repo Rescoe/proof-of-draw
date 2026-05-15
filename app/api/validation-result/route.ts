@@ -82,6 +82,12 @@ export async function POST(req: NextRequest) {
     const vote: ValidationVote = { deviceId: String(deviceId), entropy: Number(entropy), transitions: Number(transitions), rle: Number(rle), score: espScore, signature: String(signature ?? ""), votedAt: Date.now() };
     const { quorumReached, voteCount, needed } = await castVote(vote, candidate);
 
+    // voteCount===0 && needed===0 → voteMap absent ou candidateId désynchronisé
+    if (voteCount === 0 && needed === 0 && !quorumReached) {
+      console.warn(`[validation-result] voteMap manquant ou désynchronisé device=${deviceId} candidate=${candidateId}`);
+      return json({ error: "Vote non enregistré — candidat expiré ou désynchronisé", blockMined: false }, 409);
+    }
+
     console.log(`[validation-result] vote device=${deviceId} votes=${voteCount}/${needed} quorum=${quorumReached}`);
 
     if (quorumReached) {
