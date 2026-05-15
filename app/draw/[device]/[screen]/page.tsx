@@ -24,7 +24,7 @@ interface ImageImport {
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
-const DRAW_WINDOW_SEC  = 900;
+const DRAW_WINDOW_SEC  = 60;
 const MAX_HISTORY      = 50;
 const LOCALSTORAGE_KEY = (deviceId: string, screenId: string) =>
   `pod_cooldown_${deviceId}_${screenId}`;

@@ -343,38 +343,30 @@ bool httpPost(const String& path, const String& body, String& resp) {
   return code == 200;
 }
 
-
-bool httpGet(const String& path, String& resp) {
+bool httpGet(const String& path, String& resp, int* codeOut = nullptr) {
   WiFiClientSecure client;
   client.setInsecure();
+
   HTTPClient http;
-  http.begin(client, String(SERVER_URL) + path);
+  if (!http.begin(client, String(SERVER_URL) + path)) {
+    Serial.println("[HTTP GET] begin() failed");
+    return false;
+  }
+
   http.setTimeout(20000);
 
   int code = http.GET();
+  if (codeOut) *codeOut = code;
+
   resp = "";
-
   if (code > 0) {
-    int contentLength = http.getSize();
-    if (contentLength > 0) resp.reserve(min(contentLength, 16000));
-
-    WiFiClient* stream = http.getStreamPtr();
-    unsigned long timeout = millis();
-
-    while ((millis() - timeout) < 15000) {
-      if (stream->available()) {
-        char c = stream->read();
-        resp += c;
-        timeout = millis();
-        if (contentLength > 0 && (int)resp.length() >= contentLength) break;
-      } else if (!http.connected()) break;
-      yield();
-    }
+    resp = http.getString();
   }
 
   http.end();
+
   Serial.printf("[HTTP GET] %s → %d (%u bytes)\n", path.c_str(), code, resp.length());
-  return code == 200;
+  return code == 200 || code == 429;
 }
 
 // ─── PIXEL HELPERS (inchangés vs v1.5) ─────────────────────────────────────
@@ -708,16 +700,40 @@ void doPull() {
   Serial.printf("[HEAP] avant pull: %u bytes\n", ESP.getFreeHeap());
 
   String resp;
-  bool ok = httpGet("/api/pull?deviceId=" + deviceId, resp);
+  int httpCode = -1;
+  bool ok = httpGet("/api/pull?deviceId=" + deviceId, resp, &httpCode);
 
   blackBuf = (uint8_t*)malloc(BUF_SIZE);
   redBuf   = (uint8_t*)malloc(BUF_SIZE);
-  if (!blackBuf || !redBuf) { Serial.println("[PULL] malloc failed"); ESP.restart(); return; }
+  if (!blackBuf || !redBuf) {
+    Serial.println("[PULL] malloc failed");
+    ESP.restart();
+    return;
+  }
 
-  if (!ok) { Serial.println("[PULL] Echec HTTP"); return; }
+  if (httpCode == 429) {
+    int retrySec = 60;
 
-  // ── Parse chain summary ──────────────────────────────────────────────────
-  // Extraction manuelle pour éviter DynamicJsonDocument sur grosse réponse
+    int idx = resp.indexOf("\"retryAfter\":");
+    if (idx >= 0) {
+      retrySec = resp.substring(idx + 13).toInt();
+      if (retrySec <= 0) retrySec = 60;
+    }
+
+    Serial.printf("[PULL] 429 rate limit, retryAfter=%d s\n", retrySec);
+
+    unsigned long retryMs = (unsigned long)retrySec * 1000UL;
+    if (retryMs > PULL_INTERVAL) retryMs = PULL_INTERVAL;
+
+    lastPullMs = millis() - (PULL_INTERVAL - retryMs);
+    return;
+  }
+
+  if (!ok) {
+    Serial.println("[PULL] Echec HTTP");
+    return;
+  }
+
   auto extractStr = [&](const String& key) -> String {
     String search = "\"" + key + "\":\"";
     int s = resp.indexOf(search);
@@ -735,23 +751,20 @@ void doPull() {
     return resp.substring(s, s + 10).toInt();
   };
 
-  // Mise à jour état chaîne
   String newBlockHash = extractStr("blockHash");
   if (newBlockHash.length() > 0 && newBlockHash != currentBlockHash) {
-    currentBlockHash  = newBlockHash;
+    currentBlockHash = newBlockHash;
     currentBlockIndex = (int)extractInt("blockIndex");
     saveBlockHashToEEPROM(currentBlockHash);
     Serial.printf("[PULL] Nouveau bloc #%d hash=%s...\n", currentBlockIndex, currentBlockHash.substring(0, 12).c_str());
   }
 
-  // Candidat en attente de validation ?
   String pendId = extractStr("candidateId");
   if (pendId.length() > 0) {
     pendingCandidateId = pendId;
     Serial.println("[PULL] Candidat en attente: " + pendingCandidateId);
   }
 
-  // ── Gestion de la frame ───────────────────────────────────────────────────
   String frameSource = extractStr("frameSource");
 
   if (resp.indexOf("\"frame\":null") >= 0 || frameSource == "none") {
@@ -781,12 +794,12 @@ void doPull() {
   size_t redLen   = base64Decode(redB64.c_str(),   redB64.length(),   redBuf,   BUF_SIZE);
 
   if (blackLen != BUF_SIZE || redLen != BUF_SIZE) {
-    Serial.println("[PULL] Taille invalide");
-    memset(blackBuf, 0xFF, BUF_SIZE); memset(redBuf, 0xFF, BUF_SIZE);
+    Serial.printf("[PULL] Taille invalide black=%u red=%u expected=%u\n", (unsigned)blackLen, (unsigned)redLen, (unsigned)BUF_SIZE);
+    memset(blackBuf, 0xFF, BUF_SIZE);
+    memset(redBuf,   0xFF, BUF_SIZE);
     return;
   }
 
-  // Afficher info bloc si c'est une frame consensus
   if (frameSource == "consensus") {
     String artist = extractStr("artistName");
     if (artist.length() > 0) {
@@ -799,15 +812,17 @@ void doPull() {
     delay(3000);
   }
 
-  if (!refreshDisplay()) return;
+  if (!refreshDisplay()) {
+    Serial.println("[PULL] refreshDisplay failed");
+    return;
+  }
 
   hasDisplayedFrame = true;
-  lastFrameId       = frameId;
+  lastFrameId = frameId;
   ackFrame(frameId);
 
   Serial.printf("[PULL] ✅ Frame affichée source=%s frameId=%s\n", frameSource.c_str(), frameId.c_str());
 }
-
 // ─── VALIDATION ─────────────────────────────────────────────────────────────
 void doValidate() {
   if (pendingCandidateId.length() == 0) return;
