@@ -708,113 +708,176 @@ void doPull() {
 
   Serial.printf("[HEAP] avant pull: %u bytes\n", ESP.getFreeHeap());
 
-  String resp;
-  int httpCode = -1;
-  bool ok = httpGet("/api/pull?deviceId=" + deviceId, resp, &httpCode);
+  // Variables qui doivent survivre hors du bloc HTTP/JSON
+  String pullFrameSource   = "none";
+  String pullFrameId       = "";
+  String pullArtist        = "";
+  String newBlockHash      = "";
+  int    newBlockIndex     = -1;
+  String newCandId         = "";
+  bool   frameComplete     = false;
+  bool   frameAlreadyShown = false;
 
-  if (httpCode == 429) {
-    int retrySec = 60;
-    DynamicJsonDocument rateDoc(256);
-    if (deserializeJson(rateDoc, resp) == DeserializationError::Ok) {
-      retrySec = rateDoc["retryAfter"] | 60;
-      if (retrySec <= 0) retrySec = 60;
+  // ── Bloc HTTP + JSON (scope fermé pour libérer TLS + doc avant malloc pixel) ──
+  {
+    WiFiClientSecure client;
+    client.setInsecure();
+
+    HTTPClient http;
+    String url = String(SERVER_URL) + "/api/pull?deviceId=" + deviceId;
+
+    if (!http.begin(client, url)) {
+      Serial.println("[PULL] begin() failed");
+      return;
+    }
+    http.setTimeout(20000);
+
+    int code = http.GET();
+    Serial.printf("[HTTP GET] /api/pull → %d\n", code);
+
+    if (code == 429) {
+      // Réponse courte : getString() safe
+      String rresp = http.getString();
+      http.end();
+      int retrySec = 60;
+      DynamicJsonDocument rateDoc(256);
+      if (deserializeJson(rateDoc, rresp) == DeserializationError::Ok) {
+        retrySec = rateDoc["retryAfter"] | 60;
+        if (retrySec <= 0) retrySec = 60;
+      }
+      Serial.printf("[PULL] 429 rate limit, retryAfter=%d s\n", retrySec);
+      unsigned long retryMs = (unsigned long)retrySec * 1000UL;
+      if (retryMs > PULL_INTERVAL) retryMs = PULL_INTERVAL;
+      lastPullMs = millis() - (PULL_INTERVAL - retryMs);
+      return;
     }
 
-    Serial.printf("[PULL] 429 rate limit, retryAfter=%d s\n", retrySec);
-    unsigned long retryMs = (unsigned long)retrySec * 1000UL;
-    if (retryMs > PULL_INTERVAL) retryMs = PULL_INTERVAL;
-    lastPullMs = millis() - (PULL_INTERVAL - retryMs);
-    return;
-  }
-
-  if (!ok || resp.length() == 0) {
-    Serial.println("[PULL] Echec HTTP ou réponse vide");
-    return;
-  }
-
-  DynamicJsonDocument doc(4096);
-  DeserializationError err = deserializeJson(doc, resp);
-  if (err) {
-    Serial.print("[PULL] JSON error: ");
-    Serial.println(err.c_str());
-    return;
-  }
-
-  JsonObject chain = doc["chain"];
-  if (!chain.isNull()) {
-    String newBlockHash = chain["blockHash"] | "";
-    if (newBlockHash.length() > 0 && newBlockHash != currentBlockHash) {
-      currentBlockHash = newBlockHash;
-      currentBlockIndex = chain["blockIndex"] | -1;
-      saveBlockHashToEEPROM(currentBlockHash);
-      Serial.printf("[PULL] Nouveau bloc #%d hash=%s...\n",
-                    currentBlockIndex, currentBlockHash.substring(0, 12).c_str());
+    if (code != 200) {
+      http.end();
+      if (code > 0) Serial.printf("[PULL] HTTP error: %d\n", code);
+      else          Serial.println("[PULL] Echec connexion");
+      return;
     }
-  }
 
-  JsonObject pend = doc["pendingValidation"];
-  if (!pend.isNull()) {
-    pendingCandidateId = pend["candidateId"] | "";
-    if (pendingCandidateId.length() > 0) {
-      Serial.println("[PULL] Candidat en attente: " + pendingCandidateId);
+    // Filtre ArduinoJson : ne charge que les champs utiles depuis le stream TLS
+    StaticJsonDocument<512> filter;
+    filter["chain"]["blockHash"]               = true;
+    filter["chain"]["blockIndex"]              = true;
+    filter["pendingValidation"]["candidateId"] = true;
+    filter["frameSource"]                      = true;
+    filter["frame"]["frameId"]                 = true;
+    filter["frame"]["screen"]                  = true;
+    filter["frame"]["black"]                   = true;
+    filter["frame"]["red"]                     = true;
+    filter["frame"]["artistName"]              = true;
+
+    // 14336 bytes pour contenir black + red base64 (~12.6KB) + overhead
+    DynamicJsonDocument doc(14336);
+    DeserializationError err = deserializeJson(doc, http.getStream(),
+                                               DeserializationOption::Filter(filter));
+    http.end(); // ← Libère ~16KB de buffers TLS BearSSL immédiatement
+
+    if (err) {
+      Serial.print("[PULL] JSON error: ");
+      Serial.println(err.c_str());
+      return;
     }
+
+    // ── Chaîne ──
+    JsonObject chain = doc["chain"];
+    if (!chain.isNull()) {
+      newBlockHash  = chain["blockHash"]  | "";
+      newBlockIndex = chain["blockIndex"] | -1;
+    }
+
+    // ── Candidat en attente ──
+    JsonObject pend = doc["pendingValidation"];
+    if (!pend.isNull()) {
+      newCandId = pend["candidateId"] | "";
+    }
+
+    // ── Frame ──
+    pullFrameSource = doc["frameSource"] | "none";
+    JsonObject frame = doc["frame"];
+
+    if (!frame.isNull() && pullFrameSource != "none") {
+      pullFrameId = frame["frameId"] | "";
+
+      if (pullFrameId.length() > 0 && pullFrameId == lastFrameId) {
+        // Déjà affichée — pas besoin de re-décoder
+        frameAlreadyShown = true;
+      } else {
+        const char* screenPtr = frame["screen"] | "";
+        const char* blackB64  = frame["black"]  | "";
+        const char* redB64    = frame["red"]    | "";
+        size_t blackB64Len = strlen(blackB64);
+        size_t redB64Len   = strlen(redB64);
+
+        if (String(screenPtr) == SCREEN_TYPE && blackB64Len > 0 && redB64Len > 0) {
+          pullArtist = frame["artistName"] | "";
+
+          // TLS déjà libéré : on peut allouer les buffers pixel
+          blackBuf = (uint8_t*)malloc(BUF_SIZE);
+          redBuf   = (uint8_t*)malloc(BUF_SIZE);
+          if (!blackBuf || !redBuf) {
+            Serial.println("[PULL] malloc failed");
+            ESP.restart();
+            return;
+          }
+          memset(blackBuf, 0xFF, BUF_SIZE);
+          memset(redBuf,   0xFF, BUF_SIZE);
+
+          // const char* valides tant que doc est en scope (décodage avant fermeture de scope)
+          size_t bLen = base64Decode(blackB64, blackB64Len, blackBuf, BUF_SIZE);
+          size_t rLen = base64Decode(redB64,   redB64Len,   redBuf,   BUF_SIZE);
+
+          if (bLen == BUF_SIZE && rLen == BUF_SIZE) {
+            frameComplete = true;
+          } else {
+            Serial.printf("[PULL] Taille invalide black=%u red=%u expected=%u\n",
+                          (unsigned)bLen, (unsigned)rLen, (unsigned)BUF_SIZE);
+            free(blackBuf); blackBuf = nullptr;
+            free(redBuf);   redBuf   = nullptr;
+          }
+        } else {
+          Serial.println("[PULL] Frame incompatible screen=" + String(screenPtr));
+        }
+      }
+    }
+  } // ← doc détruit ici (14KB de pool ArduinoJson libérés)
+
+  // ── Mise à jour état chaîne ──────────────────────────────────────────────
+  if (newBlockHash.length() > 0 && newBlockHash != currentBlockHash) {
+    currentBlockHash  = newBlockHash;
+    currentBlockIndex = newBlockIndex;
+    saveBlockHashToEEPROM(currentBlockHash);
+    Serial.printf("[PULL] Nouveau bloc #%d hash=%s...\n",
+                  currentBlockIndex, currentBlockHash.substring(0, 12).c_str());
   }
 
-  String frameSource = doc["frameSource"] | "none";
-  JsonObject frame = doc["frame"];
-
-  if (frame.isNull() || frameSource == "none") {
-    Serial.println("[PULL] Aucune frame (source: " + frameSource + ")");
-    frameReady = false;
-    return;
+  if (newCandId.length() > 0) {
+    pendingCandidateId = newCandId;
+    Serial.println("[PULL] Candidat en attente: " + pendingCandidateId);
   }
 
-  String frameId = frame["frameId"] | "";
-  if (frameId.length() > 0 && frameId == lastFrameId) {
+  // ── Frame déjà affichée ───────────────────────────────────────────────────
+  if (frameAlreadyShown) {
     Serial.println("[PULL] Frame déjà affichée (frameId identique)");
     frameReady = true;
     return;
   }
 
-  String screen   = frame["screen"] | "";
-  String blackB64 = frame["black"] | "";
-  String redB64   = frame["red"] | "";
-
-  if (screen != SCREEN_TYPE || blackB64.isEmpty() || redB64.isEmpty()) {
-    Serial.println("[PULL] Frame incomplète ou screen incompatible");
-    frameReady = false;
-    return;
-  }
-
-  blackBuf = (uint8_t*)malloc(BUF_SIZE);
-  redBuf   = (uint8_t*)malloc(BUF_SIZE);
-  if (!blackBuf || !redBuf) {
-    Serial.println("[PULL] malloc failed");
-    ESP.restart();
-    return;
-  }
-
-  memset(blackBuf, 0xFF, BUF_SIZE);
-  memset(redBuf,   0xFF, BUF_SIZE);
-
-  size_t blackLen = base64Decode(blackB64.c_str(), blackB64.length(), blackBuf, BUF_SIZE);
-  size_t redLen   = base64Decode(redB64.c_str(),   redB64.length(),   redBuf,   BUF_SIZE);
-
-  if (blackLen != BUF_SIZE || redLen != BUF_SIZE) {
-    Serial.printf("[PULL] Taille invalide black=%u red=%u expected=%u\n",
-                  (unsigned)blackLen, (unsigned)redLen, (unsigned)BUF_SIZE);
-    free(blackBuf); blackBuf = nullptr;
-    free(redBuf);   redBuf   = nullptr;
-    frameReady = false;
-    return;
-  }
-
-  if (frameSource == "consensus") {
-    String artist = frame["artistName"] | "";
-    if (artist.length() > 0) {
-      Serial.println("[PULL] Dessin validé de: " + artist + " bloc #" + String(currentBlockIndex));
+  // ── Aucune frame disponible ───────────────────────────────────────────────
+  if (!frameComplete) {
+    if (pullFrameSource == "none") {
+      Serial.println("[PULL] Aucune frame");
     }
+    frameReady = false;
+    return;
+  }
 
+  // ── Affichage ─────────────────────────────────────────────────────────────
+  if (pullFrameSource == "consensus" || pullFrameSource == "personal") {
     if (hasDisplayedFrame) {
       clearDisplayWhite();
       delay(3000);
@@ -822,44 +885,33 @@ void doPull() {
 
     if (refreshDisplay()) {
       hasDisplayedFrame = true;
-      lastFrameId = frameId;
-      frameReady = true;
-      ackFrame(frameId);
-      consensusJustDisplayed = true;
-      pendingCandidateId = "";
-      Serial.printf("[PULL] ✅ Frame consensus affichée frameId=%s\n", frameId.c_str());
+      lastFrameId       = pullFrameId;
+      frameReady        = true;
+      ackFrame(pullFrameId);
+
+      if (pullFrameSource == "consensus") {
+        consensusJustDisplayed = true;
+        pendingCandidateId     = "";
+        if (pullArtist.length() > 0) {
+          Serial.println("[PULL] Dessin validé de: " + pullArtist
+                         + " bloc #" + String(currentBlockIndex));
+        }
+        Serial.printf("[PULL] ✅ Frame consensus affichée frameId=%s\n",
+                      pullFrameId.c_str());
+      } else {
+        consensusJustDisplayed = false;
+        pendingCandidateId     = "";
+        Serial.printf("[PULL] ✅ Frame personal affichée frameId=%s\n",
+                      pullFrameId.c_str());
+      }
     } else {
       Serial.println("[PULL] refreshDisplay failed");
       frameReady = false;
     }
-
-    return;
+  } else {
+    Serial.println("[PULL] frameSource inconnu: " + pullFrameSource);
+    frameReady = false;
   }
-
-  if (frameSource == "personal") {
-    if (hasDisplayedFrame) {
-      clearDisplayWhite();
-      delay(3000);
-    }
-
-    if (refreshDisplay()) {
-      hasDisplayedFrame = true;
-      lastFrameId = frameId;
-      frameReady = true;
-      ackFrame(frameId);
-      pendingCandidateId = "";
-      consensusJustDisplayed = false;
-      Serial.printf("[PULL] ✅ Frame personal affichée frameId=%s\n", frameId.c_str());
-    } else {
-      Serial.println("[PULL] refreshDisplay failed");
-      frameReady = false;
-    }
-
-    return;
-  }
-
-  Serial.println("[PULL] frameSource inconnu: " + frameSource);
-  frameReady = false;
 }
 
 
