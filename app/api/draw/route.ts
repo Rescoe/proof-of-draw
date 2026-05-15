@@ -1,11 +1,6 @@
 // app/api/draw/route.ts — v3 validation queue
-// Changement principal v2→v3 :
-//   Au lieu de broadcaster directement la frame, on soumet le dessin
-//   à /api/submit-candidate pour validation par le réseau d'ESP.
-//   L'affichage n'est plus immédiat — il attend le quorum de validation.
-//
-// Si BYPASS_VALIDATION=true (env), le dessin est broadcasté directement
-// (mode dégradé si tous les ESP validateurs sont hors ligne).
+// Le dessin est soumis au réseau de validation.
+// Si BYPASS_VALIDATION=true, broadcast direct.
 
 import { NextRequest, NextResponse } from "next/server";
 import { getDevice, incrementFramesSent } from "@/lib/deviceStore";
@@ -52,11 +47,9 @@ async function strikeIP(ip: string, reason: string): Promise<boolean> {
 function getBaseUrl(req: NextRequest): string {
   const envBase = process.env.NEXT_PUBLIC_BASE_URL?.trim();
   if (envBase) return envBase.replace(/\/$/, "");
-
   const proto = req.headers.get("x-forwarded-proto") ?? "https";
   const host = req.headers.get("x-forwarded-host") ?? req.headers.get("host");
-  if (!host) return "https://proof-of-draw.vercel.app";
-  return `${proto}://${host}`;
+  return host ? `${proto}://${host}` : "https://proof-of-draw.vercel.app";
 }
 
 async function broadcastDirect(
@@ -170,8 +163,7 @@ export async function POST(req: NextRequest) {
 
   try {
     const candidateBody = { deviceId, screen, black, red, buffer };
-    const baseUrl = getBaseUrl(req);
-    const submitUrl = new URL("/api/submit-candidate", baseUrl).toString();
+    const submitUrl = new URL("/api/submit-candidate", getBaseUrl(req)).toString();
 
     const candidateRes = await fetch(submitUrl, {
       method: "POST",
@@ -185,19 +177,6 @@ export async function POST(req: NextRequest) {
     const candidateData = await candidateRes.json().catch(() => ({}));
 
     if (!candidateRes.ok) {
-      if (candidateRes.status === 422) {
-        await redis.del(lockKey(deviceId));
-        return NextResponse.json(
-          {
-            error: candidateData.error ?? "Dessin trop simple",
-            score: candidateData.score,
-            minRequired: candidateData.minRequired,
-            nextDrawIn: 0,
-          },
-          { status: 422 },
-        );
-      }
-
       if (candidateRes.status === 409) {
         return NextResponse.json({
           ok: true,
@@ -217,6 +196,7 @@ export async function POST(req: NextRequest) {
       validation: "pending",
       candidateId: candidateData.candidateId,
       score: candidateData.score,
+      warning: candidateData.warning ?? null,
       metrics: candidateData.metrics,
       poolSize: candidateData.poolSize,
       message: `Dessin soumis au réseau (score: ${(candidateData.score ?? 0).toFixed(3)}). En attente de validation par ${candidateData.poolSize ?? 0} ESP.`,
