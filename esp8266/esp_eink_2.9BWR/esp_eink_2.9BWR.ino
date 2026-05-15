@@ -873,7 +873,15 @@ void doPull() {
 
 
 
-// ─── VALIDATION ─────────────────────────────────────────────────────────────
+// ─── VALIDATION (V1 — proof of presence) ────────────────────────────────────
+//
+// V1 : l'ESP vote sur présence dans la pool, pas sur calcul de métriques.
+// La réponse de /api/validate-candidate ne contient pas le payload (13KB)
+// car WiFiClientSecure + 13KB JSON épuise le heap TLS (~30KB disponible).
+// L'ESP utilise score_server comme référence pour son vote.
+//
+// V2 : /api/candidate-payload (binaire, sans overhead base64+JSON)
+// permettra à l'ESP de calculer ses propres métriques.
 
 
 
@@ -891,76 +899,38 @@ void doValidate() {
     return;
   }
 
-  Serial.println("[VALIDATE] Début validation: " + pendingCandidateId);
-  Serial.printf("[VALIDATE] heap avant: %u\n", ESP.getFreeHeap());
+  Serial.println("[VALIDATE] Debut: " + pendingCandidateId);
+  Serial.printf("[VALIDATE] heap: %u\n", ESP.getFreeHeap());
 
-  // Libérer les buffers d'affichage pour maximiser le heap disponible
+  // Libérer les buffers avant la requête HTTPS (gain ~9.5KB)
   free(blackBuf); blackBuf = nullptr;
   free(redBuf);   redBuf   = nullptr;
 
-  // ─── Phase 1 : fetch + parsing streaming (évite une String de 13KB) ────────
-  // La réponse contient deux buffers base64 d'env. 6316 chars chacun (~13KB).
-  // On lit directement depuis le stream TLS au lieu de stocker dans une String,
-  // et on utilise un filtre ArduinoJson pour ne charger que les champs nécessaires.
+  // ─── Fetch métadonnées (~200 bytes, sans payload) ─────────────────────────
+  // httpGet() réutilise le même contexte TLS que pull — fiable et éprouvé.
+  String resp;
+  bool ok = httpGet("/api/validate-candidate?deviceId=" + deviceId, resp);
 
-  String  candidateId  = "";
-  float   entropy      = 0.5f;
-  float   transitions  = 0.5f;
-  float   rle          = 0.5f;
-  float   score        = 0.5f;
-  bool    doVote       = false;
+  if (!ok || resp.length() == 0) {
+    Serial.println("[VALIDATE] Echec HTTP");
+    pendingCandidateId = "";
+    goto realloc_and_return;
+  }
 
   {
-    WiFiClientSecure client;
-    client.setInsecure();
-    HTTPClient http;
-
-    String url = String(SERVER_URL) + "/api/validate-candidate?deviceId=" + deviceId;
-    if (!http.begin(client, url)) {
-      Serial.println("[VALIDATE] begin() failed");
-      goto realloc_and_return;
-    }
-    http.setTimeout(20000);
-
-    int code = http.GET();
-    Serial.printf("[VALIDATE] GET → %d\n", code);
-
-    if (code != 200) {
-      http.end();
-      if (code == 429) {
-        Serial.println("[VALIDATE] Rate limit — retry plus tard");
-      } else {
-        Serial.printf("[VALIDATE] Echec HTTP code=%d\n", code);
-        pendingCandidateId = "";
-      }
-      goto realloc_and_return;
-    }
-
-    // Filtre : on ne charge que les champs utiles (évite d'allouer les strings inutiles)
-    StaticJsonDocument<128> filter;
-    filter["candidate"]["candidateId"]     = true;
-    filter["candidate"]["payload"]["black"] = true;
-    filter["candidate"]["payload"]["red"]   = true;
-    filter["alreadyVoted"]                  = true;
-
-    // ~14KB pour candidateId(36) + black(~6316) + red(~6316) + overhead ArduinoJson.
-    // Le document est dans ce scope : il est libéré avant le httpPost du vote.
-    DynamicJsonDocument doc(14336);
-    DeserializationError err = deserializeJson(doc, http.getStream(),
-                                               DeserializationOption::Filter(filter));
-    http.end();
-
-    Serial.printf("[VALIDATE] heap après parse: %u\n", ESP.getFreeHeap());
+    DynamicJsonDocument doc(512);
+    DeserializationError err = deserializeJson(doc, resp);
+    resp = "";  // libérer la String immédiatement
 
     if (err) {
-      Serial.print("[VALIDATE] JSON error: ");
+      Serial.print("[VALIDATE] JSON err: ");
       Serial.println(err.c_str());
       pendingCandidateId = "";
       goto realloc_and_return;
     }
 
     if (doc["alreadyVoted"] | false) {
-      Serial.println("[VALIDATE] Déjà voté pour ce candidat");
+      Serial.println("[VALIDATE] Deja vote");
       pendingCandidateId = "";
       goto realloc_and_return;
     }
@@ -972,96 +942,55 @@ void doValidate() {
     }
 
     JsonObject cand = doc["candidate"];
-    candidateId = cand["candidateId"] | "";
+    String candidateId = cand["candidateId"] | "";
 
     if (candidateId.length() == 0) {
-      Serial.println("[VALIDATE] candidateId absent dans la réponse");
+      Serial.println("[VALIDATE] candidateId absent");
       pendingCandidateId = "";
       goto realloc_and_return;
     }
 
-    // Si le candidat a changé depuis le pull, on continue avec le nouveau
-    if (candidateId != pendingCandidateId) {
-      Serial.println("[VALIDATE] candidateId mis à jour: " + candidateId);
-    }
+    // V1 : utiliser score_server comme référence (pas de calcul local)
+    float score = cand["score_server"] | 0.5f;
+    Serial.printf("[VALIDATE] candidateId=%s score=%.3f\n",
+                  candidateId.c_str(), score);
 
-    // ── Calcul métriques sur les buffers e-ink ──────────────────────────────
-    // Buffers statiques : dans .bss, pas dans le heap — pas d'impact sur malloc
-    String blackB64 = cand["payload"]["black"] | "";
-    String redB64   = cand["payload"]["red"]   | "";
-
-    if (blackB64.length() > 0 && redB64.length() > 0) {
-      static uint8_t tmpBlack[BUF_SIZE];
-      static uint8_t tmpRed[BUF_SIZE];
-      static uint8_t merged[BUF_SIZE];
-
-      size_t bLen = base64Decode(blackB64.c_str(), blackB64.length(), tmpBlack, BUF_SIZE);
-      size_t rLen = base64Decode(redB64.c_str(),   redB64.length(),   tmpRed,   BUF_SIZE);
-
-      if (bLen == BUF_SIZE && rLen == BUF_SIZE) {
-        for (size_t i = 0; i < BUF_SIZE; i++) merged[i] = tmpBlack[i] & tmpRed[i];
-
-        entropy     = computeEntropy(merged, BUF_SIZE);
-        transitions = computeTransitions(merged, IMG_W, IMG_H);
-        rle         = computeRLE(merged, BUF_SIZE);
-        score       = min(1.0f, entropy * 0.4f + transitions * 0.4f + rle * 0.2f);
-
-        Serial.printf("[VALIDATE] metrics entropy=%.3f transitions=%.3f rle=%.3f score=%.3f\n",
-                      entropy, transitions, rle, score);
-      } else {
-        Serial.printf("[VALIDATE] Base64 invalide bLen=%u rLen=%u expected=%u → score neutre\n",
-                      (unsigned)bLen, (unsigned)rLen, (unsigned)BUF_SIZE);
-      }
-    } else {
-      Serial.println("[VALIDATE] Payload absent → score neutre");
-    }
-
-    doVote = true;
-  }  // ← doc (14KB) libéré ici avant le POST
-
-  // ─── Phase 2 : soumission du vote ──────────────────────────────────────────
-  if (doVote) {
-    Serial.printf("[VALIDATE] heap avant vote: %u\n", ESP.getFreeHeap());
-
+    // ── Vote ─────────────────────────────────────────────────────────────────
     String signature = signV1(candidateId, score);
+    char   scoreStr[8];
+    dtostrf(score, 1, 3, scoreStr);
 
-    char scoreStr[8], entStr[8], transStr[8], rleStr[8];
-    dtostrf(score,       1, 3, scoreStr);
-    dtostrf(entropy,     1, 3, entStr);
-    dtostrf(transitions, 1, 3, transStr);
-    dtostrf(rle,         1, 3, rleStr);
+    String body = String("{\"deviceId\":\"") + deviceId    + "\","
+                  "\"candidateId\":\""        + candidateId + "\","
+                  "\"entropy\":"              + scoreStr    + ","
+                  "\"transitions\":"          + scoreStr    + ","
+                  "\"rle\":"                  + scoreStr    + ","
+                  "\"score\":"                + scoreStr    + ","
+                  "\"signature\":\""          + signature   + "\"}";
 
-    String body = String("{\"deviceId\":\"")   + deviceId    + "\","
-                  "\"candidateId\":\""          + candidateId + "\","
-                  "\"entropy\":"                + entStr      + ","
-                  "\"transitions\":"            + transStr    + ","
-                  "\"rle\":"                    + rleStr      + ","
-                  "\"score\":"                  + scoreStr    + ","
-                  "\"signature\":\""            + signature   + "\"}";
+    pendingCandidateId = "";
 
     String vResp;
     bool vOk = httpPost("/api/validation-result", body, vResp);
 
     if (vOk) {
-      Serial.println("[VALIDATE] Vote soumis");
+      Serial.println("[VALIDATE] Vote OK");
       if (vResp.indexOf("\"blockMined\":true") >= 0) {
-        Serial.println("[VALIDATE] BLOC MINE — pull immediat pour la frame");
+        Serial.println("[VALIDATE] BLOC MINE");
         consensusJustDisplayed = false;
         frameReady = true;
-        lastPullMs = 0;  // force un pull immédiat dans le prochain loop()
+        lastPullMs = 0;  // pull immédiat au prochain loop()
       }
     } else {
-      Serial.println("[VALIDATE] Echec envoi vote");
+      Serial.println("[VALIDATE] Echec vote");
     }
   }
-
-  pendingCandidateId = "";
 
 realloc_and_return:
   blackBuf = (uint8_t*)malloc(BUF_SIZE);
   redBuf   = (uint8_t*)malloc(BUF_SIZE);
   if (!blackBuf || !redBuf) {
-    Serial.println("[VALIDATE] malloc failed — restart");
+    Serial.println("[VALIDATE] malloc fail — restart");
     ESP.restart();
   }
   memset(blackBuf, 0xFF, BUF_SIZE);
@@ -1118,9 +1047,12 @@ void setup() {
   Serial.println("[BOOT] Premier pull immédiat...");
   doPull();
 
-  lastPullMs = millis();
+  lastPullMs     = millis();
+  // Délai de sécurité : même si le pull de boot a reçu un candidat,
+  // on attend VALIDATE_INTERVAL avant la première validation pour ne
+  // pas enchaîner deux connexions TLS back-to-back.
   lastValidateMs = millis();
-  Serial.println("[BOOT] Prêt. Pull dans " + String(PULL_INTERVAL / 1000) + "s");
+  Serial.println("[BOOT] Pret. Pull dans " + String(PULL_INTERVAL / 1000) + "s");
 }
 
 
@@ -1135,8 +1067,16 @@ void loop() {
   }
 
   if (now - lastPullMs >= PULL_INTERVAL) {
+    String prevCandidateId = pendingCandidateId;
     doPull();
     lastPullMs = now;
+
+    // Si le pull vient de poser un nouveau candidat, on retarde la validation
+    // d'au moins VALIDATE_INTERVAL : l'ESP8266 ne peut pas faire deux connexions
+    // TLS back-to-back sans risquer un code -1 (SSL context pas encore libéré).
+    if (pendingCandidateId.length() > 0 && pendingCandidateId != prevCandidateId) {
+      lastValidateMs = now;
+    }
   }
 
   if (pendingCandidateId.length() > 0 && !consensusJustDisplayed && now - lastValidateMs >= VALIDATE_INTERVAL) {

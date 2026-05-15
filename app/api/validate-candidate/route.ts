@@ -1,14 +1,15 @@
 // app/api/validate-candidate/route.ts
-// Les ESP validateurs viennent chercher ici le dessin candidat à valider.
+// Les ESP validateurs viennent chercher ici les métadonnées du candidat.
 //
-// Flux ESP :
+// Flux ESP (V1) :
 //   GET /api/validate-candidate?deviceId=dev_XXXXXXXX
-//     → reçoit { candidate: { candidateId, payload, score_server } }
-//     → calcule localement entropie + transitions + RLE
-//     → POST /api/validation-result avec les métriques signées
+//     → reçoit { candidate: { candidateId, score_server, expiresIn } }
+//     → vote avec score_server comme valeur de référence
+//     → POST /api/validation-result
 //
-// Rate limit : 1 requête par minute par device (les ESP ne doivent pas poller
-// trop souvent — ils sont notifiés via le pull classique qu'un candidat existe)
+// Pas de payload dans la réponse (V1) : l'ESP vote sur présence dans la pool.
+// V2 ajoutera /api/candidate-payload (binaire, sans overhead base64+JSON)
+// pour que l'ESP puisse calculer ses propres métriques indépendamment.
 //
 // Un ESP ne peut valider que si :
 //   1. Il est enregistré et actif (lastPing < 30min)
@@ -78,20 +79,23 @@ export async function GET(req: NextRequest) {
     });
   }
 
-  // ── 7. Retourner le candidat ───────────────────────────────────────────────
-  // Payload complet uniquement pour les membres de la pool.
-  // Les non-membres ne reçoivent jamais pendingValidation via /api/pull,
-  // donc ce cas ne devrait pas se produire en pratique (garde-fou).
+  // ── 7. Retourner les métadonnées du candidat (sans payload) ──────────────
+  // Le payload n'est pas envoyé : 13KB de base64 épuiserait le heap TLS de
+  // l'ESP8266. En V1, l'ESP vote avec score_server comme référence.
+  // En V2 : endpoint /api/candidate-payload (binaire) pour les métriques réelles.
+
+  if (!isInPool) {
+    // Ne devrait pas arriver (pull envoie pendingValidation seulement aux membres)
+    return NextResponse.json({ candidate: null });
+  }
 
   const expiresIn = Math.ceil((candidate.expiresAt - Date.now()) / 1000);
 
   return NextResponse.json({
     candidate: {
       candidateId:  candidate.candidateId,
-      poolScreen:   candidate.poolScreen,
       score_server: candidate.score,
       expiresIn,
-      payload:      isInPool ? candidate.payload : null,
     },
   });
 }
