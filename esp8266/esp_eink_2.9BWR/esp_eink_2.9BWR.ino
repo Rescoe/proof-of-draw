@@ -61,6 +61,8 @@ const char* WIFI_PASSWORD = "Q2gueWg3UaYJo2VN7C";
 #define EEPROM_FLAG_OFF     64
 #define EEPROM_PUBKEY_OFF   65
 #define KEY_GENERATED_FLAG  0x01
+#define EEPROM_ONBOARDING_OFF 97
+#define ONBOARDING_SHOWN_FLAG 0x01
 
 // ─── ÉCRAN ─────────────────────────────────────────────────────────────────
 #define IMG_W    296
@@ -98,6 +100,15 @@ unsigned long lastValidateMs = 0;
 unsigned long lastPullMs     = 0;
 
 // ─── EEPROM helpers ────────────────────────────────────────────────────────
+
+bool onboardingAlreadyShown() {
+  return EEPROM.read(EEPROM_ONBOARDING_OFF) == ONBOARDING_SHOWN_FLAG;
+}
+
+void setOnboardingShown() {
+  EEPROM.write(EEPROM_ONBOARDING_OFF, ONBOARDING_SHOWN_FLAG);
+  EEPROM.commit();
+}
 
 void eepromInit() {
   EEPROM.begin(EEPROM_SIZE);
@@ -303,19 +314,35 @@ float computeComplexityScore(const uint8_t* blackBufPtr, const uint8_t* redBufPt
 
 // ─── HTTP HELPERS ───────────────────────────────────────────────────────────
 
+
 bool httpPost(const String& path, const String& body, String& resp) {
   WiFiClientSecure client;
   client.setInsecure();
+
   HTTPClient http;
-  http.begin(client, String(SERVER_URL) + path);
+  String url = String(SERVER_URL) + path;
+
+  Serial.println("[HTTP POST] URL: " + url);
+  Serial.println("[HTTP POST] body len: " + String(body.length()));
+
+  if (!http.begin(client, url)) {
+    Serial.println("[HTTP POST] begin() failed");
+    return false;
+  }
+
   http.addHeader("Content-Type", "application/json");
   http.setTimeout(15000);
+
   int code = http.POST(body);
   resp = (code > 0) ? http.getString() : "";
-  http.end();
+
   Serial.printf("[HTTP POST] %s → %d\n", path.c_str(), code);
+  if (code > 0) Serial.println("[HTTP POST] resp: " + resp);
+
+  http.end();
   return code == 200;
 }
+
 
 bool httpGet(const String& path, String& resp) {
   WiFiClientSecure client;
@@ -556,23 +583,75 @@ bool ackFrame(const String& frameId) {
   return httpPost("/api/ack-frame", body, resp);
 }
 
+void displayKeyMaterialOnce() {
+  memset(blackBuf, 0xFF, BUF_SIZE);
+  memset(redBuf,   0xFF, BUF_SIZE);
+
+  String pubHex = bytesToHex(publicKey, 32);
+  String privHex = bytesToHex(privateKey, 32);
+
+  Serial.println(pubHex);
+  Serial.println(privHex);
+
+  String title = "PROOF-OF-DRAW KEYS";
+  String warn1 = "SAVE THESE KEYS NOW";
+  String warn2 = "PRIVATE KEY SHOWN ONCE";
+
+  auto center = [](const String& s, int maxX = IMG_W) {
+    return max(0, (maxX - (int)(s.length() * 6)) / 2);
+  };
+
+  drawText(blackBuf, center(title), 4, title);
+  for (int x = 10; x < IMG_W - 10; x++) setPixel(blackBuf, x, 14);
+
+  drawText(blackBuf, 4, 22, "PUB:");
+  for (int line = 0; line < 4; line++) {
+    String chunk = pubHex.substring(line * 16, line * 16 + 16);
+    drawText(blackBuf, 30, 22 + line * 10, chunk);
+  }
+
+  drawText(blackBuf, 4, 68, "PRIV:");
+  for (int line = 0; line < 4; line++) {
+    String chunk = privHex.substring(line * 16, line * 16 + 16);
+    drawText(redBuf, 30, 68 + line * 10, chunk);
+  }
+
+  for (int x = 10; x < IMG_W - 10; x++) setPixel(blackBuf, x, 114);
+  drawText(redBuf, center(warn1), 118, warn1);
+  drawText(redBuf, center(warn2), 128 - 10, warn2);
+
+  refreshDisplay();
+  delay(60000);
+}
+
+
 // ─── REGISTER ───────────────────────────────────────────────────────────────
 bool doRegister() {
-  String mac = WiFi.macAddress(); mac.toLowerCase();
-  String pubHex = keysLoaded ? bytesToHex(publicKey, 32) : "";
+  String mac = WiFi.macAddress();
+  mac.toLowerCase();
 
+  String pubHex = keysLoaded ? bytesToHex(publicKey, 32) : "";
   String body = "{\"mac\":\"" + mac + "\",\"screens\":[\"" + SCREEN_TYPE + "\"],"
                 "\"firmware\":\"2.0\",\"publicKey\":\"" + pubHex + "\"}";
   String resp;
 
-  Serial.printf("[HEAP] avant register: %u bytes\n", ESP.getFreeHeap());
-  if (!httpPost("/api/register", body, resp)) {
-    Serial.println("[REGISTER] Echec HTTP"); return false;
-  }
-  Serial.printf("[HEAP] après register: %u bytes\n", ESP.getFreeHeap());
+  Serial.printf("[REGISTER] heap avant: %u\n", ESP.getFreeHeap());
 
-  DynamicJsonDocument doc(512);
-  if (deserializeJson(doc, resp)) { Serial.println("[REGISTER] JSON error"); return false; }
+  if (!httpPost("/api/register", body, resp)) {
+    Serial.println("[REGISTER] Echec HTTP");
+    return false;
+  }
+
+  Serial.printf("[REGISTER] heap après: %u\n", ESP.getFreeHeap());
+  Serial.println("[REGISTER] resp: " + resp);
+
+  DynamicJsonDocument doc(768);
+  DeserializationError err = deserializeJson(doc, resp);
+  if (err) {
+    Serial.print("[REGISTER] JSON error: ");
+    Serial.println(err.c_str());
+    return false;
+  }
 
   deviceId   = doc["deviceId"].as<String>();
   pairCode   = doc["pairCode"].as<String>();
@@ -581,23 +660,41 @@ bool doRegister() {
   registered = true;
 
   Serial.println("[REGISTER] deviceId: " + deviceId);
-  Serial.println("[REGISTER] paired  : " + String(paired ? "oui" : "non"));
+  Serial.println("[REGISTER] paired: " + String(paired ? "oui" : "non"));
 
-  // Init e-ink après register (libère RAM TLS)
   if (!einkReady) {
+    Serial.printf("[HEAP] avant malloc: %u bytes\n", ESP.getFreeHeap());
     blackBuf = (uint8_t*)malloc(BUF_SIZE);
     redBuf   = (uint8_t*)malloc(BUF_SIZE);
-    if (!blackBuf || !redBuf) { Serial.println("[EINK] malloc failed"); registered = false; return false; }
+    if (!blackBuf || !redBuf) {
+      Serial.println("[EINK] ERREUR malloc — heap insuffisant");
+      registered = false;
+      return false;
+    }
     memset(blackBuf, 0xFF, BUF_SIZE);
     memset(redBuf,   0xFF, BUF_SIZE);
     einkReady = true;
+    Serial.printf("[HEAP] après malloc: %u bytes\n", ESP.getFreeHeap());
   }
 
-  if (!paired) {
+  if (!paired && !onboardingAlreadyShown()) {
+    if (!keysAlreadyGenerated()) {
+      generateKeys();
+    }
+
+    displayKeyMaterialOnce();   // clé publique + clé privée, une seule fois
     String onboardUrl = String(SERVER_URL) + "/onboard?code=" + pairCode;
     displayQR(onboardUrl, pairCode, mac);
-    Serial.println("[REGISTER] Restart dans 3s...");
-    delay(3000); ESP.restart();
+
+    setOnboardingShown();
+
+    Serial.println("[REGISTER] Restart dans 3s pour libérer heap TLS...");
+    delay(3000);
+    ESP.restart();
+  } else if (!paired) {
+    Serial.println("[REGISTER] Déjà en onboarding, attente du pairing serveur...");
+  } else {
+    Serial.println("[REGISTER] Déjà appairé, pas de QR");
   }
 
   return true;
@@ -835,64 +932,62 @@ void doValidate() {
 }
 
 // ─── SETUP / LOOP ───────────────────────────────────────────────────────────
-
 void setup() {
   Serial.begin(115200);
   Serial.println("\n[BOOT] Proof-of-Draw ESP v2.0");
 
   eepromInit();
 
+  WiFi.mode(WIFI_STA);
   WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+
   Serial.print("[WIFI] Connexion");
   int i = 0;
-  while (WiFi.status() != WL_CONNECTED && i++ < 40) { delay(500); Serial.print("."); }
-  Serial.println("\n[WIFI] IP: " + WiFi.localIP().toString());
+  while (WiFi.status() != WL_CONNECTED && i++ < 40) {
+    delay(500);
+    Serial.print(".");
+  }
+  Serial.println();
+  Serial.println("[WIFI] IP: " + WiFi.localIP().toString());
   Serial.printf("[HEAP] après WiFi: %u bytes\n", ESP.getFreeHeap());
 
-  // Chargement ou génération des clés
   if (keysAlreadyGenerated()) {
     loadKeysFromEEPROM();
     Serial.println("[KEYS] Clés chargées depuis EEPROM");
     Serial.println("[KEYS] Public: " + bytesToHex(publicKey, 32));
   }
-  // Les clés seront générées après le register (quand einkReady=true)
 
-  // Restaure le blockHash depuis EEPROM
   currentBlockHash = loadBlockHashFromEEPROM();
   if (currentBlockHash.length() > 0) {
     Serial.println("[CHAIN] BlockHash restauré: " + currentBlockHash);
   }
 
-  // Register
-  while (!registered) { doRegister(); if (!registered) delay(5000); }
-
-  // Génération des clés si pas encore fait (après register = après init e-ink)
-  if (!keysAlreadyGenerated()) {
-    generateKeys();
-    displayPublicKey();  // affiche sur e-ink — unique occasion
-
-    // Re-register avec la clé publique
-    registered = false;
-    while (!registered) { doRegister(); if (!registered) delay(5000); }
+  while (!registered) {
+    if (doRegister()) break;
+    delay(5000);
   }
 
-  lastPullMs     = millis();
+  lastPullMs = millis();
   lastValidateMs = millis();
   Serial.println("[BOOT] Prêt. Pull dans " + String(PULL_INTERVAL / 1000) + "s");
 }
 
+
 void loop() {
   unsigned long now = millis();
 
-  if (!registered) { doRegister(); delay(5000); return; }
+  if (!registered) {
+    if (!doRegister()) {
+      delay(5000);
+      return;
+    }
+  }
 
-  // Pull toutes les 15min
   if (now - lastPullMs >= PULL_INTERVAL) {
     doPull();
     lastPullMs = now;
   }
 
-  // Check validation toutes les 2min si un candidat est en attente
   if (pendingCandidateId.length() > 0 && now - lastValidateMs >= VALIDATE_INTERVAL) {
     doValidate();
     lastValidateMs = now;
