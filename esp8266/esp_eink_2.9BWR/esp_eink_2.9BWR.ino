@@ -45,7 +45,7 @@ const char* WIFI_PASSWORD = "Q2gueWg3UaYJo2VN7C";
 
 #define SERVER_URL      "https://proof-of-draw.vercel.app"
 #define SCREEN_TYPE     "eink29bwr"
-#define PULL_INTERVAL   900000UL   // 15 min
+#define PULL_INTERVAL   60000UL // 1min// 900000UL   // 15 min
 #define VALIDATE_INTERVAL 120000UL // 2 min — check si candidat en attente
 #define EINK_MIN_REFRESH_MS 10000UL
 
@@ -967,11 +967,13 @@ void setup() {
     delay(5000);
   }
 
+  Serial.println("[BOOT] Premier pull immédiat...");
+  doPull();
+
   lastPullMs = millis();
   lastValidateMs = millis();
   Serial.println("[BOOT] Prêt. Pull dans " + String(PULL_INTERVAL / 1000) + "s");
 }
-
 
 void loop() {
   unsigned long now = millis();

@@ -14,6 +14,7 @@
 //   1. Il est enregistré et actif (lastPing < 30min)
 //   2. Il fait partie de la pool du screen candidat
 //   3. Il n'a pas déjà voté pour ce candidat
+// app/api/validate-candidate/route.ts
 
 import { NextRequest, NextResponse } from "next/server";
 import { redis } from "@/lib/redis";
@@ -25,25 +26,22 @@ const DEVICE_ID_REGEX = /^dev_[A-Z0-9]{8}$/;
 const ACTIVE_WINDOW_MS = 30 * 60 * 1000;
 
 export async function GET(req: NextRequest) {
-  const ip       = getIP(req);
+  const ip = getIP(req);
   const deviceId = new URL(req.url).searchParams.get("deviceId");
 
   if (!deviceId || !DEVICE_ID_REGEX.test(deviceId)) {
     return NextResponse.json({ error: "deviceId invalide" }, { status: 400 });
   }
 
-  // ── 1. Blacklist ───────────────────────────────────────────────────────────
   if (await isBlacklisted(ip, deviceId)) return forbidden("Accès refusé");
 
-  // ── 2. Rate limit : 1/min par device ──────────────────────────────────────
   const rlKey = `rl:validate-candidate:${deviceId}`;
   const count = await redis.incr(rlKey);
   if (count === 1) await redis.expire(rlKey, 60);
-  if (count > 4) { // 4 requêtes/min max
+  if (count > 4) {
     return NextResponse.json({ error: "Trop de requêtes" }, { status: 429 });
   }
 
-  // ── 3. Device valide et actif ──────────────────────────────────────────────
   const device = await getDevice(deviceId);
   if (!device) {
     return NextResponse.json({ error: "Device inconnu" }, { status: 404 });
@@ -57,23 +55,23 @@ export async function GET(req: NextRequest) {
     });
   }
 
-  // ── 4. Candidat courant ────────────────────────────────────────────────────
   const candidate = await getCurrentCandidate();
   if (!candidate) {
+    console.log(`[validate-candidate] device=${deviceId} no_active_candidate`);
     return NextResponse.json({ candidate: null });
   }
 
-  // ── 5. Vérifier que ce device fait partie de la pool concernée ─────────────
-  const poolMembers = await redis.smembers(`pool:screen:${candidate.poolScreen}`) as string[];
+  const poolMembers = (await redis.smembers(`pool:screen:${candidate.poolScreen}`)) as string[];
   const isInPool = poolMembers.includes(deviceId);
 
-  // Si l'ESP n'est pas dans la pool du candidat, il peut quand même valider
-  // en tant que "témoin externe" mais avec un poids réduit (V1 : on les inclut)
-  // Note pour V2 : filtrer strictement par pool
-
-  // ── 6. Vérifier que ce device n'a pas déjà voté ───────────────────────────
   const voteMap = await getVotes();
-  if (voteMap && voteMap.candidateId === candidate.candidateId && voteMap.votes[deviceId]) {
+  const alreadyVoted = !!(voteMap && voteMap.candidateId === candidate.candidateId && voteMap.votes[deviceId]);
+
+  console.log(
+    `[validate-candidate] device=${deviceId} candidate=${candidate.candidateId} inPool=${isInPool} alreadyVoted=${alreadyVoted} poolSize=${candidate.poolSize} warning=${candidate.warning ?? "none"}`
+  );
+
+  if (alreadyVoted) {
     return NextResponse.json({
       candidate: null,
       alreadyVoted: true,
@@ -81,22 +79,17 @@ export async function GET(req: NextRequest) {
     });
   }
 
-  // ── 7. Retourner le candidat (sans le payload complet si externe à la pool) ─
-  // Pour économiser la bande passante, on envoie le payload complet uniquement
-  // aux ESP de la pool — les autres reçoivent juste le hash pour vérification.
-
   const expiresIn = Math.ceil((candidate.expiresAt - Date.now()) / 1000);
 
   return NextResponse.json({
     candidate: {
       candidateId: candidate.candidateId,
-      poolScreen:  candidate.poolScreen,
+      poolScreen: candidate.poolScreen,
       drawingHash: candidate.drawingHash,
       score_server: candidate.score,
       submittedAt: candidate.submittedAt,
       expiresIn,
-      // Payload complet pour les membres de la pool (ils doivent afficher si validé)
-      // Payload null pour les témoins externes (ils valident sur hash uniquement)
+      warning: candidate.warning ?? null,
       payload: isInPool ? candidate.payload : null,
       isPoolMember: isInPool,
     },
