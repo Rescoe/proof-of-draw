@@ -731,6 +731,10 @@ void doPull() {
       return;
     }
     http.setTimeout(20000);
+    // HTTP/1.0 empêche Vercel d'utiliser Transfer-Encoding: chunked.
+    // Sans ça, getStream() reçoit "1ea\r\n{..." au lieu de "{..." → InvalidInput.
+    // getString() gère le chunked mais ne peut pas allouer 12KB en heap fragmenté.
+    http.useHTTP10(true);
 
     int code = http.GET();
     Serial.printf("[HTTP GET] /api/pull → %d\n", code);
@@ -759,22 +763,11 @@ void doPull() {
       return;
     }
 
-    // Filtre ArduinoJson : ne charge que les champs utiles depuis le stream TLS
-    StaticJsonDocument<512> filter;
-    filter["chain"]["blockHash"]               = true;
-    filter["chain"]["blockIndex"]              = true;
-    filter["pendingValidation"]["candidateId"] = true;
-    filter["frameSource"]                      = true;
-    filter["frame"]["frameId"]                 = true;
-    filter["frame"]["screen"]                  = true;
-    filter["frame"]["black"]                   = true;
-    filter["frame"]["red"]                     = true;
-    filter["frame"]["artistName"]              = true;
-
-    // 14336 bytes pour contenir black + red base64 (~12.6KB) + overhead
-    DynamicJsonDocument doc(14336);
-    DeserializationError err = deserializeJson(doc, http.getStream(),
-                                               DeserializationOption::Filter(filter));
+    // Parse sans filtre : réponse sans frame ~400 bytes, avec frame ~13KB.
+    // 15360 bytes couvrent les deux cas (black+red base64 ~12.6KB + overhead JSON).
+    // Le filtre ArduinoJson provoquait un bug silencieux (pendingValidation ignoré).
+    DynamicJsonDocument doc(15360);
+    DeserializationError err = deserializeJson(doc, http.getStream());
     http.end(); // ← Libère ~16KB de buffers TLS BearSSL immédiatement
 
     if (err) {
@@ -814,7 +807,8 @@ void doPull() {
         size_t redB64Len   = strlen(redB64);
 
         if (String(screenPtr) == SCREEN_TYPE && blackB64Len > 0 && redB64Len > 0) {
-          pullArtist = frame["artistName"] | "";
+          // artistName est dans _block (enrichedPayload) ou à la racine selon version serveur
+          pullArtist = frame["_block"]["artistName"] | frame["artistName"] | "";
 
           // TLS déjà libéré : on peut allouer les buffers pixel
           blackBuf = (uint8_t*)malloc(BUF_SIZE);
@@ -844,7 +838,7 @@ void doPull() {
         }
       }
     }
-  } // ← doc détruit ici (14KB de pool ArduinoJson libérés)
+  } // ← doc détruit ici (15KB de pool ArduinoJson libérés)
 
   // ── Mise à jour état chaîne ──────────────────────────────────────────────
   if (newBlockHash.length() > 0 && newBlockHash != currentBlockHash) {
