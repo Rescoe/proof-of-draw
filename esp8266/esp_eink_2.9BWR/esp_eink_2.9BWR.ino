@@ -99,6 +99,8 @@ String pendingCandidateId = "";
 unsigned long lastValidateMs = 0;
 unsigned long lastPullMs     = 0;
 
+bool consensusJustDisplayed = false;
+
 // ─── EEPROM helpers ────────────────────────────────────────────────────────
 
 bool onboardingAlreadyShown() {
@@ -693,6 +695,13 @@ bool doRegister() {
 }
 
 // ─── PULL ───────────────────────────────────────────────────────────────────
+
+
+
+
+
+
+
 void doPull() {
   free(blackBuf); blackBuf = nullptr;
   free(redBuf);   redBuf   = nullptr;
@@ -703,87 +712,85 @@ void doPull() {
   int httpCode = -1;
   bool ok = httpGet("/api/pull?deviceId=" + deviceId, resp, &httpCode);
 
+  if (httpCode == 429) {
+    int retrySec = 60;
+    DynamicJsonDocument rateDoc(256);
+    if (deserializeJson(rateDoc, resp) == DeserializationError::Ok) {
+      retrySec = rateDoc["retryAfter"] | 60;
+      if (retrySec <= 0) retrySec = 60;
+    }
+
+    Serial.printf("[PULL] 429 rate limit, retryAfter=%d s\n", retrySec);
+    unsigned long retryMs = (unsigned long)retrySec * 1000UL;
+    if (retryMs > PULL_INTERVAL) retryMs = PULL_INTERVAL;
+    lastPullMs = millis() - (PULL_INTERVAL - retryMs);
+    return;
+  }
+
+  if (!ok || resp.length() == 0) {
+    Serial.println("[PULL] Echec HTTP ou réponse vide");
+    return;
+  }
+
+  DynamicJsonDocument doc(4096);
+  DeserializationError err = deserializeJson(doc, resp);
+  if (err) {
+    Serial.print("[PULL] JSON error: ");
+    Serial.println(err.c_str());
+    return;
+  }
+
+  JsonObject chain = doc["chain"];
+  if (!chain.isNull()) {
+    String newBlockHash = chain["blockHash"] | "";
+    if (newBlockHash.length() > 0 && newBlockHash != currentBlockHash) {
+      currentBlockHash = newBlockHash;
+      currentBlockIndex = chain["blockIndex"] | -1;
+      saveBlockHashToEEPROM(currentBlockHash);
+      Serial.printf("[PULL] Nouveau bloc #%d hash=%s...\n",
+                    currentBlockIndex, currentBlockHash.substring(0, 12).c_str());
+    }
+  }
+
+  JsonObject pend = doc["pendingValidation"];
+  if (!pend.isNull()) {
+    pendingCandidateId = pend["candidateId"] | "";
+    if (pendingCandidateId.length() > 0) {
+      Serial.println("[PULL] Candidat en attente: " + pendingCandidateId);
+    }
+  }
+
+  String frameSource = doc["frameSource"] | "none";
+  JsonObject frame = doc["frame"];
+
+  if (frame.isNull() || frameSource == "none") {
+    Serial.println("[PULL] Aucune frame (source: " + frameSource + ")");
+    frameReady = false;
+    return;
+  }
+
+  String frameId = frame["frameId"] | "";
+  if (frameId.length() > 0 && frameId == lastFrameId) {
+    Serial.println("[PULL] Frame déjà affichée (frameId identique)");
+    frameReady = true;
+    return;
+  }
+
+  String screen   = frame["screen"] | "";
+  String blackB64 = frame["black"] | "";
+  String redB64   = frame["red"] | "";
+
+  if (screen != SCREEN_TYPE || blackB64.isEmpty() || redB64.isEmpty()) {
+    Serial.println("[PULL] Frame incomplète ou screen incompatible");
+    frameReady = false;
+    return;
+  }
+
   blackBuf = (uint8_t*)malloc(BUF_SIZE);
   redBuf   = (uint8_t*)malloc(BUF_SIZE);
   if (!blackBuf || !redBuf) {
     Serial.println("[PULL] malloc failed");
     ESP.restart();
-    return;
-  }
-
-  if (httpCode == 429) {
-    int retrySec = 60;
-
-    int idx = resp.indexOf("\"retryAfter\":");
-    if (idx >= 0) {
-      retrySec = resp.substring(idx + 13).toInt();
-      if (retrySec <= 0) retrySec = 60;
-    }
-
-    Serial.printf("[PULL] 429 rate limit, retryAfter=%d s\n", retrySec);
-
-    unsigned long retryMs = (unsigned long)retrySec * 1000UL;
-    if (retryMs > PULL_INTERVAL) retryMs = PULL_INTERVAL;
-
-    lastPullMs = millis() - (PULL_INTERVAL - retryMs);
-    return;
-  }
-
-  if (!ok) {
-    Serial.println("[PULL] Echec HTTP");
-    return;
-  }
-
-  auto extractStr = [&](const String& key) -> String {
-    String search = "\"" + key + "\":\"";
-    int s = resp.indexOf(search);
-    if (s < 0) return "";
-    s += search.length();
-    int e = resp.indexOf("\"", s);
-    return e < 0 ? "" : resp.substring(s, e);
-  };
-
-  auto extractInt = [&](const String& key) -> long {
-    String search = "\"" + key + "\":";
-    int s = resp.indexOf(search);
-    if (s < 0) return -1;
-    s += search.length();
-    return resp.substring(s, s + 10).toInt();
-  };
-
-  String newBlockHash = extractStr("blockHash");
-  if (newBlockHash.length() > 0 && newBlockHash != currentBlockHash) {
-    currentBlockHash = newBlockHash;
-    currentBlockIndex = (int)extractInt("blockIndex");
-    saveBlockHashToEEPROM(currentBlockHash);
-    Serial.printf("[PULL] Nouveau bloc #%d hash=%s...\n", currentBlockIndex, currentBlockHash.substring(0, 12).c_str());
-  }
-
-  String pendId = extractStr("candidateId");
-  if (pendId.length() > 0) {
-    pendingCandidateId = pendId;
-    Serial.println("[PULL] Candidat en attente: " + pendingCandidateId);
-  }
-
-  String frameSource = extractStr("frameSource");
-
-  if (resp.indexOf("\"frame\":null") >= 0 || frameSource == "none") {
-    Serial.println("[PULL] Aucune frame (source: " + frameSource + ")");
-    return;
-  }
-
-  String frameId  = extractStr("frameId");
-  String screen   = extractStr("screen");
-  String blackB64 = extractStr("black");
-  String redB64   = extractStr("red");
-
-  if (screen != SCREEN_TYPE || blackB64.isEmpty() || redB64.isEmpty()) {
-    Serial.println("[PULL] Frame incomplète ou screen incompatible");
-    return;
-  }
-
-  if (frameId.length() > 0 && frameId == lastFrameId) {
-    Serial.println("[PULL] Frame déjà affichée (frameId identique)");
     return;
   }
 
@@ -794,83 +801,140 @@ void doPull() {
   size_t redLen   = base64Decode(redB64.c_str(),   redB64.length(),   redBuf,   BUF_SIZE);
 
   if (blackLen != BUF_SIZE || redLen != BUF_SIZE) {
-    Serial.printf("[PULL] Taille invalide black=%u red=%u expected=%u\n", (unsigned)blackLen, (unsigned)redLen, (unsigned)BUF_SIZE);
-    memset(blackBuf, 0xFF, BUF_SIZE);
-    memset(redBuf,   0xFF, BUF_SIZE);
+    Serial.printf("[PULL] Taille invalide black=%u red=%u expected=%u\n",
+                  (unsigned)blackLen, (unsigned)redLen, (unsigned)BUF_SIZE);
+    free(blackBuf); blackBuf = nullptr;
+    free(redBuf);   redBuf   = nullptr;
+    frameReady = false;
     return;
   }
 
   if (frameSource == "consensus") {
-    String artist = extractStr("artistName");
+    String artist = frame["artistName"] | "";
     if (artist.length() > 0) {
       Serial.println("[PULL] Dessin validé de: " + artist + " bloc #" + String(currentBlockIndex));
     }
-  }
 
-  if (hasDisplayedFrame) {
-    clearDisplayWhite();
-    delay(3000);
-  }
+    if (hasDisplayedFrame) {
+      clearDisplayWhite();
+      delay(3000);
+    }
 
-  if (!refreshDisplay()) {
-    Serial.println("[PULL] refreshDisplay failed");
+    if (refreshDisplay()) {
+      hasDisplayedFrame = true;
+      lastFrameId = frameId;
+      frameReady = true;
+      ackFrame(frameId);
+      consensusJustDisplayed = true;
+      pendingCandidateId = "";
+      Serial.printf("[PULL] ✅ Frame consensus affichée frameId=%s\n", frameId.c_str());
+    } else {
+      Serial.println("[PULL] refreshDisplay failed");
+      frameReady = false;
+    }
+
     return;
   }
 
-  hasDisplayedFrame = true;
-  lastFrameId = frameId;
-  ackFrame(frameId);
+  if (frameSource == "personal") {
+    if (hasDisplayedFrame) {
+      clearDisplayWhite();
+      delay(3000);
+    }
 
-  Serial.printf("[PULL] ✅ Frame affichée source=%s frameId=%s\n", frameSource.c_str(), frameId.c_str());
+    if (refreshDisplay()) {
+      hasDisplayedFrame = true;
+      lastFrameId = frameId;
+      frameReady = true;
+      ackFrame(frameId);
+      pendingCandidateId = "";
+      consensusJustDisplayed = false;
+      Serial.printf("[PULL] ✅ Frame personal affichée frameId=%s\n", frameId.c_str());
+    } else {
+      Serial.println("[PULL] refreshDisplay failed");
+      frameReady = false;
+    }
+
+    return;
+  }
+
+  Serial.println("[PULL] frameSource inconnu: " + frameSource);
+  frameReady = false;
 }
+
+
+
+
+
+
+
+
+
+
+
+
 // ─── VALIDATION ─────────────────────────────────────────────────────────────
+
+
+
+
+
+
+
+
+
 void doValidate() {
   if (pendingCandidateId.length() == 0) return;
+  if (consensusJustDisplayed) {
+    pendingCandidateId = "";
+    consensusJustDisplayed = false;
+    return;
+  }
 
   Serial.println("[VALIDATE] Début validation candidat: " + pendingCandidateId);
 
-  // 1. Récupérer le candidat
   free(blackBuf); blackBuf = nullptr;
   free(redBuf);   redBuf   = nullptr;
 
   String resp;
   bool ok = httpGet("/api/validate-candidate?deviceId=" + deviceId, resp);
 
-  blackBuf = (uint8_t*)malloc(BUF_SIZE);
-  redBuf   = (uint8_t*)malloc(BUF_SIZE);
-  if (!blackBuf || !redBuf) { ESP.restart(); return; }
-
-  if (!ok) {
-    Serial.println("[VALIDATE] Echec fetch candidat");
+  if (!ok || resp.length() == 0) {
+    Serial.println("[VALIDATE] Echec fetch candidat ou réponse vide");
     pendingCandidateId = "";
     return;
   }
 
-  if (resp.indexOf("\"candidate\":null") >= 0) {
-    Serial.println("[VALIDATE] Plus de candidat actif");
+  DynamicJsonDocument doc(4096);
+  DeserializationError err = deserializeJson(doc, resp);
+  if (err) {
+    Serial.print("[VALIDATE] JSON error: ");
+    Serial.println(err.c_str());
     pendingCandidateId = "";
     return;
   }
 
-  if (resp.indexOf("\"alreadyVoted\":true") >= 0) {
-    Serial.println("[VALIDATE] Déjà voté pour ce candidat");
+  if (doc["candidate"].isNull()) {
+    if (doc["alreadyVoted"] | false) {
+      Serial.println("[VALIDATE] Déjà voté pour ce candidat");
+    } else {
+      Serial.println("[VALIDATE] Plus de candidat actif");
+    }
     pendingCandidateId = "";
     return;
   }
 
-  // Extraction des données du candidat
-  auto extractStr = [&](const String& key) -> String {
-    String search = "\"" + key + "\":\"";
-    int s = resp.indexOf(search);
-    if (s < 0) return "";
-    s += search.length();
-    int e = resp.indexOf("\"", s);
-    return e < 0 ? "" : resp.substring(s, e);
-  };
+  JsonObject cand = doc["candidate"];
 
-  String candidateId = extractStr("candidateId");
-  String blackB64    = extractStr("black");
-  String redB64      = extractStr("red");
+  if (cand["payload"].isNull()) {
+    Serial.println("[VALIDATE] Payload absent");
+    pendingCandidateId = "";
+    return;
+  }
+
+  String candidateId = cand["candidateId"] | "";
+  String blackB64 = cand["payload"]["black"] | "";
+  String redB64   = cand["payload"]["red"] | "";
 
   if (candidateId.length() == 0) {
     Serial.println("[VALIDATE] candidateId manquant");
@@ -878,12 +942,10 @@ void doValidate() {
     return;
   }
 
-  // 2. Calculer les métriques
   float score = 0.0f;
   float entropy = 0.0f, transitions = 0.0f, rle = 0.0f;
 
   if (blackB64.length() > 0 && redB64.length() > 0) {
-    // On a le payload complet (membre de la pool)
     static uint8_t tmpBlack[BUF_SIZE];
     static uint8_t tmpRed[BUF_SIZE];
 
@@ -891,7 +953,6 @@ void doValidate() {
     size_t rLen = base64Decode(redB64.c_str(),   redB64.length(),   tmpRed,   BUF_SIZE);
 
     if (bLen == BUF_SIZE && rLen == BUF_SIZE) {
-      // Merge
       static uint8_t merged[BUF_SIZE];
       for (size_t i = 0; i < BUF_SIZE; i++) merged[i] = tmpBlack[i] & tmpRed[i];
 
@@ -899,29 +960,31 @@ void doValidate() {
       transitions = computeTransitions(merged, IMG_W, IMG_H);
       rle         = computeRLE(merged, BUF_SIZE);
       score       = min(1.0f, entropy * 0.4f + transitions * 0.4f + rle * 0.2f);
+    } else {
+      Serial.println("[VALIDATE] Base64 invalide ou taille incorrecte");
+      score = 0.5f;
+      entropy = transitions = rle = 0.5f;
     }
   } else {
-    // Pas de payload (témoin externe) — on vote avec score neutre
-    // Le serveur sait qu'on n'est pas dans la pool
+    Serial.println("[VALIDATE] Payload absent, score neutre");
     score = 0.5f;
     entropy = transitions = rle = 0.5f;
   }
 
-  // 3. Construire et envoyer le résultat
   String signature = signV1(candidateId, score);
 
   char scoreStr[8], entStr[8], transStr[8], rleStr[8];
-  dtostrf(score,       1, 3, scoreStr);
-  dtostrf(entropy,     1, 3, entStr);
+  dtostrf(score, 1, 3, scoreStr);
+  dtostrf(entropy, 1, 3, entStr);
   dtostrf(transitions, 1, 3, transStr);
-  dtostrf(rle,         1, 3, rleStr);
+  dtostrf(rle, 1, 3, rleStr);
 
   String body = "{\"deviceId\":\"" + deviceId + "\","
                 "\"candidateId\":\"" + candidateId + "\","
-                "\"entropy\":"     + String(entStr)   + ","
+                "\"entropy\":" + String(entStr) + ","
                 "\"transitions\":" + String(transStr) + ","
-                "\"rle\":"         + String(rleStr)   + ","
-                "\"score\":"       + String(scoreStr) + ","
+                "\"rle\":" + String(rleStr) + ","
+                "\"score\":" + String(scoreStr) + ","
                 "\"signature\":\"" + signature + "\"}";
 
   free(blackBuf); blackBuf = nullptr;
@@ -932,12 +995,18 @@ void doValidate() {
 
   blackBuf = (uint8_t*)malloc(BUF_SIZE);
   redBuf   = (uint8_t*)malloc(BUF_SIZE);
-  if (!blackBuf || !redBuf) { ESP.restart(); return; }
+  if (!blackBuf || !redBuf) {
+    ESP.restart();
+    return;
+  }
 
   if (vOk) {
     Serial.println("[VALIDATE] Vote soumis avec succès");
     if (vResp.indexOf("\"blockMined\":true") >= 0) {
-      Serial.println("[VALIDATE] 🎉 BLOC MINÉ ! Prochain pull affichera le dessin validé.");
+      Serial.println("[VALIDATE] 🎉 BLOC MINÉ !");
+      consensusJustDisplayed = true;
+      pendingCandidateId = "";
+      frameReady = true;
     }
   } else {
     Serial.println("[VALIDATE] Echec envoi vote");
@@ -945,6 +1014,17 @@ void doValidate() {
 
   pendingCandidateId = "";
 }
+
+
+
+
+
+
+
+
+
+
+
 
 // ─── SETUP / LOOP ───────────────────────────────────────────────────────────
 void setup() {
@@ -990,6 +1070,7 @@ void setup() {
   Serial.println("[BOOT] Prêt. Pull dans " + String(PULL_INTERVAL / 1000) + "s");
 }
 
+
 void loop() {
   unsigned long now = millis();
 
@@ -1005,10 +1086,11 @@ void loop() {
     lastPullMs = now;
   }
 
-  if (pendingCandidateId.length() > 0 && now - lastValidateMs >= VALIDATE_INTERVAL) {
+  if (pendingCandidateId.length() > 0 && !consensusJustDisplayed && now - lastValidateMs >= VALIDATE_INTERVAL) {
     doValidate();
     lastValidateMs = now;
   }
 
   delay(100);
 }
+
