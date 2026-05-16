@@ -1,6 +1,8 @@
 "use client";
 
-import type { NetworkDevice } from "@/lib/networkSnapshot";
+import { useEffect, useRef } from "react";
+import type { NetworkDevice, NetworkPreview } from "@/lib/networkSnapshot";
+import { eink29bwrToCanvas, eink27bwToCanvas, oled096ToCanvas } from "@/lib/screenToCanvas";
 
 function formatRelativeTime(ts: number): string {
   if (!ts) return "—";
@@ -11,11 +13,73 @@ function formatRelativeTime(ts: number): string {
   return `${Math.floor(sec / 86400)}j`;
 }
 
-function frameSummary(device: NetworkDevice): string {
-  const f = device.recentFrame;
-  if (!f) return "Aucune frame récente";
-  return `Frame ${f.frameId.slice(0, 8)}… · ${formatRelativeTime(f.createdAt)}`;
+// ─── Miniature canvas de la dernière frame ───────────────────────────────────
+
+function FramePreviewMini({
+  preview,
+  screenType,
+}: {
+  preview: NetworkPreview;
+  screenType: string;
+}) {
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+
+    try {
+      let imageData: ImageData | null = null;
+
+      if (preview.mode === "bwr" && preview.black && preview.red) {
+        imageData = eink29bwrToCanvas(preview.black, preview.red);
+      } else if (preview.mode === "mono" && preview.buffer) {
+        if (screenType === "eink27bw") {
+          imageData = eink27bwToCanvas(preview.buffer);
+        } else if (screenType === "oled096") {
+          imageData = oled096ToCanvas(preview.buffer);
+        }
+      }
+
+      if (!imageData) return;
+
+      // Dessiner l'imageData dans le canvas à sa taille native
+      canvas.width  = imageData.width;
+      canvas.height = imageData.height;
+      ctx.putImageData(imageData, 0, 0);
+    } catch {
+      // Données corrompues — on laisse le canvas vide
+    }
+  }, [preview, screenType]);
+
+  // Dimensions d'affichage (canvas CSS) selon l'écran
+  const cssW = screenType === "oled096"  ? 128
+             : screenType === "eink27bw" ? 132
+             : 148; // eink29bwr et autres
+  const cssH = screenType === "oled096"  ? 64
+             : screenType === "eink27bw" ? 88
+             : 64;
+
+  return (
+    <div style={{
+      marginTop: 8,
+      borderRadius: 6,
+      overflow: "hidden",
+      border: "1px solid rgba(255,255,255,0.08)",
+      display: "inline-block",
+      lineHeight: 0,
+    }}>
+      <canvas
+        ref={canvasRef}
+        style={{ width: cssW, height: cssH, imageRendering: "pixelated", display: "block" }}
+      />
+    </div>
+  );
 }
+
+// ─── SidePanel ────────────────────────────────────────────────────────────────
 
 export function SidePanel({ device, onClose }: { device: NetworkDevice | null; onClose: () => void }) {
   if (!device) return (
@@ -24,8 +88,9 @@ export function SidePanel({ device, onClose }: { device: NetworkDevice | null; o
     </aside>
   );
 
+  const primaryScreenType = device.screens[0]?.screen ?? "";
+
   return (
-    
     <aside className="nv2-panel">
       <button className="nv2-panel__close" onClick={onClose} aria-label="Fermer">✕</button>
 
@@ -73,10 +138,22 @@ export function SidePanel({ device, onClose }: { device: NetworkDevice | null; o
       </div>
 
       <div className="nv2-panel__section">
-        <div className="nv2-panel__section-label">Activité frame</div>
-        <p className="nv2-muted nv2-small">{frameSummary(device)}</p>
-        {device.recentFrame?.sourceDeviceId && (
-          <p className="nv2-muted nv2-small">Source : {device.recentFrame.sourceDeviceId}</p>
+        <div className="nv2-panel__section-label">Dernière frame affichée</div>
+        {device.recentFrame && device.recentFrame.preview.mode !== "none" ? (
+          <>
+            <FramePreviewMini
+              preview={device.recentFrame.preview}
+              screenType={primaryScreenType}
+            />
+            <p className="nv2-muted nv2-small" style={{ marginTop: 6 }}>
+              {`Frame ${device.recentFrame.frameId.slice(0, 8)}… · ${formatRelativeTime(device.recentFrame.createdAt)}`}
+            </p>
+            {device.recentFrame.sourceDeviceId && (
+              <p className="nv2-muted nv2-small">Source : {device.recentFrame.sourceDeviceId}</p>
+            )}
+          </>
+        ) : (
+          <p className="nv2-muted nv2-small">Aucune frame récente</p>
         )}
       </div>
     </aside>

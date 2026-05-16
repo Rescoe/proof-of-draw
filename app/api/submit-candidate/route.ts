@@ -9,11 +9,13 @@ import {
   decodeEinkBuffer,
   mergeChannels,
   hashDrawing,
+  hashActions,
   MIN_COMPLEXITY_SCORE,
 } from "@/lib/crypto";
 import { setCandidate, getCurrentCandidate, Candidate } from "@/lib/chain";
+import type { ActionEvent } from "@/lib/types/actions";
 
-const INTERNAL_SECRET = process.env.INTERNAL_API_SECRET ?? "";
+const INTERNAL_SECRET  = process.env.INTERNAL_API_SECRET ?? "";
 const ACTIVE_WINDOW_MS = 30 * 60 * 1000;
 
 async function getActivePoolSize(screenId: string): Promise<number> {
@@ -50,6 +52,8 @@ export async function POST(req: NextRequest) {
   }
 
   const { deviceId, screen, black, red, buffer } = body as Record<string, string>;
+  const actions   = Array.isArray(body.actions) ? (body.actions as ActionEvent[]) : [];
+  const drawScore = typeof body.drawScore === "number" ? body.drawScore : 0;
 
   if (!deviceId || !screen) {
     return NextResponse.json({ error: "deviceId et screen requis" }, { status: 400 });
@@ -83,7 +87,7 @@ export async function POST(req: NextRequest) {
       ? `Dessin très simple (score ${metrics.score.toFixed(3)} < ${MIN_COMPLEXITY_SCORE}). Le validateur décidera.`
       : null;
 
-  console.log(`[submit-candidate] device=${deviceId} screen=${screen} score=${metrics.score.toFixed(3)}${warning ? " warning=low_complexity" : ""}`);
+  console.log(`[submit-candidate] device=${deviceId} screen=${screen} score=${metrics.score.toFixed(3)} drawScore=${drawScore}${warning ? " warning=low_complexity" : ""}`);
 
   const existing = await getCurrentCandidate();
   if (existing) {
@@ -94,7 +98,12 @@ export async function POST(req: NextRequest) {
     }, { status: 409 });
   }
 
-  const drawingHash = await hashDrawing(screen, black, red, buffer);
+  // Calculer les deux hashes
+  const [imageHash, actionsHash] = await Promise.all([
+    hashDrawing(screen, black, red, buffer),
+    hashActions(actions),
+  ]);
+
   const poolSize = await getActivePoolSize(screen);
   const CANDIDATE_TTL_SEC = parseInt(process.env.CANDIDATE_TTL_SEC ?? "600");
 
@@ -106,7 +115,10 @@ export async function POST(req: NextRequest) {
     payload: screen === "eink29bwr"
       ? { screen: "eink29bwr", black: black!, red: red! }
       : { screen: screen as any, buffer: buffer! },
-    drawingHash,
+    imageHash,
+    actionsHash,
+    drawScore,
+    actionSequence: actions,
     score: metrics.score,
     submittedAt: Date.now(),
     expiresAt: Date.now() + CANDIDATE_TTL_SEC * 1000,
@@ -116,7 +128,7 @@ export async function POST(req: NextRequest) {
 
   await setCandidate(candidate);
 
-  console.log(`[submit-candidate] candidat créé id=${candidate.candidateId} poolSize=${poolSize} score=${metrics.score.toFixed(3)}`);
+  console.log(`[submit-candidate] candidat créé id=${candidate.candidateId} poolSize=${poolSize} score=${metrics.score.toFixed(3)} drawScore=${drawScore} actionsHash=${actionsHash.slice(0, 12)}...`);
 
   return NextResponse.json({
     ok: true,
@@ -124,9 +136,9 @@ export async function POST(req: NextRequest) {
     score: metrics.score,
     warning,
     metrics: {
-      entropy: metrics.entropy,
+      entropy:     metrics.entropy,
       transitions: metrics.transitions,
-      rle: metrics.rle,
+      rle:         metrics.rle,
     },
     poolSize,
     expiresIn: CANDIDATE_TTL_SEC,

@@ -4,6 +4,7 @@ import { useEffect, useState, useCallback, useRef } from "react";
 import { SCREEN_PROFILES, ScreenId } from "@/lib/screenProfiles";
 import { OwnedDevice } from "@/lib/deviceStore";
 import { canvasToScreenPayload } from "@/lib/canvasToScreen";
+import type { ActionEvent } from "@/lib/types/actions";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -452,6 +453,10 @@ export default function DrawCanvasPage() {
   const cooldownRef                 = useRef<ReturnType<typeof setInterval> | null>(null);
   const [banWarning, setBanWarning] = useState(false);
 
+  // ── Proof-of-Draw action tracking ──────────────────────────────────────────
+  const actionsRef      = useRef<ActionEvent[]>([]);
+  const sessionStartRef = useRef<number>(Date.now());
+
   // ── Canvas dimensions ──────────────────────────────────────────────────────
   const W = profile?.width  ?? 128;
   const H = profile?.height ?? 64;
@@ -497,6 +502,7 @@ export default function DrawCanvasPage() {
     if (ctx) ctx.putImageData(history.current[historyIndex.current], 0, 0);
     setCanUndo(historyIndex.current > 0);
     setCanRedo(true);
+    actionsRef.current.push({ kind: "undo", t: Date.now() - sessionStartRef.current });
   }, []);
 
   const redo = useCallback(() => {
@@ -506,6 +512,7 @@ export default function DrawCanvasPage() {
     if (ctx) ctx.putImageData(history.current[historyIndex.current], 0, 0);
     setCanUndo(true);
     setCanRedo(historyIndex.current < history.current.length - 1);
+    actionsRef.current.push({ kind: "redo", t: Date.now() - sessionStartRef.current });
   }, []);
 
   // ── Canvas init ────────────────────────────────────────────────────────────
@@ -646,6 +653,7 @@ export default function DrawCanvasPage() {
     if (tool === "fill") {
       saveHistory();
       floodFill(ctx, pt.x, pt.y, activeColor, W, H);
+      actionsRef.current.push({ kind: "fill", t: Date.now() - sessionStartRef.current, tool: "fill", color: activeColor });
       drawing.current = false;
       return;
     }
@@ -696,6 +704,14 @@ export default function DrawCanvasPage() {
     drawing.current = false;
     lastPoint.current = null;
     shapeStart.current = null;
+    // Enregistrer l'action selon l'outil
+    if (tool === "brush") {
+      actionsRef.current.push({ kind: "stroke", t: Date.now() - sessionStartRef.current, tool: "brush", color: activeColor });
+    } else if (tool === "eraser") {
+      actionsRef.current.push({ kind: "erase", t: Date.now() - sessionStartRef.current, tool: "eraser" });
+    } else if (tool === "line" || tool === "rect" || tool === "ellipse") {
+      actionsRef.current.push({ kind: "shape", t: Date.now() - sessionStartRef.current, tool, color: activeColor });
+    }
     saveHistory();
   }, [tool, activeColor, brushSize, W, H, toCanvasPoint, drawLine, drawRect, drawEllipse, saveHistory]);
 
@@ -704,6 +720,7 @@ export default function DrawCanvasPage() {
     const ctx = canvasRef.current?.getContext("2d");
     if (!ctx) return;
     ctx.fillStyle = "#FFFFFF"; ctx.fillRect(0, 0, W, H);
+    actionsRef.current.push({ kind: "fill", t: Date.now() - sessionStartRef.current, tool: "clear", color: "#FFFFFF" });
     saveHistory();
   }, [W, H, saveHistory]);
 
@@ -748,6 +765,7 @@ export default function DrawCanvasPage() {
     ctx.globalAlpha = 1;
     ctx.drawImage(off, 0, 0, W, H, imgImport.x, imgImport.y,
       Math.round(W * imgImport.scale), Math.round(H * imgImport.scale));
+    actionsRef.current.push({ kind: "move", t: Date.now() - sessionStartRef.current, tool: "import" });
     saveHistory();
     setImgMode(false);
     setImgImport(s => ({ ...s, data: null }));
@@ -778,11 +796,13 @@ export default function DrawCanvasPage() {
     if (!device || !canSend || !canvasRef.current) return;
     setSending(true); setStatus(null);
     try {
-      const payload = canvasToScreenPayload(canvasRef.current, screenId);
+      const payload   = canvasToScreenPayload(canvasRef.current, screenId);
+      const actions   = actionsRef.current;
+      const drawScore = actions.reduce((acc, a) => a.kind === "undo" ? acc - 1 : acc + 1, 0);
       const body =
         screenId === "eink29bwr"
-          ? { screen: screenId, deviceId, black: (payload as any).black, red: (payload as any).red }
-          : { screen: screenId, deviceId, buffer: (payload as any).buffer };
+          ? { screen: screenId, deviceId, black: (payload as any).black, red: (payload as any).red, actions, drawScore }
+          : { screen: screenId, deviceId, buffer: (payload as any).buffer, actions, drawScore };
       const res  = await fetch("/api/draw", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
       const data = await res.json().catch(() => ({}));
       if (res.status === 429) {

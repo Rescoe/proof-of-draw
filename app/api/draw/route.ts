@@ -11,7 +11,7 @@ import { redis } from "@/lib/redis";
 const DRAW_WINDOW_SEC = parseInt(process.env.DRAW_WINDOW_SEC ?? "60");
 const ABUSE_STRIKES = parseInt(process.env.DRAW_LIMIT_PER_ROUND ?? "3");
 const BLACKLIST_TTL = parseInt(process.env.BLACKLIST_TTL_SECONDS ?? "604800");
-const MAX_BODY_BYTES = 20_000;
+const MAX_BODY_BYTES = 30_000; // augmenté pour inclure la séquence d'actions
 const DEVICE_ID_REGEX = /^dev_[A-Z0-9]{8}$/;
 const VALID_SCREENS = new Set(["eink29bwr", "eink27bw", "oled096"]);
 const BYPASS_VALIDATION = process.env.BYPASS_VALIDATION === "true";
@@ -92,6 +92,8 @@ export async function POST(req: NextRequest) {
   }
 
   const { deviceId, screen, black, red, buffer } = body as Record<string, string>;
+  const actions   = Array.isArray(body.actions) ? body.actions : [];
+  const drawScore = typeof body.drawScore === "number" ? (body.drawScore as number) : null;
 
   if (!deviceId || !DEVICE_ID_REGEX.test(deviceId)) {
     return NextResponse.json({ error: "deviceId invalide" }, { status: 400 });
@@ -106,6 +108,11 @@ export async function POST(req: NextRequest) {
 
   if (!hasPayload) {
     return NextResponse.json({ error: "Payload incomplet" }, { status: 400 });
+  }
+
+  // Un drawScore ≤ 0 signifie un dessin vide (autant d'undos que d'actions ou plus)
+  if (drawScore !== null && drawScore <= 0) {
+    return NextResponse.json({ error: "Dessin vide — score Proof-of-Draw ≤ 0" }, { status: 400 });
   }
 
   const [ipBanned, devBanned] = await Promise.all([
@@ -161,7 +168,7 @@ export async function POST(req: NextRequest) {
   }
 
   try {
-    const candidateBody = { deviceId, screen, black, red, buffer };
+    const candidateBody = { deviceId, screen, black, red, buffer, actions, drawScore };
     const submitUrl = new URL("/api/submit-candidate", getBaseUrl(req)).toString();
 
     const candidateRes = await fetch(submitUrl, {

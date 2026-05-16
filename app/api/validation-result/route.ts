@@ -98,6 +98,7 @@ export async function POST(req: NextRequest) {
 
       await broadcastValidatedFrame(candidate.poolScreen, candidate.payload, frameId, block.displayTime, block.blockIndex, candidate.artistName);
       await clearCandidate();
+      // La galerie de blocs se revalidera automatiquement dans ≤60s (TTL unstable_cache)
       const poolMembers = (await redis.smembers(`pool:screen:${candidate.poolScreen}`)) as string[];
       Promise.all(poolMembers.map((dId) => redis.del(`personal:frame:${dId}`))).catch((err) => console.error("[validation-result] clear personal frames error:", err));
 

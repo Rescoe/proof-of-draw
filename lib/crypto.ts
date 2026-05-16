@@ -191,6 +191,16 @@ export async function hashDrawing(
 // MIN : 900s (15min) — cohérent avec le PULL_INTERVAL existant
 // MAX : 7200s (2h) — pour les dessins très complexes
 
+// ─── Hash de séquence d'actions ──────────────────────────────────────────────
+//
+// Hash SHA-256 canonique de la séquence d'actions Proof-of-Draw.
+// Permet de vérifier l'intégrité du processus de création, indépendamment du résultat pixel.
+
+export async function hashActions(actions: { kind: string; t: number; tool?: string; color?: string }[]): Promise<string> {
+  const canonical = JSON.stringify(actions);
+  return sha256Hex(canonical);
+}
+
 export function computeDisplayTime(
   score: number,
   prevBlockHash: string,

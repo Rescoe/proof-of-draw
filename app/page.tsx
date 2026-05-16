@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { getNetworkSnapshot } from "@/lib/networkSnapshot";
 import { NetworkMap } from "./network/NetworkMap";
+import { BlockGallery } from "./BlockGallery";
 
 export default async function HomePage() {
   const snapshot = await getNetworkSnapshot();
@@ -38,6 +39,9 @@ export default async function HomePage() {
 
       {/* NETWORK MAP - PLEIN ÉCRAN */}
       <NetworkMap snapshot={snapshot} />
+
+      {/* GALERIE DES BLOCS MINÉS */}
+      <BlockGallery />
 
     </div>
   );
