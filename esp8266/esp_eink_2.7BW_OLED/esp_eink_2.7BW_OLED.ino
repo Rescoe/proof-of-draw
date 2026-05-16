@@ -267,11 +267,14 @@ bool httpGet(const String& path, String& resp) {
 
 // ─── BUS helpers (SPI ↔ I2C) ───────────────────────────────────────────────
 // Sur ESP8266, Wire.end() n'existe pas → on réinitialise avec begin()
+// ─── BUS helpers ───────────────────────────────────────────────────────────
+
 void activateSPI() {
-  if (lastScreenWasSPI) return;
-  // Réinitialise I2C pour libérer les pins proprement
+  // Coupe I2C proprement (Wire.end() n'existe pas sur ESP8266
+  // → on réinitialise Wire pour libérer les pins sans crash)
   Wire.begin(OLED_SDA, OLED_SCL);
   delay(10);
+
   SPI.begin();
   SPI.beginTransaction(SPISettings(2000000, MSBFIRST, SPI_MODE0));
   delay(10);
@@ -351,11 +354,20 @@ int textWidthE27(const String& text, int scale = 1) {
 }
 
 // ─── OLED ──────────────────────────────────────────────────────────────────
+
 bool ensureOLEDReady() {
-  activateI2C();
+  // Force toujours Wire sur les bons pins avant toute opération OLED
+  Wire.begin(OLED_SDA, OLED_SCL);
+  Wire.setClock(100000);
+  delay(10);
+
   if (oledReady) return true;
+
   oledReady = oled.begin(SSD1306_SWITCHCAPVCC, 0x3C);
-  if (!oledReady) { Serial.println("[OLED] init failed"); return false; }
+  if (!oledReady) {
+    Serial.println("[OLED] init failed");
+    return false;
+  }
   oled.clearDisplay();
   oled.display();
   Serial.println("[OLED] ready");
@@ -367,18 +379,38 @@ bool displayOLED(const uint8_t* buf, size_t len) {
     Serial.printf("[OLED] taille invalide: %u attendu %u\n", len, OLED_BUF_SIZE);
     return false;
   }
-  activateI2C();
-  // Re-init OLED si on vient du SPI
+
+  // Si on vient du SPI, on coupe SPI proprement avant de toucher I2C
+  if (lastScreenWasSPI) {
+    SPI.endTransaction();
+    SPI.end();
+    delay(50);  // laisse le bus se stabiliser
+    lastScreenWasSPI = false;
+  }
+
+  // Réinitialise Wire sur les bons pins dans tous les cas
+  Wire.begin(OLED_SDA, OLED_SCL);
+  Wire.setClock(100000);
+  delay(20);
+
+  // Re-init du contrôleur SSD1306
+  // Nécessaire si on a coupé l'alimentation ou switché le bus
   if (!oled.begin(SSD1306_SWITCHCAPVCC, 0x3C)) {
-    Serial.println("[OLED] re-init failed");
+    Serial.println("[OLED] begin() failed");
+    oledReady = false;
     return false;
   }
   oledReady = true;
+  delay(10);  // laisse le SSD1306 finir son init interne
+
+  // Copie le buffer et envoie
   memcpy(oled.getBuffer(), buf, OLED_BUF_SIZE);
   oled.display();
+
   Serial.println("[OLED] displayed");
   return true;
 }
+
 
 // ─── E27 DISPLAY ───────────────────────────────────────────────────────────
 bool initE27ForRefresh() {
@@ -388,9 +420,14 @@ bool initE27ForRefresh() {
     Serial.printf("[E27] attente refresh %lums\n", wait);
     delay(wait);
   }
-  activateSPI();
+
+  activateSPI();  // lastScreenWasSPI = true ici
+
   if (epd27.Init() != 0) {
     Serial.println("[E27] Init failed");
+    SPI.endTransaction();
+    SPI.end();
+    lastScreenWasSPI = false;
     return false;
   }
   return true;
@@ -399,8 +436,14 @@ bool initE27ForRefresh() {
 bool displayE27Buffer(const uint8_t* buf) {
   if (!buf) return false;
   if (!initE27ForRefresh()) return false;
+
   epd27.Display(buf);
   epd27.Sleep();
+
+  SPI.endTransaction();
+  SPI.end();
+  lastScreenWasSPI = false;  // libère SPI après chaque usage E27
+
   lastE27RefreshMs = millis();
   Serial.println("[E27] displayed");
   return true;
