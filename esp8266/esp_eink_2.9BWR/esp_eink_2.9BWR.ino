@@ -715,20 +715,116 @@ void logHeapState(const char* tag) {
                 ESP.getHeapFragmentation());
 }
 
-// ─── PULL ───────────────────────────────────────────────────────────────────
-// ─── PULL LÉGER (metadata only, ~300 bytes) ──────────────────────────────
+
+
+
+
+// ─── FETCH FRAME (route séparée, heap propre après pull léger) ──────────────
+bool doFetchFrame(const String& frameId, const String& frameSource) {
+  logHeapState("FETCHFRAME-BEFORE");
+
+  // Pas de DynamicJsonDocument — on lit le binaire directement dans les buffers
+  blackBuf = (uint8_t*)malloc(BUF_SIZE);
+  redBuf   = (uint8_t*)malloc(BUF_SIZE);
+  if (!blackBuf || !redBuf) {
+    Serial.println("[FETCHFRAME] malloc pixel failed");
+    free(blackBuf); blackBuf = nullptr;
+    free(redBuf);   redBuf   = nullptr;
+    return false;
+  }
+  memset(blackBuf, 0xFF, BUF_SIZE);
+  memset(redBuf,   0xFF, BUF_SIZE);
+
+  {
+    WiFiClientSecure client;
+    client.setInsecure();
+    HTTPClient http;
+
+    String url = String(SERVER_URL) + "/api/pull-frame?deviceId=" + deviceId + "&fmt=bin";
+    if (!http.begin(client, url)) {
+      Serial.println("[FETCHFRAME] begin() failed");
+      free(blackBuf); blackBuf = nullptr;
+      free(redBuf);   redBuf   = nullptr;
+      return false;
+    }
+    http.setTimeout(20000);
+    http.useHTTP10(true);
+
+    int code = http.GET();
+    Serial.printf("[HTTP GET] /api/pull-frame → %d\n", code);
+
+    if (code == 404) {
+      http.end();
+      Serial.println("[FETCHFRAME] Pas de frame");
+      free(blackBuf); blackBuf = nullptr;
+      free(redBuf);   redBuf   = nullptr;
+      return true;
+    }
+
+    if (code != 200) {
+      http.end();
+      Serial.printf("[FETCHFRAME] HTTP error: %d\n", code);
+      free(blackBuf); blackBuf = nullptr;
+      free(redBuf);   redBuf   = nullptr;
+      return false;
+    }
+
+    // Lire 9472 bytes bruts : d'abord blackBuf, puis redBuf
+    WiFiClient* stream = http.getStreamPtr();
+    size_t bRead = stream->readBytes(blackBuf, BUF_SIZE);
+    size_t rRead = stream->readBytes(redBuf,   BUF_SIZE);
+    http.end();
+
+    Serial.printf("[FETCHFRAME] lu black=%u red=%u expected=%u\n",
+                  bRead, rRead, BUF_SIZE);
+
+    if (bRead != BUF_SIZE || rRead != BUF_SIZE) {
+      Serial.println("[FETCHFRAME] lecture incomplète");
+      free(blackBuf); blackBuf = nullptr;
+      free(redBuf);   redBuf   = nullptr;
+      return false;
+    }
+  }
+
+  // Affichage
+  if (hasDisplayedFrame) {
+    clearDisplayWhite();
+    delay(3000);
+  }
+
+  if (!refreshDisplay()) {
+    Serial.println("[FETCHFRAME] refreshDisplay failed");
+    free(blackBuf); blackBuf = nullptr;
+    free(redBuf);   redBuf   = nullptr;
+    frameReady = false;
+    return false;
+  }
+
+  hasDisplayedFrame      = true;
+  lastFrameId            = frameId;
+  frameReady             = true;
+  ackFrame(frameId);
+  consensusJustDisplayed = (frameSource == "consensus");
+  pendingCandidateId     = "";
+
+  Serial.printf("[FETCHFRAME] ✅ affichée frameId=%s source=%s\n",
+                frameId.c_str(), frameSource.c_str());
+  logHeapState("FETCHFRAME-AFTER");
+  return true;
+}
+
+// ─── PULL LÉGER (metadata only, ~300 bytes) ──────────────────────────────────
 bool doPull() {
   free(blackBuf); blackBuf = nullptr;
   free(redBuf);   redBuf   = nullptr;
 
   logHeapState("PULL-BEFORE");
 
-  String newBlockHash  = "";
-  int    newBlockIndex = -1;
-  String newCandId     = "";
-  String newFrameId    = "";
+  String newBlockHash   = "";
+  int    newBlockIndex  = -1;
+  String newCandId      = "";
+  String newFrameId     = "";
   String newFrameSource = "none";
-  bool   parseOk       = false;
 
   {
     WiFiClientSecure client;
@@ -768,7 +864,7 @@ bool doPull() {
       return false;
     }
 
-    // Réponse légère : ~300 bytes, doc 1KB suffit largement
+    // Réponse légère ~300 bytes, doc 1KB suffit
     DynamicJsonDocument doc(1024);
     DeserializationError err = deserializeJson(doc, http.getStream());
     http.end();
@@ -792,12 +888,16 @@ bool doPull() {
     }
 
     newFrameSource = doc["frameSource"] | "none";
-    newFrameId     = doc["frameId"]     | "";
 
-    parseOk = true;
+    // La réponse pull légère retourne frameId à la racine (plus dans frame{})
+    newFrameId = doc["frameId"] | "";
+    // Fallback : si le serveur retourne encore frame.frameId
+    if (newFrameId.length() == 0) {
+      JsonObject frameObj = doc["frame"];
+      if (!frameObj.isNull()) newFrameId = frameObj["frameId"] | "";
+    }
   }
-
-  if (!parseOk) return false;
+  // TLS fermé ici
 
   // Mise à jour état chaîne
   if (newBlockHash.length() > 0 && newBlockHash != currentBlockHash) {
@@ -820,131 +920,24 @@ bool doPull() {
   }
 
   if (newFrameId == lastFrameId) {
-    Serial.println("[PULL] Frame déjà affichée");
+    Serial.println("[PULL] Frame déjà affichée (frameId identique)");
     frameReady = true;
     return true;
   }
 
-  // Nouvelle frame disponible → fetch séparé
-  logHeapState("PULL-DONE-FETCH");
+  // Nouvelle frame dispo → fetch dans une 2e connexion TLS séparée
+  Serial.printf("[PULL] Nouvelle frame frameId=%s source=%s → fetch\n",
+                newFrameId.c_str(), newFrameSource.c_str());
   return doFetchFrame(newFrameId, newFrameSource);
 }
 
-// ─── FETCH FRAME (connexion TLS séparée, heap intact après pull léger) ──────
-bool doFetchFrame(const String& frameId, const String& frameSource) {
-  logHeapState("FETCHFRAME-BEFORE");
 
-  // À ce stade, TLS du pull est fermé, heap défragmenté → bon moment pour allouer
-  // On alloue le doc AVANT d'ouvrir TLS
-  DynamicJsonDocument doc(16384);
-  if (doc.capacity() == 0) {
-    Serial.println("[FETCHFRAME] OOM doc alloc");
-    return false;
-  }
 
-  {
-    WiFiClientSecure client;
-    client.setInsecure();
-    HTTPClient http;
 
-    String url = String(SERVER_URL) + "/api/pull-frame?deviceId=" + deviceId;
-    if (!http.begin(client, url)) {
-      Serial.println("[FETCHFRAME] begin() failed");
-      return false;
-    }
-    http.setTimeout(20000);
-    http.useHTTP10(true);
 
-    int code = http.GET();
-    Serial.printf("[HTTP GET] /api/pull-frame → %d\n", code);
 
-    if (code == 404) {
-      http.end();
-      Serial.println("[FETCHFRAME] Pas de frame en attente");
-      return true;
-    }
 
-    if (code != 200) {
-      http.end();
-      Serial.printf("[FETCHFRAME] HTTP error: %d\n", code);
-      return false;
-    }
 
-    DeserializationError err = deserializeJson(doc, http.getStream());
-    http.end();  // libère TLS avant de toucher les buffers
-
-    if (err) {
-      Serial.print("[FETCHFRAME] JSON error: ");
-      Serial.println(err.c_str());
-      logHeapState("FETCHFRAME-JSON-ERR");
-      return false;
-    }
-  }
-
-  const char* screenPtr = doc["screen"] | "";
-  const char* blackB64  = doc["black"]  | "";
-  const char* redB64    = doc["red"]    | "";
-  String      pullArtist = doc["_block"]["artistName"] | doc["artistName"] | "";
-
-  if (String(screenPtr) != SCREEN_TYPE || strlen(blackB64) == 0 || strlen(redB64) == 0) {
-    Serial.println("[FETCHFRAME] Frame incompatible ou vide screen=" + String(screenPtr));
-    return false;
-  }
-
-  blackBuf = (uint8_t*)malloc(BUF_SIZE);
-  redBuf   = (uint8_t*)malloc(BUF_SIZE);
-  if (!blackBuf || !redBuf) {
-    Serial.println("[FETCHFRAME] malloc pixel failed");
-    free(blackBuf); blackBuf = nullptr;
-    free(redBuf);   redBuf   = nullptr;
-    logHeapState("FETCHFRAME-MALLOC-FAIL");
-    return false;
-  }
-  memset(blackBuf, 0xFF, BUF_SIZE);
-  memset(redBuf,   0xFF, BUF_SIZE);
-
-  size_t bLen = base64Decode(blackB64, strlen(blackB64), blackBuf, BUF_SIZE);
-  size_t rLen = base64Decode(redB64,   strlen(redB64),   redBuf,   BUF_SIZE);
-
-  if (bLen != BUF_SIZE || rLen != BUF_SIZE) {
-    Serial.printf("[FETCHFRAME] Taille invalide black=%u red=%u expected=%u\n",
-                  (unsigned)bLen, (unsigned)rLen, (unsigned)BUF_SIZE);
-    free(blackBuf); blackBuf = nullptr;
-    free(redBuf);   redBuf   = nullptr;
-    return false;
-  }
-
-  if (hasDisplayedFrame) {
-    clearDisplayWhite();
-    delay(3000);
-  }
-
-  if (!refreshDisplay()) {
-    Serial.println("[FETCHFRAME] refreshDisplay failed");
-    frameReady = false;
-    return false;
-  }
-
-  hasDisplayedFrame = true;
-  lastFrameId       = frameId;
-  frameReady        = true;
-  ackFrame(frameId);
-
-  if (frameSource == "consensus") {
-    consensusJustDisplayed = true;
-    pendingCandidateId     = "";
-    if (pullArtist.length() > 0)
-      Serial.println("[FETCHFRAME] Dessin de: " + pullArtist + " bloc #" + String(currentBlockIndex));
-    Serial.printf("[FETCHFRAME] ✅ Frame consensus affichée frameId=%s\n", frameId.c_str());
-  } else {
-    consensusJustDisplayed = false;
-    pendingCandidateId     = "";
-    Serial.printf("[FETCHFRAME] ✅ Frame personal affichée frameId=%s\n", frameId.c_str());
-  }
-
-  logHeapState("FETCHFRAME-AFTER");
-  return true;
-}
 
 // ─── VALIDATION ─────────────────────────────────────────────────────────────
 bool doValidate() {
@@ -1140,8 +1133,7 @@ void loop() {
     lastValidateMs  = millis();
 
     if (validateOk && frameReady) {
-      // Attendre que BearSSL libère ses buffers TLS
-      delay(2000);
+      delay(2000);  // laisse BearSSL libérer ses buffers TLS
       bool immediatePullOk = doPull();
       if (immediatePullOk) {
         lastPullMs = millis();

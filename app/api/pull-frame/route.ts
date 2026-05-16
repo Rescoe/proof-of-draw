@@ -3,53 +3,64 @@ import { NextRequest, NextResponse } from "next/server";
 import { redis } from "@/lib/redis";
 import { getDevice } from "@/lib/deviceStore";
 import { getFrameForDevice } from "@/lib/queue";
-import { isBlacklisted, getIP, forbidden } from "@/lib/rateLimit";
 
 const DEVICE_ID_REGEX = /^dev_[A-Z0-9]{8}$/;
 const personalKey = (deviceId: string) => `personal:frame:${deviceId}`;
 
-function json(body: any, status = 200) { return NextResponse.json(body, { status }); }
-
 export async function GET(req: NextRequest) {
   try {
-    const ip = getIP(req);
     const deviceId = new URL(req.url).searchParams.get("deviceId");
+    const fmt      = new URL(req.url).searchParams.get("fmt"); // "bin" ou null
 
     if (!deviceId || !DEVICE_ID_REGEX.test(deviceId))
-      return json({ error: "deviceId invalide" }, 400);
-    if (await isBlacklisted(ip, deviceId)) return forbidden("Accès refusé");
+      return NextResponse.json({ error: "deviceId invalide" }, { status: 400 });
 
     const device = await getDevice(deviceId);
-    if (!device) return json({ error: "device inconnu" }, 404);
+    if (!device)
+      return NextResponse.json({ error: "device inconnu" }, { status: 404 });
 
-    // Consensus frame
+    // Cherche consensus puis personal
+    let payload: any = null;
     const consensusFrame = await getFrameForDevice(deviceId, []);
     if (consensusFrame?.payload) {
-      return json({
-        frameId: consensusFrame.frameId,
-        source: "consensus",
-        ...consensusFrame.payload,  // contient black, red, screen, etc.
-      });
-    }
-
-    // Personal frame
-    const personalRaw = await redis.get(personalKey(deviceId));
-    if (personalRaw) {
-      const personalFrame = typeof personalRaw === "string"
-        ? JSON.parse(personalRaw)
-        : personalRaw;
-      if (personalFrame?.payload) {
-        return json({
-          frameId: personalFrame.frameId,
-          source: "personal",
-          ...personalFrame.payload,
-        });
+      payload = consensusFrame.payload;
+    } else {
+      const personalRaw = await redis.get(personalKey(deviceId));
+      if (personalRaw) {
+        const pf = typeof personalRaw === "string" ? JSON.parse(personalRaw) : personalRaw;
+        if (pf?.payload) payload = pf.payload;
       }
     }
 
-    return json({ error: "no frame" }, 404);
+    if (!payload) {
+      return NextResponse.json({ error: "no frame" }, { status: 404 });
+    }
+
+    const { black, red } = payload as { black?: string; red?: string };
+    if (!black || !red) {
+      return NextResponse.json({ error: "payload incompatible (pas eink29bwr)" }, { status: 404 });
+    }
+
+    if (fmt === "bin") {
+      // Retourne les deux buffers concaténés en binaire : blackBuf (4736) + redBuf (4736)
+      const blackBytes = Buffer.from(black, "base64");
+      const redBytes   = Buffer.from(red,   "base64");
+      const combined   = Buffer.concat([blackBytes, redBytes]); // 9472 bytes
+
+      return new NextResponse(combined, {
+        status: 200,
+        headers: {
+          "Content-Type":   "application/octet-stream",
+          "Content-Length": String(combined.length),
+        },
+      });
+    }
+
+    // Fallback JSON (pour debug depuis navigateur)
+    return NextResponse.json({ frameId: consensusFrame?.frameId, ...payload });
+
   } catch (err) {
     console.error("[pull-frame] error:", err);
-    return json({ error: "Erreur interne" }, 500);
+    return NextResponse.json({ error: "Erreur interne" }, { status: 500 });
   }
 }
