@@ -4,31 +4,141 @@
 
 Le projet `proof-of-draw` est une application Next.js + firmware ESP8266 pour dessiner depuis le web et afficher les frames sur des écrans e-ink / OLED connectés à des ESP.
 
-L'application existe déjà et fonctionne en MVP.  
 **Ne pas refaire l'application. Ne pas restructurer le projet. Ne pas refactoriser l'UI globalement.**
-
-Le travail attendu consiste uniquement à faire évoluer l'architecture réseau :
-
-- ancien modèle : `Web App -> serveur -> IP ESP locale`
-- nouveau modèle : `ESP -> serveur (register + ping + pull)`
-- le serveur devient la source unique de vérité
-- l'ESP devient un client du serveur
-- l'utilisateur continue de dessiner sur l'app web, jamais directement sur l'ESP
 
 ---
 
-## Contexte actuel du repo
+## Statut au 16/05/2026
 
-Le repo contient déjà :
+La V1 distribuée est fonctionnelle sur l'écran e-ink 2.9" BWR. Le pipeline complet fonctionne :
 
-- `app/onboard/page.tsx` : onboarding actuel basé sur `name + ip + port + screens`
-- `app/api/onboard/route.ts` : enregistre un device avec `ip` et `port`
-- `app/api/draw/route.ts` : envoie encore vers l'ESP par IP
-- `app/api/ping/route.ts` : ping encore l'ESP via `http://ip:port/ping`
-- `lib/deviceStore.ts` : stocke `id, name, ip, port, screens, lastPing, lastDraw, framesSent`
-- `lib/queue.ts` : `sendFrameNow(ip, port, payload)`
-- `lib/canvasToScreen.ts` : déjà fonctionnel, à conserver
-- firmwares ESP dans `esp8266/esp_eink_2.7BW_OLED` et `esp8266/esp_eink_2.9BWR`
+```
+dessin web → candidat → vote ESP → bloc miné → fetch binaire → affichage e-ink
+```
+
+Commit de référence : `43aac8f`
+
+Le travail restant concerne la généralisation à d'autres types d'écrans et le passage au quorum multi-ESP.
+
+---
+
+## Architecture réseau actuelle (post-migration)
+
+- ancien modèle (déprécié) : `Web App → serveur → IP ESP locale`
+- modèle actuel : `ESP → serveur (register + ping + pull + pull-frame)`
+- le serveur est la source unique de vérité
+- l'ESP est un client du serveur
+- l'utilisateur dessine sur l'app web, jamais directement sur l'ESP
+- aucun fetch sortant vers IP locale (plus de SSRF)
+
+---
+
+## Ce qui est en place et fonctionnel
+
+### Routes serveur
+
+| Route | État |
+|-------|------|
+| `POST /api/register` | ✅ Idempotent par MAC, retourne deviceId + pairCode, gère pools Redis |
+| `POST /api/ping` | ✅ Met à jour lastPing/lastSeen |
+| `GET /api/pull` | ✅ Retourne metadata légère (~300B) sans buffers pixel |
+| `GET /api/pull-frame?fmt=bin` | ✅ Retourne 9472 bytes binaires (blackBuf + redBuf concaténés) |
+| `GET /api/validate-candidate` | ✅ Metadata candidat uniquement (sans payload image) |
+| `POST /api/validation-result` | ✅ Vote ESP, quorum, minage, broadcast |
+| `POST /api/draw` | ✅ Auth HMAC, rate limit, archivage Redis |
+| `POST /api/submit-candidate` | ✅ Crée le candidat Redis |
+| `POST /api/onboard` | ✅ Associe pairCode → artistName |
+| `POST /api/ack-frame` | ✅ Confirme l'affichage, supprime la frame Redis |
+| `POST /api/personal-frame` | ✅ Frame personnelle par device |
+
+### Firmware
+
+| Fichier | État |
+|---------|------|
+| `esp8266/esp_eink_2.9BWR/esp_eink_2.9BWR.ino` | ✅ Fonctionnel, pipeline complet validé |
+| `esp8266/esp_eink_2.7BW_OLED/esp_eink_2.7BW_OLED.ino` | 🔜 À porter vers la nouvelle architecture |
+
+### Librairies serveur
+
+Toutes fonctionnelles et à ne pas casser :
+- `lib/chain.ts` — logique chaîne de blocs légère
+- `lib/deviceStore.ts` — CRUD devices Redis, TTL 48h
+- `lib/queue.ts` — store/retrieve frames Redis, FramePayload typé
+- `lib/canvasToScreen.ts` — conversion canvas → buffers e-ink, ne pas toucher
+- `lib/rateLimit.ts` — rate limiting, blacklist, strikes
+- `lib/crypto.ts` — SHA-256, computeDisplayTime
+- `lib/screenProfiles.ts` — profils écrans, BUF_SIZE par type
+- `lib/session.ts` — sessions HMAC
+
+---
+
+## Invariants critiques — ne jamais casser
+
+### Mémoire ESP8266
+
+```
+blackBuf/redBuf → free() AVANT toute connexion TLS
+blackBuf/redBuf → malloc() APRÈS fermeture TLS
+http.useHTTP10(true) → obligatoire sur tous les GET streaming
+/api/validate-candidate → ne retourne JAMAIS le payload image
+/api/pull → ne retourne JAMAIS black/red dans le JSON
+/api/pull-frame?fmt=bin → binaire brut uniquement, pas de JSON
+```
+
+### Sécurité serveur
+
+```
+Rate limit préservé sur tous les endpoints
+Blacklist IP/device/MAC opérationnelle
+Pas de fetch sortant vers IP locale
+Pas d'état critique en mémoire Vercel (serverless-safe)
+TTL sur tous les objets Redis (devices 48h, frames displayTime, locks 15min)
+Toute logique de pool via Redis Sets : SADD/SREM idempotent
+```
+
+### Chaîne
+
+```
+blockHash stocké en EEPROM ESP (offset 32, 32 bytes)
+parentHash vérifié à chaque bloc
+displayTime calculé depuis score via computeDisplayTime()
+castVote() retourne zeros si voteMap absent → détecter 409 côté serveur
+```
+
+---
+
+## Prochains travaux
+
+### V1 — Généralisation multi-écrans
+
+Pour porter un nouvel écran, trois points à modifier :
+
+**1. `/api/pull-frame/route.ts`**
+- lire le profil depuis `screenProfiles.ts`
+- pour BW/OLED : envoyer uniquement `blackBuf` (pas de concaténation)
+- pour BWR : conserver `blackBuf + redBuf` concaténés
+- ajouter header `X-Screen-Type` dans la réponse
+
+**2. Firmware cible**
+- définir `SCREEN_TYPE` et `BUF_SIZE` en constantes
+- `doFetchFrame()` : adapter le nombre de buffers lus et l'appel `epd.Display()`
+- conserver `readFull()` pour la lecture robuste
+
+**3. `screenProfiles.ts`**
+- ajouter le profil : `BUF_SIZE`, `bufferCount` (1 ou 2), `format` (`bw` ou `bwr`)
+
+### V1 — Test multi-ESP en pool
+
+- vérifier que le quorum `ceil(poolSize × 0.51)` fonctionne avec plusieurs devices
+- vérifier que `alreadyVoted` bloque correctement le double vote
+
+### V2 — Roadmap
+
+- `/api/candidate-payload` : payload binaire pour calcul local métriques ESP
+- Signature ED25519 réelle (clé privée EEPROM déjà générée côté ESP)
+- Score composite local : entropie Shannon + transitions + RLE
+- Multi-pool par résolution/couleur
+- Mint on-chain (hors scope V1)
 
 ---
 
@@ -43,250 +153,16 @@ Le repo contient déjà :
 - ne pas déployer
 - ne pas modifier le design global
 - ne pas inventer une nouvelle architecture de fichiers
+- ne pas faire de fetch sortant vers IP locale
 
 ---
 
-## Objectif fonctionnel
+## Format de rendu attendu
 
-Mettre en place une version fonctionnelle où :
-
-1. l'ESP démarre
-2. l'ESP appelle `POST /api/register`
-3. le serveur crée ou retrouve le device via son adresse MAC
-4. le serveur retourne `deviceId + pairCode`
-5. l'utilisateur ouvre `/onboard`
-6. l'utilisateur saisit son nom (`artistName`) et un code d'association (`pairCode`)
-7. l'utilisateur choisit les écrans connectés
-8. le serveur associe ce device au profil utilisateur
-9. quand l'utilisateur dessine sur un type d'écran donné, la frame est stockée côté serveur
-10. tous les ESP enregistrés ayant ce `screen` récupèrent la frame via `GET /api/pull`
-11. les ESP affichent localement la frame
-12. chaque ESP fait un `POST /api/ping` régulièrement
-13. les devices inactifs depuis plus de 48h sont nettoyés
-
----
-
-## Architecture cible
-
-### Web app
-- garde le canvas centralisé
-- continue d'utiliser `canvasToScreenPayload(...)`
-- n'envoie plus jamais directement à une IP locale
-- envoie les frames au serveur uniquement
-
-### Serveur
-- stocke les devices en mémoire / JSON simple
-- stocke les frames en mémoire
-- associe frames et types d'écrans
-- fournit des routes `register`, `ping`, `pull`
-- ne fait plus aucun fetch arbitraire vers les IP des utilisateurs
-
-### ESP
-- se connecte au WiFi
-- contacte le serveur
-- s'enregistre avec MAC + firmware
-- reçoit `deviceId + pairCode`
-- ping régulièrement
-- pull les frames
-- affiche ce qu'il reçoit
-- n'expose plus `/frame` comme point d'entrée principal pour l'architecture cible
-
----
-
-## Modifications attendues
-
-### 1. `app/onboard/page.tsx`
-Modifier la page existante, sans refaire l'UI :
-- supprimer les champs IP et port
-- garder la logique de sélection des écrans
-- renommer le champ `name` côté métier en `artistName`
-- ajouter un champ obligatoire `pairCode`
-- envoyer à `/api/onboard` :
-  ```json
-  {
-    "pairCode": "...",
-    "artistName": "...",
-    "screens": [...]
-  }
-  ```
-
-### 2. `app/api/onboard/route.ts`
-Réécrire la logique :
-- ne plus accepter `ip`, `port`
-- ne plus générer l'identité depuis `name + ip`
-- rechercher le device via `pairCode`
-- attacher `artistName`
-- mettre à jour les `screens` choisisis par l'utilisateur
-- retourner le `deviceId` et l'état du device associé
-
-### 3. `app/api/register/route.ts`
-Créer cette route.
-Body attendu :
-```json
-{
-  "mac": "xx:xx:xx:xx:xx:xx",
-  "firmware": "1.0",
-  "screens": ["eink29bwr"]
-}
-```
-Réponse :
-```json
-{
-  "deviceId": "dev_xxx",
-  "pairCode": "AB12-CD34"
-}
-```
-
-Règles :
-- si MAC déjà connue : réutiliser le même device
-- si nouvelle MAC : créer un nouveau device
-- générer un `pairCode`
-- initialiser `lastSeen` / `lastPing`
-
-### 4. `app/api/ping/route.ts`
-Réécrire pour recevoir :
-```json
-{ "deviceId": "dev_xxx" }
-```
-et faire uniquement :
-- update `lastPing`
-- update `lastSeen`
-- réponse `{ ok: true }`
-
-Aucun fetch vers IP locale.
-
-### 5. `app/api/pull/route.ts`
-Créer cette route.
-Entrée :
-- `GET /api/pull?deviceId=...`
-- optionnellement `screen=...`
-
-Sortie :
-```json
-{ "frame": null }
-```
-ou
-```json
-{
-  "frame": {
-    "screen": "eink29bwr",
-    "black": "...",
-    "red": "..."
-  }
-}
-```
-
-### 6. `app/api/draw/route.ts`
-Réécrire sans transport IP :
-- ne plus utiliser `device.ip`
-- ne plus appeler `sendFrameNow(device.ip, device.port, payload)`
-- utiliser `payload.screen` issu de `canvasToScreenPayload`
-- stocker le frame côté serveur
-- diffuser logiquement par type d'écran, pas par IP
-
-Important :
-- l'utilisateur dessine sur un écran cible (`screen`)
-- tous les devices ayant ce même `screen` doivent pouvoir récupérer la dernière frame publiée
-
-### 7. `lib/deviceStore.ts`
-Faire évoluer le modèle de données.
-
-Supprimer :
-- `ip`
-- `port`
-
-Garder / ajouter :
-- `deviceId`
-- `mac`
-- `pairCode`
-- `artistName`
-- `screens`
-- `firmware`
-- `lastPing`
-- `lastSeen`
-- `framesSent`
-
-Ajouter les helpers nécessaires :
-- `registerDevice(...)`
-- `getDeviceById(...)`
-- `getDeviceByPairCode(...)`
-- `getDeviceByMac(...)`
-- `updatePing(...)`
-- `attachOnboardData(...)`
-- `cleanupInactiveDevices()`
-
-Règle de cleanup :
-- si `Date.now() - lastSeen > 48h`, supprimer le device
-
-### 8. `lib/queue.ts`
-Le fichier ne doit plus envoyer vers une IP locale.
-Réorienter sa responsabilité :
-- soit stockage mémoire simple par screen
-- soit helper minimal de publication en mémoire
-- pas de fetch réseau sortant vers les devices
-
-### 9. `lib/screenToCanvas.ts`
-Créer ce fichier si utile pour debug / preview inverse.
-But :
-- conversion frame stockée -> représentation canvas
-- rester compatible avec `canvasToScreen.ts`
-- ne pas casser la conversion existante
-
-### 10. Firmware ESP8266
-Modifier le firmware existant, pas réécrire tout l'univers.
-
-Nouveau flow minimal :
-1. connexion WiFi
-2. `POST /api/register`
-3. stockage de `deviceId` + `pairCode`
-4. affichage ou log du `pairCode`
-5. boucle :
-   - `POST /api/ping`
-   - `GET /api/pull?deviceId=...`
-   - render local du frame
-
-Le firmware doit devenir client du serveur.
-Le serveur ne doit plus contacter l'ESP directement.
-
----
-
-## Important sur la sécurité
-
-Le code actuel avec `ip`/`port` expose un risque de SSRF et ne doit plus rester la base de l'architecture.
-La migration vers `register + ping + pull` est prioritaire avant toute suite du projet.
-
----
-
-## Important sur la vision produit
-
-Le projet futur est un réseau distribué de display nodes pour `Proof of Draw`.
-Mais cette phase ne doit implémenter que l'infrastructure réseau de base :
-- pairing
-- register
-- ping
-- pull
-- stockage mémoire des frames
-- diffusion par type d'écran
-
-Ne pas implémenter maintenant :
-- blockchain
-- wallet
-- seed phrase
-- rewards
-- consensus
-- Duino-Coin fork
-- choix de gagnant
-- hashing on-chain
-
----
-
-## Rendu attendu de l'agent
-
-Quand tu fais les modifications :
-- donne les fichiers complets modifiés/créés
-- respecte les chemins exacts
-- n'invente pas une nouvelle arborescence
-- n'ajoute pas de dépendances inutiles
-- garde le projet buildable
-- garde les types TypeScript cohérents
-- privilégie des modifications minimales et ciblées
+Quand tu modifies le projet :
+1. liste les fichiers modifiés
+2. liste les fichiers créés
+3. donne le contenu complet de chaque fichier modifié/créé
+4. ne donne pas des pseudo-diffs incomplets
+5. ne propose pas une réarchitecture totale
+6. vérifie que le build reste valide (TypeScript strict)

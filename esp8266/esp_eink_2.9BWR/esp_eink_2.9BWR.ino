@@ -99,8 +99,8 @@ String pendingCandidateId = "";
 unsigned long lastValidateMs = 0;
 unsigned long lastPullMs     = 0;
 
-bool consensusJustDisplayed = false;
-
+bool lastFrameWasConsensus = false;
+// (renomme partout dans le code)
 // ─── EEPROM helpers ────────────────────────────────────────────────────────
 
 bool onboardingAlreadyShown() {
@@ -454,8 +454,15 @@ size_t base64Decode(const char* src, size_t srcLen, uint8_t* dst, size_t dstMax)
 
 bool initDisplayForRefresh() {
   unsigned long elapsed = millis() - lastRefreshMs;
-  if (elapsed < EINK_MIN_REFRESH_MS) delay(EINK_MIN_REFRESH_MS - elapsed);
-  if (epd.Init() != 0) { Serial.println("[EINK] Init failed"); return false; }
+  if (elapsed < EINK_MIN_REFRESH_MS) {
+    unsigned long wait = EINK_MIN_REFRESH_MS - elapsed;
+    Serial.printf("[EINK] attente refresh %lums\n", wait);
+    delay(wait);
+  }
+  if (epd.Init() != 0) {
+    Serial.println("[EINK] Init failed");
+    return false;
+  }
   return true;
 }
 
@@ -468,14 +475,33 @@ bool refreshDisplay() {
 }
 
 bool clearDisplayWhite() {
-  if (!initDisplayForRefresh()) return false;
-  memset(blackBuf, 0xFF, BUF_SIZE);
-  memset(redBuf,   0xFF, BUF_SIZE);
-  epd.Display(blackBuf, redBuf);
+  unsigned long elapsed = millis() - lastRefreshMs;
+  if (elapsed < EINK_MIN_REFRESH_MS) delay(EINK_MIN_REFRESH_MS - elapsed);
+
+  if (epd.Init() != 0) {
+    Serial.println("[EINK] clearDisplayWhite: Init failed, skip");
+    lastRefreshMs = millis();
+    return false;
+  }
+
+  uint8_t* tmpBlack = (uint8_t*)malloc(BUF_SIZE);
+  uint8_t* tmpRed   = (uint8_t*)malloc(BUF_SIZE);
+  if (!tmpBlack || !tmpRed) {
+    free(tmpBlack); free(tmpRed);
+    Serial.println("[EINK] clearDisplayWhite: malloc failed, skip");
+    lastRefreshMs = millis();
+    return false;
+  }
+  memset(tmpBlack, 0xFF, BUF_SIZE);
+  memset(tmpRed,   0xFF, BUF_SIZE);
+  epd.Display(tmpBlack, tmpRed);
   epd.Sleep();
+  free(tmpBlack);
+  free(tmpRed);
   lastRefreshMs = millis();
   return true;
 }
+
 
 // ─── AFFICHAGE CLÉ PUBLIQUE (unique au premier boot) ───────────────────────
 void displayPublicKey() {
@@ -720,6 +746,7 @@ void logHeapState(const char* tag) {
 
 
 // ─── FETCH FRAME (route séparée, heap propre après pull léger) ──────────────
+// ─── FETCH FRAME ─────────────────────────────────────────────────────────────
 bool doFetchFrame(const String& frameId, const String& frameSource) {
   logHeapState("FETCHFRAME-BEFORE");
 
@@ -768,8 +795,6 @@ bool doFetchFrame(const String& frameId, const String& frameSource) {
       return false;
     }
 
-    // Lecture robuste en boucle — readBytes() peut renvoyer moins que demandé
-    // sur un stream TLS/réseau fragmenté
     auto readFull = [](WiFiClient* s, uint8_t* dst, size_t len) -> size_t {
       size_t total = 0;
       unsigned long t0 = millis();
@@ -789,8 +814,7 @@ bool doFetchFrame(const String& frameId, const String& frameSource) {
     size_t rRead = readFull(stream, redBuf,   BUF_SIZE);
     http.end();
 
-    Serial.printf("[FETCHFRAME] lu black=%u red=%u expected=%u\n",
-                  bRead, rRead, BUF_SIZE);
+    Serial.printf("[FETCHFRAME] lu black=%u red=%u expected=%u\n", bRead, rRead, BUF_SIZE);
 
     if (bRead != BUF_SIZE || rRead != BUF_SIZE) {
       Serial.println("[FETCHFRAME] lecture incomplète");
@@ -799,26 +823,28 @@ bool doFetchFrame(const String& frameId, const String& frameSource) {
       return false;
     }
   }
+  // TLS fermé ici — le panel a eu le temps de finir son refresh précédent
 
   if (hasDisplayedFrame) {
     clearDisplayWhite();
-    delay(3000);
+    // Pas de delay(3000) ici : initDisplayForRefresh() dans refreshDisplay()
+    // attend déjà EINK_MIN_REFRESH_MS depuis lastRefreshMs
   }
 
   if (!refreshDisplay()) {
-    Serial.println("[FETCHFRAME] refreshDisplay failed");
+    Serial.println("[FETCHFRAME] refreshDisplay failed — frame conservée côté serveur");
     free(blackBuf); blackBuf = nullptr;
     free(redBuf);   redBuf   = nullptr;
     frameReady = false;
     return false;
   }
 
-  hasDisplayedFrame      = true;
-  lastFrameId            = frameId;
-  frameReady             = true;
+  hasDisplayedFrame     = true;
+  lastFrameId           = frameId;
+  frameReady            = true;
   ackFrame(frameId);
-  consensusJustDisplayed = (frameSource == "consensus");
-  pendingCandidateId     = "";
+  lastFrameWasConsensus = (frameSource == "consensus");
+  pendingCandidateId    = "";
 
   Serial.printf("[FETCHFRAME] ✅ affichée frameId=%s source=%s\n",
                 frameId.c_str(), frameSource.c_str());
@@ -829,9 +855,7 @@ bool doFetchFrame(const String& frameId, const String& frameSource) {
 
 
 
-
-
-// ─── PULL LÉGER (metadata only, ~300 bytes) ──────────────────────────────────
+// ─── PULL LÉGER ──────────────────────────────────────────────────────────────
 bool doPull() {
   free(blackBuf); blackBuf = nullptr;
   free(redBuf);   redBuf   = nullptr;
@@ -882,7 +906,6 @@ bool doPull() {
       return false;
     }
 
-    // Réponse légère ~300 bytes, doc 1KB suffit
     DynamicJsonDocument doc(1024);
     DeserializationError err = deserializeJson(doc, http.getStream());
     http.end();
@@ -906,18 +929,13 @@ bool doPull() {
     }
 
     newFrameSource = doc["frameSource"] | "none";
-
-    // La réponse pull légère retourne frameId à la racine (plus dans frame{})
-    newFrameId = doc["frameId"] | "";
-    // Fallback : si le serveur retourne encore frame.frameId
+    newFrameId     = doc["frameId"]     | "";
     if (newFrameId.length() == 0) {
       JsonObject frameObj = doc["frame"];
       if (!frameObj.isNull()) newFrameId = frameObj["frameId"] | "";
     }
   }
-  // TLS fermé ici
 
-  // Mise à jour état chaîne
   if (newBlockHash.length() > 0 && newBlockHash != currentBlockHash) {
     currentBlockHash  = newBlockHash;
     currentBlockIndex = newBlockIndex;
@@ -943,11 +961,21 @@ bool doPull() {
     return true;
   }
 
-  // Nouvelle frame dispo → fetch dans une 2e connexion TLS séparée
   Serial.printf("[PULL] Nouvelle frame frameId=%s source=%s → fetch\n",
                 newFrameId.c_str(), newFrameSource.c_str());
-  return doFetchFrame(newFrameId, newFrameSource);
+
+  bool fetchOk = doFetchFrame(newFrameId, newFrameSource);
+
+  // CRITIQUE : même si le fetch/display échoue, on retourne true
+  // pour que lastPullMs soit mis à jour dans le loop et éviter la
+  // boucle infinie pull → échec → pull immédiat → échec → ...
+  // La prochaine tentative sera dans PULL_INTERVAL (60s).
+  if (!fetchOk) {
+    Serial.println("[PULL] doFetchFrame failed — prochaine tentative dans 60s");
+  }
+  return true;
 }
+
 
 
 
@@ -961,11 +989,12 @@ bool doPull() {
 bool doValidate() {
   if (pendingCandidateId.length() == 0) return true;
 
-  if (consensusJustDisplayed) {
-    pendingCandidateId = "";
-    consensusJustDisplayed = false;
-    return true;
-  }
+  // ← SUPPRIME ces lignes qui bloquent la validation après un consensus :
+  // if (consensusJustDisplayed) {
+  //   pendingCandidateId = "";
+  //   consensusJustDisplayed = false;
+  //   return true;
+  // }
 
   Serial.println("[VALIDATE] Debut: " + pendingCandidateId);
   logHeapState("VALIDATE-BEFORE");
@@ -1019,7 +1048,7 @@ bool doValidate() {
     Serial.printf("[VALIDATE] candidateId=%s score=%.3f\n", candidateId.c_str(), score);
 
     String signature = signV1(candidateId, score);
-    char   scoreStr[8];
+    char scoreStr[8];
     dtostrf(score, 1, 3, scoreStr);
 
     String body = String("{\"deviceId\":\"") + deviceId + "\","
@@ -1039,7 +1068,6 @@ bool doValidate() {
       Serial.println("[VALIDATE] Vote OK");
       if (vResp.indexOf("\"blockMined\":true") >= 0) {
         Serial.println("[VALIDATE] BLOC MINE");
-        consensusJustDisplayed = false;
         frameReady = true;
       }
     } else {
@@ -1060,7 +1088,6 @@ validate_realloc:
   logHeapState("VALIDATE-AFTER");
   return true;
 }
-
 
 
 
@@ -1126,38 +1153,39 @@ void setup() {
 void loop() {
   unsigned long now = millis();
 
+  // ─── Re-registration si perdu ──────────────────────────────────────────
   if (!registered) {
     if (!doRegister()) { delay(5000); return; }
   }
 
+  // ─── Pull périodique ───────────────────────────────────────────────────
   if (now - lastPullMs >= PULL_INTERVAL) {
     String prevCandidateId = pendingCandidateId;
-    bool pullOk = doPull();
-    if (pullOk) {
-      lastPullMs = now;
-    } else {
-      Serial.println("[LOOP] doPull failed, lastPullMs conservé");
-    }
+    doPull();
+    lastPullMs = millis();
 
+    // Si un nouveau candidat est apparu, on reset le timer de validation
+    // pour lui laisser VALIDATE_INTERVAL avant de voter
     if (pendingCandidateId.length() > 0 && pendingCandidateId != prevCandidateId) {
+      Serial.println("[LOOP] Nouveau candidat détecté, reset timer validation");
       lastValidateMs = millis();
     }
   }
 
+  // ─── Validation d'un candidat en attente ───────────────────────────────
   if (pendingCandidateId.length() > 0 &&
-      !consensusJustDisplayed &&
       millis() - lastValidateMs >= VALIDATE_INTERVAL) {
-    bool validateOk = doValidate();
-    lastValidateMs  = millis();
 
-    if (validateOk && frameReady) {
+    doValidate();
+    lastValidateMs = millis();
+
+    // Si un bloc vient d'être miné, on pull immédiatement pour récupérer
+    // la nouvelle frame sans attendre PULL_INTERVAL
+    if (frameReady) {
+      Serial.println("[LOOP] Bloc miné — pull immédiat");
       delay(2000);  // laisse BearSSL libérer ses buffers TLS
-      bool immediatePullOk = doPull();
-      if (immediatePullOk) {
-        lastPullMs = millis();
-      } else {
-        Serial.println("[LOOP] immediate doPull after validate failed");
-      }
+      doPull();
+      lastPullMs = millis();
     }
   }
 

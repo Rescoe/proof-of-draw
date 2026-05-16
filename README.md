@@ -1,242 +1,351 @@
-# ESP Canvas MVP
+# Proof of Draw
 
-Application Next.js pour dessiner et envoyer des frames vers des écrans ESP8266 (e-ink, OLED).
+> Un réseau artistique distribué où des écrans e-ink ESP8266 valident collectivement des dessins via consensus, gravant chaque œuvre dans une chaîne légère.
+
+---
+
+## Vision
+
+Proof of Draw est un réseau artistique embarqué qui relie des artistes, des ESP8266, et des écrans physiques e-ink/OLED. Un dessin est soumis depuis une interface web Next.js, propagé à une pool d'ESP du même type d'écran, validé localement selon des métriques simples de complexité visuelle, puis affiché et archivé dans une chaîne légère stockée dans Redis.
+
+Le serveur Next.js / Vercel reste coordinateur et archiveur. Redis / Upstash gère l'état, les locks, les files, les bans, les devices et les pools. Les ESP ne font pas que afficher — ils participent à un protocole de validation distribué.
+
+---
+
+## Stack
+
+| Composant | Technologie |
+|-----------|-------------|
+| Frontend | Next.js 14 (App Router) — Vercel |
+| Backend | Next.js API Routes — Vercel Edge/Serverless |
+| Storage | Upstash Redis (KV, TTL natif, pas de DB) |
+| Firmware | ESP8266 Arduino — e-ink Waveshare 2.9" BWR + 2.7" BW/OLED |
+| Auth | Session HMAC + blacklist Redis |
+| Crypto | ED25519 (clés en EEPROM ESP), SHA-256 (hashes blocs) |
+
+---
+
+## Statut actuel — v1 (16/05/2026)
+
+| Composant | État |
+|-----------|------|
+| Enregistrement ESP (register + pairing QR) | ✅ fonctionnel |
+| Dessin web → candidat | ✅ fonctionnel |
+| Vote ESP → quorum → bloc miné | ✅ fonctionnel |
+| Affichage post-mining sur e-ink 2.9" BWR | ✅ fonctionnel |
+| Personal frame | ✅ logique implémentée |
+| Rate limiting / blacklist / strikes | ✅ préservé |
+| Intégrité chaîne (blockHash EEPROM, parentHash) | ✅ fonctionnel |
+| Multi-ESP en pool (quorum > 1) | 🔜 à tester |
+| Firmware e-ink 2.7" BW + OLED | 🔜 à porter |
+
+Commit de référence firmware ESP + eink 2.9" BWR : `43aac8f`
+
+---
+
+## Flux complet
+
+```
+[Web] Artiste dessine sur /draw
+        ↓
+POST /api/draw → POST /api/submit-candidate
+        ↓
+[ESP] GET /api/pull (léger, ~300B) — détecte candidat
+        ↓ wait VALIDATE_INTERVAL (30s)
+GET /api/validate-candidate (~121B) — récupère metadata + score_server
+        ↓
+POST /api/validation-result — vote ESP
+        ↓ quorum atteint → bloc miné → broadcast frame:{deviceId} Redis
+GET /api/pull (léger) — détecte nouveau frameId
+        ↓
+GET /api/pull-frame?fmt=bin — 9472 bytes binaires (blackBuf + redBuf)
+        ↓ readFull() loop garantit réception complète
+epd.Display(blackBuf, redBuf) → ✅ affiché sur e-ink
+```
+
+---
+
+## Architecture serveur
+
+### Routes API
+
+| Route | Méthode | Rôle |
+|-------|---------|------|
+| `/api/register` | POST | Enregistrement ESP par MAC. Idempotent. Retourne deviceId + pairCode. Gère les pools Redis. |
+| `/api/ping` | POST | Met à jour lastPing/lastSeen du device. |
+| `/api/pull` | GET | Retourne metadata légère (~300B) : frameSource, frameId, chain summary, pendingValidation. Rate limit : 2/15min. |
+| `/api/pull-frame` | GET | Retourne les buffers pixel en binaire brut (`?fmt=bin`) : blackBuf[4736] + redBuf[4736] concaténés. |
+| `/api/validate-candidate` | GET | Retourne metadata du candidat courant (sans payload). Rate limit : 4/min. |
+| `/api/validation-result` | POST | Enregistre le vote ESP. Si quorum → finalizeBlock → broadcast → clearCandidate. |
+| `/api/draw` | POST | Soumet un dessin depuis l'app web (auth HMAC). |
+| `/api/submit-candidate` | POST | Crée le candidat Redis à partir du dessin. |
+| `/api/onboard` | POST | Associe un pairCode à un artistName. |
+| `/api/ack-frame` | POST | ESP confirme l'affichage d'un frame. |
+| `/api/personal-frame` | POST | Stocke un frame personnel pour un device spécifique. |
+
+### Librairies serveur
+
+| Fichier | Rôle |
+|---------|------|
+| `lib/chain.ts` | Logique chaîne : Block, Candidate, VoteMap, castVote(), finalizeBlock(), clearCandidate(), getChainSummary() |
+| `lib/deviceStore.ts` | CRUD devices Redis. TTL 48h. |
+| `lib/queue.ts` | Store/retrieve frames depuis Redis. FramePayload typé par écran. |
+| `lib/canvasToScreen.ts` | Conversion canvas → buffers e-ink selon profil écran. |
+| `lib/rateLimit.ts` | Rate limiting, blacklist, strike system Redis. |
+| `lib/crypto.ts` | SHA-256, computeDisplayTime (score → durée affichage). |
+| `lib/screenProfiles.ts` | Profils d'écrans : dimensions, formats, BUF_SIZE. |
+| `lib/session.ts` | Gestion sessions HMAC pour l'app web. |
+
+### Clés Redis
+
+| Clé | Valeur |
+|-----|--------|
+| `chain:head` | JSON(Block) — dernier bloc validé |
+| `chain:block:{hash}` | JSON(Block) — archive par hash |
+| `chain:index:{n}` | blockHash — index séquentiel |
+| `candidate:current` | JSON(Candidate) — dessin en attente |
+| `candidate:votes` | JSON(VoteMap) — votes reçus |
+| `pool:screen:{screenId}` | Set(deviceId) — membres de la pool |
+| `frame:{deviceId}` | JSON — frame à afficher (TTL = displayTime) |
+
+---
+
+## Architecture firmware ESP8266
+
+### Boot flow
+
+```
+WiFi connect
+→ POST /api/register (MAC → deviceId + pairCode)
+→ Génération/chargement clés ED25519 EEPROM
+→ malloc blackBuf + redBuf (BUF_SIZE × 2 = ~9.5KB)
+→ doPull() immédiat
+→ loop : pull toutes les 60s / validate toutes les 30s
+```
+
+### Contraintes mémoire critiques
+
+L'ESP8266 dispose de ~47KB de heap après WiFi. Chaque connexion TLS (BearSSL) consomme ~16KB de manière fragmentée. Toute la gestion mémoire repose sur ces invariants :
+
+- `blackBuf`/`redBuf` toujours `free()` avant toute connexion TLS, toujours `malloc()` après
+- `DynamicJsonDocument` pour les petits JSON alloué après fermeture TLS (scope HTTP fermé)
+- `http.useHTTP10(true)` obligatoire — Vercel utilise chunked encoding en HTTP/1.1, incompatible avec `getStream()`
+- `/api/validate-candidate` ne retourne PAS le payload image (uniquement metadata + score_server)
+- Lecture binaire directe pour les buffers pixel : zéro JSON, zéro base64 côté firmware
+
+### Fichiers firmware
+
+| Fichier | Cible |
+|---------|-------|
+| `esp8266/esp_eink_2.9BWR/esp_eink_2.9BWR.ino` | Waveshare 2.9" BWR (noir/blanc/rouge) ✅ |
+| `esp8266/esp_eink_2.7BW_OLED/esp_eink_2.7BW_OLED.ino` | 2.7" BW + OLED 🔜 |
+
+### EEPROM layout
+
+```
+[0..31]   clé privée ED25519 (32 bytes)
+[32..63]  blockHash courant (16 premiers bytes du hash = 32 hex chars)
+[64]      keyGenerated flag (0x01 = généré)
+[65..96]  clé publique (32 bytes)
+[97]      onboardingShown flag (0x01 = déjà affiché)
+```
+
+---
+
+## Problèmes résolus (session 15-16/05/2026)
+
+### P1 — validate-candidate retournait 13KB
+
+**Symptôme :** heap TLS ESP épuisé, GET → -1, candidateId vide.  
+**Cause :** payload base64 inclus dans la réponse, DynamicJsonDocument(4096) épuisé.  
+**Fix :** suppression du payload de la réponse. L'ESP vote avec score_server uniquement.
+
+### P2 — candidateId toujours vide après P1
+
+**Cause :** DynamicJsonDocument trop grand alloué après TLS fragmenté → pas de bloc contigu.  
+**Fix :** réécriture doValidate() avec DynamicJsonDocument(512).
+
+### P3 — Pull + validate back-to-back : second TLS impossible
+
+**Cause :** loop() déclenchait validate immédiatement après pull.  
+**Fix :** reset lastValidateMs = now à chaque nouveau candidat → délai VALIDATE_INTERVAL avant premier vote.
+
+### P4 — voteCount=0, needed=0 → vote ignoré silencieusement
+
+**Cause :** castVote() retourne zeros quand voteMap absent/expiré de Redis.  
+**Fix :** détection 409 + log warn côté serveur.
+
+### P5 — JSON error IncompleteInput après bloc miné
+
+**Cause :** getString() ne peut pas allouer une String de 12.8KB sur heap fragmenté post-TLS.  
+**Fix :** réécriture doPull() avec http.getStream() → ArduinoJson lit directement le stream.
+
+### P6 — JSON error InvalidInput sur le stream
+
+**Cause :** Vercel utilise Transfer-Encoding: chunked (HTTP/1.1). getStream() reçoit `1ea\r\n{...}`.  
+**Fix :** `http.useHTTP10(true)` avant chaque GET.
+
+### P7 — JSON error NoMemory persistant après bloc miné
+
+**Cause :** DynamicJsonDocument(15360) alloué après http.GET() → heap fragmenté par BearSSL → malloc échoue malgré 29KB free total (maxBlock = 19KB).  
+**Fix :** séparation en deux routes + lecture binaire directe (voir P8).
+
+### P8 — Architecture pull/fetch séparée (fix définitif)
+
+**Problème :** même avec l'allocation du doc avant TLS, le maxBlock tombait à ~23KB après le pull léger, insuffisant pour un DynamicJsonDocument(16384) dans doFetchFrame.  
+**Fix :** `/api/pull-frame?fmt=bin` retourne les buffers en **binaire brut** (9472 bytes, pas de JSON, pas de base64). Le firmware lit directement dans blackBuf et redBuf avec une boucle robuste :
+
+```cpp
+auto readFull = [](WiFiClient* s, uint8_t* dst, size_t len) -> size_t {
+  size_t total = 0;
+  unsigned long t0 = millis();
+  while (total < len && millis() - t0 < 15000) {
+    if (s->available()) {
+      size_t got = s->readBytes(dst + total, len - total);
+      if (got > 0) total += got;
+    } else {
+      delay(10);
+    }
+  }
+  return total;
+};
+```
+
+**Pourquoi readFull est nécessaire :** `stream->readBytes()` sur TLS peut retourner moins que demandé si les données arrivent en plusieurs paquets TCP → buffers partiels → image hachée.
+
+---
+
+## Généralisation à d'autres types d'écrans
+
+### Côté serveur — `/api/pull-frame`
+
+Le endpoint lit le profil d'écran depuis `screenProfiles.ts` pour déterminer :
+- le nombre de buffers (`bw` = 1 buffer, `bwr` = 2 buffers concaténés)
+- la `BUF_SIZE` correspondante
+
+Pour les écrans monochrome : envoyer uniquement `blackBuf` (pas de concaténation rouge).  
+Ajouter un header `X-Screen-Type` dans la réponse pour validation côté ESP.
+
+### Côté firmware — `doFetchFrame`
+
+`SCREEN_TYPE` et `BUF_SIZE` sont des constantes définies en tête de fichier.  
+Pour les écrans BW (un seul buffer) : lire `BUF_SIZE` bytes, appeler `epd.Display(blackBuf)`.  
+Pour les écrans BWR : conserver la lecture `black + red` actuelle.
+
+### Côté `screenProfiles.ts`
+
+Chaque profil déclare :
+- `BUF_SIZE` : taille d'un buffer en bytes
+- `bufferCount` : 1 (BW/OLED) ou 2 (BWR)
+- `format` : `"bw"` ou `"bwr"`
+- dimensions logiques
+
+---
+
+## Écrans supportés
+
+| ID | Nom | Résolution logique driver | BUF_SIZE | Format |
+|----|-----|--------------------------|----------|--------|
+| `eink29bwr` | E-Ink 2.9" BWR Waveshare V4 | 128×296 | 4736 | BWR (2 buffers) |
+| `eink27bw` | E-Ink 2.7" BW Waveshare V2 | 176×264 | 5808 | BW (1 buffer) |
+| `oled096` | OLED 0.96" SSD1306 | 128×64 | 1024 | BW (1 buffer) |
+
+### Conversions canvas → buffer (référence)
+
+#### E-Ink 2.9" BWR (296×128 canvas → 128×296 driver, rotation 90° CCW)
+
+```typescript
+const bufCol = y;        // 0..127
+const bufRow = 295 - x;  // 0..295
+const byteIndex = bufRow * 16 + Math.floor(bufCol / 8);
+const bit = 7 - (bufCol % 8);
+// 0xFF = blanc, bit à 0 = coloré
+```
+
+#### E-Ink 2.7" BW (264×176 canvas → 176×264 driver, rotation 90° CCW)
+
+```typescript
+const bufCol = y;        // 0..175
+const bufRow = 263 - x;  // 0..263
+const byteIndex = bufRow * 22 + Math.floor(bufCol / 8);
+const bit = 7 - (bufCol % 8);
+```
+
+#### OLED 0.96" (128×64, page-major)
+
+```typescript
+const page = Math.floor(y / 8);
+const bit = y % 8;
+buffer[page * 128 + x] |= (1 << bit);
+// 0x00 = éteint, bit à 1 = allumé
+```
+
+---
+
+## Consensus — Proof of Presence V1
+
+L'ESP vote sur présence dans la pool. Le score serveur (`score_server`) sert de référence.  
+Le quorum est `ceil(poolSize × 0.51)`.
+
+**V2 prévu :** l'ESP calcule ses propres métriques depuis `/api/candidate-payload` (binaire) :
+- Entropie Shannon
+- Densité de transitions horizontales
+- RLE complexity
+- Score composite : entropie 40% + transitions 40% + RLE 20%
+
+---
+
+## Sécurité
+
+- Cookie session HMAC-SHA256
+- Rate limiting par device (Redis)
+- Blacklist IP/device/MAC automatique (après PULL_MAX × 10 dépassements)
+- Lock draw atomique SET NX
+- TTL sur devices (48h) et frames (displayTime calculé depuis score)
+- Pas d'état critique en mémoire Vercel (serverless-safe)
+- Pas de fetch sortant vers IP locale (plus de SSRF possible)
+
+---
 
 ## Démarrage rapide
 
 ```bash
 npm install
-# Éditez .env.local avec votre IP
+cp .env.local.example .env.local
+# Renseigner UPSTASH_REDIS_REST_URL et UPSTASH_REDIS_REST_TOKEN
 npm run dev
 ```
+
 → http://localhost:3000
 
-## Flows
-1. `/onboard` — Enregistrer un device (nom, IP:PORT, écrans)
-2. `/draw` — Sélectionner device + écran → Canvas adapté → Envoyer
-3. `/admin` — Dashboard devices, ping, stats
+### Flow d'onboarding ESP
 
-## Écrans supportés
-| ID | Nom | Résolution | Couleurs |
-|----|-----|-----------|---------|
-| `eink29bwr` | E-Ink 2.9" BWR | 296×128 | N/B/Rouge |
-| `oled096` | OLED 0.96" | 128×64 | N/B |
-| `eink27bw` | E-Ink 2.7" BW | 264×176 | Niveaux de gris |
+1. Flasher le firmware `esp_eink_2.9BWR.ino` avec WIFI_SSID, WIFI_PASSWORD, SERVER_URL
+2. L'ESP démarre, s'enregistre sur `/api/register`, affiche le pairCode sur l'écran
+3. Ouvrir `/onboard` sur le web, saisir le pairCode et artistName
+4. Dessiner sur `/draw` — le dessin circule vers la pool
 
-## Tester sans ESP (ESP mock Python)
+---
 
-```python
-# fake_esp.py — lancez avec: python fake_esp.py
-from http.server import HTTPServer, BaseHTTPRequestHandler
-import json
+## Variables d'environnement
 
-class Handler(BaseHTTPRequestHandler):
-    def do_GET(self):
-        if self.path == '/ping':
-            self.send_response(200)
-            self.send_header('Content-Type','application/json')
-            self.end_headers()
-            self.wfile.write(b'{"ok":true}')
-    def do_POST(self):
-        n = int(self.headers.get('Content-Length',0))
-        data = json.loads(self.rfile.read(n))
-        print(f"FRAME: screen={data['screen']} data_len={len(data.get('data',''))}")
-        self.send_response(200)
-        self.send_header('Content-Type','application/json')
-        self.end_headers()
-        self.wfile.write(b'{"ok":true}')
-    def do_OPTIONS(self):
-        self.send_response(204)
-        self.send_header('Access-Control-Allow-Origin','*')
-        self.send_header('Access-Control-Allow-Methods','POST,GET,OPTIONS')
-        self.send_header('Access-Control-Allow-Headers','Content-Type')
-        self.end_headers()
-    def log_message(self, *a): pass
-
-HTTPServer(('',8080),Handler).serve_forever()
+```
+UPSTASH_REDIS_REST_URL=
+UPSTASH_REDIS_REST_TOKEN=
+PULL_WINDOW_SEC=900
+PULL_LIMIT_PER_WINDOW=2
+BLACKLIST_TTL_SECONDS=604800
+DRAW_LOCK_TTL=900
+SESSION_SECRET=
 ```
 
-Puis enregistrez dans /onboard : IP=127.0.0.1 PORT=8080
+---
 
-## ESP8266 — esp8266/esp_canvas.ino
-1. Arduino IDE + board ESP8266
-2. Librairies: ArduinoJson, GxEPD2 (e-ink) ou Adafruit SSD1306 (OLED)
-3. Modifiez WIFI_SSID, WIFI_PASSWORD, SCREEN_TYPE
-4. Flashez → POST /frame reçu, loggé Serial
+## Roadmap V2
 
-## API
-- `GET /api/devices` — Liste devices
-- `POST /api/onboard` — `{name, ip, port, screens[]}`
-- `POST /api/draw` — `{deviceId, screen, data: base64}`
-- `POST /api/ping` — `{deviceId}`
-
-## Sécurité (mockée)
-`lib/security.ts` : checkAuth(), rateLimit(15min), quotaDaily(1) → toujours true.
-Prêt à brancher JWT + Redis + DB.
-
-## Déploiement
-```bash
-npx vercel --prod
-# Pour la persistance: activer Vercel KV et adapter deviceStore.ts
-```
-
-Rappels :
-📋 GUIDE DÉFINITIF — CANVAS → BUFFER ÉCRANS
-Pour éviter de refaire les mêmes conneries sur les écrans.
-
-🎯 Contrat global (inchangé)
-ts
-export type ScreenPayload =
-  | { screen: "oled096"; buffer: string }        // 128×64 SSD1306, 1024 bytes
-  | { screen: "eink27bw"; buffer: string }      // 176×264 Waveshare V2, 5808 bytes
-  | { screen: "eink29bwr"; black: string; red: string } // 128×296 Waveshare V4, 4736×2 bytes
-🖥️ 1. OLED 0.96" SSD1306 128×64
-TS (canvas → buffer)
-ts
-const OLED_W = 128, OLED_H = 64;
-const BUF_SIZE = 1024;
-
-const buffer = new Uint8Array(BUF_SIZE).fill(0x00); // 0x00 = éteint
-
-for (y=0; y<64; y++) for (x=0; x<128; x++) {
-  const i = (y*128 + x)*4;
-  const a = px[i+3]; if (a < 32) continue; // transparent = éteint
-  const lum = (px[i]*3 + px[i+1]*6 + px[i+2])/10;
-  const isLit = lum < 128; // sombre = allumé
-  if (!isLit) continue;
-
-  const page = y/8, bit = y%8;
-  buffer[page*128 + x] |= (1 << bit);
-}
-Arduino (Adafruit_SSD1306)
-cpp
-size_t len = base64Decode(bufferB64, ..., oledBuf, 1024);
-uint8_t* fb = oled.getBuffer();
-memcpy(fb, oledBuf, 1024);
-oled.display();
-⚠️ Points critiques
-
-a < 32 OBLIGATOIRE sinon fond transparent = écran plein
-
-lum < 128 pour allumer les sombres (trait)
-
-bit 0 = éteint, 1 = allumé
-
-page-major : byteIndex = page*128 + x
-
-🖨️ 2. E-INK 2.7" BW Waveshare V2 (176×264 logique)
-TS (canvas 264×176 → buffer driver)
-ts
-const EPD_W = 176, EPD_H = 264;
-const bytesPerRow = 22, BUF_SIZE = 5808;
-
-const buffer = new Uint8Array(BUF_SIZE).fill(0xff); // 0xFF = blanc
-
-for (y=0; y<176; y++) for (x=0; x<264; x++) { // canvas 264x176
-  const i = (y*264 + x)*4;
-  const a = px[i+3]; if (a < 32) continue;
-  const lum = (px[i]*3 + px[i+1]*6 + px[i+2])/10;
-  if (lum > 128) continue; // blanc = reste 1
-
-  // Rotation 90° CCW
-  const bufCol = y;        // 0..175
-  const bufRow = 263 - x;  // 0..263
-  const byteIndex = bufRow * 22 + (bufCol/8);
-  const bit = 7 - (bufCol%8);
-  buffer[byteIndex] &= (~(1<<bit)) & 0xff;
-}
-Arduino (epd2in7_V2)
-cpp
-size_t len = base64Decode(bufferB64, ..., e27Buf, 5808);
-epd27.Display(e27Buf);
-epd27.Sleep();
-⚠️ Points critiques
-
-0xFF = blanc, 0 = noir
-
-Rotation 90° CCW obligatoire : bytesPerRow = 176/8 = 22
-
-MSB-first : bit = 7 - (col%8)
-
-🌈 3. E-INK 2.9" BWR Waveshare V4 (128×296 logique)
-TS (canvas 296×128 → buffers driver)
-ts
-const EPD_W = 128, EPD_H = 296;
-const bytesPerRow = 16, BUF_SIZE = 4736;
-
-const blackBuf = new Uint8Array(BUF_SIZE).fill(0xff);
-const redBuf   = new Uint8Array(BUF_SIZE).fill(0xff);
-
-for (y=0; y<128; y++) for (x=0; x<296; x++) {
-  const i = (y*296 + x)*4;
-  const a = px[i+3]; if (a < 32) continue;
-  const color = classifyPixel(r,g,b); // black/red/white
-  if (color === "white") continue;
-
-  // Rotation 90° CCW
-  const bufCol = y;
-  const bufRow = 295 - x;
-  const byteIndex = bufRow * 16 + (bufCol/8);
-  const bit = 7 - (bufCol%8);
-
-  const mask = (~(1<<bit)) & 0xff;
-  if (color === "black") blackBuf[byteIndex] &= mask;
-  else redBuf[byteIndex] &= mask;
-}
-Arduino (epd2in9b_V4)
-cpp
-size_t blackLen = base64Decode(blackB64, ..., blackBuf, 4736);
-size_t redLen   = base64Decode(redB64,   ..., redBuf,   4736);
-epd.Display(blackBuf, redBuf);
-epd.Sleep();
-⚠️ Points critiques
-
-Rotation 90° CCW obligatoire : bytesPerRow = 128/8 = 16
-
-MSB-first
-
-0xFF = blanc, 0 = colored (black ou red)
-
-🔧 Arduino unifié (template)
-cpp
-void handleFrame() {
-  const char* screen = doc["screen"];
-  const char* bufferB64 = doc["buffer"];
-  const char* blackB64 = doc["black"];
-  const char* redB64 = doc["red"];
-
-  if (strcmp(screen, "oled096") == 0) {
-    base64Decode(bufferB64, oledBuf, 1024);
-    memcpy(oled.getBuffer(), oledBuf, 1024);
-    oled.display();
-  }
-  else if (strcmp(screen, "eink27bw") == 0) {
-    base64Decode(bufferB64, e27Buf, 5808);
-    epd27.Display(e27Buf);
-    epd27.Sleep();
-  }
-  else if (strcmp(screen, "eink29bwr") == 0) {
-    base64Decode(blackB64, blackBuf, 4736);
-    base64Decode(redB64,   redBuf,   4736);
-    epd29.Display(blackBuf, redBuf);
-    epd29.Sleep();
-  }
-}
-⚠️ ERREURS À NE JAMAIS REFAIRE
-Erreur	Symptôme	Cause
-Erreur	Symptôme	Cause
-a < 32 oublié	Buffer plein 0xFF	Transparent = sombre = allumé
-Pas de rotation	Image découpée/bandes	bytesPerRow faux
-lum > 128 au lieu <	Rien visible	Allume le blanc, pas le trait
-drawPixel() boucle	Lent / artefacts	memcpy(getBuffer()) direct
-📏 Vérification systématique
-Logs obligatoires à chaque écran :
-
-text
-[canvasToScreen XXX] XXX pixels allumés
-[BUFFER PREVIEW] 0x18 0x3C 0x7E ... (pas que FF/00)
-[SEND] XXX: buffer XXX bytes
-[HTTP] body=XXXX decoded=XXXX expected=XXXX
-Si buffer preview = tapis FF/00 → bug contenu TS
-Si decoded != expected → bug transport
-Si Displayed OK mais rien → inversion invertDisplay() ou seuil TS faux
+- `/api/candidate-payload` : payload binaire pour calcul local des métriques ESP
+- Signature ED25519 réelle (clé privée EEPROM déjà générée)
+- Score composite local : entropie + transitions + RLE
+- Multi-pool par résolution/couleur d'écran
+- Port firmware vers e-ink 2.7" BW et OLED 0.96"
+- Mint on-chain (hors scope V1)

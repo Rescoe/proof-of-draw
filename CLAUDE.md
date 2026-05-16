@@ -1,217 +1,218 @@
 # CLAUDE.md
 
-## Role
+## Rôle
 
 Tu travailles sur le repo existant `proof-of-draw`.
 
 Ta mission n'est PAS de refaire l'application.  
-Ta mission est de faire une migration réseau ciblée pour passer d'une architecture à IP locale vers une architecture à devices pull-based.
+Ta mission est de faire évoluer le projet à partir d'une base fonctionnelle en V1.
 
 ---
 
-## Read this first
+## État du projet au 16/05/2026
 
-Le repo actuel est déjà fonctionnel en MVP, avec ces points importants :
+### Ce qui fonctionne en production
 
-- `app/onboard/page.tsx` demande encore `name`, `ip`, `port`, `screens`
-- `app/api/onboard/route.ts` crée encore des devices à partir de `name + ip`
-- `app/api/draw/route.ts` fait encore `sendFrameNow(device.ip, device.port, payload)`
-- `app/api/ping/route.ts` fait encore un fetch vers `http://${device.ip}:${device.port}/ping`
-- `lib/deviceStore.ts` persiste encore `ip`, `port`
-- `lib/queue.ts` fait encore le push HTTP direct
-- `lib/canvasToScreen.ts` fonctionne déjà et doit être conservé
-- le repo possède déjà les firmwares ESP et les profils d'écrans
+Le pipeline complet est validé sur l'écran e-ink 2.9" BWR :
 
-Conclusion :
-le projet n'a PAS besoin d'une nouvelle app, mais d'une migration d'architecture réseau.
+```
+dessin web → POST /api/draw → POST /api/submit-candidate
+→ ESP GET /api/pull (metadata ~300B)
+→ ESP GET /api/validate-candidate (metadata candidat ~121B)
+→ ESP POST /api/validation-result (vote)
+→ quorum → bloc miné → broadcast Redis frame:{deviceId}
+→ ESP GET /api/pull (détecte nouveau frameId)
+→ ESP GET /api/pull-frame?fmt=bin (9472 bytes binaires)
+→ readFull() loop → epd.Display(blackBuf, redBuf) ✅
+```
+
+Commit de référence : `43aac8f`
+
+### Ce qui reste à faire
+
+- Porter le firmware vers e-ink 2.7" BW et OLED 0.96"
+- Tester le quorum multi-ESP (poolSize > 1)
+- V2 : calcul local de métriques ESP, signature ED25519 réelle
+
+---
+
+## Architecture actuelle
+
+### Modèle réseau
+
+```
+ESP → serveur (register + ping + pull + pull-frame)
+```
+
+Pas de fetch sortant vers IP locale. Pas de SSRF possible.
+
+### Séparation pull léger / fetch binaire
+
+`/api/pull` retourne uniquement des métadonnées (~300B) :
+```json
+{
+  "frameSource": "consensus",
+  "frameId": "...",
+  "chain": { "blockHash": "...", "blockIndex": 7 },
+  "pendingValidation": { "candidateId": "..." }
+}
+```
+
+`/api/pull-frame?fmt=bin` retourne 9472 bytes bruts :
+```
+[0..4735]    blackBuf (4736 bytes)
+[4736..9471] redBuf   (4736 bytes)
+```
+
+Pas de JSON. Pas de base64. Content-Type: application/octet-stream.
+
+---
+
+## Contraintes mémoire ESP8266 — à lire avant tout changement firmware
+
+L'ESP8266 a ~47KB de heap après WiFi. BearSSL consomme ~16KB par connexion TLS de façon fragmentée.
+
+### Règles absolues
+
+```
+1. free(blackBuf); free(redBuf) AVANT toute connexion TLS
+2. malloc(blackBuf); malloc(redBuf) APRÈS fermeture TLS (http.end())
+3. http.useHTTP10(true) sur TOUS les GET — Vercel chunked encoding sinon
+4. /api/validate-candidate ne retourne JAMAIS le payload image
+5. /api/pull ne retourne JAMAIS black/red
+6. DynamicJsonDocument petit (512-1024) pour les réponses légères
+7. Pour les buffers pixel : readFull() en boucle, jamais readBytes() seul
+```
+
+### Pourquoi readFull() est obligatoire
+
+`stream->readBytes()` sur TLS peut retourner moins que demandé (paquets TCP fragmentés). Sans boucle, les buffers sont partiels → image hachée à l'écran.
+
+```cpp
+auto readFull = [](WiFiClient* s, uint8_t* dst, size_t len) -> size_t {
+  size_t total = 0;
+  unsigned long t0 = millis();
+  while (total < len && millis() - t0 < 15000) {
+    if (s->available()) {
+      size_t got = s->readBytes(dst + total, len - total);
+      if (got > 0) total += got;
+    } else {
+      delay(10);
+    }
+  }
+  return total;
+};
+```
+
+---
+
+## Contraintes serveur
+
+### TypeScript strict
+
+`lib/queue.ts` définit `FramePayload` comme une union discriminée :
+```typescript
+export type FramePayload =
+  | { screen: "oled096";   buffer: string }
+  | { screen: "eink27bw";  buffer: string }
+  | { screen: "eink29bwr"; black: string; red: string }
+  | { screen: string; buffer?: string; black?: string; red?: string };
+```
+
+Pour extraire `black`/`red` sans erreur TypeScript :
+```typescript
+const { black: _b, red: _r, ...meta } = payload as Record<string, unknown>;
+```
+
+### Serverless-safe
+
+Pas d'état en mémoire Vercel. Tout passe par Redis.  
+Pas de cron. Le cleanup des devices inactifs est opportuniste (à chaque lecture/écriture).
+
+### Rate limiting
+
+Préserver impérativement :
+- `/api/pull` : 2 requêtes / 15 min par device
+- `/api/validate-candidate` : 4 requêtes / min par device
+- Blacklist automatique après PULL_MAX × 10 dépassements
+- Strike system sur `/api/draw`
+
+---
+
+## Conversions canvas → buffer (référence canvasToScreen.ts)
+
+### E-Ink 2.9" BWR — canvas 296×128 → driver 128×296
+
+```typescript
+// Rotation 90° CCW, bytesPerRow = 16
+const bufCol = y;        // 0..127
+const bufRow = 295 - x;  // 0..295
+const byteIndex = bufRow * 16 + Math.floor(bufCol / 8);
+const bit = 7 - (bufCol % 8);
+// 0xFF = blanc, bit à 0 = coloré (noir ou rouge)
+```
+
+### E-Ink 2.7" BW — canvas 264×176 → driver 176×264
+
+```typescript
+// Rotation 90° CCW, bytesPerRow = 22
+const bufCol = y;        // 0..175
+const bufRow = 263 - x;  // 0..263
+const byteIndex = bufRow * 22 + Math.floor(bufCol / 8);
+const bit = 7 - (bufCol % 8);
+// 0xFF = blanc, bit à 0 = noir
+```
+
+### OLED 0.96" — canvas 128×64, page-major
+
+```typescript
+// a < 32 OBLIGATOIRE (transparent = éteint)
+const page = Math.floor(y / 8);
+const bit = y % 8;
+buffer[page * 128 + x] |= (1 << bit);
+// 0x00 = éteint, bit à 1 = allumé
+```
+
+---
+
+## Généralisation à un nouvel écran
+
+Trois fichiers à modifier :
+
+### 1. `screenProfiles.ts`
+Ajouter : `BUF_SIZE`, `bufferCount` (1 ou 2), `format` (`"bw"` | `"bwr"`), dimensions.
+
+### 2. `/api/pull-frame/route.ts`
+Lire le profil. Pour `bw` : envoyer `blackBuf` seul. Pour `bwr` : `blackBuf + redBuf` concaténés.  
+Ajouter header `X-Screen-Type`.
+
+### 3. Firmware cible
+Définir `SCREEN_TYPE` et `BUF_SIZE` comme constantes.  
+`doFetchFrame()` : adapter le nombre de `readFull()` et l'appel `epd.Display()`.
 
 ---
 
 ## Non-goals
 
-Ne fais PAS :
+Ne pas faire :
 - refonte UI
 - nouveau design
 - changement de framework
 - base de données
 - websocket
-- auth blockchain
-- wallet
-- seed phrase
-- logique proof-of-draw complète
-- fork duino-coin
-- refactor global du repo
-- renommage massif des fichiers
+- auth blockchain / wallet / seed phrase
+- logique proof-of-draw V2 complète avant que V1 multi-écrans soit validée
+- fetch sortant vers IP locale
+- renommage massif de fichiers
+- déploiement
 
 ---
 
-## Required changes
+## Format de rendu
 
-### A. Replace IP onboarding with pair-code onboarding
-
-Modifier `app/onboard/page.tsx` :
-- supprimer les champs `ip` et `port`
-- garder le sélecteur d'écrans
-- remplacer `name` par `artistName`
-- ajouter `pairCode`
-- POST vers `/api/onboard` avec :
-  ```json
-  {
-    "pairCode": "...",
-    "artistName": "...",
-    "screens": [...]
-  }
-  ```
-
-### B. Add device registration route
-
-Créer `app/api/register/route.ts`.
-
-L'ESP appelle cette route au boot avec :
-```json
-{
-  "mac": "aa:bb:cc:dd:ee:ff",
-  "firmware": "1.0",
-  "screens": ["eink29bwr"]
-}
-```
-
-Le serveur répond :
-```json
-{
-  "deviceId": "dev_xxx",
-  "pairCode": "AB12-CD34"
-}
-```
-
-Comportement :
-- idempotent sur la MAC
-- nouveau device si MAC inconnue
-- pairCode généré si nécessaire
-
-### C. Replace ping route behavior
-
-Modifier `app/api/ping/route.ts` :
-- entrée : `{ deviceId }`
-- action : mettre à jour `lastPing` + `lastSeen`
-- sortie : `{ ok: true }`
-- aucun fetch vers IP locale
-
-### D. Add pull route
-
-Créer `app/api/pull/route.ts` :
-- input : `deviceId`
-- output :
-  - `{ frame: null }`
-  - ou `{ frame: payload }`
-
-Le payload doit être compatible avec `canvasToScreen.ts`.
-
-### E. Change draw route to server-side store
-
-Modifier `app/api/draw/route.ts` :
-- garder auth / rate limit / quota si déjà présents
-- ne plus contacter les ESP par IP
-- utiliser `payload.screen`
-- publier/stocker le frame côté serveur
-- permettre à tous les devices ayant ce `screen` de récupérer le dernier frame
-
-### F. Replace device model
-
-Modifier `lib/deviceStore.ts`.
-
-Retirer :
-- `ip`
-- `port`
-
-Ajouter / garder :
-- `deviceId`
-- `mac`
-- `pairCode`
-- `artistName`
-- `screens`
-- `firmware`
-- `lastPing`
-- `lastSeen`
-- `framesSent`
-
-Ajouter helpers nécessaires pour :
-- register via MAC
-- onboard via pairCode
-- ping
-- liste devices
-- cleanup
-
-### G. Add cleanup
-
-Supprimer les devices inactifs depuis plus de 48h.
-
-Implémentation acceptable :
-- helper appelé dans les routes
-- ou boucle simple en mémoire
-- ou nettoyage opportuniste à chaque lecture/écriture
-
-Pas de DB. Pas de cron externe obligatoire.
-
-### H. Replace queue transport
-
-Modifier `lib/queue.ts` :
-- plus aucun fetch vers IP locale
-- la queue peut devenir un simple store mémoire ou helper de publication
-- elle ne doit plus être un transport réseau sortant
-
-### I. ESP firmware migration
-
-Modifier le firmware ESP pour ce flow :
-
-1. boot
-2. connect WiFi
-3. POST `/api/register`
-4. reçoit `deviceId` + `pairCode`
-5. boucle :
-   - POST `/api/ping`
-   - GET `/api/pull?deviceId=...`
-   - render local
-
-Le firmware devient client.
-Le serveur ne pousse plus directement sur le LAN utilisateur.
-
----
-
-## Implementation rules
-
-- faire des changements minimaux
-- ne pas casser le build
-- respecter les types existants
-- réutiliser `canvasToScreen.ts`
-- conserver les pages `/draw` existantes autant que possible
-- si un fichier doit être créé, utiliser le chemin le plus naturel dans l'arborescence existante
-- si une API existante doit changer, le faire avec le moins de surface possible
-
----
-
-## Delivery format
-
-Quand tu rends le travail :
-1. liste les fichiers modifiés
-2. liste les fichiers créés
-3. donne le contenu complet de chaque fichier modifié/créé
-4. explique brièvement les endroits où il faudra ajuster les firmwares selon le modèle d'écran
-5. ne donne pas des pseudo-diffs incomplets
-6. ne propose pas une réarchitecture totale
-
----
-
-## Product intent
-
-Le dessin reste centralisé dans l'app web.  
-Les ESP sont des display nodes passifs connectés au serveur.  
-Le but immédiat est la diffusion synchronisée d'un dessin vers tous les devices compatibles avec un type d'écran.
-
-Exemple :
-- un utilisateur dessine pour `eink29bwr`
-- le serveur stocke ce frame
-- tous les ESP enregistrés avec `eink29bwr` peuvent pull ce frame
-- affichage synchronisé sans IP locale
-
-C'est la base technique du futur projet `Proof of Draw`, mais cette phase ne doit implémenter que l'infrastructure réseau de distribution.
+1. Lister les fichiers modifiés
+2. Lister les fichiers créés
+3. Donner le contenu complet de chaque fichier
+4. Pas de pseudo-diffs incomplets
+5. Pas de réarchitecture totale
+6. Build TypeScript valide

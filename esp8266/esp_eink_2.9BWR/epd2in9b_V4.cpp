@@ -45,42 +45,44 @@ int Epd::Init(void) {
         return -1;
     }
     Reset();
-
+    DelayMs(100);        // ← ajoute ce délai avant le premier ReadBusy
+    
     ReadBusy();
-    SendCommand(0x12);
+    SendCommand(0x12);   // SWRESET
+    DelayMs(20);         // ← ajoute ce délai après SWRESET
     ReadBusy();
 
-    SendCommand(0x01); //Driver output control      
+    SendCommand(0x01);
     SendData((height-1)%256);    
     SendData((height-1)/256);
     SendData(0x00);
 
-    SendCommand(0x11); //data entry mode       
+    SendCommand(0x11);
     SendData(0x03);
 
-    SendCommand(0x44); //set Ram-X address start/end position   
+    SendCommand(0x44);
     SendData(0x00);
     SendData(width/8-1);   
 
-    SendCommand(0x45); //set Ram-Y address start/end position          
+    SendCommand(0x45);
     SendData(0x00);
     SendData(0x00); 
     SendData((height-1)%256);    
     SendData((height-1)/256);
 
-    SendCommand(0x3C); //BorderWavefrom
+    SendCommand(0x3C);
     SendData(0x05);	
 
-    SendCommand(0x21); //  Display update control
+    SendCommand(0x21);
     SendData(0x00);		
     SendData(0x80);	
 
-    SendCommand(0x18); //Read built-in temperature sensor
+    SendCommand(0x18);
     SendData(0x80);	
 
-    SendCommand(0x4E);   // set RAM x address count to 0;
+    SendCommand(0x4E);
     SendData(0x00);
-    SendCommand(0x4F);   // set RAM y address count to 0X199;    
+    SendCommand(0x4F);
     SendData(0x00);    
     SendData(0x00);
     ReadBusy();
@@ -163,23 +165,18 @@ void Epd::SendData(unsigned char data) {
  *  @brief: Wait until the busy_pin goes HIGH
  */
 void Epd::ReadBusy(void) {
-  static unsigned long lastBusyPrint = 0;
-  unsigned long now = millis();
-  
-  if (now - lastBusyPrint > 1000) {  // 1s cooldown
-    Serial.print("e-Paper busy\r\n");
-    lastBusyPrint = now;
+  Serial.print("e-Paper busy\r\n");
+  unsigned long t0 = millis();
+  // BUSY LOW = occupé, BUSY HIGH = prêt (panel Waveshare 2.9" BWR V4)
+  while (DigitalRead(busy_pin) == 0) {
+    if (millis() - t0 > 15000) {
+      Serial.print("e-Paper busy TIMEOUT\r\n");
+      break;
+    }
+    DelayMs(10);
   }
-  
-  while(1) {
-    if(DigitalRead(busy_pin) == 0) break;
-    DelayMs(10);  // Plus réactif que 50ms
-  }
-  
-  if (now - lastBusyPrint > 1000) {
-    Serial.print("e-Paper busy release\r\n");
-  }
-  DelayMs(50);  // Réduit de 200ms
+  Serial.print("e-Paper busy release\r\n");
+  DelayMs(10);
 }
 
 /**
@@ -188,12 +185,12 @@ void Epd::ReadBusy(void) {
  *          see Epd::Sleep();
  */
 void Epd::Reset(void) {
-    DigitalWrite(reset_pin, HIGH);
-    DelayMs(200);   
-    DigitalWrite(reset_pin, LOW);                //module reset    
-    DelayMs(5);
-    DigitalWrite(reset_pin, HIGH);
-    DelayMs(200);    
+  DigitalWrite(reset_pin, HIGH);
+  DelayMs(20);
+  DigitalWrite(reset_pin, LOW);
+  DelayMs(20);
+  DigitalWrite(reset_pin, HIGH);
+  DelayMs(200);  // datasheet : ≥10ms après reset avant d'envoyer des commandes
 }
 
 /******************************************************************************
