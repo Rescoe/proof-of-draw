@@ -723,7 +723,6 @@ void logHeapState(const char* tag) {
 bool doFetchFrame(const String& frameId, const String& frameSource) {
   logHeapState("FETCHFRAME-BEFORE");
 
-  // Pas de DynamicJsonDocument — on lit le binaire directement dans les buffers
   blackBuf = (uint8_t*)malloc(BUF_SIZE);
   redBuf   = (uint8_t*)malloc(BUF_SIZE);
   if (!blackBuf || !redBuf) {
@@ -769,10 +768,25 @@ bool doFetchFrame(const String& frameId, const String& frameSource) {
       return false;
     }
 
-    // Lire 9472 bytes bruts : d'abord blackBuf, puis redBuf
+    // Lecture robuste en boucle — readBytes() peut renvoyer moins que demandé
+    // sur un stream TLS/réseau fragmenté
+    auto readFull = [](WiFiClient* s, uint8_t* dst, size_t len) -> size_t {
+      size_t total = 0;
+      unsigned long t0 = millis();
+      while (total < len && millis() - t0 < 15000) {
+        if (s->available()) {
+          size_t got = s->readBytes(dst + total, len - total);
+          if (got > 0) total += got;
+        } else {
+          delay(10);
+        }
+      }
+      return total;
+    };
+
     WiFiClient* stream = http.getStreamPtr();
-    size_t bRead = stream->readBytes(blackBuf, BUF_SIZE);
-    size_t rRead = stream->readBytes(redBuf,   BUF_SIZE);
+    size_t bRead = readFull(stream, blackBuf, BUF_SIZE);
+    size_t rRead = readFull(stream, redBuf,   BUF_SIZE);
     http.end();
 
     Serial.printf("[FETCHFRAME] lu black=%u red=%u expected=%u\n",
@@ -786,7 +800,6 @@ bool doFetchFrame(const String& frameId, const String& frameSource) {
     }
   }
 
-  // Affichage
   if (hasDisplayedFrame) {
     clearDisplayWhite();
     delay(3000);
@@ -812,6 +825,11 @@ bool doFetchFrame(const String& frameId, const String& frameSource) {
   logHeapState("FETCHFRAME-AFTER");
   return true;
 }
+
+
+
+
+
 
 // ─── PULL LÉGER (metadata only, ~300 bytes) ──────────────────────────────────
 bool doPull() {
