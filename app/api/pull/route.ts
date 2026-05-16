@@ -92,12 +92,16 @@ export async function GET(req: NextRequest) {
         chain: null, pendingValidation: null,
       }, 404);
 
-    // ── Ping device ─────────────────────────────────────────────────────────
-    await redis.set(
-      `device:${deviceId}`,
-      JSON.stringify({ ...device, lastSeen: Date.now(), lastPing: Date.now() }),
-      { ex: 48 * 3600 }
-    );
+    // ── Ping device (skip si mis à jour il y a moins de 4 min — réduit le quota Redis) ──
+    const recentlyUpdated =
+      Math.max(device.lastSeen ?? 0, device.lastPing ?? 0) > Date.now() - 4 * 60 * 1000;
+    if (!recentlyUpdated) {
+      await redis.set(
+        `device:${deviceId}`,
+        JSON.stringify({ ...device, lastSeen: Date.now(), lastPing: Date.now() }),
+        { ex: 48 * 3600 }
+      );
+    }
 
     // ── Sélection frame ─────────────────────────────────────────────────────
     let frameMeta: Record<string, unknown> | null = null;
@@ -152,6 +156,11 @@ export async function GET(req: NextRequest) {
       console.log(`[pull] device=${deviceId} frame=${frameSource} no_candidate`);
     }
 
+    // ── retryAfter : hint pour les ESP afin de réduire le polling en idle ───
+    // idle = pas de frame ET pas de candidat en attente de validation
+    const isIdle = frameSource === "none" && pendingValidation === null;
+    const retryAfter = isIdle ? 300 : 60;  // 5 min si rien à faire, 1 min si actif
+
     // ── Réponse ─────────────────────────────────────────────────────────────
     // Compatibilité tous firmwares :
     //
@@ -173,6 +182,7 @@ export async function GET(req: NextRequest) {
 
       chain:             chainSummary,
       pendingValidation,
+      retryAfter,   // ← hint : secondes avant le prochain pull (ESP l'utilise pour s'auto-throttler)
     });
 
   } catch (err) {

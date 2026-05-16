@@ -1,8 +1,31 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { NetworkDevice, NetworkPreview } from "@/lib/networkSnapshot";
 import { eink29bwrToCanvas, eink27bwToCanvas, oled096ToCanvas } from "@/lib/screenToCanvas";
+
+// ─── Types locaux (évite d'importer des modules serveur) ─────────────────────
+
+interface MinedBlock {
+  blockIndex: number;
+  blockHash: string;
+  artistName: string;
+  poolScreen: string;
+  minedAt: number;
+  drawScore: number;
+  validatorIds: string[];
+  score: number;
+  displayTime: number;
+}
+
+interface BlockImagePayload {
+  screen: string;
+  black?: string;
+  red?: string;
+  buffer?: string;
+}
+
+// ─── Helpers ─────────────────────────────────────────────────────────────────
 
 function formatRelativeTime(ts: number): string {
   if (!ts) return "—";
@@ -13,7 +36,17 @@ function formatRelativeTime(ts: number): string {
   return `${Math.floor(sec / 86400)}j`;
 }
 
-// ─── Miniature canvas de la dernière frame ───────────────────────────────────
+function blockImageToPreview(img: BlockImagePayload): NetworkPreview {
+  if (img.screen === "eink29bwr" && img.black) {
+    return { mode: "bwr", black: img.black, red: img.red };
+  }
+  if (img.buffer) {
+    return { mode: "mono", buffer: img.buffer };
+  }
+  return { mode: "none" };
+}
+
+// ─── Canvas miniature (frame active ou bloc validé) ──────────────────────────
 
 function FramePreviewMini({
   preview,
@@ -45,7 +78,6 @@ function FramePreviewMini({
 
       if (!imageData) return;
 
-      // Dessiner l'imageData dans le canvas à sa taille native
       canvas.width  = imageData.width;
       canvas.height = imageData.height;
       ctx.putImageData(imageData, 0, 0);
@@ -54,10 +86,9 @@ function FramePreviewMini({
     }
   }, [preview, screenType]);
 
-  // Dimensions d'affichage (canvas CSS) selon l'écran
   const cssW = screenType === "oled096"  ? 128
              : screenType === "eink27bw" ? 132
-             : 148; // eink29bwr et autres
+             : 148;
   const cssH = screenType === "oled096"  ? 64
              : screenType === "eink27bw" ? 88
              : 64;
@@ -70,6 +101,7 @@ function FramePreviewMini({
       border: "1px solid rgba(255,255,255,0.08)",
       display: "inline-block",
       lineHeight: 0,
+      background: "#fff",
     }}>
       <canvas
         ref={canvasRef}
@@ -82,6 +114,36 @@ function FramePreviewMini({
 // ─── SidePanel ────────────────────────────────────────────────────────────────
 
 export function SidePanel({ device, onClose }: { device: NetworkDevice | null; onClose: () => void }) {
+
+  // ── Chargement lazy du dernier bloc validé ──────────────────────────────
+  const [lastBlock,    setLastBlock]    = useState<MinedBlock | null>(null);
+  const [lastImage,    setLastImage]    = useState<BlockImagePayload | null>(null);
+  const [loadingBlock, setLoadingBlock] = useState(false);
+
+  useEffect(() => {
+    if (!device) {
+      setLastBlock(null);
+      setLastImage(null);
+      return;
+    }
+    setLoadingBlock(true);
+    setLastBlock(null);
+    setLastImage(null);
+
+    fetch(`/api/device-last-block?deviceId=${device.deviceId}`)
+      .then((r) => r.json())
+      .then((data) => {
+        setLastBlock(data.block ?? null);
+        setLastImage(data.imagePayload ?? null);
+      })
+      .catch(() => {
+        setLastBlock(null);
+        setLastImage(null);
+      })
+      .finally(() => setLoadingBlock(false));
+  }, [device?.deviceId]);
+
+  // ── Empty state ─────────────────────────────────────────────────────────
   if (!device) return (
     <aside className="nv2-panel nv2-panel--empty">
       <p>Sélectionnez un ESP<br />pour voir ses détails</p>
@@ -94,6 +156,7 @@ export function SidePanel({ device, onClose }: { device: NetworkDevice | null; o
     <aside className="nv2-panel">
       <button className="nv2-panel__close" onClick={onClose} aria-label="Fermer">✕</button>
 
+      {/* ── Header device ── */}
       <div className="nv2-panel__header">
         <div className="nv2-panel__status-dot" style={{ background: device.isOnline ? "#4ade80" : "#475569" }} />
         <div>
@@ -105,6 +168,7 @@ export function SidePanel({ device, onClose }: { device: NetworkDevice | null; o
         </span>
       </div>
 
+      {/* ── Écrans connectés ── */}
       <div className="nv2-panel__section">
         <div className="nv2-panel__section-label">Écrans connectés</div>
         <div className="nv2-screen-grid">
@@ -127,6 +191,7 @@ export function SidePanel({ device, onClose }: { device: NetworkDevice | null; o
         </div>
       </div>
 
+      {/* ── Métriques ── */}
       <div className="nv2-panel__section">
         <div className="nv2-panel__section-label">Métriques</div>
         <div className="nv2-metrics-grid">
@@ -137,8 +202,9 @@ export function SidePanel({ device, onClose }: { device: NetworkDevice | null; o
         </div>
       </div>
 
+      {/* ── Frame active (queue courante) ── */}
       <div className="nv2-panel__section">
-        <div className="nv2-panel__section-label">Dernière frame affichée</div>
+        <div className="nv2-panel__section-label">Frame en cours d'affichage</div>
         {device.recentFrame && device.recentFrame.preview.mode !== "none" ? (
           <>
             <FramePreviewMini
@@ -153,9 +219,105 @@ export function SidePanel({ device, onClose }: { device: NetworkDevice | null; o
             )}
           </>
         ) : (
-          <p className="nv2-muted nv2-small">Aucune frame récente</p>
+          <p className="nv2-muted nv2-small">Aucune frame active</p>
         )}
       </div>
+
+      {/* ── Dernier bloc validé (lazy depuis /api/device-last-block) ── */}
+      <div className="nv2-panel__section">
+        <div className="nv2-panel__section-label">Dernier bloc validé</div>
+
+        {loadingBlock && (
+          <p className="nv2-muted nv2-small nv2-loading">Chargement…</p>
+        )}
+
+        {!loadingBlock && lastBlock && (
+          <div className="nv2-block-preview">
+            {/* Vignette du dessin */}
+            {lastImage && blockImageToPreview(lastImage).mode !== "none" && (
+              <FramePreviewMini
+                preview={blockImageToPreview(lastImage)}
+                screenType={lastImage.screen}
+              />
+            )}
+
+            {/* Méta-données du bloc */}
+            <div className="nv2-block-meta">
+              <div className="nv2-block-meta__row">
+                <span className="nv2-block-meta__label">Bloc</span>
+                <span className="nv2-block-meta__value nv2-accent">#{lastBlock.blockIndex}</span>
+              </div>
+              <div className="nv2-block-meta__row">
+                <span className="nv2-block-meta__label">Miné</span>
+                <span className="nv2-block-meta__value">{formatRelativeTime(lastBlock.minedAt)}</span>
+              </div>
+              <div className="nv2-block-meta__row">
+                <span className="nv2-block-meta__label">PoD score</span>
+                <span className="nv2-block-meta__value nv2-green">{lastBlock.drawScore}</span>
+              </div>
+              <div className="nv2-block-meta__row">
+                <span className="nv2-block-meta__label">Validateurs</span>
+                <span className="nv2-block-meta__value">{lastBlock.validatorIds.length}</span>
+              </div>
+              <div className="nv2-block-meta__row">
+                <span className="nv2-block-meta__label">Display</span>
+                <span className="nv2-block-meta__value">{lastBlock.displayTime}s</span>
+              </div>
+              <div className="nv2-block-meta__row" style={{ marginTop: 4 }}>
+                <span className="nv2-block-meta__label">Hash</span>
+                <code className="nv2-block-meta__hash">{lastBlock.blockHash.slice(0, 16)}…</code>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {!loadingBlock && !lastBlock && (
+          <p className="nv2-muted nv2-small">Aucun bloc miné par ce device</p>
+        )}
+      </div>
+
+      {/* ── Styles ── */}
+      <style>{`
+        .nv2-loading {
+          opacity: 0.5;
+          font-style: italic;
+        }
+        .nv2-block-preview {
+          display: flex;
+          flex-direction: column;
+          gap: 10px;
+        }
+        .nv2-block-meta {
+          display: flex;
+          flex-direction: column;
+          gap: 4px;
+          background: rgba(255,255,255,0.03);
+          border: 1px solid rgba(255,255,255,0.06);
+          border-radius: 8px;
+          padding: 10px 12px;
+        }
+        .nv2-block-meta__row {
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          font-size: 11px;
+        }
+        .nv2-block-meta__label {
+          color: var(--text3, #64748b);
+        }
+        .nv2-block-meta__value {
+          color: var(--text2, #94a3b8);
+          font-weight: 600;
+          font-family: monospace;
+        }
+        .nv2-block-meta__hash {
+          font-size: 10px;
+          font-family: monospace;
+          color: var(--text3, #64748b);
+        }
+        .nv2-accent { color: var(--accent, #7c6bff) !important; }
+        .nv2-green  { color: #4ade80 !important; }
+      `}</style>
     </aside>
   );
 }

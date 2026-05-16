@@ -62,6 +62,7 @@ export function NetworkStage({ snapshot, onDeviceSelect, selectedDeviceId }: Pro
         return {
           screen,
           deviceId: node.device.deviceId,
+          device: node.device,   // référence complète pour handleSelect
           x: node.x + Math.cos(angle) * dist,
           y: node.y + Math.sin(angle) * dist,
           espX: node.x,
@@ -195,30 +196,43 @@ export function NetworkStage({ snapshot, onDeviceSelect, selectedDeviceId }: Pro
             );
           })}
 
-          {/* Écrans satellites */}
+          {/* Écrans satellites — cliquables, ouvrent le SidePanel du parent ESP */}
           {screenNodes.map((sn) => {
-            const active = snapshot.devices.find((d) => d.deviceId === sn.deviceId)?.isOnline;
+            const active    = sn.device.isOnline;
+            const isParentSelected = selectedDeviceId === sn.deviceId;
             return (
-              <g 
+              <g
                 key={`screen-node-${sn.deviceId}-${sn.screen.screen}`}
                 transform={`translate(${sn.x},${sn.y})`}
                 opacity={active ? 1 : 0.35}
+                style={{ cursor: "pointer" }}
+                onClick={() => handleSelect(sn.device)}
+                role="button"
+                tabIndex={0}
+                aria-label={`Écran ${sn.screen.label} — ${sn.device.artistName || sn.deviceId}`}
+                onKeyDown={(e) => e.key === "Enter" && handleSelect(sn.device)}
               >
+                {/* Anneau de sélection (parent ESP sélectionné) */}
+                {isParentSelected && (
+                  <circle r="26" fill="none" stroke="var(--accent)" strokeWidth="1.5"
+                          strokeOpacity="0.5" strokeDasharray="4,4"
+                          strokeDashoffset={tick * 2} />
+                )}
                 {/* Halo */}
-                <circle r="20" fill="rgba(16,185,129,0.08)" />
+                <circle r="20" fill={isParentSelected ? "rgba(124,107,255,0.1)" : "rgba(16,185,129,0.08)"} />
                 {/* Boîtier écran */}
-                <rect 
-                  x="-14" y="-11" 
-                  width="28" height="18" 
+                <rect
+                  x="-14" y="-11"
+                  width="28" height="18"
                   rx="3.5"
                   fill="rgba(10,10,15,0.98)"
-                  stroke={active ? "rgba(16,185,129,0.5)" : "rgba(148,163,184,0.2)"}
-                  strokeWidth="1.8"
+                  stroke={isParentSelected ? "var(--accent)" : active ? "rgba(16,185,129,0.5)" : "rgba(148,163,184,0.2)"}
+                  strokeWidth={isParentSelected ? 2 : 1.8}
                 />
                 {/* Écran actif */}
-                <rect 
-                  x="-11" y="-8" 
-                  width="22" height="12" 
+                <rect
+                  x="-11" y="-8"
+                  width="22" height="12"
                   rx="1.5"
                   fill={active ? "rgba(16,185,129,0.12)" : "rgba(255,255,255,0.03)"}
                 />
@@ -226,11 +240,11 @@ export function NetworkStage({ snapshot, onDeviceSelect, selectedDeviceId }: Pro
                 <rect x="-3" y="7" width="6" height="6" rx="1" fill="rgba(10,10,15,0.9)" />
                 <line x1="0" y1="13" x2="0" y2="16" stroke="rgba(148,163,184,0.4)" strokeWidth="1.5" strokeLinecap="round" />
                 {/* Label écran */}
-                <text 
-                  x="0" y="24" 
-                  textAnchor="middle" 
-                  fontSize="8.5" 
-                  fill={active ? "var(--text2)" : "var(--text3)"}
+                <text
+                  x="0" y="24"
+                  textAnchor="middle"
+                  fontSize="8.5"
+                  fill={isParentSelected ? "var(--accent)" : active ? "var(--text2)" : "var(--text3)"}
                   fontFamily="monospace"
                   fontWeight="500"
                 >

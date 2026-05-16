@@ -96,8 +96,9 @@ unsigned long displayTimeRemaining = 0;
 
 // Validation
 String pendingCandidateId = "";
-unsigned long lastValidateMs = 0;
-unsigned long lastPullMs     = 0;
+unsigned long lastValidateMs    = 0;
+unsigned long lastPullMs        = 0;
+unsigned long nextPullIntervalMs = PULL_INTERVAL;  // adapté par retryAfter serveur
 
 bool lastFrameWasConsensus = false;
 // (renomme partout dans le code)
@@ -867,6 +868,7 @@ bool doPull() {
   String newCandId      = "";
   String newFrameId     = "";
   String newFrameSource = "none";
+  int    pullRetryAfter = 60;  // valeur par défaut, remplacée par doc["retryAfter"]
 
   {
     WiFiClientSecure client;
@@ -930,11 +932,24 @@ bool doPull() {
 
     newFrameSource = doc["frameSource"] | "none";
     newFrameId     = doc["frameId"]     | "";
+    pullRetryAfter = doc["retryAfter"]  | 60;
+    if (pullRetryAfter <= 0) pullRetryAfter = 60;
     if (newFrameId.length() == 0) {
       JsonObject frameObj = doc["frame"];
       if (!frameObj.isNull()) newFrameId = frameObj["frameId"] | "";
     }
   }
+
+  // Ajuste l'intervalle de pull selon l'activité réseau signalée par le serveur
+  if (newFrameSource == "none" && newCandId.length() == 0) {
+    // Réseau idle → on respecte le retryAfter du serveur (typiquement 300s)
+    nextPullIntervalMs = (unsigned long)pullRetryAfter * 1000UL;
+  } else {
+    // Activité détectée (frame ou candidat) → retour au rythme nominal
+    nextPullIntervalMs = PULL_INTERVAL;
+  }
+  Serial.printf("[PULL] nextInterval=%lus (retryAfter=%d)\n",
+                nextPullIntervalMs / 1000UL, pullRetryAfter);
 
   if (newBlockHash.length() > 0 && newBlockHash != currentBlockHash) {
     currentBlockHash  = newBlockHash;
@@ -1159,7 +1174,7 @@ void loop() {
   }
 
   // ─── Pull périodique ───────────────────────────────────────────────────
-  if (now - lastPullMs >= PULL_INTERVAL) {
+  if (now - lastPullMs >= nextPullIntervalMs) {
     String prevCandidateId = pendingCandidateId;
     doPull();
     lastPullMs = millis();
