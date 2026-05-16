@@ -1,22 +1,8 @@
 // app/api/pull/route.ts
-//
-// Pipeline réelle:
-// 1. L'utilisateur dessine sur le web.
-// 2. Le dessin part en candidat.
-// 3. Les ESP validateurs votent.
-// 4. Si quorum atteint, le serveur broadcast la frame validée.
-// 5. Les ESP récupèrent ensuite cette frame via /api/pull.
-//
-// Rôle de /api/pull:
-// - Renvoyer la frame consensus si elle existe.
-// - Sinon renvoyer une personal frame si elle existe.
-// - Sinon renvoyer null.
-// - Toujours renvoyer un JSON stable pour éviter les désynchronisations ESP.
-
 import { NextRequest, NextResponse } from "next/server";
 import { redis } from "@/lib/redis";
 import { getDevice } from "@/lib/deviceStore";
-import { getFrameForDevice } from "@/lib/queue";
+import { getFrameForDevice, FramePayload } from "@/lib/queue";
 import { isBlacklisted, getIP, forbidden } from "@/lib/rateLimit";
 import { getChainSummary, getCurrentCandidate } from "@/lib/chain";
 
@@ -25,9 +11,9 @@ const PULL_WINDOW_SEC = parseInt(process.env.PULL_WINDOW_SEC ?? "900");
 const PULL_MAX = parseInt(process.env.PULL_LIMIT_PER_WINDOW ?? "2");
 const BLACKLIST_TTL = parseInt(process.env.BLACKLIST_TTL_SECONDS ?? "604800");
 
-const rlKey = (deviceId: string) => `rl:pull:${deviceId}`;
+const rlKey      = (deviceId: string) => `rl:pull:${deviceId}`;
 const personalKey = (deviceId: string) => `personal:frame:${deviceId}`;
-const blDevKey = (deviceId: string) => `bl:dev:${deviceId}`;
+const blDevKey   = (deviceId: string) => `bl:dev:${deviceId}`;
 
 async function getPersonalFrame(deviceId: string) {
   const raw = await redis.get(personalKey(deviceId));
@@ -37,12 +23,22 @@ async function getPersonalFrame(deviceId: string) {
 
 function json(body: any, status = 200) { return NextResponse.json(body, { status }); }
 
+/** Retourne le payload sans les buffers image (black/red/buffer) */
+function payloadMeta(payload: FramePayload): Record<string, unknown> {
+  const { ...rest } = payload as Record<string, unknown>;
+  delete rest["black"];
+  delete rest["red"];
+  delete rest["buffer"];
+  return rest;
+}
+
 export async function GET(req: NextRequest) {
   try {
     const ip = getIP(req);
     const deviceId = new URL(req.url).searchParams.get("deviceId");
 
-    if (!deviceId || !DEVICE_ID_REGEX.test(deviceId)) return json({ error: "deviceId invalide", frame: null, frameSource: "none", chain: null, pendingValidation: null }, 400);
+    if (!deviceId || !DEVICE_ID_REGEX.test(deviceId))
+      return json({ error: "deviceId invalide", frame: null, frameSource: "none", chain: null, pendingValidation: null }, 400);
     if (await isBlacklisted(ip, deviceId)) return forbidden("Accès refusé");
 
     const count = await redis.incr(rlKey(deviceId));
@@ -65,18 +61,23 @@ export async function GET(req: NextRequest) {
       getCurrentCandidate(),
     ]);
 
-    if (!device) return json({ error: "device inconnu", frame: null, frameSource: "none", chain: null, pendingValidation: null }, 404);
+    if (!device)
+      return json({ error: "device inconnu", frame: null, frameSource: "none", chain: null, pendingValidation: null }, 404);
 
-    await redis.set(`device:${deviceId}`, JSON.stringify({ ...device, lastSeen: Date.now(), lastPing: Date.now() }), { ex: 48 * 3600 });
+    await redis.set(
+      `device:${deviceId}`,
+      JSON.stringify({ ...device, lastSeen: Date.now(), lastPing: Date.now() }),
+      { ex: 48 * 3600 }
+    );
 
     let frame: any = null;
     let frameSource: "consensus" | "personal" | "none" = "none";
 
     if (consensusFrame?.payload) {
-      frame = { frameId: consensusFrame.frameId, ...consensusFrame.payload };
+      frame = { frameId: consensusFrame.frameId, ...payloadMeta(consensusFrame.payload) };
       frameSource = "consensus";
     } else if (personalFrame?.payload) {
-      frame = { frameId: personalFrame.frameId, ...personalFrame.payload };
+      frame = { frameId: personalFrame.frameId, ...payloadMeta(personalFrame.payload) };
       frameSource = "personal";
     }
 
@@ -93,7 +94,12 @@ export async function GET(req: NextRequest) {
         } catch {}
       }
       if (isInPool && !alreadyVoted) {
-        pendingValidation = { candidateId: candidate.candidateId, poolScreen: candidate.poolScreen, expiresIn: Math.max(Math.ceil((candidate.expiresAt - Date.now()) / 1000), 0), warning: candidate.warning ?? null };
+        pendingValidation = {
+          candidateId: candidate.candidateId,
+          poolScreen:  candidate.poolScreen,
+          expiresIn:   Math.max(Math.ceil((candidate.expiresAt - Date.now()) / 1000), 0),
+          warning:     candidate.warning ?? null,
+        };
       }
       console.log(`[pull] device=${deviceId} frame=${frameSource} candidate=${candidate.candidateId} inPool=${isInPool} alreadyVoted=${alreadyVoted}`);
     } else {
