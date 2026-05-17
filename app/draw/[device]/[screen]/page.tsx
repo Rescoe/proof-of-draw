@@ -413,6 +413,8 @@ export default function DrawCanvasPage() {
 
   // ── State ──────────────────────────────────────────────────────────────────
   const [device, setDevice]         = useState<OwnedDevice | null>(null);
+  const [isGuest, setIsGuest]       = useState(false);        // true si ESP public non possédé
+  const [guestName, setGuestName]   = useState("");           // nom de l'artiste invité
   const [sending, setSending]       = useState(false);
   const [status, setStatus]         = useState<{ type: "ok" | "error" | "wait"; msg: string } | null>(null);
 
@@ -562,12 +564,41 @@ export default function DrawCanvasPage() {
         const d = (data.devices ?? []).find(
           (d: OwnedDevice) => String(d.deviceId).trim() === String(deviceId).trim()
         );
-        if (!d || !d.screens?.includes(screenId)) {
-          if (attempt < 5 && !cancelled) setTimeout(() => loadDevice(attempt + 1), 1000);
-          else if (!cancelled) router.push("/draw");
+        if (d && d.screens?.includes(screenId)) {
+          setDevice(d);
+          setIsGuest(false);
           return;
         }
-        setDevice(d);
+        // Pas dans mes devices → vérifier si c'est un ESP public
+        const pubRes  = await fetch("/api/public-screens");
+        const pubData = await pubRes.json();
+        if (cancelled) return;
+        const pub = (pubData.devices ?? []).find(
+          (p: { deviceId: string; screens: string[] }) =>
+            String(p.deviceId).trim() === String(deviceId).trim() &&
+            p.screens?.includes(screenId)
+        );
+        if (pub) {
+          // Construit un OwnedDevice minimal pour le mode invité
+          setDevice({
+            deviceId:   pub.deviceId,
+            artistName: pub.artistName,
+            screens:    pub.screens,
+            firmware:   "",
+            framesSent: 0,
+            lastPing:   0,
+            lastSeen:   0,
+            createdAt:  0,
+            isOnline:   pub.isOnline,
+            hasPairCode: false,
+            publicMode: true,
+          });
+          setIsGuest(true);
+          return;
+        }
+        // Ni possédé ni public → retry puis redirect
+        if (attempt < 5 && !cancelled) setTimeout(() => loadDevice(attempt + 1), 1000);
+        else if (!cancelled) router.push("/draw");
       } catch { if (!cancelled) router.push("/draw"); }
     }
     loadDevice();
@@ -854,7 +885,9 @@ export default function DrawCanvasPage() {
       const replayEvents = replayRef.current;
       // Axe 4 : utiliser le score calculé en temps réel plutôt que de recalculer
       const drawScore    = scoreRef.current;
-      const baseBody = { screen: screenId, deviceId, actions, replayEvents, drawScore };
+      // Mode invité : inclure le nom de l'artiste dessinateur
+      const drawArtistName = isGuest && guestName.trim() ? guestName.trim() : undefined;
+      const baseBody = { screen: screenId, deviceId, actions, replayEvents, drawScore, drawArtistName };
       const body =
         screenId === "eink29bwr"
           ? { ...baseBody, black: (payload as any).black, red: (payload as any).red }
@@ -874,7 +907,7 @@ export default function DrawCanvasPage() {
       setStatus({ type: "error", msg: err.message || "Erreur réseau" });
       setTimeout(() => setStatus(null), 5000);
     } finally { setSending(false); }
-  }, [device, canSend, screenId, deviceId, startCooldown]);
+  }, [device, canSend, screenId, deviceId, isGuest, guestName, startCooldown]);
 
   if (!profile) return null;
 
@@ -1049,11 +1082,11 @@ export default function DrawCanvasPage() {
         {/* Device info */}
         <div style={{ flexShrink: 1, overflow: "hidden", minWidth: 0 }}>
           <div style={{ fontWeight: 700, fontSize: "0.85rem", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-            {device?.artistName || deviceId}
+            {isGuest ? `ESP de ${device?.artistName || deviceId}` : (device?.artistName || deviceId)}
           </div>
           {!isMobile && (
             <div style={{ color: "var(--text3)", fontSize: "0.65rem", fontFamily: "monospace" }}>
-              {profile.name} · {W}×{H}px
+              {isGuest ? "🔓 ESP partagé · " : ""}{profile.name} · {W}×{H}px
             </div>
           )}
         </div>
@@ -1147,6 +1180,45 @@ export default function DrawCanvasPage() {
             height: "100%", background: "var(--accent)",
             width: `${progress}%`, transition: "width 1s linear",
           }} />
+        </div>
+      )}
+
+      {/* ── Bannière mode invité ─────────────────────────────────────────── */}
+      {isGuest && (
+        <div style={{
+          display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap",
+          padding: "6px 14px",
+          background: "rgba(124,107,255,0.08)",
+          borderBottom: "1px solid rgba(124,107,255,0.2)",
+          flexShrink: 0,
+        }}>
+          <span style={{ fontSize: 12, color: "var(--accent)", fontWeight: 600, whiteSpace: "nowrap" }}>
+            🔓 ESP partagé
+          </span>
+          <span style={{ fontSize: 11, color: "var(--text3)", whiteSpace: "nowrap" }}>
+            Votre dessin sera signé :
+          </span>
+          <input
+            type="text"
+            placeholder="Votre nom d'artiste…"
+            value={guestName}
+            onChange={e => setGuestName(e.target.value.slice(0, 40))}
+            maxLength={40}
+            style={{
+              flex: 1, minWidth: 140, maxWidth: 260,
+              padding: "4px 10px", borderRadius: 6,
+              border: "1px solid rgba(124,107,255,0.35)",
+              background: "rgba(0,0,0,0.3)",
+              color: "var(--text)",
+              fontSize: 12,
+              outline: "none",
+            }}
+          />
+          {!guestName.trim() && (
+            <span style={{ fontSize: 10, color: "var(--text3)", fontStyle: "italic" }}>
+              (anonyme si vide)
+            </span>
+          )}
         </div>
       )}
 

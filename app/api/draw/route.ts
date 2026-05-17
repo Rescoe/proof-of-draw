@@ -117,7 +117,11 @@ export async function POST(req: NextRequest) {
   if (ipBanned) return forbidden("IP bannie");
   if (devBanned) return forbidden("Device banni");
 
-  if (!(await sessionOwnsDevice(deviceId))) {
+  // Auth : soit le device appartient à la session, soit il est en mode public
+  const device = await getDevice(deviceId);
+  const isPublic = device?.publicMode === true;
+
+  if (!isPublic && !(await sessionOwnsDevice(deviceId))) {
     await strikeIP(ip, "unauthorized_draw_attempt");
     return NextResponse.json({ error: "Non autorisé" }, { status: 403 });
   }
@@ -135,8 +139,6 @@ export async function POST(req: NextRequest) {
       { status: 429, headers: { "Retry-After": String(ttl) } },
     );
   }
-
-  const device = await getDevice(deviceId);
   if (!device) {
     await Promise.all([redis.del(lockKey(deviceId)), strikeIP(ip, "nonexistent_device")]);
     return NextResponse.json({ error: "Device introuvable" }, { status: 404 });

@@ -22,9 +22,19 @@ function statusColor(isOnline: boolean, lastPing?: number): string {
   return Math.floor((Date.now() - lastPing) / 1000) < 3600 ? "#fb923c" : "var(--text3)";
 }
 
+interface PublicDevice {
+  deviceId: string;
+  artistName: string;
+  screens: string[];
+  isOnline: boolean;
+}
+
 export default function MyDevicesPage() {
-  const [devices, setDevices] = useState<OwnedDevice[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [tab, setTab]             = useState<"mine" | "shared">("mine");
+  const [devices, setDevices]     = useState<OwnedDevice[]>([]);
+  const [publicDevices, setPublicDevices] = useState<PublicDevice[]>([]);
+  const [loading, setLoading]     = useState(true);
+  const [loadingPub, setLoadingPub] = useState(false);
   const [rotating,  setRotating]  = useState<string | null>(null);
   const [newCode,   setNewCode]   = useState<Record<string, string>>({});
   const [copyMsg,   setCopyMsg]   = useState<Record<string, string>>({});
@@ -45,8 +55,22 @@ export default function MyDevicesPage() {
     }
   };
 
+  const loadPublic = async () => {
+    setLoadingPub(true);
+    try {
+      const res  = await fetch("/api/public-screens", { cache: "no-store" });
+      const data = await res.json();
+      setPublicDevices(data.devices ?? []);
+    } catch {
+      setPublicDevices([]);
+    } finally {
+      setLoadingPub(false);
+    }
+  };
+
   useEffect(() => {
     load();
+    loadPublic();
   }, []);
 
   async function handleRotateCode(deviceId: string) {
@@ -148,7 +172,112 @@ export default function MyDevicesPage() {
         </a>
       </div>
 
-      {loading ? (
+      {/* ── Onglets ── */}
+      <div style={{
+        display: "flex", gap: 0, marginBottom: "1.5rem",
+        borderBottom: "1px solid var(--border)",
+      }}>
+        {([
+          { key: "mine",   label: "Mes ESP" },
+          { key: "shared", label: `ESP disponibles${publicDevices.length ? ` (${publicDevices.length})` : ""}` },
+        ] as const).map(({ key, label }) => (
+          <button
+            key={key}
+            onClick={() => setTab(key)}
+            style={{
+              padding: "0.6rem 1.2rem",
+              background: "none", border: "none",
+              borderBottom: `2px solid ${tab === key ? "var(--accent)" : "transparent"}`,
+              color: tab === key ? "var(--accent)" : "var(--text3)",
+              fontWeight: tab === key ? 700 : 500,
+              fontSize: "0.875rem", cursor: "pointer",
+              transition: "color 0.12s, border-color 0.12s",
+            }}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+
+      {/* ── Onglet : ESP disponibles ── */}
+      {tab === "shared" && (
+        <div>
+          {loadingPub ? (
+            <div style={{ color: "var(--text3)", textAlign: "center", padding: "2rem" }}>
+              Chargement…
+            </div>
+          ) : publicDevices.length === 0 ? (
+            <div style={{
+              textAlign: "center", padding: "3rem 2rem",
+              border: "1px dashed var(--border)", borderRadius: 12,
+            }}>
+              <div style={{ fontSize: "2.5rem", marginBottom: "0.75rem" }}>📡</div>
+              <p style={{ color: "var(--text2)", marginBottom: "0.5rem" }}>
+                Aucun ESP partagé pour l'instant.
+              </p>
+              <p style={{ color: "var(--text3)", fontSize: "0.8rem" }}>
+                Les artistes qui activent le prêt public sur leurs ESP apparaissent ici.
+              </p>
+            </div>
+          ) : (
+            <div style={{ display: "flex", flexDirection: "column", gap: "1rem" }}>
+              {publicDevices.map((pub) => (
+                <div key={pub.deviceId} style={{
+                  padding: "1rem 1.25rem",
+                  borderRadius: 10,
+                  border: "1px solid var(--border)",
+                  background: "var(--bg2)",
+                  display: "flex", alignItems: "center", justifyContent: "space-between", gap: "1rem",
+                  flexWrap: "wrap",
+                }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: "0.6rem" }}>
+                    <div style={{
+                      width: 8, height: 8, borderRadius: "50%", flexShrink: 0,
+                      background: pub.isOnline ? "#4ade80" : "var(--text3)",
+                    }} />
+                    <div>
+                      <div style={{ fontWeight: 700, fontSize: "0.95rem" }}>
+                        {pub.artistName}
+                      </div>
+                      <div style={{ fontSize: "0.72rem", color: "var(--text3)", fontFamily: "monospace" }}>
+                        {pub.screens.join(", ")}
+                      </div>
+                    </div>
+                  </div>
+
+                  <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap" }}>
+                    {pub.screens.map((sid) => (
+                      <a
+                        key={sid}
+                        href={`/draw/${pub.deviceId}/${sid}`}
+                        style={{
+                          padding: "0.45rem 1rem",
+                          borderRadius: 7,
+                          background: pub.isOnline ? "var(--accent)" : "var(--bg3)",
+                          color: pub.isOnline ? "#fff" : "var(--text3)",
+                          textDecoration: "none",
+                          fontWeight: 600, fontSize: "0.8rem",
+                          whiteSpace: "nowrap",
+                          border: `1px solid ${pub.isOnline ? "transparent" : "var(--border)"}`,
+                          pointerEvents: pub.isOnline ? "auto" : "none",
+                          opacity: pub.isOnline ? 1 : 0.5,
+                        }}
+                        title={pub.isOnline ? `Dessiner sur ${sid}` : "ESP hors ligne"}
+                      >
+                        {isKnownScreen(sid) ? SCREEN_PROFILES[sid].name : sid}
+                        {pub.isOnline ? " ✏️" : " 🔴"}
+                      </a>
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ── Onglet : Mes ESP ── */}
+      {tab === "mine" && (loading ? (
         <div style={{ color: "var(--text3)", textAlign: "center", padding: "3rem" }}>
           Chargement…
         </div>
@@ -498,7 +627,7 @@ export default function MyDevicesPage() {
             );
           })}
         </div>
-      )}
+      ))}
     </div>
   );
 }
