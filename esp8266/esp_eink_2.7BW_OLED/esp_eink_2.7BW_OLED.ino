@@ -41,19 +41,27 @@ const char* WIFI_PASSWORD = "Q2gueWg3UaYJo2VN7C";
 #define IDLE_DELAY_MS      100UL
 
 // ─── EEPROM layout ─────────────────────────────────────────────────────────
-// [0..31]  : clé privée (32 bytes)
-// [32..63] : blockHash courant (32 bytes ASCII)
-// [64]     : keyGenerated flag
-// [65..96] : clé publique (32 bytes)
-// [97]     : onboarding shown flag
-#define EEPROM_SIZE          128
-#define EEPROM_PRIVKEY_OFF   0
-#define EEPROM_BLOCKHASH_OFF 32
-#define EEPROM_FLAG_OFF      64
-#define EEPROM_PUBKEY_OFF    65
-#define EEPROM_ONBOARDING_OFF 97
-#define KEY_GENERATED_FLAG   0x01
-#define ONBOARDING_SHOWN_FLAG 0x01
+// [0..31]    : clé privée (32 bytes)
+// [32..63]   : blockHash courant (32 bytes ASCII)
+// [64]       : keyGenerated flag
+// [65..96]   : clé publique (32 bytes)
+// [97]       : onboarding shown flag
+// [98]       : OLED frame saved flag (0x5A = valide)
+// [99..1122] : OLED frame buffer (1024 bytes)
+// [1123..1202]: OLED ticker text sauvegardé (80 bytes, null-terminated)
+#define EEPROM_SIZE            1210
+#define EEPROM_PRIVKEY_OFF     0
+#define EEPROM_BLOCKHASH_OFF   32
+#define EEPROM_FLAG_OFF        64
+#define EEPROM_PUBKEY_OFF      65
+#define EEPROM_ONBOARDING_OFF  97
+#define EEPROM_OLED_FLAG_OFF   98
+#define EEPROM_OLED_BUF_OFF    99
+#define EEPROM_OLED_TICK_OFF   (EEPROM_OLED_BUF_OFF + OLED_BUF_SIZE)  // 99+1024 = 1123
+#define EEPROM_OLED_TICK_LEN   80
+#define KEY_GENERATED_FLAG     0x01
+#define ONBOARDING_SHOWN_FLAG  0x01
+#define OLED_FRAME_SAVED_FLAG  0x5A
 
 // ─── OLED 128×64 ───────────────────────────────────────────────────────────
 #define OLED_SDA      D6
@@ -157,6 +165,53 @@ String loadBlockHashFromEEPROM() {
     hash += c;
   }
   return hash;
+}
+
+// ─── Persistance frame OLED ────────────────────────────────────────────────
+// Sauvegarde le buffer OLED (1024 bytes) + le texte du ticker
+// afin de restaurer le dernier affichage après un redémarrage.
+// Le E-ink n'en a pas besoin (rétention sans alimentation).
+
+void saveOLEDFrameToEEPROM(const uint8_t* buf, const String& ticker) {
+  Serial.println("[EEPROM] Sauvegarde frame OLED...");
+  // Buffer pixel (1024 octets)
+  for (int i = 0; i < OLED_BUF_SIZE; i++) {
+    EEPROM.write(EEPROM_OLED_BUF_OFF + i, buf[i]);
+    if (i % 128 == 0) yield();  // éviter watchdog sur longue boucle
+  }
+  // Ticker text (max EEPROM_OLED_TICK_LEN - 1 chars + '\0')
+  int tlen = min((int)ticker.length(), EEPROM_OLED_TICK_LEN - 1);
+  for (int i = 0; i < tlen; i++)
+    EEPROM.write(EEPROM_OLED_TICK_OFF + i, (uint8_t)ticker.charAt(i));
+  EEPROM.write(EEPROM_OLED_TICK_OFF + tlen, 0);  // null terminator
+  // Flag en dernier (valide uniquement si écriture complète)
+  EEPROM.write(EEPROM_OLED_FLAG_OFF, OLED_FRAME_SAVED_FLAG);
+  EEPROM.commit();
+  Serial.printf("[EEPROM] Frame OLED sauvegardée (%d bytes buf, ticker: \"%s\")\n",
+                OLED_BUF_SIZE, ticker.c_str());
+}
+
+// Retourne true si une frame valide a été restaurée.
+// buf doit pointer sur un buffer alloué de OLED_BUF_SIZE bytes.
+// ticker est rempli avec le texte sauvegardé (vide si aucun).
+
+bool loadOLEDFrameFromEEPROM(uint8_t* buf, String& ticker) {
+  if (EEPROM.read(EEPROM_OLED_FLAG_OFF) != OLED_FRAME_SAVED_FLAG) {
+    Serial.println("[EEPROM] Pas de frame OLED sauvegardée");
+    return false;
+  }
+  for (int i = 0; i < OLED_BUF_SIZE; i++) {
+    buf[i] = EEPROM.read(EEPROM_OLED_BUF_OFF + i);
+    if (i % 128 == 0) yield();
+  }
+  ticker = "";
+  for (int i = 0; i < EEPROM_OLED_TICK_LEN - 1; i++) {
+    char c = (char)EEPROM.read(EEPROM_OLED_TICK_OFF + i);
+    if (c == '\0') break;
+    ticker += c;
+  }
+  Serial.printf("[EEPROM] Frame OLED restaurée — ticker: \"%s\"\n", ticker.c_str());
+  return true;
 }
 
 // ─── Génération clés V1 ────────────────────────────────────────────────────
@@ -480,56 +535,74 @@ bool displayOLED(const uint8_t* buf, size_t len) {
 
 
 // ─── HEADER SCROLLANT OLED ─────────────────────────────────────────────────
-// Affiche un ticker horizontal dans les 8 premières lignes (page 0) de l'OLED.
-// Le reste de l'écran montre l'artwork artBuf intact.
-// Le texte entre par la droite et sort par la gauche (news ticker).
+// Affiche un bandeau texte scrollant dans les 8 premières lignes de l'OLED
+// (page SSD1306 n°0), pendant que l'artwork reste affiché en dessous.
 //
-// Doit être appelé APRÈS displayOLED() (qui réinitialise Wire + oled).
-// artBuf : pointeur sur le buffer 1024 bytes de l'artwork (conservé en mémoire).
+// Flux :
+//   1. Re-init Wire + oled (au cas où on vient du SPI)
+//   2. Charger l'artwork dans le buffer oled
+//   3. Scroll du texte de droite à gauche dans la page 0 uniquement
+//   4. Après le scroll, afficher l'artwork complet sans overlay
+//
+// artBuf  : 1024 bytes du frame OLED (déjà décodé, pas encore libéré)
+// tickerText : texte à défiler (vide → skip)
 
 void scrollOLEDHeader(const uint8_t* artBuf, const String& tickerText) {
-  if (!artBuf || !oledReady) return;
+  if (!artBuf) return;
   if (tickerText.length() == 0) return;
 
-  // La police Adafruit 5x7 occupe 6px de large par caractère (5 + 1 gap)
-  const int CHAR_W = 6;
-  int textW = tickerText.length() * CHAR_W;
-
-  // Si le texte tient dans la largeur de l'écran → affichage fixe à gauche
-  if (textW <= OLED_WIDTH) {
-    memcpy(oled.getBuffer(), artBuf, OLED_BUF_SIZE);
-    // Page 0 (top 8px) → fond noir
-    memset(oled.getBuffer(), 0x00, OLED_WIDTH);
-    oled.setTextWrap(false);
-    oled.setTextSize(1);
-    oled.setTextColor(SSD1306_WHITE);
-    oled.setCursor(0, 0);
-    oled.print(tickerText);
-    oled.display();
+  // ── Re-init bus I2C + OLED ───────────────────────────────────────────────
+  // Nécessaire si on appelle scroll après un displayOLED (qui peut avoir
+  // laissé le bus dans un état intermédiaire)
+  Wire.begin(OLED_SDA, OLED_SCL);
+  Wire.setClock(100000);
+  delay(10);
+  if (!oled.begin(SSD1306_SWITCHCAPVCC, 0x3C)) {
+    Serial.println("[OLED] scrollHeader: begin() failed");
     return;
   }
+  oledReady = true;
+  delay(5);
 
-  // Scroll de droite à gauche, 2px par frame à ~30fps
-  // Étapes : de x=OLED_WIDTH (texte hors écran à droite) à x=-(textW) (hors écran à gauche)
-  int totalSteps = OLED_WIDTH + textW;
+  // ── Calcul de la largeur du texte ────────────────────────────────────────
+  // Police Adafruit 1x = 5px/char + 1px gap = 6px/char
+  const int CHAR_W   = 6;
+  const int textW    = (int)tickerText.length() * CHAR_W;
+  // Durée totale du scroll : le texte traverse tout l'écran + sa propre largeur
+  // → OLED_WIDTH + textW pas, avance de 2px par frame
+  const int totalSteps = OLED_WIDTH + textW;
+
+  oled.setTextWrap(false);
+  oled.setTextSize(1);
+  oled.setTextColor(SSD1306_WHITE);
+
   for (int step = 0; step <= totalSteps; step += 2) {
-    // Restaurer l'artwork complet dans le buffer OLED
+    // 1. Charger l'artwork dans le buffer oled
     memcpy(oled.getBuffer(), artBuf, OLED_BUF_SIZE);
-    // Effacer page 0 (top 8px) → fond noir pour le ticker
+
+    // 2. Effacer la page 0 (octets 0..127 = colonnes de la ligne 0..7)
+    //    0x00 = tous les pixels éteints = fond noir pour le ticker
     memset(oled.getBuffer(), 0x00, OLED_WIDTH);
-    // Dessiner le texte à la position courante
-    oled.setTextWrap(false);
-    oled.setTextSize(1);
-    oled.setTextColor(SSD1306_WHITE);
+
+    // 3. Dessiner le texte à la position courante du scroll
+    //    step=0 → curseur à x=128 (hors écran à droite)
+    //    step=OLED_WIDTH+textW → curseur à x=-(textW) (hors écran à gauche)
+    //    Adafruit_GFX clippe automatiquement les pixels hors bounds
     oled.setCursor((int16_t)(OLED_WIDTH - step), 0);
     oled.print(tickerText);
+
+    // 4. Envoyer le buffer à l'écran
     oled.display();
-    delay(30);  // ~33fps — doux pour l'œil
-    yield();
+
+    delay(35);  // ~28fps
+    yield();    // nourrir le watchdog ESP8266
   }
-  // Fin du scroll : restaurer l'artwork complet (sans ticker)
+
+  // Fin du scroll : restaurer l'artwork sans overlay de ticker
   memcpy(oled.getBuffer(), artBuf, OLED_BUF_SIZE);
   oled.display();
+
+  Serial.printf("[OLED] scroll terminé (%d steps, textW=%d)\n", totalSteps / 2, textW);
 }
 
 // ─── E27 DISPLAY ───────────────────────────────────────────────────────────
@@ -844,15 +917,29 @@ bool doFetchFrameOLED(const String& frameId, const String& frameSource) {
     return false;
   }
 
-  // ── Header ticker OLED : après affichage de l'artwork ───────────────────────
-  // Compose le texte du ticker : "Titre  |  Artiste  HH:MM"
-  if (pendingWorkTitle.length() > 0 || pendingArtistName.length() > 0) {
+  // ── Header ticker OLED ──────────────────────────────────────────────────────
+  // Format : "TITRE  |  ARTISTE  #N  HH:MM"
+  // Le ticker se lance si au moins un champ est disponible.
+  {
     String ticker = "";
-    if (pendingWorkTitle.length() > 0)  ticker += pendingWorkTitle;
-    if (pendingArtistName.length() > 0) ticker += (ticker.length() > 0 ? "  |  " : "") + pendingArtistName;
-    if (pendingDisplayTs.length() > 0)  ticker += "  " + pendingDisplayTs;
-    Serial.println("[OLED] Ticker: " + ticker);
-    scrollOLEDHeader(oledBuf, ticker);
+    if (pendingWorkTitle.length() > 0)
+      ticker += pendingWorkTitle;
+    if (pendingArtistName.length() > 0)
+      ticker += (ticker.length() > 0 ? "  |  " : "") + pendingArtistName;
+    if (currentBlockIndex >= 0)
+      ticker += "  #" + String(currentBlockIndex);
+    if (pendingDisplayTs.length() > 0)
+      ticker += "  " + pendingDisplayTs;
+
+    if (ticker.length() > 0) {
+      Serial.println("[OLED] Ticker: " + ticker);
+      scrollOLEDHeader(oledBuf, ticker);
+    } else {
+      Serial.println("[OLED] Ticker: aucune metadata, skip scroll");
+    }
+
+    // ── Persistance EEPROM : sauvegarde frame + ticker pour restauration boot ──
+    saveOLEDFrameToEEPROM(oledBuf, ticker);
   }
 
   free(oledBuf);
@@ -1039,26 +1126,33 @@ bool doPull() {
     pullRetryAfter = doc["retryAfter"]  | 60;
     if (pullRetryAfter <= 0) pullRetryAfter = 60;
 
-    // Lecture métadonnées cartel depuis frame{}
-    // payloadMeta() côté serveur expose workTitle/drawArtistName/displayTs
-    // tout en supprimant les champs binaires (black/red/buffer)
+    // ── Métadonnées cartel (à la racine, plus fiable que doc["frame"]) ─────────
+    // Le serveur expose cartelMeta{workTitle, drawArtistName, displayTs, blockIndex}
+    // indépendamment du chemin de validation.
     {
+      JsonObject cm = doc["cartelMeta"];
+      if (!cm.isNull()) {
+        const char* wt = cm["workTitle"]      | "";
+        const char* an = cm["drawArtistName"] | "";
+        const char* dt = cm["displayTs"]      | "";
+        int         bi = cm["blockIndex"]     | -1;
+        if (strlen(wt) > 0) { pendingWorkTitle  = String(wt); pendingWorkTitle.trim(); }
+        else                   pendingWorkTitle  = "";
+        if (strlen(an) > 0) { pendingArtistName = String(an); pendingArtistName.trim(); }
+        else                   pendingArtistName = "";
+        if (strlen(dt) > 0)    pendingDisplayTs  = String(dt);
+        if (bi >= 0)           currentBlockIndex = bi;
+        Serial.printf("[PULL] cartel: title=%s artist=%s ts=%s bloc=%d\n",
+                      wt, an, dt, bi);
+      }
+    }
+
+    // Fallback frame{} pour les champs frameId/screen si absents à la racine
+    if (newFrameId.length() == 0) {
       JsonObject frameObj = doc["frame"];
       if (!frameObj.isNull()) {
-        // Fallback frameId/screen si absent à la racine
-        if (newFrameId.length() == 0) {
-          newFrameId = frameObj["frameId"] | "";
-          newScreen  = frameObj["screen"]  | "";
-        }
-        // Métadonnées cartel (stockées jusqu'au prochain fetch frame)
-        const char* wt = frameObj["workTitle"]     | "";
-        const char* an = frameObj["drawArtistName"]| "";
-        const char* dt = frameObj["displayTs"]     | "";
-        if (strlen(wt) > 0) { pendingWorkTitle  = String(wt); pendingWorkTitle.trim(); }
-        if (strlen(an) > 0) { pendingArtistName = String(an); pendingArtistName.trim(); }
-        if (strlen(dt) > 0) { pendingDisplayTs  = String(dt); }
-        if (strlen(wt) > 0 || strlen(an) > 0)
-          Serial.printf("[PULL] cartel: ts=%s artist=%s title=%s\n", dt, an, wt);
+        newFrameId = frameObj["frameId"] | "";
+        newScreen  = frameObj["screen"]  | "";
       }
     }
   }
@@ -1245,6 +1339,26 @@ void setup() {
 
   if (paired) {
     ensureOLEDReady();
+
+    // ── Restauration EEPROM : affiche la dernière frame OLED avant le pull ──────
+    // Permet de revoir le dernier dessin immédiatement après redémarrage,
+    // sans attendre le prochain cycle pull (WiFi + serveur).
+    {
+      uint8_t* savedBuf = (uint8_t*)malloc(OLED_BUF_SIZE);
+      if (savedBuf) {
+        String savedTicker = "";
+        if (loadOLEDFrameFromEEPROM(savedBuf, savedTicker)) {
+          Serial.println("[BOOT] Restauration frame OLED depuis EEPROM");
+          displayOLED(savedBuf, OLED_BUF_SIZE);
+          if (savedTicker.length() > 0)
+            scrollOLEDHeader(savedBuf, savedTicker);
+        }
+        free(savedBuf);
+      } else {
+        Serial.println("[BOOT] malloc EEPROM restore échoué — skip");
+      }
+    }
+
     Serial.println("[BOOT] Premier pull immédiat...");
     doPull();
   }

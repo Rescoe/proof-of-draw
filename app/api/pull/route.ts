@@ -157,32 +157,40 @@ export async function GET(req: NextRequest) {
     }
 
     // ── retryAfter : hint pour les ESP afin de réduire le polling en idle ───
-    // idle = pas de frame ET pas de candidat en attente de validation
     const isIdle = frameSource === "none" && pendingValidation === null;
-    const retryAfter = isIdle ? 300 : 60;  // 5 min si rien à faire, 1 min si actif
+    const retryAfter = isIdle ? 300 : 60;
+
+    // ── Métadonnées cartel (lecture à plat, accessible sans parser frame{}) ──
+    // workTitle / drawArtistName / displayTs viennent du payload stocké par broadcastDirect.
+    // blockIndex vient de chainSummary.
+    // Ces champs sont exposés à la RACINE de la réponse pour simplifier le parsing firmware.
+    const fm = frameMeta as Record<string, unknown> | null;
+    const cartelMeta = {
+      workTitle:      (fm?.["workTitle"]      as string | undefined) ?? null,
+      drawArtistName: (fm?.["drawArtistName"] as string | undefined) ?? null,
+      displayTs:      (fm?.["displayTs"]      as string | undefined) ?? null,
+      blockIndex:     (chainSummary as any)?.blockIndex ?? -1,
+    };
 
     // ── Réponse ─────────────────────────────────────────────────────────────
-    // Compatibilité tous firmwares :
-    //
-    // eink29BWR v2.0  → lit frameId + frameSource à la racine  ✓
-    // multiscreen v2.0 → lit frameId + screen + frameSource à la racine  ✓
-    // anciens firmwares → lisent frame.frameId (fallback conservé)  ✓
-    //
     return json({
-      // Champs racine (firmwares v2.0)
       frameId,
       frameSource,
-      screen,         // ← nouveau : "eink29bwr" | "eink27bw" | "oled096" | null
+      screen,
 
-      // Objet frame complet pour compatibilité anciens firmwares
-      // (ne contient plus black/red/buffer — buffers toujours via pull-frame)
+      // Métadonnées lues directement à la racine par le firmware — évite
+      // le parsing imbriqué dans frame{} et fonctionne quel que soit le chemin
+      // (BYPASS, validation, fallback)
+      cartelMeta,
+
+      // frame{} conservé pour compatibilité anciens firmwares
       frame: frameMeta
         ? { frameId, screen, frameSource, ...frameMeta }
         : null,
 
       chain:             chainSummary,
       pendingValidation,
-      retryAfter,   // ← hint : secondes avant le prochain pull (ESP l'utilise pour s'auto-throttler)
+      retryAfter,
     });
 
   } catch (err) {

@@ -28,8 +28,9 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <nav className="site-nav">
           <div className="site-nav__inner">
             <Link href="/" className="site-brand">
-              <span className="site-brand__mark">◈</span>
-              <span>Proof-of-<em>Draw</em></span>
+<span className="site-brand__mark">
+  <img src="/logo.png" alt="Logo" className="site-logo" />
+</span>              <span>Proof-of-<em>Draw</em></span>
             </Link>
 
             <div className="site-nav__links">

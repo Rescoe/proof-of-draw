@@ -1,15 +1,21 @@
 "use client";
 
+import { useState, useCallback } from "react";
 import type { NetworkSnapshot, NetworkDevice } from "@/lib/networkSnapshot";
 import { NetworkStage } from "./NetworkStage";
+import { SidePanel } from "./SidePanel";
 
 type Props = { snapshot: NetworkSnapshot | null };
 
 export function NetworkMap({ snapshot }: Props) {
-  // SidePanel supprimé — le clic ne fait rien (pas de panel de détails)
-  const handleSelect = (_device: NetworkDevice) => {};
+  // Aucun device sélectionné au départ → panel masqué
+  const [selected, setSelected] = useState<NetworkDevice | null>(null);
 
-  // Garde si snapshot vide
+  const handleSelect = useCallback((device: NetworkDevice) => {
+    // Clic sur le même device → ferme le panel
+    setSelected((prev) => (prev?.deviceId === device.deviceId ? null : device));
+  }, []);
+
   if (!snapshot || !snapshot.devices?.length) {
     return (
       <div className="nv2-layout nv2-empty">
@@ -23,17 +29,23 @@ export function NetworkMap({ snapshot }: Props) {
   }
 
   return (
-    <div className="nv2-layout">
+    <div className={`nv2-layout${selected ? " nv2-layout--panel" : ""}`}>
       <NetworkStage
         snapshot={snapshot}
         onDeviceSelect={handleSelect}
-        selectedDeviceId={undefined}
+        selectedDeviceId={selected?.deviceId}
       />
 
-      {/* CSS */}
+      {/* Panel visible uniquement quand un device est sélectionné */}
+      {selected && (
+        <SidePanel device={selected} onClose={() => setSelected(null)} />
+      )}
+
       <style>{`
+        /* Layout de base : une seule colonne (pas de panel) */
         .nv2-layout {
-          display: block;
+          display: grid;
+          grid-template-columns: 1fr;
           background: #080c14;
           border-radius: 16px;
           overflow: hidden;
@@ -41,9 +53,20 @@ export function NetworkMap({ snapshot }: Props) {
           font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
           color: #f1f5f9;
         }
-        
+        /* Panel ouvert : colonne de 280px à droite */
+        .nv2-layout--panel {
+          grid-template-columns: 1fr 280px;
+        }
+        @media (max-width: 768px) {
+          .nv2-layout--panel {
+            grid-template-columns: 1fr;
+            grid-template-rows: auto auto;
+          }
+        }
+
         /* Empty state */
         .nv2-empty {
+          display: grid;
           place-items: center;
           padding: 60px 20px;
         }
@@ -64,8 +87,6 @@ export function NetworkMap({ snapshot }: Props) {
           font-size: 13px;
           opacity: 0.5;
         }
-        
-        /* SidePanel supprimé — affichage plein largeur */
       `}</style>
     </div>
   );

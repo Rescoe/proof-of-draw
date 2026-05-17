@@ -11,8 +11,9 @@ export default async function HomePage() {
       
       {/* HERO - BOUTONS UNIQUEMENT */}
       <section className="hero">
-        <div className="hero-icon">◈</div>
-
+<div className="hero-icon">
+  <img src="/logo.png" alt="Logo" className="hero-logo" />
+</div>
         <div className="hero-kicker">
           Proof-of-Draw · réseau distribué
         </div>
