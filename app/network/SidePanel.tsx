@@ -16,6 +16,10 @@ interface MinedBlock {
   validatorIds: string[];
   score: number;
   displayTime: number;
+  frameId: string;
+  workTitle?: string;
+  drawArtistName?: string;
+  deviceOwnerName?: string;
 }
 
 interface BlockImagePayload {
@@ -202,79 +206,138 @@ export function SidePanel({ device, onClose }: { device: NetworkDevice | null; o
         </div>
       </div>
 
-      {/* ── Frame active (queue courante) ── */}
-      <div className="nv2-panel__section">
-        <div className="nv2-panel__section-label">Frame en cours d'affichage</div>
-        {device.recentFrame && device.recentFrame.preview.mode !== "none" ? (
-          <>
-            <FramePreviewMini
-              preview={device.recentFrame.preview}
-              screenType={primaryScreenType}
-            />
-            <p className="nv2-muted nv2-small" style={{ marginTop: 6 }}>
-              {`Frame ${device.recentFrame.frameId.slice(0, 8)}… · ${formatRelativeTime(device.recentFrame.createdAt)}`}
-            </p>
-            {device.recentFrame.sourceDeviceId && (
-              <p className="nv2-muted nv2-small">Source : {device.recentFrame.sourceDeviceId}</p>
-            )}
-          </>
-        ) : (
-          <p className="nv2-muted nv2-small">Aucune frame active</p>
-        )}
-      </div>
+      {/* ── Frame active (queue courante) — fusionnée avec le bloc si même frameId ── */}
+      {(() => {
+        // Axe 5 : si la frame active correspond au dernier bloc validé → affichage fusionné
+        const frameIsBlock = !loadingBlock && lastBlock && device.recentFrame &&
+          device.recentFrame.frameId === lastBlock.frameId;
 
-      {/* ── Dernier bloc validé (lazy depuis /api/device-last-block) ── */}
-      <div className="nv2-panel__section">
-        <div className="nv2-panel__section-label">Dernier bloc validé</div>
-
-        {loadingBlock && (
-          <p className="nv2-muted nv2-small nv2-loading">Chargement…</p>
-        )}
-
-        {!loadingBlock && lastBlock && (
-          <div className="nv2-block-preview">
-            {/* Vignette du dessin */}
-            {lastImage && blockImageToPreview(lastImage).mode !== "none" && (
-              <FramePreviewMini
-                preview={blockImageToPreview(lastImage)}
-                screenType={lastImage.screen}
-              />
-            )}
-
-            {/* Méta-données du bloc */}
-            <div className="nv2-block-meta">
-              <div className="nv2-block-meta__row">
-                <span className="nv2-block-meta__label">Bloc</span>
-                <span className="nv2-block-meta__value nv2-accent">#{lastBlock.blockIndex}</span>
+        if (frameIsBlock) {
+          // Mode fusionné
+          return (
+            <div className="nv2-panel__section">
+              <div className="nv2-panel__section-label" style={{ color: "var(--accent)" }}>
+                ◈ Bloc #{lastBlock!.blockIndex} — actuellement affiché
               </div>
-              <div className="nv2-block-meta__row">
-                <span className="nv2-block-meta__label">Miné</span>
-                <span className="nv2-block-meta__value">{formatRelativeTime(lastBlock.minedAt)}</span>
-              </div>
-              <div className="nv2-block-meta__row">
-                <span className="nv2-block-meta__label">PoD score</span>
-                <span className="nv2-block-meta__value nv2-green">{lastBlock.drawScore}</span>
-              </div>
-              <div className="nv2-block-meta__row">
-                <span className="nv2-block-meta__label">Validateurs</span>
-                <span className="nv2-block-meta__value">{lastBlock.validatorIds.length}</span>
-              </div>
-              <div className="nv2-block-meta__row">
-                <span className="nv2-block-meta__label">Display</span>
-                <span className="nv2-block-meta__value">{lastBlock.displayTime}s</span>
-              </div>
-              <div className="nv2-block-meta__row" style={{ marginTop: 4 }}>
-                <span className="nv2-block-meta__label">Hash</span>
-                <code className="nv2-block-meta__hash">{lastBlock.blockHash.slice(0, 16)}…</code>
+              {lastImage && blockImageToPreview(lastImage).mode !== "none" && (
+                <FramePreviewMini
+                  preview={blockImageToPreview(lastImage)}
+                  screenType={lastImage.screen}
+                />
+              )}
+              <div className="nv2-block-meta" style={{ marginTop: 8 }}>
+                {lastBlock!.workTitle && lastBlock!.workTitle !== "Sans titre" && (
+                  <div className="nv2-block-meta__row">
+                    <span className="nv2-block-meta__label">Titre</span>
+                    <span className="nv2-block-meta__value">{lastBlock!.workTitle}</span>
+                  </div>
+                )}
+                {lastBlock!.drawArtistName && (
+                  <div className="nv2-block-meta__row">
+                    <span className="nv2-block-meta__label">Artiste</span>
+                    <span className="nv2-block-meta__value">{lastBlock!.drawArtistName}</span>
+                  </div>
+                )}
+                <div className="nv2-block-meta__row">
+                  <span className="nv2-block-meta__label">Miné</span>
+                  <span className="nv2-block-meta__value">{formatRelativeTime(lastBlock!.minedAt)}</span>
+                </div>
+                <div className="nv2-block-meta__row">
+                  <span className="nv2-block-meta__label">PoD score</span>
+                  <span className="nv2-block-meta__value nv2-green">{lastBlock!.drawScore}</span>
+                </div>
+                <div className="nv2-block-meta__row">
+                  <span className="nv2-block-meta__label">Display</span>
+                  <span className="nv2-block-meta__value">{lastBlock!.displayTime}s</span>
+                </div>
               </div>
             </div>
-          </div>
-        )}
+          );
+        }
 
-        {!loadingBlock && !lastBlock && (
-          <p className="nv2-muted nv2-small">Aucun bloc miné par ce device</p>
-        )}
-      </div>
+        // Mode séparé (frame active ≠ dernier bloc)
+        return (
+          <>
+            {/* Frame active */}
+            <div className="nv2-panel__section">
+              <div className="nv2-panel__section-label">Frame en cours d'affichage</div>
+              {device.recentFrame && device.recentFrame.preview.mode !== "none" ? (
+                <>
+                  <FramePreviewMini
+                    preview={device.recentFrame.preview}
+                    screenType={primaryScreenType}
+                  />
+                  <p className="nv2-muted nv2-small" style={{ marginTop: 6 }}>
+                    {`Frame ${device.recentFrame.frameId.slice(0, 8)}… · ${formatRelativeTime(device.recentFrame.createdAt)}`}
+                  </p>
+                  {device.recentFrame.sourceDeviceId && (
+                    <p className="nv2-muted nv2-small">Source : {device.recentFrame.sourceDeviceId}</p>
+                  )}
+                </>
+              ) : (
+                <p className="nv2-muted nv2-small">Aucune frame active</p>
+              )}
+            </div>
+
+            {/* Dernier bloc validé */}
+            <div className="nv2-panel__section">
+              <div className="nv2-panel__section-label">Dernier bloc validé</div>
+              {loadingBlock && <p className="nv2-muted nv2-small nv2-loading">Chargement…</p>}
+              {!loadingBlock && lastBlock && (
+                <div className="nv2-block-preview">
+                  {lastImage && blockImageToPreview(lastImage).mode !== "none" && (
+                    <FramePreviewMini
+                      preview={blockImageToPreview(lastImage)}
+                      screenType={lastImage.screen}
+                    />
+                  )}
+                  <div className="nv2-block-meta">
+                    <div className="nv2-block-meta__row">
+                      <span className="nv2-block-meta__label">Bloc</span>
+                      <span className="nv2-block-meta__value nv2-accent">#{lastBlock.blockIndex}</span>
+                    </div>
+                    {lastBlock.workTitle && lastBlock.workTitle !== "Sans titre" && (
+                      <div className="nv2-block-meta__row">
+                        <span className="nv2-block-meta__label">Titre</span>
+                        <span className="nv2-block-meta__value">{lastBlock.workTitle}</span>
+                      </div>
+                    )}
+                    {lastBlock.drawArtistName && (
+                      <div className="nv2-block-meta__row">
+                        <span className="nv2-block-meta__label">Artiste</span>
+                        <span className="nv2-block-meta__value">{lastBlock.drawArtistName}</span>
+                      </div>
+                    )}
+                    <div className="nv2-block-meta__row">
+                      <span className="nv2-block-meta__label">Miné</span>
+                      <span className="nv2-block-meta__value">{formatRelativeTime(lastBlock.minedAt)}</span>
+                    </div>
+                    <div className="nv2-block-meta__row">
+                      <span className="nv2-block-meta__label">PoD score</span>
+                      <span className="nv2-block-meta__value nv2-green">{lastBlock.drawScore}</span>
+                    </div>
+                    <div className="nv2-block-meta__row">
+                      <span className="nv2-block-meta__label">Validateurs</span>
+                      <span className="nv2-block-meta__value">{lastBlock.validatorIds.length}</span>
+                    </div>
+                    <div className="nv2-block-meta__row">
+                      <span className="nv2-block-meta__label">Display</span>
+                      <span className="nv2-block-meta__value">{lastBlock.displayTime}s</span>
+                    </div>
+                    <div className="nv2-block-meta__row" style={{ marginTop: 4 }}>
+                      <span className="nv2-block-meta__label">Hash</span>
+                      <code className="nv2-block-meta__hash">{lastBlock.blockHash.slice(0, 16)}…</code>
+                    </div>
+                  </div>
+                </div>
+              )}
+              {!loadingBlock && !lastBlock && (
+                <p className="nv2-muted nv2-small">Aucun bloc miné par ce device</p>
+              )}
+            </div>
+          </>
+        );
+      })()}
 
       {/* ── Styles ── */}
       <style>{`

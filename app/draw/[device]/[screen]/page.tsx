@@ -4,7 +4,7 @@ import { useEffect, useState, useCallback, useRef } from "react";
 import { SCREEN_PROFILES, ScreenId } from "@/lib/screenProfiles";
 import { OwnedDevice } from "@/lib/deviceStore";
 import { canvasToScreenPayload } from "@/lib/canvasToScreen";
-import type { ActionEvent } from "@/lib/types/actions";
+import type { ActionEvent, ReplayEvent } from "@/lib/types/actions";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -454,8 +454,18 @@ export default function DrawCanvasPage() {
   const [banWarning, setBanWarning] = useState(false);
 
   // ── Proof-of-Draw action tracking ──────────────────────────────────────────
-  const actionsRef      = useRef<ActionEvent[]>([]);
-  const sessionStartRef = useRef<number>(Date.now());
+  const actionsRef           = useRef<ActionEvent[]>([]);
+  const sessionStartRef      = useRef<number>(Date.now());
+
+  // ── Axe 4 : score courant + checkpoints (pour clear) ──────────────────────
+  const scoreRef             = useRef<number>(0);
+  const scoreCheckpointsRef  = useRef<number[]>([]);
+  const lastActionWasClearRef= useRef<boolean>(false);
+
+  // ── Axe 4 : replay pixel-perfect ──────────────────────────────────────────
+  const replayRef            = useRef<ReplayEvent[]>([]);
+  const lastReplayT          = useRef<number>(0);
+  const REPLAY_THROTTLE_MS   = 16; // ~60fps max
 
   // ── Canvas dimensions ──────────────────────────────────────────────────────
   const W = profile?.width  ?? 128;
@@ -503,6 +513,13 @@ export default function DrawCanvasPage() {
     setCanUndo(historyIndex.current > 0);
     setCanRedo(true);
     actionsRef.current.push({ kind: "undo", t: Date.now() - sessionStartRef.current });
+    // Axe 4 : undo après clear → restaurer le checkpoint
+    if (lastActionWasClearRef.current && scoreCheckpointsRef.current.length > 0) {
+      scoreRef.current = scoreCheckpointsRef.current.pop()!;
+    } else {
+      scoreRef.current = Math.max(0, scoreRef.current - 1);
+    }
+    lastActionWasClearRef.current = false;
   }, []);
 
   const redo = useCallback(() => {
@@ -513,6 +530,8 @@ export default function DrawCanvasPage() {
     setCanUndo(true);
     setCanRedo(historyIndex.current < history.current.length - 1);
     actionsRef.current.push({ kind: "redo", t: Date.now() - sessionStartRef.current });
+    lastActionWasClearRef.current = false;
+    // redo est neutre sur le score
   }, []);
 
   // ── Canvas init ────────────────────────────────────────────────────────────
@@ -654,6 +673,8 @@ export default function DrawCanvasPage() {
       saveHistory();
       floodFill(ctx, pt.x, pt.y, activeColor, W, H);
       actionsRef.current.push({ kind: "fill", t: Date.now() - sessionStartRef.current, tool: "fill", color: activeColor });
+      scoreRef.current += 1;
+      lastActionWasClearRef.current = false;
       drawing.current = false;
       return;
     }
@@ -662,6 +683,13 @@ export default function DrawCanvasPage() {
       ctx.fillStyle   = tool === "eraser" ? "#FFFFFF" : activeColor;
       ctx.beginPath(); ctx.arc(pt.x, pt.y, brushSize / 2, 0, Math.PI * 2); ctx.fill();
       ctx.globalAlpha = 1;
+      // Axe 4 : enregistrer l'événement de replay "down"
+      const t = Date.now() - sessionStartRef.current;
+      replayRef.current.push({
+        kind: "down", t, x: pt.x, y: pt.y,
+        tool, color: tool === "eraser" ? "#FFFFFF" : activeColor, size: brushSize,
+      });
+      lastReplayT.current = t;
     }
   }, [tool, activeColor, brushSize, opacity, W, H, toCanvasPoint, saveHistory]);
 
@@ -676,6 +704,15 @@ export default function DrawCanvasPage() {
       const color = tool === "eraser" ? "#FFFFFF" : activeColor;
       if (lastPoint.current) drawLine(ctx, lastPoint.current, pt, brushSize, color, opacity / 100);
       lastPoint.current = pt;
+      // Axe 4 : enregistrer le mouvement (throttlé à 16ms)
+      const t = Date.now() - sessionStartRef.current;
+      if (t - lastReplayT.current >= REPLAY_THROTTLE_MS) {
+        replayRef.current.push({
+          kind: "move", t, x: pt.x, y: pt.y,
+          tool, color, size: brushSize,
+        });
+        lastReplayT.current = t;
+      }
     } else if (tool === "line" || tool === "rect" || tool === "ellipse") {
       overlay.clearRect(0, 0, W, H);
       if (shapeStart.current) {
@@ -704,13 +741,23 @@ export default function DrawCanvasPage() {
     drawing.current = false;
     lastPoint.current = null;
     shapeStart.current = null;
+    const t = Date.now() - sessionStartRef.current;
     // Enregistrer l'action selon l'outil
     if (tool === "brush") {
-      actionsRef.current.push({ kind: "stroke", t: Date.now() - sessionStartRef.current, tool: "brush", color: activeColor });
+      actionsRef.current.push({ kind: "stroke", t, tool: "brush", color: activeColor });
+      scoreRef.current += 1;
+      lastActionWasClearRef.current = false;
+      // Axe 4 : enregistrer "up"
+      replayRef.current.push({ kind: "up", t, x: pt.x, y: pt.y, tool });
     } else if (tool === "eraser") {
-      actionsRef.current.push({ kind: "erase", t: Date.now() - sessionStartRef.current, tool: "eraser" });
+      actionsRef.current.push({ kind: "erase", t, tool: "eraser" });
+      scoreRef.current += 1;
+      lastActionWasClearRef.current = false;
+      replayRef.current.push({ kind: "up", t, x: pt.x, y: pt.y, tool });
     } else if (tool === "line" || tool === "rect" || tool === "ellipse") {
-      actionsRef.current.push({ kind: "shape", t: Date.now() - sessionStartRef.current, tool, color: activeColor });
+      actionsRef.current.push({ kind: "shape", t, tool, color: activeColor });
+      scoreRef.current += 1;
+      lastActionWasClearRef.current = false;
     }
     saveHistory();
   }, [tool, activeColor, brushSize, W, H, toCanvasPoint, drawLine, drawRect, drawEllipse, saveHistory]);
@@ -720,7 +767,11 @@ export default function DrawCanvasPage() {
     const ctx = canvasRef.current?.getContext("2d");
     if (!ctx) return;
     ctx.fillStyle = "#FFFFFF"; ctx.fillRect(0, 0, W, H);
-    actionsRef.current.push({ kind: "fill", t: Date.now() - sessionStartRef.current, tool: "clear", color: "#FFFFFF" });
+    // Axe 4 : empiler le score courant et remettre à 0
+    scoreCheckpointsRef.current.push(scoreRef.current);
+    scoreRef.current = 0;
+    lastActionWasClearRef.current = true;
+    actionsRef.current.push({ kind: "clear", t: Date.now() - sessionStartRef.current, tool: "clear", color: "#FFFFFF" });
     saveHistory();
   }, [W, H, saveHistory]);
 
@@ -766,6 +817,8 @@ export default function DrawCanvasPage() {
     ctx.drawImage(off, 0, 0, W, H, imgImport.x, imgImport.y,
       Math.round(W * imgImport.scale), Math.round(H * imgImport.scale));
     actionsRef.current.push({ kind: "move", t: Date.now() - sessionStartRef.current, tool: "import" });
+    scoreRef.current += 1;
+    lastActionWasClearRef.current = false;
     saveHistory();
     setImgMode(false);
     setImgImport(s => ({ ...s, data: null }));
@@ -796,13 +849,16 @@ export default function DrawCanvasPage() {
     if (!device || !canSend || !canvasRef.current) return;
     setSending(true); setStatus(null);
     try {
-      const payload   = canvasToScreenPayload(canvasRef.current, screenId);
-      const actions   = actionsRef.current;
-      const drawScore = actions.reduce((acc, a) => a.kind === "undo" ? acc - 1 : acc + 1, 0);
+      const payload      = canvasToScreenPayload(canvasRef.current, screenId);
+      const actions      = actionsRef.current;
+      const replayEvents = replayRef.current;
+      // Axe 4 : utiliser le score calculé en temps réel plutôt que de recalculer
+      const drawScore    = scoreRef.current;
+      const baseBody = { screen: screenId, deviceId, actions, replayEvents, drawScore };
       const body =
         screenId === "eink29bwr"
-          ? { screen: screenId, deviceId, black: (payload as any).black, red: (payload as any).red, actions, drawScore }
-          : { screen: screenId, deviceId, buffer: (payload as any).buffer, actions, drawScore };
+          ? { ...baseBody, black: (payload as any).black, red: (payload as any).red }
+          : { ...baseBody, buffer: (payload as any).buffer };
       const res  = await fetch("/api/draw", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
       const data = await res.json().catch(() => ({}));
       if (res.status === 429) {

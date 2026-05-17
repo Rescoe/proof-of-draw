@@ -25,9 +25,10 @@ function statusColor(isOnline: boolean, lastPing?: number): string {
 export default function MyDevicesPage() {
   const [devices, setDevices] = useState<OwnedDevice[]>([]);
   const [loading, setLoading] = useState(true);
-  const [rotating, setRotating] = useState<string | null>(null);
-  const [newCode, setNewCode] = useState<Record<string, string>>({});
-  const [copyMsg, setCopyMsg] = useState<Record<string, string>>({});
+  const [rotating,  setRotating]  = useState<string | null>(null);
+  const [newCode,   setNewCode]   = useState<Record<string, string>>({});
+  const [copyMsg,   setCopyMsg]   = useState<Record<string, string>>({});
+  const [toggling,  setToggling]  = useState<string | null>(null);
 
   const load = async () => {
     try {
@@ -70,6 +71,22 @@ export default function MyDevicesPage() {
       alert("Erreur réseau");
     } finally {
       setRotating(null);
+    }
+  }
+
+  async function handleTogglePublic(deviceId: string, current: boolean) {
+    setToggling(deviceId);
+    try {
+      await fetch(`/api/my-devices/${deviceId}/availability`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ enabled: !current }),
+      });
+      await load();
+    } catch {
+      alert("Erreur réseau");
+    } finally {
+      setToggling(null);
     }
   }
 
@@ -429,6 +446,53 @@ export default function MyDevicesPage() {
                     </a>{" "}
                     avec le code affiché sur l&apos;écran.
                   </p>
+                </div>
+
+                {/* Axe 2 : Mode prêt public */}
+                <div
+                  style={{
+                    marginTop: "1rem",
+                    paddingTop: "1rem",
+                    borderTop: "1px solid var(--border)",
+                  }}
+                >
+                  <div
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "space-between",
+                      gap: "1rem",
+                    }}
+                  >
+                    <div>
+                      <div style={{ fontSize: "0.72rem", color: "var(--text3)", textTransform: "uppercase", letterSpacing: "0.05em" }}>
+                        Prêt public
+                      </div>
+                      <p style={{ fontSize: "0.72rem", color: "var(--text3)", marginTop: "0.2rem", marginBottom: 0 }}>
+                        {d.publicMode
+                          ? "D'autres artistes peuvent dessiner sur cet ESP."
+                          : "Seul vous pouvez dessiner sur cet ESP."}
+                      </p>
+                    </div>
+                    <button
+                      onClick={() => handleTogglePublic(d.deviceId, !!d.publicMode)}
+                      disabled={toggling === d.deviceId}
+                      style={{
+                        padding: "0.4rem 1rem",
+                        borderRadius: "6px",
+                        border: `1px solid ${d.publicMode ? "rgba(74,222,128,0.4)" : "var(--border)"}`,
+                        background: d.publicMode ? "rgba(74,222,128,0.1)" : "var(--bg)",
+                        color: d.publicMode ? "#4ade80" : "var(--text2)",
+                        fontSize: "0.78rem",
+                        cursor: "pointer",
+                        fontWeight: 600,
+                        flexShrink: 0,
+                        opacity: toggling === d.deviceId ? 0.5 : 1,
+                      }}
+                    >
+                      {toggling === d.deviceId ? "…" : d.publicMode ? "✓ Public" : "Privé"}
+                    </button>
+                  </div>
                 </div>
               </div>
             );

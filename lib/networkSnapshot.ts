@@ -330,17 +330,52 @@ async function buildNetworkSnapshot(): Promise<NetworkSnapshot> {
   /*
     ==========================================
     STEP 2
-    charger devices uniques
+    charger devices uniques — batch mget (Axe 6 optimization)
+    2 mget au lieu de N*2 redis.get individuels
     ==========================================
   */
 
-  const devices = (
-    await Promise.all(
-      allDeviceIds.map((id) =>
-        fetchDevice(id)
-      )
-    )
-  ).filter(Boolean) as NetworkDevice[];
+  let devices: NetworkDevice[] = [];
+
+  if (allDeviceIds.length > 0) {
+    const deviceKeys = allDeviceIds.map((id) => `device:${id}`);
+    const frameKeys  = allDeviceIds.map((id) => `frame:${id}`);
+
+    // 2 mget en parallèle au lieu de N*2 get individuels
+    const [deviceRaws, frameRaws] = await Promise.all([
+      redis.mget<(DeviceRecord | null)[]>(...deviceKeys),
+      redis.mget<(RawFrame | null)[]>(...frameKeys),
+    ]);
+
+    for (let i = 0; i < allDeviceIds.length; i++) {
+      const raw = deviceRaws[i];
+      if (!raw) continue;
+
+      const device: DeviceRecord = typeof raw === "string" ? JSON.parse(raw) : raw;
+      const frameRaw = frameRaws[i];
+      const frame: RawFrame | null = frameRaw
+        ? (typeof frameRaw === "string" ? JSON.parse(frameRaw) : frameRaw)
+        : null;
+
+      const screens = Array.isArray(device.screens) ? device.screens : [];
+
+      devices.push({
+        deviceId:   device.deviceId,
+        artistName: device.artistName,
+        firmware:   device.firmware,
+        screens:    screens.map((screen) => {
+          const meta = getScreenMeta(screen);
+          return { screen, label: meta.label, description: meta.description };
+        }),
+        lastSeen:   device.lastSeen ?? 0,
+        lastPing:   device.lastPing ?? 0,
+        framesSent: device.framesSent ?? 0,
+        createdAt:  device.createdAt ?? 0,
+        isOnline:   isOnline(device),
+        recentFrame: sanitizeFrame(frame),
+      });
+    }
+  }
 
   devices.sort((a, b) => {
     const aa = Math.max(

@@ -2,7 +2,7 @@
 // L'ESP confirme qu'il a bien affiché la frame → on la supprime de Redis
 
 import { NextRequest, NextResponse } from "next/server";
-import { getDevice } from "@/lib/deviceStore";
+import { getDevice, ackFrameReceived } from "@/lib/deviceStore";
 import { clearFrameForDeviceAck } from "@/lib/queue";
 import { isBlacklisted, getIP, forbidden } from "@/lib/rateLimit";
 
@@ -23,7 +23,10 @@ export async function POST(req: NextRequest) {
     if (!device)
       return NextResponse.json({ error: "device inconnu" }, { status: 404 });
 
-    const cleared = await clearFrameForDeviceAck(deviceId, device.screens, frameId);
+    const [cleared] = await Promise.all([
+      clearFrameForDeviceAck(deviceId, device.screens, frameId),
+      ackFrameReceived(deviceId), // Axe 2 : met à jour lastFrameReceivedAt
+    ]);
     console.log(`[/api/ack-frame] device=${deviceId} frameId=${frameId} cleared=${cleared}`);
     return NextResponse.json({ ok: true, cleared });
   } catch (err) {

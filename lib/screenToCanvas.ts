@@ -70,8 +70,8 @@ export function eink27bwToCanvas(bufferB64: string): ImageData {
 
       if (!isBlack) continue; // blanc = déjà fill blanc
 
-      const x = 263 - bufRow;
-      const y = bufCol;
+      const x = bufRow;
+      const y = 175 - bufCol;
       if (x < 0 || x >= CANVAS_W || y < 0 || y >= CANVAS_H) continue;
 
       const idx = (y * CANVAS_W + x) * 4;
@@ -106,8 +106,8 @@ export function eink29bwrToCanvas(blackB64: string, redB64: string): ImageData {
 
       if (!isBlack && !isRed) continue;
 
-      const x = 295 - bufRow;
-      const y = bufCol;
+      const x = bufRow;
+      const y = 127 - bufCol;
       if (x < 0 || x >= CANVAS_W || y < 0 || y >= CANVAS_H) continue;
 
       const idx = (y * CANVAS_W + x) * 4;

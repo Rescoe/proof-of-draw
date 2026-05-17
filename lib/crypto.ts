@@ -1,6 +1,8 @@
 // lib/crypto.ts
 // Métriques de complexité visuelle pour la validation Proof-of-Draw
 // Tout en pur TypeScript, zéro dépendance native — compatible Vercel Edge.
+
+import type { ReplayEvent, PodEnrichment } from "@/lib/types/actions";
 //
 // Ces trois métriques sont calculées côté serveur pour :
 //   1. Vérification croisée des résultats ESP (anti-triche)
@@ -199,6 +201,71 @@ export async function hashDrawing(
 export async function hashActions(actions: { kind: string; t: number; tool?: string; color?: string }[]): Promise<string> {
   const canonical = JSON.stringify(actions);
   return sha256Hex(canonical);
+}
+
+// ─── Hash enrichi PoD ─────────────────────────────────────────────────────────
+//
+// podHashEnriched = SHA256(actionsHash + JSON(enrichment))
+// Permet de vérifier que les métriques de replay sont cohérentes avec les actions.
+
+export async function hashPodEnriched(actionsHash: string, enrichment: PodEnrichment): Promise<string> {
+  const canonical = actionsHash + JSON.stringify(enrichment);
+  return sha256Hex(canonical);
+}
+
+/**
+ * Calcule les métriques PodEnrichment depuis la séquence de replay.
+ */
+export function computeEnrichment(replay: ReplayEvent[], actions: { kind: string; t: number }[]): PodEnrichment {
+  let totalStrokes = 0;
+  let totalPoints = 0;
+  let currentStrokeLen = 0;
+  let lastStrokeDown: ReplayEvent | null = null;
+  const strokeLengths: number[] = [];
+  const colors = new Set<string>();
+
+  for (const ev of replay) {
+    totalPoints++;
+    if (ev.kind === "down") {
+      totalStrokes++;
+      lastStrokeDown = ev;
+      currentStrokeLen = 0;
+      if (ev.color) colors.add(ev.color);
+    } else if (ev.kind === "move") {
+      if (lastStrokeDown) {
+        const dx = ev.x - lastStrokeDown.x;
+        const dy = ev.y - lastStrokeDown.y;
+        currentStrokeLen += Math.sqrt(dx * dx + dy * dy);
+        lastStrokeDown = ev;
+      }
+      if (ev.color) colors.add(ev.color);
+    } else if (ev.kind === "up") {
+      strokeLengths.push(currentStrokeLen);
+      lastStrokeDown = null;
+      currentStrokeLen = 0;
+    }
+  }
+
+  const avgStrokeLength = strokeLengths.length > 0
+    ? strokeLengths.reduce((s, l) => s + l, 0) / strokeLengths.length
+    : 0;
+
+  const sessionDurationMs = replay.length > 0
+    ? replay[replay.length - 1].t - replay[0].t
+    : 0;
+
+  const undoCount  = actions.filter(a => a.kind === "undo").length;
+  const clearCount = actions.filter(a => a.kind === "clear").length;
+
+  return {
+    totalStrokes,
+    totalPoints,
+    avgStrokeLength: Math.round(avgStrokeLength * 10) / 10,
+    sessionDurationMs,
+    uniqueColorsUsed: colors.size,
+    undoCount,
+    clearCount,
+  };
 }
 
 export function computeDisplayTime(

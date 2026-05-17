@@ -11,7 +11,7 @@ import { redis } from "@/lib/redis";
 const DRAW_WINDOW_SEC = parseInt(process.env.DRAW_WINDOW_SEC ?? "60");
 const ABUSE_STRIKES = parseInt(process.env.DRAW_LIMIT_PER_ROUND ?? "3");
 const BLACKLIST_TTL = parseInt(process.env.BLACKLIST_TTL_SECONDS ?? "604800");
-const MAX_BODY_BYTES = 30_000; // augmenté pour inclure la séquence d'actions
+const MAX_BODY_BYTES = 150_000; // augmenté pour inclure replay events (coords x,y par point)
 const DEVICE_ID_REGEX = /^dev_[A-Z0-9]{8}$/;
 const VALID_SCREENS = new Set(["eink29bwr", "eink27bw", "oled096"]);
 const BYPASS_VALIDATION = process.env.BYPASS_VALIDATION === "true";
@@ -92,8 +92,11 @@ export async function POST(req: NextRequest) {
   }
 
   const { deviceId, screen, black, red, buffer } = body as Record<string, string>;
-  const actions   = Array.isArray(body.actions) ? body.actions : [];
-  const drawScore = typeof body.drawScore === "number" ? (body.drawScore as number) : null;
+  const actions      = Array.isArray(body.actions) ? body.actions : [];
+  const replayEvents = Array.isArray(body.replayEvents) ? body.replayEvents : [];
+  const drawScore    = typeof body.drawScore === "number" ? (body.drawScore as number) : null;
+  const workTitle    = typeof body.workTitle === "string" ? body.workTitle.trim().slice(0, 80) : undefined;
+  const drawArtistName = typeof body.drawArtistName === "string" ? body.drawArtistName.trim().slice(0, 40) : undefined;
 
   if (!deviceId || !DEVICE_ID_REGEX.test(deviceId)) {
     return NextResponse.json({ error: "deviceId invalide" }, { status: 400 });
@@ -168,7 +171,7 @@ export async function POST(req: NextRequest) {
   }
 
   try {
-    const candidateBody = { deviceId, screen, black, red, buffer, actions, drawScore };
+    const candidateBody = { deviceId, screen, black, red, buffer, actions, replayEvents, drawScore, workTitle, drawArtistName };
     const submitUrl = new URL("/api/submit-candidate", getBaseUrl(req)).toString();
 
     const candidateRes = await fetch(submitUrl, {

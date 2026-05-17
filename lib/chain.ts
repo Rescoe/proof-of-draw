@@ -44,13 +44,27 @@ export interface Block {
   actionsHash: string;  // hash de la séquence d'actions
   drawScore: number;    // Proof-of-Draw score
   deviceId: string;
-  artistName: string;
+  artistName: string;   // nom de l'artiste auteur du dessin
   poolScreen: string;
   validatorIds: string[];
   score: number;
   displayTime: number;
   minedAt: number;
   frameId: string;
+
+  // ── Axe 2 : ESP prêt public ──────────────────────────────────────────────────
+  workTitle?: string;          // titre du dessin (optionnel, défaut "Sans titre")
+  drawArtistName?: string;     // artiste dessinateur si différent du propriétaire de l'ESP
+  deviceOwnerName?: string;    // propriétaire de l'ESP (si ESP en prêt public)
+
+  // ── Axe 3 : Ré-validation ────────────────────────────────────────────────────
+  podHashEnriched?: string;    // SHA256(actionsHash + enrichment JSON) — Axe 4
+  revalidated?: {              // blocs antérieurs re-vérifiés lors du minage
+    blockHash: string;
+    observerIds: string[];
+    confirmedAt: number;
+  }[];
+  obsConfirmed?: boolean;      // true si l'actionsHash a été confirmé par des observers
 }
 
 export interface BlockImagePayload {
@@ -63,7 +77,7 @@ export interface BlockImagePayload {
 export interface Candidate {
   candidateId: string;
   deviceId: string;
-  artistName: string;
+  artistName: string;        // propriétaire de l'ESP
   poolScreen: string;
   payload: FramePayload;
   imageHash: string;         // hash des pixels finaux (était drawingHash)
@@ -75,6 +89,15 @@ export interface Candidate {
   expiresAt: number;
   poolSize: number;
   warning?: string | null;
+
+  // ── Axe 2 : ESP prêt public ──────────────────────────────────────────────────
+  workTitle?: string;          // titre du dessin
+  drawArtistName?: string;     // artiste dessinateur si différent du propriétaire
+  deviceOwnerName?: string;    // propriétaire de l'ESP
+
+  // ── Axe 4 : Replay + enrichissement PoD ─────────────────────────────────────
+  replayEvents?: import("@/lib/types/actions").ReplayEvent[];
+  podHashEnriched?: string;
 }
 
 export interface ValidationVote {
@@ -103,6 +126,8 @@ const KEY_VOTES     = "candidate:votes";
 const blockKey   = (hash: string) => `chain:block:${hash}`;
 const imageKey   = (hash: string) => `chain:image:${hash}`;
 const actionsKey = (hash: string) => `chain:actions:${hash}`;
+const replayKey  = (hash: string) => `chain:replay:${hash}`;
+const KEY_OBS_QUEUE = "chain:obs:queue";
 
 const GENESIS_HASH      = "0".repeat(64);
 const CANDIDATE_TTL_SEC = parseInt(process.env.CANDIDATE_TTL_SEC ?? "600");
@@ -254,6 +279,7 @@ export async function finalizeBlock(
   const avgScore  = votes.reduce((s, v) => s + v.score, 0) / votes.length;
   const finalScore = (candidate.score + avgScore) / 2;
   const displayTime = computeDisplayTime(finalScore, parentHash);
+  const minedAt = Date.now();
 
   const canonical = JSON.stringify({
     parentHash,
@@ -263,26 +289,55 @@ export async function finalizeBlock(
     poolScreen:  candidate.poolScreen,
     validatorIds: votes.map((v) => v.deviceId).sort(),
     score:       finalScore,
-    minedAt:     Date.now(),
+    minedAt,
   });
 
   const blockHash = await sha256Hex(canonical);
 
+  // ── Axe 3 : Ré-validation des k blocs précédents ─────────────────────────────
+  // k = min(5, floor(log2(N+1))) blocs sélectionnés pour re-vérification future
+  const k = Math.min(5, Math.floor(Math.log2(length + 1)));
+  const recentHashes = k > 0 ? await redis.lrange<string>(KEY_RECENT, 0, k - 1) : [];
+  const revalidatedMeta = recentHashes.map((h) => ({
+    blockHash: h,
+    observerIds: [] as string[],
+    confirmedAt: 0,
+  }));
+
+  // Pousser les tâches d'observation dans la queue (traitées quand des ESPs sont libres)
+  if (recentHashes.length > 0) {
+    const obsTask = JSON.stringify({
+      type: "revalidate",
+      blockHashes: recentHashes,
+      enqueuedAt: minedAt,
+    });
+    await redis.lpush(KEY_OBS_QUEUE, obsTask);
+  }
+
   const block: Block = {
-    blockIndex:   length,
+    blockIndex:      length,
     blockHash,
     parentHash,
-    imageHash:    candidate.imageHash,
-    actionsHash:  candidate.actionsHash,
-    drawScore:    candidate.drawScore,
-    deviceId:     candidate.deviceId,
-    artistName:   candidate.artistName,
-    poolScreen:   candidate.poolScreen,
-    validatorIds: votes.map((v) => v.deviceId).sort(),
-    score:        finalScore,
+    imageHash:       candidate.imageHash,
+    actionsHash:     candidate.actionsHash,
+    drawScore:       candidate.drawScore,
+    deviceId:        candidate.deviceId,
+    artistName:      candidate.artistName,   // propriétaire de l'ESP
+    poolScreen:      candidate.poolScreen,
+    validatorIds:    votes.map((v) => v.deviceId).sort(),
+    score:           finalScore,
     displayTime,
-    minedAt:      Date.now(),
+    minedAt,
     frameId,
+    // Axe 2
+    workTitle:       candidate.workTitle,
+    drawArtistName:  candidate.drawArtistName,
+    deviceOwnerName: candidate.deviceOwnerName,
+    // Axe 3
+    revalidated:     revalidatedMeta,
+    obsConfirmed:    false,
+    // Axe 4
+    podHashEnriched: candidate.podHashEnriched,
   };
 
   // Image à conserver de manière permanente
@@ -296,18 +351,25 @@ export async function finalizeBlock(
   };
 
   // Stockage Redis — SANS TTL pour les données de blockchain (permanentes)
-  await Promise.all([
-    redis.set(KEY_HEAD,           JSON.stringify(block)),          // pas de TTL
-    redis.set(blockKey(blockHash), JSON.stringify(block)),         // pas de TTL
-    redis.set(imageKey(blockHash), JSON.stringify(imagePayload)),  // pas de TTL
-    redis.set(actionsKey(blockHash), JSON.stringify(candidate.actionSequence ?? [])), // pas de TTL
-    redis.lpush(KEY_RECENT, blockHash),      // push en tête de liste
-    redis.ltrim(KEY_RECENT, 0, RECENT_MAX - 1), // garder les 100 derniers
-    redis.set(KEY_LENGTH, String(length + 1)), // pas de TTL
-  ]);
+  const writes: Promise<unknown>[] = [
+    redis.set(KEY_HEAD,            JSON.stringify(block)),
+    redis.set(blockKey(blockHash), JSON.stringify(block)),
+    redis.set(imageKey(blockHash), JSON.stringify(imagePayload)),
+    redis.set(actionsKey(blockHash), JSON.stringify(candidate.actionSequence ?? [])),
+    redis.lpush(KEY_RECENT, blockHash),
+    redis.ltrim(KEY_RECENT, 0, RECENT_MAX - 1),
+    redis.set(KEY_LENGTH, String(length + 1)),
+  ];
+
+  // Axe 4 : stocker les events de replay (optionnel, peut être absent)
+  if (candidate.replayEvents && candidate.replayEvents.length > 0) {
+    writes.push(redis.set(replayKey(blockHash), JSON.stringify(candidate.replayEvents)));
+  }
+
+  await Promise.all(writes);
 
   console.log(
-    `[chain] BLOC #${length} hash=${blockHash.slice(0, 12)}... score=${finalScore.toFixed(3)} display=${displayTime}s drawScore=${candidate.drawScore}`,
+    `[chain] BLOC #${length} hash=${blockHash.slice(0, 12)}... score=${finalScore.toFixed(3)} display=${displayTime}s drawScore=${candidate.drawScore}${candidate.drawArtistName ? ` artist=${candidate.drawArtistName}` : ""}`,
   );
 
   return block;
@@ -379,9 +441,67 @@ async function _getRecentBlocks(n: number): Promise<BlockWithImage[]> {
   return withImages;
 }
 
-/** Version mise en cache pour la home page — revalidée à chaque nouveau bloc. */
+/** Version mise en cache pour la home page — revalidée toutes les 10s. */
 export const getRecentBlocksCached = unstable_cache(
-  () => _getRecentBlocks(10),
+  () => _getRecentBlocks(20),
   ["recent-blocks"],
-  { revalidate: 60, tags: ["recent-blocks"] },
+  { revalidate: 10, tags: ["recent-blocks"] },
 );
+
+// ─── Données de replay et actions ────────────────────────────────────────────
+
+export async function getBlockActions(hash: string): Promise<import("@/lib/types/actions").ActionEvent[] | null> {
+  const raw = await redis.get(actionsKey(hash));
+  if (!raw) return null;
+  try {
+    return typeof raw === "string" ? JSON.parse(raw) : (raw as any);
+  } catch {
+    return null;
+  }
+}
+
+export async function getBlockReplay(hash: string): Promise<import("@/lib/types/actions").ReplayEvent[] | null> {
+  const raw = await redis.get(replayKey(hash));
+  if (!raw) return null;
+  try {
+    return typeof raw === "string" ? JSON.parse(raw) : (raw as any);
+  } catch {
+    return null;
+  }
+}
+
+// ─── Queue d'observation (Axe 3) ─────────────────────────────────────────────
+
+/** Dépile la prochaine tâche d'observation. Appelé par /api/pull quand un ESP est disponible. */
+export async function popObsTask(): Promise<{ type: string; blockHashes: string[]; enqueuedAt: number } | null> {
+  const raw = await redis.rpop<string>(KEY_OBS_QUEUE);
+  if (!raw) return null;
+  try {
+    return typeof raw === "string" ? JSON.parse(raw) : (raw as any);
+  } catch {
+    return null;
+  }
+}
+
+/** Marque un bloc comme confirmé par les observers. */
+export async function confirmBlockObservation(blockHash: string, observerIds: string[]): Promise<void> {
+  const block = await getBlockByHash(blockHash);
+  if (!block) return;
+
+  const revalidated = (block.revalidated ?? []).map((r) => {
+    if (r.blockHash === blockHash) {
+      return { ...r, observerIds, confirmedAt: Date.now() };
+    }
+    return r;
+  });
+
+  block.obsConfirmed = true;
+  block.revalidated = revalidated;
+
+  await redis.set(blockKey(blockHash), JSON.stringify(block));
+  // Mettre à jour aussi la head si c'est le dernier bloc
+  const head = await getChainHead();
+  if (head?.blockHash === blockHash) {
+    await redis.set(KEY_HEAD, JSON.stringify(block));
+  }
+}

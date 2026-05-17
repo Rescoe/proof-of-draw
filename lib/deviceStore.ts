@@ -17,6 +17,10 @@ export interface Device {
   lastPing:   number;
   framesSent: number;
   createdAt:  number;
+
+  // ── Axe 2 : ESP en prêt public ──────────────────────────────────────────────
+  publicMode?: boolean;             // toggle manuel : l'ESP est disponible pour d'autres artistes
+  lastFrameReceivedAt?: number;     // mis à jour sur /api/ack-frame
 }
 
 export interface PublicDevice {
@@ -37,6 +41,8 @@ export interface OwnedDevice {
   createdAt:  number;
   isOnline:   boolean;
   hasPairCode: boolean;
+  publicMode?: boolean;
+  lastFrameReceivedAt?: number;
 }
 
 const TTL_SECONDS = 48 * 60 * 60;
@@ -72,16 +78,18 @@ export function toPublicDevice(d: Device): PublicDevice {
 
 export function toOwnedDevice(d: Device): OwnedDevice {
   return {
-    deviceId:    d.deviceId,
-    artistName:  d.artistName,
-    screens:     d.screens,
-    firmware:    d.firmware,
-    framesSent:  d.framesSent,
-    lastPing:    d.lastPing,
-    lastSeen:    d.lastSeen,
-    createdAt:   d.createdAt,
-    isOnline:    isOnline(d),
-    hasPairCode: !!d.pairCode,
+    deviceId:           d.deviceId,
+    artistName:         d.artistName,
+    screens:            d.screens,
+    firmware:           d.firmware,
+    framesSent:         d.framesSent,
+    lastPing:           d.lastPing,
+    lastSeen:           d.lastSeen,
+    createdAt:          d.createdAt,
+    isOnline:           isOnline(d),
+    hasPairCode:        !!d.pairCode,
+    publicMode:         d.publicMode ?? false,
+    lastFrameReceivedAt: d.lastFrameReceivedAt,
   };
 }
 
@@ -209,4 +217,37 @@ export async function deleteDevice(deviceId: string): Promise<void> {
     redis.del(pairKey(device.pairCode)),
   ]);
   await decrementDeviceCount();
+}
+
+// ─── Axe 2 : ESP en prêt public ──────────────────────────────────────────────
+
+/**
+ * Active ou désactive le mode prêt public (toggle manuel).
+ */
+export async function setPublicMode(deviceId: string, enabled: boolean): Promise<Device | null> {
+  const device = await getDevice(deviceId);
+  if (!device) return null;
+  device.publicMode = enabled;
+  await saveDevice(device);
+  return device;
+}
+
+/**
+ * Retourne tous les devices en mode public et online.
+ * Un device est "disponible" si publicMode=true.
+ */
+export async function getPublicDevices(): Promise<Device[]> {
+  const all = await getAllDevices();
+  return all.filter((d) => d.publicMode === true);
+}
+
+/**
+ * Met à jour lastFrameReceivedAt lors d'un ack-frame.
+ * Désactive publicMode si l'artiste a repris son ESP (il reçoit à nouveau des frames).
+ */
+export async function ackFrameReceived(deviceId: string): Promise<void> {
+  const device = await getDevice(deviceId);
+  if (!device) return;
+  device.lastFrameReceivedAt = Date.now();
+  await saveDevice(device);
 }
