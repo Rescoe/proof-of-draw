@@ -11,7 +11,10 @@ import { redis } from "@/lib/redis";
 const DRAW_WINDOW_SEC = parseInt(process.env.DRAW_WINDOW_SEC ?? "60");
 const ABUSE_STRIKES = parseInt(process.env.DRAW_LIMIT_PER_ROUND ?? "3");
 const BLACKLIST_TTL = parseInt(process.env.BLACKLIST_TTL_SECONDS ?? "604800");
-const MAX_BODY_BYTES = 150_000; // augmenté pour inclure replay events (coords x,y par point)
+// Pas de limite de taille sur /api/draw : le buffer e-ink + replay events peuvent
+// dépasser plusieurs centaines de kb selon la durée de session. Le draw:lock par
+// device (DRAW_WINDOW_SEC) et l'auth session constituent les protections suffisantes.
+// Vercel limite les requêtes serverless à 4.5 MB indépendamment.
 const DEVICE_ID_REGEX = /^dev_[A-Z0-9]{8}$/;
 const VALID_SCREENS = new Set(["eink29bwr", "eink27bw", "oled096"]);
 const BYPASS_VALIDATION = process.env.BYPASS_VALIDATION === "true";
@@ -73,20 +76,9 @@ async function broadcastDirect(
 export async function POST(req: NextRequest) {
   const ip = getIP(req);
 
-  const cl = parseInt(req.headers.get("content-length") ?? "0");
-  if (cl > MAX_BODY_BYTES) {
-    await strikeIP(ip, "oversized_payload");
-    return NextResponse.json({ error: "Payload trop large" }, { status: 413 });
-  }
-
   let body: Record<string, unknown>;
   try {
-    const text = await req.text();
-    if (text.length > MAX_BODY_BYTES) {
-      await strikeIP(ip, "oversized_payload_actual");
-      return NextResponse.json({ error: "Payload trop large" }, { status: 413 });
-    }
-    body = JSON.parse(text);
+    body = await req.json();
   } catch {
     return NextResponse.json({ error: "JSON invalide" }, { status: 400 });
   }
