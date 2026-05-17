@@ -98,6 +98,12 @@ bool    keysLoaded = false;
 String currentBlockHash  = "";
 int    currentBlockIndex = -1;
 
+// ─── MÉTADONNÉES CARTEL ─────────────────────────────────────────────────────
+// Lues depuis le JSON de /api/pull, appliquées lors du fetch frame
+String pendingWorkTitle  = "";   // titre de l'œuvre (≤80 chars)
+String pendingArtistName = "";   // nom de l'artiste (≤40 chars)
+String pendingDisplayTs  = "";   // timestamp formaté "DD/MM HH:MM" (UTC)
+
 // ─── DEBUG HEAP ─────────────────────────────────────────────────────────────
 void logHeapState(const char* tag) {
   Serial.printf("[%s] heap=%u maxBlock=%u frag=%u%%\n",
@@ -354,6 +360,66 @@ int textWidthE27(const String& text, int scale = 1) {
   return text.length() * 6 * scale;
 }
 
+// ─── CARTEL E-INK ──────────────────────────────────────────────────────────
+// Blanchit une bande horizontale dans le buffer E27 (remet les bytes à 0xFF).
+// Le buffer E27 est organisé en rows de (E27_WIDTH/8) = 22 bytes.
+// Un bit à 1 = blanc, un bit à 0 = noir (convention e-ink Waveshare).
+
+void clearBandE27(uint8_t* buf, int yStart, int yEnd) {
+  const int bytesPerRow = E27_WIDTH / 8;  // 22
+  for (int y = yStart; y <= yEnd && y < E27_HEIGHT; y++) {
+    memset(buf + y * bytesPerRow, 0xFF, bytesPerRow);
+  }
+}
+
+// Brûle un cartel fixe dans le buffer E27 :
+//   - Bande haute  (12px) : displayTs (horodatage)
+//   - Bande basse  (12px) : artistName + " · " + workTitle (tronqué)
+// Les bandes recouvrent le bord de l'artwork — pas de redimensionnement du canvas.
+
+void burnEinkCartel(uint8_t* buf,
+                    const String& workTitle,
+                    const String& artistName,
+                    const String& ts) {
+  if (!buf) return;
+  const int BAND = 13;  // hauteur de chaque bande en pixels
+
+  // ── Bande supérieure : timestamp ──────────────────────────────────────────
+  clearBandE27(buf, 0, BAND - 1);
+  // Ligne de séparation : dernière ligne de la bande (pixels noirs)
+  for (int x = 0; x < E27_WIDTH; x++) setPixelE27(buf, x, BAND - 1);
+  // Texte centré verticalement dans la bande (y=2 → marge 2px en haut)
+  String topLine = ts.length() > 0 ? ts : "PROOF-OF-DRAW";
+  int topX = max(0, (E27_WIDTH - textWidthE27(topLine, 1)) / 2);
+  drawTextE27(buf, topX, 2, topLine, 1);
+
+  // ── Bande inférieure : artiste + titre ────────────────────────────────────
+  int botBandY = E27_HEIGHT - BAND;
+  clearBandE27(buf, botBandY, E27_HEIGHT - 1);
+  // Ligne de séparation en haut de la bande
+  for (int x = 0; x < E27_WIDTH; x++) setPixelE27(buf, x, botBandY);
+
+  String botLine;
+  if (artistName.length() > 0 && workTitle.length() > 0)
+    botLine = artistName + " \xB7 " + workTitle;  // "·" latin-1
+  else if (artistName.length() > 0)
+    botLine = artistName;
+  else if (workTitle.length() > 0)
+    botLine = workTitle;
+  else
+    botLine = "";
+
+  // Tronquer si trop long pour la largeur de l'écran
+  while (botLine.length() > 0 && textWidthE27(botLine, 1) > E27_WIDTH - 4) {
+    botLine.remove(botLine.length() - 1);
+  }
+  if (botLine.length() == 0 && workTitle.length() > 0) {
+    botLine = workTitle.substring(0, min((int)workTitle.length(), 26));
+  }
+  int botX = max(0, (E27_WIDTH - textWidthE27(botLine, 1)) / 2);
+  drawTextE27(buf, botX, botBandY + 2, botLine, 1);
+}
+
 // ─── OLED ──────────────────────────────────────────────────────────────────
 
 bool ensureOLEDReady() {
@@ -412,6 +478,59 @@ bool displayOLED(const uint8_t* buf, size_t len) {
   return true;
 }
 
+
+// ─── HEADER SCROLLANT OLED ─────────────────────────────────────────────────
+// Affiche un ticker horizontal dans les 8 premières lignes (page 0) de l'OLED.
+// Le reste de l'écran montre l'artwork artBuf intact.
+// Le texte entre par la droite et sort par la gauche (news ticker).
+//
+// Doit être appelé APRÈS displayOLED() (qui réinitialise Wire + oled).
+// artBuf : pointeur sur le buffer 1024 bytes de l'artwork (conservé en mémoire).
+
+void scrollOLEDHeader(const uint8_t* artBuf, const String& tickerText) {
+  if (!artBuf || !oledReady) return;
+  if (tickerText.length() == 0) return;
+
+  // La police Adafruit 5x7 occupe 6px de large par caractère (5 + 1 gap)
+  const int CHAR_W = 6;
+  int textW = tickerText.length() * CHAR_W;
+
+  // Si le texte tient dans la largeur de l'écran → affichage fixe à gauche
+  if (textW <= OLED_WIDTH) {
+    memcpy(oled.getBuffer(), artBuf, OLED_BUF_SIZE);
+    // Page 0 (top 8px) → fond noir
+    memset(oled.getBuffer(), 0x00, OLED_WIDTH);
+    oled.setTextWrap(false);
+    oled.setTextSize(1);
+    oled.setTextColor(SSD1306_WHITE);
+    oled.setCursor(0, 0);
+    oled.print(tickerText);
+    oled.display();
+    return;
+  }
+
+  // Scroll de droite à gauche, 2px par frame à ~30fps
+  // Étapes : de x=OLED_WIDTH (texte hors écran à droite) à x=-(textW) (hors écran à gauche)
+  int totalSteps = OLED_WIDTH + textW;
+  for (int step = 0; step <= totalSteps; step += 2) {
+    // Restaurer l'artwork complet dans le buffer OLED
+    memcpy(oled.getBuffer(), artBuf, OLED_BUF_SIZE);
+    // Effacer page 0 (top 8px) → fond noir pour le ticker
+    memset(oled.getBuffer(), 0x00, OLED_WIDTH);
+    // Dessiner le texte à la position courante
+    oled.setTextWrap(false);
+    oled.setTextSize(1);
+    oled.setTextColor(SSD1306_WHITE);
+    oled.setCursor((int16_t)(OLED_WIDTH - step), 0);
+    oled.print(tickerText);
+    oled.display();
+    delay(30);  // ~33fps — doux pour l'œil
+    yield();
+  }
+  // Fin du scroll : restaurer l'artwork complet (sans ticker)
+  memcpy(oled.getBuffer(), artBuf, OLED_BUF_SIZE);
+  oled.display();
+}
 
 // ─── E27 DISPLAY ───────────────────────────────────────────────────────────
 bool initE27ForRefresh() {
@@ -725,6 +844,17 @@ bool doFetchFrameOLED(const String& frameId, const String& frameSource) {
     return false;
   }
 
+  // ── Header ticker OLED : après affichage de l'artwork ───────────────────────
+  // Compose le texte du ticker : "Titre  |  Artiste  HH:MM"
+  if (pendingWorkTitle.length() > 0 || pendingArtistName.length() > 0) {
+    String ticker = "";
+    if (pendingWorkTitle.length() > 0)  ticker += pendingWorkTitle;
+    if (pendingArtistName.length() > 0) ticker += (ticker.length() > 0 ? "  |  " : "") + pendingArtistName;
+    if (pendingDisplayTs.length() > 0)  ticker += "  " + pendingDisplayTs;
+    Serial.println("[OLED] Ticker: " + ticker);
+    scrollOLEDHeader(oledBuf, ticker);
+  }
+
   free(oledBuf);
 
   lastFrameId           = frameId;
@@ -808,6 +938,13 @@ bool doFetchFrameE27(const String& frameId, const String& frameSource) {
   }
   // TLS fermé
 
+  // ── Cartel e-ink : brûler le header/footer AVANT l'affichage ───────────────
+  if (pendingWorkTitle.length() > 0 || pendingArtistName.length() > 0 || pendingDisplayTs.length() > 0) {
+    Serial.printf("[E27] Cartel: ts=%s artist=%s title=%s\n",
+                  pendingDisplayTs.c_str(), pendingArtistName.c_str(), pendingWorkTitle.c_str());
+    burnEinkCartel(e27Buf, pendingWorkTitle, pendingArtistName, pendingDisplayTs);
+  }
+
   if (!displayE27Buffer(e27Buf)) {
     Serial.println("[FETCHFRAME-E27] display failed — frame conservée serveur");
     free(e27Buf);
@@ -876,8 +1013,8 @@ bool doPull() {
       return true;
     }
 
-    // Doc réduit : on ne lit plus le buffer OLED ici
-    DynamicJsonDocument doc(1024);
+    // Doc étendu : inclut workTitle (≤80) + drawArtistName (≤40) + displayTs (≤12)
+    DynamicJsonDocument doc(2048);
     DeserializationError err = deserializeJson(doc, http.getStream());
     http.end();
 
@@ -902,12 +1039,26 @@ bool doPull() {
     pullRetryAfter = doc["retryAfter"]  | 60;
     if (pullRetryAfter <= 0) pullRetryAfter = 60;
 
-    // Fallback frame{}
-    if (newFrameId.length() == 0) {
+    // Lecture métadonnées cartel depuis frame{}
+    // payloadMeta() côté serveur expose workTitle/drawArtistName/displayTs
+    // tout en supprimant les champs binaires (black/red/buffer)
+    {
       JsonObject frameObj = doc["frame"];
       if (!frameObj.isNull()) {
-        newFrameId = frameObj["frameId"] | "";
-        newScreen  = frameObj["screen"]  | "";
+        // Fallback frameId/screen si absent à la racine
+        if (newFrameId.length() == 0) {
+          newFrameId = frameObj["frameId"] | "";
+          newScreen  = frameObj["screen"]  | "";
+        }
+        // Métadonnées cartel (stockées jusqu'au prochain fetch frame)
+        const char* wt = frameObj["workTitle"]     | "";
+        const char* an = frameObj["drawArtistName"]| "";
+        const char* dt = frameObj["displayTs"]     | "";
+        if (strlen(wt) > 0) { pendingWorkTitle  = String(wt); pendingWorkTitle.trim(); }
+        if (strlen(an) > 0) { pendingArtistName = String(an); pendingArtistName.trim(); }
+        if (strlen(dt) > 0) { pendingDisplayTs  = String(dt); }
+        if (strlen(wt) > 0 || strlen(an) > 0)
+          Serial.printf("[PULL] cartel: ts=%s artist=%s title=%s\n", dt, an, wt);
       }
     }
   }

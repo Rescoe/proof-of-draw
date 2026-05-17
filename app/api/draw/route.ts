@@ -59,10 +59,14 @@ async function broadcastDirect(
   screen: string,
   payload: Record<string, string>,
   deviceId: string,
+  meta?: { workTitle?: string; drawArtistName?: string; displayTs?: string },
 ): Promise<void> {
   const frameId = crypto.randomUUID();
   const stored = JSON.stringify({
-    payload: { ...payload, screen },
+    // Les champs binaires (black/red/buffer) sont dans payload
+    // Les métadonnées cartel (workTitle, drawArtistName, displayTs) sont mergées dans payload
+    // → payloadMeta() dans /api/pull les expose en supprimant uniquement les binaires
+    payload: { ...payload, screen, ...meta },
     frameId,
     createdAt: Date.now(),
     sourceDeviceId: deviceId,
@@ -84,11 +88,18 @@ export async function POST(req: NextRequest) {
   }
 
   const { deviceId, screen, black, red, buffer } = body as Record<string, string>;
-  const actions      = Array.isArray(body.actions) ? body.actions : [];
-  const replayEvents = Array.isArray(body.replayEvents) ? body.replayEvents : [];
-  const drawScore    = typeof body.drawScore === "number" ? (body.drawScore as number) : null;
-  const workTitle    = typeof body.workTitle === "string" ? body.workTitle.trim().slice(0, 80) : undefined;
+  const actions        = Array.isArray(body.actions) ? body.actions : [];
+  const replayEvents   = Array.isArray(body.replayEvents) ? body.replayEvents : [];
+  const drawScore      = typeof body.drawScore === "number" ? (body.drawScore as number) : null;
+  const workTitle      = typeof body.workTitle === "string" ? body.workTitle.trim().slice(0, 80) : undefined;
   const drawArtistName = typeof body.drawArtistName === "string" ? body.drawArtistName.trim().slice(0, 40) : undefined;
+  const importWarning  = typeof body.importWarning === "string" ? body.importWarning : undefined;
+
+  // Timestamp formaté UTC pour le cartel ESP (DD/MM HH:MM)
+  const _now = new Date();
+  const displayTs = `${String(_now.getUTCDate()).padStart(2,"0")}/${String(_now.getUTCMonth()+1).padStart(2,"0")} ${String(_now.getUTCHours()).padStart(2,"0")}:${String(_now.getUTCMinutes()).padStart(2,"0")}`;
+  // Métadonnées embarquées dans le frame Redis — lues par l'ESP au pull
+  const frameMeta = { workTitle, drawArtistName, displayTs };
 
   if (!deviceId || !DEVICE_ID_REGEX.test(deviceId)) {
     return NextResponse.json({ error: "deviceId invalide" }, { status: 400 });
@@ -155,7 +166,7 @@ export async function POST(req: NextRequest) {
     const payload: Record<string, string> =
       screen === "eink29bwr" ? { black: black!, red: red! } : { buffer: buffer! };
 
-    await broadcastDirect(screen, payload, deviceId);
+    await broadcastDirect(screen, payload, deviceId, frameMeta);
 
     return NextResponse.json({
       ok: true,
@@ -165,7 +176,7 @@ export async function POST(req: NextRequest) {
   }
 
   try {
-    const candidateBody = { deviceId, screen, black, red, buffer, actions, replayEvents, drawScore, workTitle, drawArtistName };
+    const candidateBody = { deviceId, screen, black, red, buffer, actions, replayEvents, drawScore, workTitle, drawArtistName, importWarning };
     const submitUrl = new URL("/api/submit-candidate", getBaseUrl(req)).toString();
 
     const candidateRes = await fetch(submitUrl, {
@@ -210,7 +221,7 @@ export async function POST(req: NextRequest) {
     const payload: Record<string, string> =
       screen === "eink29bwr" ? { black: black!, red: red! } : { buffer: buffer! };
 
-    await broadcastDirect(screen, payload, deviceId);
+    await broadcastDirect(screen, payload, deviceId, frameMeta);
 
     return NextResponse.json({
       ok: true,

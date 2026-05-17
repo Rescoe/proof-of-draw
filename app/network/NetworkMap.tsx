@@ -1,18 +1,13 @@
 "use client";
 
-import { useState, useCallback } from "react";
 import type { NetworkSnapshot, NetworkDevice } from "@/lib/networkSnapshot";
 import { NetworkStage } from "./NetworkStage";
-import { SidePanel } from "./SidePanel";
 
 type Props = { snapshot: NetworkSnapshot | null };
 
 export function NetworkMap({ snapshot }: Props) {
-  const [selected, setSelected] = useState<NetworkDevice | null>(null);
-
-  const handleSelect = useCallback((device: NetworkDevice) => {
-    setSelected((prev) => (prev?.deviceId === device.deviceId ? null : device));
-  }, []);
+  // SidePanel supprimé — le clic ne fait rien (pas de panel de détails)
+  const handleSelect = (_device: NetworkDevice) => {};
 
   // Garde si snapshot vide
   if (!snapshot || !snapshot.devices?.length) {
@@ -32,28 +27,19 @@ export function NetworkMap({ snapshot }: Props) {
       <NetworkStage
         snapshot={snapshot}
         onDeviceSelect={handleSelect}
-        selectedDeviceId={selected?.deviceId}
+        selectedDeviceId={undefined}
       />
-      <SidePanel device={selected} onClose={() => setSelected(null)} />
-      
+
       {/* CSS */}
       <style>{`
         .nv2-layout {
-          display: grid;
-          grid-template-columns: 1fr 280px;
-          gap: 0;
+          display: block;
           background: #080c14;
           border-radius: 16px;
           overflow: hidden;
           min-height: 560px;
           font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
           color: #f1f5f9;
-        }
-        @media (max-width: 768px) {
-          .nv2-layout {
-            grid-template-columns: 1fr;
-            grid-template-rows: auto auto;
-          }
         }
         
         /* Empty state */
@@ -79,9 +65,7 @@ export function NetworkMap({ snapshot }: Props) {
           opacity: 0.5;
         }
         
-        /* SidePanel CSS (inchangé) */
-        .nv2-panel { /* ... tout le CSS précédent ... */ }
-        /* ... reste identique ... */
+        /* SidePanel supprimé — affichage plein largeur */
       `}</style>
     </div>
   );

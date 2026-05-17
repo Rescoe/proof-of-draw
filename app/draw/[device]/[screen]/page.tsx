@@ -468,6 +468,16 @@ export default function DrawCanvasPage() {
   const replayRef            = useRef<ReplayEvent[]>([]);
   const lastReplayT          = useRef<number>(0);
   const REPLAY_THROTTLE_MS   = 16; // ~60fps max
+  // Longueur du replay à chaque point de l'historique (pour restauration sur undo)
+  const replaySnapshots      = useRef<number[]>([]);
+
+  // ── Import d'image — tracking provenance ──────────────────────────────────
+  const hasFileImportRef     = useRef(false);   // true si une image a été importée
+  const actionsAtImportRef   = useRef(0);       // score après application de l'import
+
+  // ── Titre de l'œuvre ───────────────────────────────────────────────────────
+  const [workTitle, setWorkTitle]     = useState("");
+  const [titleError, setTitleError]   = useState(false);
 
   // ── Canvas dimensions ──────────────────────────────────────────────────────
   const W = profile?.width  ?? 128;
@@ -503,6 +513,9 @@ export default function DrawCanvasPage() {
     history.current.push(snap);
     if (history.current.length > MAX_HISTORY) history.current.shift();
     historyIndex.current = history.current.length - 1;
+    // Enregistrer la longueur du replay à ce point (pour restauration sur undo)
+    replaySnapshots.current = replaySnapshots.current.slice(0, historyIndex.current);
+    replaySnapshots.current.push(replayRef.current.length);
     setCanUndo(historyIndex.current > 0);
     setCanRedo(false);
   }, [W, H]);
@@ -512,6 +525,10 @@ export default function DrawCanvasPage() {
     historyIndex.current--;
     const ctx = canvasRef.current?.getContext("2d");
     if (ctx) ctx.putImageData(history.current[historyIndex.current], 0, 0);
+    // Restaurer le replay à l'état de ce point historique
+    const snapshotLen = replaySnapshots.current[historyIndex.current] ?? 0;
+    replayRef.current = replayRef.current.slice(0, snapshotLen);
+    replaySnapshots.current = replaySnapshots.current.slice(0, historyIndex.current + 1);
     setCanUndo(historyIndex.current > 0);
     setCanRedo(true);
     actionsRef.current.push({ kind: "undo", t: Date.now() - sessionStartRef.current });
@@ -627,6 +644,7 @@ export default function DrawCanvasPage() {
   useEffect(() => () => { if (cooldownRef.current) clearInterval(cooldownRef.current); }, []);
 
   const canSend = cooldown === 0 && !sending && !imgMode;
+  const needsTitle = canSend && !workTitle.trim();
 
   // ── Keyboard shortcuts ─────────────────────────────────────────────────────
   useEffect(() => {
@@ -782,7 +800,7 @@ export default function DrawCanvasPage() {
       replayRef.current.push({ kind: "up", t, x: pt.x, y: pt.y, tool });
     } else if (tool === "eraser") {
       actionsRef.current.push({ kind: "erase", t, tool: "eraser" });
-      scoreRef.current += 1;
+      // erase = 0 : ne contribue pas au score Proof-of-Draw
       lastActionWasClearRef.current = false;
       replayRef.current.push({ kind: "up", t, x: pt.x, y: pt.y, tool });
     } else if (tool === "line" || tool === "rect" || tool === "ellipse") {
@@ -850,6 +868,9 @@ export default function DrawCanvasPage() {
     actionsRef.current.push({ kind: "move", t: Date.now() - sessionStartRef.current, tool: "import" });
     scoreRef.current += 1;
     lastActionWasClearRef.current = false;
+    // Marquer la provenance : score au moment de l'import (pour mesurer les actions suivantes)
+    hasFileImportRef.current = true;
+    actionsAtImportRef.current = scoreRef.current;
     saveHistory();
     setImgMode(false);
     setImgImport(s => ({ ...s, data: null }));
@@ -878,6 +899,14 @@ export default function DrawCanvasPage() {
   // ── Send ───────────────────────────────────────────────────────────────────
   const handleSend = useCallback(async () => {
     if (!device || !canSend || !canvasRef.current) return;
+
+    // Titre obligatoire
+    if (!workTitle.trim()) {
+      setTitleError(true);
+      setTimeout(() => setTitleError(false), 2500);
+      return;
+    }
+
     setSending(true); setStatus(null);
     try {
       const payload      = canvasToScreenPayload(canvasRef.current, screenId);
@@ -887,7 +916,20 @@ export default function DrawCanvasPage() {
       const drawScore    = scoreRef.current;
       // Mode invité : inclure le nom de l'artiste dessinateur
       const drawArtistName = isGuest && guestName.trim() ? guestName.trim() : undefined;
-      const baseBody = { screen: screenId, deviceId, actions, replayEvents, drawScore, drawArtistName };
+
+      // Provenance : détecter les imports d'image avec peu d'actions supplémentaires
+      let importWarning: string | undefined;
+      if (hasFileImportRef.current) {
+        const actionsAfterImport = scoreRef.current - actionsAtImportRef.current;
+        if (actionsAfterImport <= 2) importWarning = "image_forte";       // quasi aucune modification
+        else if (actionsAfterImport <= 10) importWarning = "image_legere"; // modifications légères
+      }
+
+      const baseBody = {
+        screen: screenId, deviceId, actions, replayEvents, drawScore, drawArtistName,
+        workTitle: workTitle.trim(),
+        importWarning,
+      };
       const body =
         screenId === "eink29bwr"
           ? { ...baseBody, black: (payload as any).black, red: (payload as any).red }
@@ -903,11 +945,15 @@ export default function DrawCanvasPage() {
       const secs = data.nextDrawIn ?? DRAW_WINDOW_SEC;
       saveCooldown(deviceId, screenId, Date.now() + secs * 1000);
       startCooldown(secs); setStatus({ type: "ok", msg: "" });
+      // Réinitialiser le titre et le tracking d'import après envoi réussi
+      setWorkTitle("");
+      hasFileImportRef.current = false;
+      actionsAtImportRef.current = 0;
     } catch (err: any) {
       setStatus({ type: "error", msg: err.message || "Erreur réseau" });
       setTimeout(() => setStatus(null), 5000);
     } finally { setSending(false); }
-  }, [device, canSend, screenId, deviceId, isGuest, guestName, startCooldown]);
+  }, [device, canSend, screenId, deviceId, isGuest, guestName, workTitle, startCooldown]);
 
   if (!profile) return null;
 
@@ -1157,20 +1203,64 @@ export default function DrawCanvasPage() {
             style={{
               padding: isMobile ? "7px 14px" : "6px 20px",
               borderRadius: 9, border: "none",
-              background: imgMode ? "rgba(251,146,60,0.3)" : canSend ? "var(--accent)" : "var(--bg3)",
-              color: canSend && !imgMode ? "#fff" : imgMode ? "#fb923c" : "var(--text3)",
+              background: imgMode
+                ? "rgba(251,146,60,0.3)"
+                : needsTitle
+                  ? "rgba(248,113,113,0.18)"
+                  : canSend ? "var(--accent)" : "var(--bg3)",
+              color: canSend && !imgMode && !needsTitle ? "#fff"
+                : imgMode ? "#fb923c"
+                : needsTitle ? "#f87171"
+                : "var(--text3)",
               cursor: canSend ? "pointer" : "not-allowed",
               fontWeight: 700, fontSize: "0.85rem",
               minWidth: isMobile ? 90 : 110,
               transition: "all 0.2s",
             }}
           >
-            {sending   ? "Envoi…"
-              : imgMode  ? "⚠️ Valider"
+            {sending        ? "Envoi…"
+              : imgMode     ? "⚠️ Valider"
               : cooldown > 0 ? `⏳ ${formatTime(cooldown)}`
+              : needsTitle  ? "✏️ Titre ?"
               : "📡 Envoyer"}
           </button>
         </div>
+      </div>
+
+      {/* ── Titre de l'œuvre (requis) ──────────────────────────────────────── */}
+      <div style={{
+        display: "flex", alignItems: "center", gap: 8,
+        padding: isMobile ? "4px 10px" : "4px 14px",
+        background: titleError ? "rgba(248,113,113,0.06)" : "var(--bg2)",
+        borderBottom: `1px solid ${titleError ? "rgba(248,113,113,0.4)" : "var(--border)"}`,
+        flexShrink: 0,
+        transition: "background 0.2s, border-color 0.2s",
+      }}>
+        <span style={{
+          fontSize: 10, color: titleError ? "#f87171" : "var(--text3)",
+          whiteSpace: "nowrap", textTransform: "uppercase", letterSpacing: "0.06em",
+          flexShrink: 0,
+        }}>
+          {titleError ? "⚠ Titre requis" : "Titre"}
+        </span>
+        <input
+          type="text"
+          placeholder="Nom de l'œuvre (obligatoire avant envoi)…"
+          value={workTitle}
+          onChange={e => { setWorkTitle(e.target.value.slice(0, 80)); setTitleError(false); }}
+          maxLength={80}
+          style={{
+            flex: 1,
+            padding: "3px 10px",
+            borderRadius: 6,
+            border: titleError ? "1px solid #f87171" : "1px solid rgba(124,107,255,0.25)",
+            background: titleError ? "rgba(248,113,113,0.1)" : "rgba(0,0,0,0.3)",
+            color: "var(--text)",
+            fontSize: 12,
+            outline: "none",
+            transition: "border-color 0.2s, background 0.2s",
+          }}
+        />
       </div>
 
       {/* Progress bar */}
