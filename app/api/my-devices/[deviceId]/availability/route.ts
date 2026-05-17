@@ -9,12 +9,12 @@ import { getIP, isBlacklisted, forbidden } from "@/lib/rateLimit";
 
 export async function POST(
   req: NextRequest,
-  { params }: { params: { deviceId: string } },
+  { params }: { params: Promise<{ deviceId: string }> },
 ) {
   const ip = getIP(req);
   if (await isBlacklisted(ip)) return forbidden("Accès refusé");
 
-  const { deviceId } = params;
+  const { deviceId } = await params;
   if (!deviceId) return NextResponse.json({ error: "deviceId requis" }, { status: 400 });
 
   if (!(await sessionOwnsDevice(deviceId))) {
