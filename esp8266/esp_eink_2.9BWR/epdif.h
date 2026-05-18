@@ -37,8 +37,6 @@
 #define BUSY_PIN  D0   // GPIO16
 #define PWR_PIN         6
 
-//DIN va sur D7 (MOSI / GPIO13) et CLK va sur D5 (SCK / GPIO14).
-
 class EpdIf {
 public:
     EpdIf(void);

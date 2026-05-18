@@ -8,9 +8,8 @@ import { getChainHead, getCurrentCandidate, popObsTask } from "@/lib/chain";
 import type { ChainSummary } from "@/lib/chain";
 
 const DEVICE_ID_REGEX = /^dev_[A-Z0-9]{8}$/;
-// Rate limit raisonnablement généreux : 5 pulls/min par device (validation loop ~30s)
-const PULL_WINDOW_SEC = parseInt(process.env.PULL_WINDOW_SEC ?? "60");
-const PULL_MAX        = parseInt(process.env.PULL_LIMIT_PER_WINDOW ?? "5");
+const PULL_WINDOW_SEC = parseInt(process.env.PULL_WINDOW_SEC ?? "900");
+const PULL_MAX        = parseInt(process.env.PULL_LIMIT_PER_WINDOW ?? "2");
 const BLACKLIST_TTL   = parseInt(process.env.BLACKLIST_TTL_SECONDS ?? "604800");
 
 const rlKey       = (deviceId: string) => `rl:pull:${deviceId}`;
