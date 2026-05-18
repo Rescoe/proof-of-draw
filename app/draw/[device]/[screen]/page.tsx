@@ -479,11 +479,6 @@ export default function DrawCanvasPage() {
   const [workTitle, setWorkTitle]     = useState("");
   const [titleError, setTitleError]   = useState(false);
 
-  // ── Toast envoi mobile ─────────────────────────────────────────────────────
-  const [showSendToast, setShowSendToast]     = useState(false);
-  const [toastTitle, setToastTitle]           = useState("");
-  const [toastGuestName, setToastGuestName]   = useState("");
-
   // ── Canvas dimensions ──────────────────────────────────────────────────────
   const W = profile?.width  ?? 128;
   const H = profile?.height ?? 64;
@@ -902,16 +897,13 @@ export default function DrawCanvasPage() {
   }, [imgImport, imgMode, W, H, profile]);
 
   // ── Send ───────────────────────────────────────────────────────────────────
-  // titleOverride / guestOverride : utilisés par le toast mobile pour passer les valeurs saisies
-  const handleSend = useCallback(async (titleOverride?: string, guestOverride?: string) => {
+  const handleSend = useCallback(async () => {
     if (!device || !canSend || !canvasRef.current) return;
 
-    const effectiveTitle = titleOverride ?? workTitle;
-    const effectiveGuest = guestOverride ?? guestName;
-
     // Titre obligatoire
-    if (!effectiveTitle.trim()) {
-      if (!titleOverride) { setTitleError(true); setTimeout(() => setTitleError(false), 2500); }
+    if (!workTitle.trim()) {
+      setTitleError(true);
+      setTimeout(() => setTitleError(false), 2500);
       return;
     }
 
@@ -923,7 +915,7 @@ export default function DrawCanvasPage() {
       // Axe 4 : utiliser le score calculé en temps réel plutôt que de recalculer
       const drawScore    = scoreRef.current;
       // Mode invité : inclure le nom de l'artiste dessinateur
-      const drawArtistName = isGuest && effectiveGuest.trim() ? effectiveGuest.trim() : undefined;
+      const drawArtistName = isGuest && guestName.trim() ? guestName.trim() : undefined;
 
       // Provenance : détecter les imports d'image avec peu d'actions supplémentaires
       let importWarning: string | undefined;
@@ -935,7 +927,7 @@ export default function DrawCanvasPage() {
 
       const baseBody = {
         screen: screenId, deviceId, actions, replayEvents, drawScore, drawArtistName,
-        workTitle: effectiveTitle.trim(),
+        workTitle: workTitle.trim(),
         importWarning,
       };
       const body =
@@ -974,7 +966,7 @@ export default function DrawCanvasPage() {
       setStatus({ type: "error", msg: err.message || "Erreur réseau" });
       setTimeout(() => setStatus(null), 5000);
     } finally { setSending(false); }
-  }, [device, canSend, screenId, deviceId, isGuest, guestName, workTitle, startCooldown]); // effectiveTitle/Guest viennent des args ou de la closure
+  }, [device, canSend, screenId, deviceId, isGuest, guestName, workTitle, startCooldown]);
 
   if (!profile) return null;
 
@@ -1220,9 +1212,7 @@ export default function DrawCanvasPage() {
         {/* Send button */}
         <div style={{ marginLeft: "auto", flexShrink: 0 }}>
           <button
-            onClick={isMobile
-              ? () => { setToastTitle(workTitle); setToastGuestName(guestName); setShowSendToast(true); }
-              : () => handleSend()}
+            onClick={handleSend}
             disabled={!canSend}
             style={{
               padding: isMobile ? "7px 14px" : "6px 20px",
@@ -1251,10 +1241,10 @@ export default function DrawCanvasPage() {
         </div>
       </div>
 
-      {/* ── Titre de l'œuvre (requis) — caché sur mobile (géré via toast) ─── */}
+      {/* ── Titre de l'œuvre (requis) ──────────────────────────────────────── */}
       <div style={{
-        display: isMobile ? "none" : "flex", alignItems: "center", gap: 8,
-        padding: "4px 14px",
+        display: "flex", alignItems: "center", gap: 8,
+        padding: isMobile ? "4px 10px" : "4px 14px",
         background: titleError ? "rgba(248,113,113,0.06)" : "var(--bg2)",
         borderBottom: `1px solid ${titleError ? "rgba(248,113,113,0.4)" : "var(--border)"}`,
         flexShrink: 0,
@@ -1297,8 +1287,8 @@ export default function DrawCanvasPage() {
         </div>
       )}
 
-      {/* ── Bannière mode invité — cachée sur mobile (saisie via toast) ─────── */}
-      {isGuest && !isMobile && (
+      {/* ── Bannière mode invité ─────────────────────────────────────────── */}
+      {isGuest && (
         <div style={{
           display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap",
           padding: "6px 14px",
@@ -1601,97 +1591,6 @@ export default function DrawCanvasPage() {
               style={{ ...smallBtn(imgMode), padding: "8px 10px" }}
             >
               📷
-            </button>
-          </div>
-        </div>
-      )}
-
-      {/* ── Toast d'envoi mobile ──────────────────────────────────────────── */}
-      {showSendToast && (
-        <div
-          onClick={e => { if (e.target === e.currentTarget) setShowSendToast(false); }}
-          style={{
-            position: "fixed", inset: 0, zIndex: 3000,
-            background: "rgba(0,0,0,0.55)",
-            display: "flex", alignItems: "flex-end", justifyContent: "center",
-          }}
-        >
-          <div style={{
-            width: "100%", maxWidth: 480,
-            background: "var(--bg1, #13192b)",
-            borderTop: "1px solid rgba(255,255,255,0.1)",
-            borderRadius: "16px 16px 0 0",
-            padding: "20px 20px 32px",
-            animation: "slideUp 0.2s ease",
-            display: "flex", flexDirection: "column", gap: 14,
-          }}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-              <span style={{ fontWeight: 700, fontSize: 15, color: "var(--text)" }}>📡 Envoyer le dessin</span>
-              <button
-                onClick={() => setShowSendToast(false)}
-                style={{ background: "none", border: "none", color: "var(--text3)", fontSize: 20, cursor: "pointer", padding: "2px 8px" }}
-              >✕</button>
-            </div>
-
-            {/* Titre */}
-            <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-              <label style={{ fontSize: 11, color: "var(--text3)", textTransform: "uppercase", letterSpacing: "0.06em" }}>
-                Titre de l'œuvre <span style={{ color: "#f87171" }}>*</span>
-              </label>
-              <input
-                type="text"
-                placeholder="Nom de l'œuvre (obligatoire)…"
-                value={toastTitle}
-                onChange={e => setToastTitle(e.target.value.slice(0, 80))}
-                autoFocus
-                maxLength={80}
-                style={{
-                  padding: "10px 14px", borderRadius: 8,
-                  border: toastTitle.trim() ? "1px solid rgba(124,107,255,0.4)" : "1px solid rgba(248,113,113,0.5)",
-                  background: "rgba(0,0,0,0.35)", color: "var(--text)", fontSize: 14, outline: "none",
-                }}
-              />
-            </div>
-
-            {/* Nom d'artiste (mode invité) */}
-            {isGuest && (
-              <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-                <label style={{ fontSize: 11, color: "var(--accent)", textTransform: "uppercase", letterSpacing: "0.06em" }}>
-                  🔓 Votre nom d'artiste
-                </label>
-                <input
-                  type="text"
-                  placeholder="Votre nom (anonyme si vide)…"
-                  value={toastGuestName}
-                  onChange={e => setToastGuestName(e.target.value.slice(0, 40))}
-                  maxLength={40}
-                  style={{
-                    padding: "10px 14px", borderRadius: 8,
-                    border: "1px solid rgba(124,107,255,0.3)",
-                    background: "rgba(0,0,0,0.35)", color: "var(--text)", fontSize: 14, outline: "none",
-                  }}
-                />
-              </div>
-            )}
-
-            {/* Bouton confirmer */}
-            <button
-              onClick={() => {
-                if (!toastTitle.trim()) return;
-                setShowSendToast(false);
-                handleSend(toastTitle, toastGuestName);
-              }}
-              disabled={!toastTitle.trim() || sending}
-              style={{
-                padding: "13px", borderRadius: 10, border: "none", marginTop: 4,
-                background: toastTitle.trim() && !sending ? "var(--accent)" : "var(--bg3)",
-                color: toastTitle.trim() && !sending ? "#fff" : "var(--text3)",
-                fontWeight: 700, fontSize: 15,
-                cursor: toastTitle.trim() && !sending ? "pointer" : "not-allowed",
-                transition: "all 0.2s",
-              }}
-            >
-              {sending ? "Envoi en cours…" : "Confirmer et envoyer"}
             </button>
           </div>
         </div>
