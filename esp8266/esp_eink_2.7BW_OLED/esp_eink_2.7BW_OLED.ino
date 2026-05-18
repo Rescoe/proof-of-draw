@@ -1435,8 +1435,10 @@ bool doObsConfirm() {
 }
 
 // ─── VALIDATION ────────────────────────────────────────────────────────────
+// Retourne true si un bloc vient d'être miné (quorum atteint par ce vote).
+// Utilisé dans le loop() pour déclencher un pull immédiat uniquement si nécessaire.
 bool doValidate() {
-  if (pendingCandidateId.length() == 0) return true;
+  if (pendingCandidateId.length() == 0) return false;
 
   Serial.println("[VALIDATE] Debut: " + pendingCandidateId);
   logHeapState("VALIDATE-BEFORE");
@@ -1447,7 +1449,7 @@ bool doValidate() {
   if (!ok || resp.length() == 0) {
     Serial.println("[VALIDATE] Echec HTTP");
     pendingCandidateId = "";
-    return true;
+    return false;
   }
 
   DynamicJsonDocument doc(512);
@@ -1457,19 +1459,19 @@ bool doValidate() {
   if (err) {
     Serial.print("[VALIDATE] JSON err: "); Serial.println(err.c_str());
     pendingCandidateId = "";
-    return true;
+    return false;
   }
 
   if (doc["alreadyVoted"] | false) {
     Serial.println("[VALIDATE] Déjà voté");
     pendingCandidateId = "";
-    return true;
+    return false;
   }
 
   if (doc["candidate"].isNull()) {
     Serial.println("[VALIDATE] Pas de candidat actif");
     pendingCandidateId = "";
-    return true;
+    return false;
   }
 
   JsonObject cand    = doc["candidate"];
@@ -1478,7 +1480,7 @@ bool doValidate() {
   if (candidateId.length() == 0) {
     Serial.println("[VALIDATE] candidateId absent");
     pendingCandidateId = "";
-    return true;
+    return false;
   }
 
   float score = cand["score_server"] | 0.5f;
@@ -1500,17 +1502,20 @@ bool doValidate() {
 
   String vResp;
   bool vOk = httpPost("/api/validation-result", body, vResp);
+  bool blockMined = false;
 
   if (vOk) {
     Serial.println("[VALIDATE] Vote OK");
-    if (vResp.indexOf("\"blockMined\":true") >= 0)
+    if (vResp.indexOf("\"blockMined\":true") >= 0) {
       Serial.println("[VALIDATE] BLOC MINE");
+      blockMined = true;
+    }
   } else {
     Serial.println("[VALIDATE] Echec vote");
   }
 
   logHeapState("VALIDATE-AFTER");
-  return true;
+  return blockMined;
 }
 
 // ─── SETUP ─────────────────────────────────────────────────────────────────
@@ -1629,13 +1634,17 @@ void loop() {
   // ── Validation candidat ──
   if (pendingCandidateId.length() > 0 &&
       millis() - lastValidateMs >= VALIDATE_INTERVAL) {
-    doValidate();
+    bool blockMined = doValidate();
     lastValidateMs = millis();
 
-    Serial.println("[LOOP] Bloc miné — pull immédiat");
-    delay(2000);
-    doPull();
-    lastPullMs = millis();
+    // Pull immédiat uniquement si ce vote a déclenché le quorum
+    // (inutile sinon — préserve le budget rate-limit pull)
+    if (blockMined) {
+      Serial.println("[LOOP] Bloc miné — pull immédiat");
+      delay(2000);  // laisse BearSSL libérer ses buffers TLS
+      doPull();
+      lastPullMs = millis();
+    }
   }
 
   // Pas de delay fixe ici : tickerStep() gère son propre throttle (35ms).
