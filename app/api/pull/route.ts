@@ -4,7 +4,8 @@ import { redis } from "@/lib/redis";
 import { getDevice } from "@/lib/deviceStore";
 import { getFrameForDevice, FramePayload } from "@/lib/queue";
 import { isBlacklisted, getIP, forbidden } from "@/lib/rateLimit";
-import { getChainSummary, getCurrentCandidate } from "@/lib/chain";
+import { getChainHead, getCurrentCandidate, popObsTask } from "@/lib/chain";
+import type { ChainSummary } from "@/lib/chain";
 
 const DEVICE_ID_REGEX = /^dev_[A-Z0-9]{8}$/;
 const PULL_WINDOW_SEC = parseInt(process.env.PULL_WINDOW_SEC ?? "900");
@@ -75,14 +76,28 @@ export async function GET(req: NextRequest) {
     }
 
     // ── Fetch parallèle ─────────────────────────────────────────────────────
-    const [device, consensusFrame, personalFrame, chainSummary, candidate] =
+    // getChainHead() remplace getChainSummary() pour éviter un double read Redis
+    // et accéder aux champs workTitle / drawArtistName du bloc (métadonnées cartel).
+    const [device, consensusFrame, personalFrame, chainHead, candidate] =
       await Promise.all([
         getDevice(deviceId),
         getFrameForDevice(deviceId, []),
         getPersonalFrame(deviceId),
-        getChainSummary(),
+        getChainHead(),
         getCurrentCandidate(),
       ]);
+
+    // Résumé chaîne (sous-ensemble de chainHead, rétrocompat réponse JSON)
+    const chainSummary: ChainSummary | null = chainHead
+      ? {
+          blockIndex:  chainHead.blockIndex,
+          blockHash:   chainHead.blockHash,
+          displayTime: chainHead.displayTime,
+          artistName:  chainHead.artistName,
+          poolScreen:  chainHead.poolScreen,
+          minedAt:     chainHead.minedAt,
+        }
+      : null;
 
     if (!device)
       return json({
@@ -161,16 +176,41 @@ export async function GET(req: NextRequest) {
     const retryAfter = isIdle ? 300 : 60;
 
     // ── Métadonnées cartel (lecture à plat, accessible sans parser frame{}) ──
-    // workTitle / drawArtistName / displayTs viennent du payload stocké par broadcastDirect.
-    // blockIndex vient de chainSummary.
-    // Ces champs sont exposés à la RACINE de la réponse pour simplifier le parsing firmware.
+    // Priorité : payload frame Redis → fallback chaîne (chain:head).
+    // Le chemin validation ne stocke pas toujours les métadonnées dans le frame Redis,
+    // mais elles sont toujours présentes dans le bloc chaîne après minage.
     const fm = frameMeta as Record<string, unknown> | null;
+
+    // Timestamp de minage depuis chain:head (fallback si displayTs absent du frame)
+    const minedDate = chainHead ? new Date(chainHead.minedAt) : null;
+    const fallbackTs = minedDate
+      ? `${String(minedDate.getUTCDate()).padStart(2, "0")}/${String(minedDate.getUTCMonth() + 1).padStart(2, "0")} ${String(minedDate.getUTCHours()).padStart(2, "0")}:${String(minedDate.getUTCMinutes()).padStart(2, "0")}`
+      : null;
+
     const cartelMeta = {
-      workTitle:      (fm?.["workTitle"]      as string | undefined) ?? null,
-      drawArtistName: (fm?.["drawArtistName"] as string | undefined) ?? null,
-      displayTs:      (fm?.["displayTs"]      as string | undefined) ?? null,
-      blockIndex:     (chainSummary as any)?.blockIndex ?? -1,
+      // Frame payload en priorité ; sinon lecture directe depuis le bloc chaîne
+      workTitle:      (fm?.["workTitle"]      as string | undefined)
+                      || (chainHead?.workTitle ?? null),
+      drawArtistName: (fm?.["drawArtistName"] as string | undefined)
+                      || (chainHead?.drawArtistName ?? chainHead?.artistName ?? null),
+      displayTs:      (fm?.["displayTs"]      as string | undefined) ?? fallbackTs,
+      blockIndex:     chainSummary?.blockIndex ?? -1,
     };
+
+    // ── Tâche d'observation (device idle → revalide des blocs antérieurs) ────
+    // L'ESP n'affiche rien de nouveau — il envoie juste une confirmation serveur.
+    // La tâche est dépilée de la queue uniquement quand le device est vraiment idle.
+    let pendingObservation: { blockHashes: string[]; enqueuedAt: number } | null = null;
+    if (isIdle) {
+      const obsTask = await popObsTask();
+      if (obsTask?.blockHashes?.length) {
+        pendingObservation = {
+          blockHashes: obsTask.blockHashes,
+          enqueuedAt:  obsTask.enqueuedAt,
+        };
+        console.log(`[pull] obs task → device=${deviceId} hashes=${obsTask.blockHashes.length}`);
+      }
+    }
 
     // ── Réponse ─────────────────────────────────────────────────────────────
     return json({
@@ -188,8 +228,9 @@ export async function GET(req: NextRequest) {
         ? { frameId, screen, frameSource, ...frameMeta }
         : null,
 
-      chain:             chainSummary,
+      chain:              chainSummary,
       pendingValidation,
+      pendingObservation,
       retryAfter,
     });
 

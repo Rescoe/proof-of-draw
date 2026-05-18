@@ -112,6 +112,23 @@ String pendingWorkTitle  = "";   // titre de l'œuvre (≤80 chars)
 String pendingArtistName = "";   // nom de l'artiste (≤40 chars)
 String pendingDisplayTs  = "";   // timestamp formaté "DD/MM HH:MM" (UTC)
 
+// ─── REVALIDATION (Axe 3) ───────────────────────────────────────────────────
+// Tâche d'observation envoyée par le serveur quand le device est idle.
+// Contient les hashes des blocs à re-confirmer (JSON array stringifié).
+// Aucun changement d'affichage — confirmation purement réseau.
+String pendingObsHashes = "";   // ex: ["abcd...","1234..."]
+
+// ─── TICKER OLED NON-BLOQUANT ────────────────────────────────────────────────
+// Le buffer artwork est alloué une seule fois sur le heap et réutilisé.
+// Le ticker tourne en boucle infinie via tickerStep() appelé dans loop().
+// Quand un nouveau frame arrive, setOLEDFrame() remplace le contenu.
+uint8_t*      oledArtBuf    = nullptr;   // buffer artwork persistant (OLED_BUF_SIZE)
+String        oledTicker    = "";        // texte en cours de défilement
+int           oledTickStep  = 0;         // position courante (px, 0 = texte à droite)
+int           oledTickTotal = 0;         // OLED_WIDTH + textWidth = distance totale
+bool          oledTickActive = false;    // ticker en cours ?
+unsigned long lastTickMs    = 0;         // timestamp dernier pas (throttle 35ms)
+
 // ─── DEBUG HEAP ─────────────────────────────────────────────────────────────
 void logHeapState(const char* tag) {
   Serial.printf("[%s] heap=%u maxBlock=%u frag=%u%%\n",
@@ -432,19 +449,26 @@ void clearBandE27(uint8_t* buf, int yStart, int yEnd) {
 //   - Bande basse  (12px) : artistName + " · " + workTitle (tronqué)
 // Les bandes recouvrent le bord de l'artwork — pas de redimensionnement du canvas.
 
+// blockIndex : numéro du bloc courant (-1 = absent)
 void burnEinkCartel(uint8_t* buf,
                     const String& workTitle,
                     const String& artistName,
-                    const String& ts) {
+                    const String& ts,
+                    int blockIndex = -1) {
   if (!buf) return;
   const int BAND = 13;  // hauteur de chaque bande en pixels
 
-  // ── Bande supérieure : timestamp ──────────────────────────────────────────
+  // ── Bande supérieure : timestamp + numéro de bloc ─────────────────────────
   clearBandE27(buf, 0, BAND - 1);
   // Ligne de séparation : dernière ligne de la bande (pixels noirs)
   for (int x = 0; x < E27_WIDTH; x++) setPixelE27(buf, x, BAND - 1);
-  // Texte centré verticalement dans la bande (y=2 → marge 2px en haut)
+  // Texte : "DD/MM HH:MM  #N" (centré), fallback "PROOF-OF-DRAW"
   String topLine = ts.length() > 0 ? ts : "PROOF-OF-DRAW";
+  if (blockIndex >= 0) topLine += "  #" + String(blockIndex);
+  // Si trop long, on tronque le timestamp pour garder le numéro de bloc
+  while (topLine.length() > 0 && textWidthE27(topLine, 1) > E27_WIDTH - 4) {
+    topLine.remove(topLine.length() - 1);
+  }
   int topX = max(0, (E27_WIDTH - textWidthE27(topLine, 1)) / 2);
   drawTextE27(buf, topX, 2, topLine, 1);
 
@@ -534,75 +558,82 @@ bool displayOLED(const uint8_t* buf, size_t len) {
 }
 
 
-// ─── HEADER SCROLLANT OLED ─────────────────────────────────────────────────
-// Affiche un bandeau texte scrollant dans les 8 premières lignes de l'OLED
-// (page SSD1306 n°0), pendant que l'artwork reste affiché en dessous.
+// ─── TICKER OLED NON-BLOQUANT ────────────────────────────────────────────────
 //
-// Flux :
-//   1. Re-init Wire + oled (au cas où on vient du SPI)
-//   2. Charger l'artwork dans le buffer oled
-//   3. Scroll du texte de droite à gauche dans la page 0 uniquement
-//   4. Après le scroll, afficher l'artwork complet sans overlay
+// setOLEDFrame() : enregistre un nouveau frame artwork + ticker.
+//   Alloue oledArtBuf une seule fois ; les appels suivants réutilisent le slot.
+//   Réinitialise le scroll à 0 (le texte repart de la droite).
 //
-// artBuf  : 1024 bytes du frame OLED (déjà décodé, pas encore libéré)
-// tickerText : texte à défiler (vide → skip)
+// tickerStep() : avance d'un pas (2px) si 35ms se sont écoulées.
+//   Appelé dans loop() — non-bloquant, rend la main immédiatement.
+//   Boucle infinie : quand le texte sort à gauche, il revient à droite.
 
-void scrollOLEDHeader(const uint8_t* artBuf, const String& tickerText) {
+void setOLEDFrame(const uint8_t* artBuf, const String& ticker) {
   if (!artBuf) return;
-  if (tickerText.length() == 0) return;
 
-  // ── Re-init bus I2C + OLED ───────────────────────────────────────────────
-  // Nécessaire si on appelle scroll après un displayOLED (qui peut avoir
-  // laissé le bus dans un état intermédiaire)
-  Wire.begin(OLED_SDA, OLED_SCL);
-  Wire.setClock(100000);
-  delay(10);
-  if (!oled.begin(SSD1306_SWITCHCAPVCC, 0x3C)) {
-    Serial.println("[OLED] scrollHeader: begin() failed");
-    return;
+  // Allouer le buffer global la première fois
+  if (!oledArtBuf) {
+    oledArtBuf = (uint8_t*)malloc(OLED_BUF_SIZE);
+    if (!oledArtBuf) {
+      Serial.println("[TICKER] malloc oledArtBuf failed");
+      return;
+    }
   }
-  oledReady = true;
-  delay(5);
+  memcpy(oledArtBuf, artBuf, OLED_BUF_SIZE);
 
-  // ── Calcul de la largeur du texte ────────────────────────────────────────
-  // Police Adafruit 1x = 5px/char + 1px gap = 6px/char
-  const int CHAR_W   = 6;
-  const int textW    = (int)tickerText.length() * CHAR_W;
-  // Durée totale du scroll : le texte traverse tout l'écran + sa propre largeur
-  // → OLED_WIDTH + textW pas, avance de 2px par frame
-  const int totalSteps = OLED_WIDTH + textW;
+  oledTicker   = ticker;
+  oledTickStep = 0;
+  // 6px/char (police Adafruit 1×) ; texte doit traverser écran + sa propre largeur
+  const int CHAR_W = 6;
+  oledTickTotal    = OLED_WIDTH + (int)ticker.length() * CHAR_W;
+  oledTickActive   = (ticker.length() > 0);
 
+  Serial.printf("[TICKER] setOLEDFrame ticker=\"%s\" total=%d\n",
+                ticker.c_str(), oledTickTotal);
+}
+
+void tickerStep() {
+  if (!oledTickActive || !oledArtBuf || oledTicker.length() == 0) return;
+
+  unsigned long now = millis();
+  if (now - lastTickMs < 35) return;  // ~28 fps
+  lastTickMs = now;
+
+  // ── Réinitialisation bus si on vient du SPI (E-ink) ──────────────────────
+  if (lastScreenWasSPI) {
+    SPI.endTransaction();
+    SPI.end();
+    delay(20);
+    Wire.begin(OLED_SDA, OLED_SCL);
+    Wire.setClock(100000);
+    delay(10);
+    if (!oled.begin(SSD1306_SWITCHCAPVCC, 0x3C)) return;
+    oledReady = true;
+    lastScreenWasSPI = false;
+  } else if (!oledReady) {
+    Wire.begin(OLED_SDA, OLED_SCL);
+    Wire.setClock(100000);
+    delay(10);
+    if (!oled.begin(SSD1306_SWITCHCAPVCC, 0x3C)) return;
+    oledReady = true;
+  }
+
+  // ── Rendu du pas courant ──────────────────────────────────────────────────
+  memcpy(oled.getBuffer(), oledArtBuf, OLED_BUF_SIZE);
+  // Page 0 = octets [0..127] = 8 premières lignes → fond noir pour le ticker
+  memset(oled.getBuffer(), 0x00, OLED_WIDTH);
   oled.setTextWrap(false);
   oled.setTextSize(1);
   oled.setTextColor(SSD1306_WHITE);
-
-  for (int step = 0; step <= totalSteps; step += 2) {
-    // 1. Charger l'artwork dans le buffer oled
-    memcpy(oled.getBuffer(), artBuf, OLED_BUF_SIZE);
-
-    // 2. Effacer la page 0 (octets 0..127 = colonnes de la ligne 0..7)
-    //    0x00 = tous les pixels éteints = fond noir pour le ticker
-    memset(oled.getBuffer(), 0x00, OLED_WIDTH);
-
-    // 3. Dessiner le texte à la position courante du scroll
-    //    step=0 → curseur à x=128 (hors écran à droite)
-    //    step=OLED_WIDTH+textW → curseur à x=-(textW) (hors écran à gauche)
-    //    Adafruit_GFX clippe automatiquement les pixels hors bounds
-    oled.setCursor((int16_t)(OLED_WIDTH - step), 0);
-    oled.print(tickerText);
-
-    // 4. Envoyer le buffer à l'écran
-    oled.display();
-
-    delay(35);  // ~28fps
-    yield();    // nourrir le watchdog ESP8266
-  }
-
-  // Fin du scroll : restaurer l'artwork sans overlay de ticker
-  memcpy(oled.getBuffer(), artBuf, OLED_BUF_SIZE);
+  oled.setCursor((int16_t)(OLED_WIDTH - oledTickStep), 0);
+  oled.print(oledTicker);
   oled.display();
 
-  Serial.printf("[OLED] scroll terminé (%d steps, textW=%d)\n", totalSteps / 2, textW);
+  // ── Avance + boucle infinie ───────────────────────────────────────────────
+  oledTickStep += 2;
+  if (oledTickStep > oledTickTotal) {
+    oledTickStep = 0;  // le texte repart de la droite
+  }
 }
 
 // ─── E27 DISPLAY ───────────────────────────────────────────────────────────
@@ -917,9 +948,9 @@ bool doFetchFrameOLED(const String& frameId, const String& frameSource) {
     return false;
   }
 
-  // ── Header ticker OLED ──────────────────────────────────────────────────────
-  // Format : "TITRE  |  ARTISTE  #N  HH:MM"
-  // Le ticker se lance si au moins un champ est disponible.
+  // ── Composition du ticker ────────────────────────────────────────────────────
+  // Format : "TITRE  |  ARTISTE  #N  DD/MM HH:MM"
+  // Toujours calculé même si certains champs sont vides.
   {
     String ticker = "";
     if (pendingWorkTitle.length() > 0)
@@ -931,18 +962,16 @@ bool doFetchFrameOLED(const String& frameId, const String& frameSource) {
     if (pendingDisplayTs.length() > 0)
       ticker += "  " + pendingDisplayTs;
 
-    if (ticker.length() > 0) {
-      Serial.println("[OLED] Ticker: " + ticker);
-      scrollOLEDHeader(oledBuf, ticker);
-    } else {
-      Serial.println("[OLED] Ticker: aucune metadata, skip scroll");
-    }
+    Serial.println("[TICKER] " + (ticker.length() > 0 ? ticker : "(vide)"));
 
-    // ── Persistance EEPROM : sauvegarde frame + ticker pour restauration boot ──
+    // Démarre le ticker non-bloquant (boucle infinie dans loop())
+    setOLEDFrame(oledBuf, ticker);
+
+    // Persistance EEPROM : sauvegarde frame + ticker pour restauration boot
     saveOLEDFrameToEEPROM(oledBuf, ticker);
   }
 
-  free(oledBuf);
+  free(oledBuf);  // le buffer local est libéré ; oledArtBuf (global) garde sa copie
 
   lastFrameId           = frameId;
   hasDisplayedFrame     = true;
@@ -1026,10 +1055,14 @@ bool doFetchFrameE27(const String& frameId, const String& frameSource) {
   // TLS fermé
 
   // ── Cartel e-ink : brûler le header/footer AVANT l'affichage ───────────────
-  if (pendingWorkTitle.length() > 0 || pendingArtistName.length() > 0 || pendingDisplayTs.length() > 0) {
-    Serial.printf("[E27] Cartel: ts=%s artist=%s title=%s\n",
-                  pendingDisplayTs.c_str(), pendingArtistName.c_str(), pendingWorkTitle.c_str());
-    burnEinkCartel(e27Buf, pendingWorkTitle, pendingArtistName, pendingDisplayTs);
+  // Bande haute : timestamp + numéro de bloc (#N)
+  // Bande basse : artiste · titre
+  if (pendingWorkTitle.length() > 0 || pendingArtistName.length() > 0
+      || pendingDisplayTs.length() > 0 || currentBlockIndex >= 0) {
+    Serial.printf("[E27] Cartel: ts=%s artist=%s title=%s bloc=%d\n",
+                  pendingDisplayTs.c_str(), pendingArtistName.c_str(),
+                  pendingWorkTitle.c_str(), currentBlockIndex);
+    burnEinkCartel(e27Buf, pendingWorkTitle, pendingArtistName, pendingDisplayTs, currentBlockIndex);
   }
 
   if (!displayE27Buffer(e27Buf)) {
@@ -1155,6 +1188,29 @@ bool doPull() {
         newScreen  = frameObj["screen"]  | "";
       }
     }
+
+    // ── Tâche d'observation (revalidation de blocs antérieurs) ────────────────
+    // Uniquement quand le device est idle (le serveur ne peuple ce champ que dans ce cas).
+    // L'ESP ne change PAS son affichage — il confirme juste la présence des blocs.
+    {
+      JsonObject obs = doc["pendingObservation"];
+      if (!obs.isNull()) {
+        JsonArray hashes = obs["blockHashes"].as<JsonArray>();
+        if (hashes.size() > 0) {
+          String hashArr = "[";
+          for (size_t i = 0; i < hashes.size(); i++) {
+            if (i > 0) hashArr += ",";
+            const char* h = hashes[i] | "";
+            hashArr += "\"";
+            hashArr += h;
+            hashArr += "\"";
+          }
+          hashArr += "]";
+          pendingObsHashes = hashArr;
+          Serial.println("[PULL] Tâche obs: " + pendingObsHashes);
+        }
+      }
+    }
   }
   // TLS fermé
 
@@ -1224,6 +1280,24 @@ bool doPull() {
 }
 
 
+
+// ─── OBS-CONFIRM (Axe 3 : revalidation de blocs antérieurs) ───────────────
+// Envoie la confirmation que cet ESP a "observé" les blocs de la tâche reçue.
+// Aucun changement d'affichage : uniquement une requête POST vers le serveur.
+bool doObsConfirm() {
+  if (pendingObsHashes.length() == 0) return true;
+
+  Serial.println("[OBS] Confirmation observation: " + pendingObsHashes);
+
+  String body = "{\"deviceId\":\"" + deviceId
+              + "\",\"blockHashes\":" + pendingObsHashes + "}";
+  String resp;
+  bool ok = httpPost("/api/obs-confirm", body, resp);
+
+  Serial.printf("[OBS] confirm → %s resp: %s\n", ok ? "OK" : "FAIL", resp.c_str());
+  pendingObsHashes = "";  // toujours vider, même en cas d'échec
+  return ok;
+}
 
 // ─── VALIDATION ────────────────────────────────────────────────────────────
 bool doValidate() {
@@ -1343,17 +1417,17 @@ void setup() {
     // ── Restauration EEPROM : affiche la dernière frame OLED avant le pull ──────
     // Permet de revoir le dernier dessin immédiatement après redémarrage,
     // sans attendre le prochain cycle pull (WiFi + serveur).
+    // setOLEDFrame() démarre le ticker non-bloquant (boucle via loop()).
     {
       uint8_t* savedBuf = (uint8_t*)malloc(OLED_BUF_SIZE);
       if (savedBuf) {
         String savedTicker = "";
         if (loadOLEDFrameFromEEPROM(savedBuf, savedTicker)) {
           Serial.println("[BOOT] Restauration frame OLED depuis EEPROM");
-          displayOLED(savedBuf, OLED_BUF_SIZE);
-          if (savedTicker.length() > 0)
-            scrollOLEDHeader(savedBuf, savedTicker);
+          displayOLED(savedBuf, OLED_BUF_SIZE);     // affichage immédiat
+          setOLEDFrame(savedBuf, savedTicker);       // démarre le ticker infini
         }
-        free(savedBuf);
+        free(savedBuf);  // local freed ; setOLEDFrame a copié dans oledArtBuf
       } else {
         Serial.println("[BOOT] malloc EEPROM restore échoué — skip");
       }
@@ -1371,6 +1445,11 @@ void setup() {
 // ─── LOOP ──────────────────────────────────────────────────────────────────
 void loop() {
   unsigned long now = millis();
+
+  // ── Ticker OLED non-bloquant ─────────────────────────────────────────────
+  // Appelé à chaque tour, avance d'un pas seulement si 35ms se sont écoulées.
+  // Boucle infinie : le texte revient à droite après être sorti à gauche.
+  tickerStep();
 
   // ── Re-registration si perdu ──
   if (!registered) {
@@ -1406,6 +1485,12 @@ void loop() {
     }
   }
 
+  // ── Observation (revalidation blocs) ──
+  // Dépend uniquement de la présence d'une tâche obs — pas de timer
+  if (pendingObsHashes.length() > 0) {
+    doObsConfirm();
+  }
+
   // ── Validation candidat ──
   if (pendingCandidateId.length() > 0 &&
       millis() - lastValidateMs >= VALIDATE_INTERVAL) {
@@ -1418,5 +1503,7 @@ void loop() {
     lastPullMs = millis();
   }
 
-  delay(IDLE_DELAY_MS);
+  // Pas de delay fixe ici : tickerStep() gère son propre throttle (35ms).
+  // Un yield() suffit pour nourrir le watchdog ESP8266 entre les tours de boucle.
+  yield();
 }
