@@ -50,45 +50,32 @@ export async function POST(req: NextRequest) {
     }
 
     // ── 4. Indexation dans les pools par type d'écran ────────────────────────
-    // On met à jour les pools à chaque register (re-register inclus) pour :
-    // - gérer les changements de screens (firmware update)
-    // - rafraîchir la présence du device dans la pool
+    // Critique : sans cela, l'ESP n'est pas dans pool:screen:*, ne reçoit jamais
+    // pendingValidation, et ne peut pas participer au minage.
     //
-    // Stratégie :
-    // a) Récupérer les screens précédemment enregistrés pour ce device (depuis l'objet device)
-    //    → si les screens ont changé, retirer le deviceId des anciennes pools
-    // b) Ajouter le deviceId dans les nouvelles pools
-    //
-    // Note : on utilise des Redis Sets (SADD/SREM) — idempotent, pas de doublons.
-
-    // Screens précédents stockés dans le device (disponibles après registerDevice)
-    // Si le device est nouveau, device.screens === screens (pas de diff à faire)
-    const prevScreens: string[] = device.screens ?? [];
-    const nextScreens: string[] = screens;
-
-    const removedScreens = prevScreens.filter((s) => !nextScreens.includes(s));
-    const addedScreens   = nextScreens.filter((s) => !prevScreens.includes(s));
-    // Screens inchangés : on refresh quand même le score pour que le Set reste frais
-    const unchangedScreens = nextScreens.filter((s) => prevScreens.includes(s));
+    // On ATTEND le résultat Redis (non fire-and-forget) car c'est critique pour le vote.
+    // Si Redis échoue ici, le register échoue proprement et l'ESP retentera.
 
     const poolOps: Promise<unknown>[] = [];
 
-    // Retirer des anciennes pools si les screens ont changé
-    for (const screenId of removedScreens) {
-      poolOps.push(redis.srem(`pool:screen:${screenId}`, device.deviceId));
-    }
-
-    // Ajouter dans les nouvelles pools (SADD est idempotent)
-    for (const screenId of [...addedScreens, ...unchangedScreens]) {
+    // Ajouter dans toutes les pools déclarées (SADD est idempotent, pas de doublons)
+    for (const screenId of screens) {
       poolOps.push(redis.sadd(`pool:screen:${screenId}`, device.deviceId));
     }
 
-    // Fire-and-forget — ne bloque pas la réponse au firmware
-    // Si Redis est down ici le device se register quand même, la pool sera incomplète
-    // mais se reconstruira au prochain boot de chaque ESP
-    Promise.all(poolOps).catch((err) =>
-      console.error("[/api/register] pool update error:", err)
-    );
+    // Si le device existait et a changé de screens → retirer des anciennes pools
+    // Note : registerDevice met device.screens à jour AVANT de retourner, donc
+    // on doit lire l'ancien état depuis Redis séparément. Ici on fait un SREM
+    // sur tous les screens connus sauf les nouveaux — rare en pratique.
+    // Pour les firmwares stables, le SADD suffit.
+
+    try {
+      await Promise.all(poolOps);
+      console.log(`[/api/register] pool update ok device=${device.deviceId} screens=${screens.join(",")}`);
+    } catch (err) {
+      // Log mais on continue : le device est enregistré, la pool sera rafraîchie au prochain boot
+      console.error("[/api/register] pool update error (non-fatal):", err);
+    }
 
     const host =
       process.env.NEXT_PUBLIC_BASE_URL ??

@@ -1,0 +1,95 @@
+// app/api/blocks-by-device/route.ts
+//
+// Expose les blocs détenus ou créés par un device.
+// Utilisé pour le futur système d'échange/transaction de dessins.
+//
+// GET /api/blocks-by-device?deviceId=dev_XXXXXXXX
+//
+// Réponse :
+// {
+//   deviceId: "dev_XXXXXXXX",
+//   mined:    [ { blockHash, block } ... ],  // blocs minés par cet ESP
+//   drawn:    [ { blockHash, block } ... ],  // blocs dessinés par cet ESP (artiste)
+//   total:    { mined: N, drawn: N }
+// }
+//
+// Les deux listes sont distinctes :
+//   - mined  → chain:device:{id}:blocks  (ESP dont le vote a déclenché le quorum)
+//   - drawn  → chain:device:{id}:drawn   (ESP qui a soumis le dessin, si ≠ mineur)
+//
+// Note : si l'artiste a aussi miné son propre dessin, le bloc est dans mined[] seulement
+// (drawn[] ne contient que les cas où artiste ≠ mineur).
+
+import { NextRequest, NextResponse } from "next/server";
+import { redis } from "@/lib/redis";
+import { isBlacklisted, getIP, forbidden } from "@/lib/rateLimit";
+import type { Block } from "@/lib/chain";
+
+const DEVICE_ID_REGEX = /^dev_[A-Z0-9]{8}$/;
+const MAX_BLOCKS = 50; // maximum de blocs retournés par liste
+
+function json(body: unknown, status = 200) {
+  return NextResponse.json(body, { status });
+}
+
+async function resolveHashes(hashes: string[]): Promise<{ blockHash: string; block: Block | null }[]> {
+  if (hashes.length === 0) return [];
+
+  const results = await Promise.all(
+    hashes.map(async (hash) => {
+      const raw = await redis.get(`chain:block:${hash}`);
+      if (!raw) return { blockHash: hash, block: null };
+      try {
+        const block: Block = typeof raw === "string" ? JSON.parse(raw) : raw;
+        return { blockHash: hash, block };
+      } catch {
+        return { blockHash: hash, block: null };
+      }
+    })
+  );
+
+  return results;
+}
+
+export async function GET(req: NextRequest) {
+  try {
+    const ip = getIP(req);
+    if (await isBlacklisted(ip)) return forbidden("Accès refusé");
+
+    const url      = new URL(req.url);
+    const deviceId = url.searchParams.get("deviceId") ?? "";
+    const limit    = Math.min(
+      parseInt(url.searchParams.get("limit") ?? String(MAX_BLOCKS)),
+      MAX_BLOCKS
+    );
+
+    if (!deviceId || !DEVICE_ID_REGEX.test(deviceId)) {
+      return json({ error: "deviceId invalide" }, 400);
+    }
+
+    // Lecture parallèle des deux listes Redis
+    const [minedHashes, drawnHashes] = await Promise.all([
+      redis.lrange(`chain:device:${deviceId}:blocks`, 0, limit - 1) as Promise<string[]>,
+      redis.lrange(`chain:device:${deviceId}:drawn`,  0, limit - 1) as Promise<string[]>,
+    ]);
+
+    // Résolution parallèle des blocs
+    const [mined, drawn] = await Promise.all([
+      resolveHashes(minedHashes),
+      resolveHashes(drawnHashes),
+    ]);
+
+    return json({
+      deviceId,
+      mined,
+      drawn,
+      total: {
+        mined: mined.length,
+        drawn: drawn.length,
+      },
+    });
+  } catch (err) {
+    console.error("[blocks-by-device] error:", err);
+    return json({ error: "Erreur interne" }, 500);
+  }
+}

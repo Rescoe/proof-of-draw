@@ -95,7 +95,8 @@ export async function POST(req: NextRequest) {
       const voteMap = await getVotes();
       const allVotes = voteMap ? Object.values(voteMap.votes) : [vote];
       const frameId = crypto.randomUUID();
-      const block = await finalizeBlock(candidate, allVotes, frameId);
+      // vote.deviceId = l'ESP dont le vote vient d'atteindre le quorum → il est le mineur
+      const block = await finalizeBlock(candidate, allVotes, frameId, vote.deviceId);
 
       await broadcastValidatedFrame(candidate.poolScreen, candidate.payload, frameId, block.displayTime, block.blockIndex, candidate.artistName);
       await clearCandidate();

@@ -1125,20 +1125,131 @@ bool doPull() {
 
 
 
+// ─── FETCH CANDIDAT BINAIRE + MÉTRIQUES LOCALES (V2) ────────────────────────
+// Télécharge le frame candidat depuis /api/candidate-frame (9472 bytes : black+red),
+// calcule les métriques de complexité localement, libère les buffers.
+// Retourne true si succès et remplit les 4 valeurs de sortie.
+// En cas d'échec, retourne false → l'appelant bascule en V1 (echo du score serveur).
+bool fetchAndComputeMetrics(const String& candidateId,
+                            float& outEntropy, float& outTransitions,
+                            float& outRle,     float& outScore) {
+  logHeapState("CAND-FETCH-BEFORE");
+
+  uint8_t* cBlack = (uint8_t*)malloc(BUF_SIZE);
+  uint8_t* cRed   = (uint8_t*)malloc(BUF_SIZE);
+  if (!cBlack || !cRed) {
+    Serial.println("[CAND-FETCH] malloc failed — heap insuffisant, fallback V1");
+    free(cBlack); free(cRed);
+    return false;
+  }
+
+  bool fetchOk = false;
+  {
+    WiFiClientSecure client;
+    client.setInsecure();
+    HTTPClient http;
+
+    // screen=eink29bwr n'est pas obligatoire (route le détecte depuis le payload)
+    // mais on le passe pour cohérence et logs côté serveur.
+    String url = String(SERVER_URL)
+                 + "/api/candidate-frame?candidateId=" + candidateId
+                 + "&fmt=bin&screen=eink29bwr";
+
+    Serial.println("[CAND-FETCH] URL: " + url);
+
+    if (!http.begin(client, url)) {
+      Serial.println("[CAND-FETCH] begin() failed");
+      free(cBlack); free(cRed);
+      return false;
+    }
+    http.setTimeout(20000);
+    http.useHTTP10(true);   // stream brut sans chunked encoding
+
+    int code = http.GET();
+    Serial.printf("[CAND-FETCH] /api/candidate-frame → %d\n", code);
+
+    if (code == 404 || code == 409) {
+      // Candidat expiré ou remplacé entre le pull et la validation
+      http.end();
+      Serial.printf("[CAND-FETCH] %d — candidat introuvable ou expiré\n", code);
+      free(cBlack); free(cRed);
+      return false;
+    }
+
+    if (code != 200) {
+      http.end();
+      Serial.printf("[CAND-FETCH] HTTP error %d — fallback V1\n", code);
+      free(cBlack); free(cRed);
+      return false;
+    }
+
+    // Lecture du stream binaire : black[0..BUF_SIZE-1] || red[0..BUF_SIZE-1]
+    auto readFull = [](WiFiClient* s, uint8_t* dst, size_t len) -> size_t {
+      size_t total = 0;
+      unsigned long t0 = millis();
+      while (total < len && millis() - t0 < 15000) {
+        if (s->available()) {
+          size_t got = s->readBytes(dst + total, len - total);
+          if (got > 0) total += got;
+        } else {
+          delay(10);
+        }
+      }
+      return total;
+    };
+
+    WiFiClient* stream = http.getStreamPtr();
+    size_t bRead = readFull(stream, cBlack, BUF_SIZE);
+    size_t rRead = readFull(stream, cRed,   BUF_SIZE);
+    http.end();   // ferme TLS ici → libère ~20KB avant les calculs
+
+    Serial.printf("[CAND-FETCH] lu black=%u red=%u expected=%u\n", bRead, rRead, BUF_SIZE);
+
+    if (bRead == BUF_SIZE && rRead == BUF_SIZE) {
+      fetchOk = true;
+    } else {
+      Serial.println("[CAND-FETCH] lecture incomplète — fallback V1");
+    }
+  }
+  // TLS fermé dans le bloc ci-dessus
+
+  if (!fetchOk) {
+    free(cBlack); free(cRed);
+    return false;
+  }
+
+  // ── Calcul des métriques sur le buffer mergé (identique à computeComplexityScore) ──
+  // On utilise un buffer static pour ne pas empiler 4736 octets sur la stack.
+  static uint8_t merged[BUF_SIZE];
+  for (size_t i = 0; i < BUF_SIZE; i++) {
+    merged[i] = cBlack[i] & cRed[i];  // 0=actif (convention e-ink)
+  }
+
+  // Libération immédiate après merge — 9472 bytes rendus avant les POST TLS
+  free(cBlack); cBlack = nullptr;
+  free(cRed);   cRed   = nullptr;
+
+  outEntropy     = computeEntropy(merged, BUF_SIZE);
+  outTransitions = computeTransitions(merged, IMG_W, IMG_H);
+  outRle         = computeRLE(merged, BUF_SIZE);
+  outScore       = outEntropy * 0.4f + outTransitions * 0.4f + outRle * 0.2f;
+  if (outScore > 1.0f) outScore = 1.0f;
+
+  Serial.printf("[CAND-FETCH] V2 metrics: entropy=%.3f trans=%.3f rle=%.3f score=%.3f\n",
+                outEntropy, outTransitions, outRle, outScore);
+
+  logHeapState("CAND-FETCH-AFTER");
+  return true;
+}
+
 // ─── VALIDATION ─────────────────────────────────────────────────────────────
 bool doValidate() {
   if (pendingCandidateId.length() == 0) return true;
 
-  // ← SUPPRIME ces lignes qui bloquent la validation après un consensus :
-  // if (consensusJustDisplayed) {
-  //   pendingCandidateId = "";
-  //   consensusJustDisplayed = false;
-  //   return true;
-  // }
-
   Serial.println("[VALIDATE] Debut: " + pendingCandidateId);
   logHeapState("VALIDATE-BEFORE");
 
+  // Libère les buffers display — 9472 bytes récupérés pour TLS + calcul
   free(blackBuf); blackBuf = nullptr;
   free(redBuf);   redBuf   = nullptr;
 
@@ -1146,7 +1257,7 @@ bool doValidate() {
   bool ok = httpGet("/api/validate-candidate?deviceId=" + deviceId, resp);
 
   if (!ok || resp.length() == 0) {
-    Serial.println("[VALIDATE] Echec HTTP");
+    Serial.println("[VALIDATE] Echec HTTP validate-candidate");
     pendingCandidateId = "";
     goto validate_realloc;
   }
@@ -1154,7 +1265,7 @@ bool doValidate() {
   {
     DynamicJsonDocument doc(512);
     DeserializationError err = deserializeJson(doc, resp);
-    resp = "";
+    resp = "";   // libère la mémoire String dès que parsé
 
     if (err) {
       Serial.print("[VALIDATE] JSON err: ");
@@ -1164,19 +1275,20 @@ bool doValidate() {
     }
 
     if (doc["alreadyVoted"] | false) {
-      Serial.println("[VALIDATE] Deja vote");
+      Serial.println("[VALIDATE] Deja vote pour ce candidat");
       pendingCandidateId = "";
       goto validate_realloc;
     }
 
     if (doc["candidate"].isNull()) {
-      Serial.println("[VALIDATE] Pas de candidat actif");
+      Serial.println("[VALIDATE] Pas de candidat actif (expiré ?)");
       pendingCandidateId = "";
       goto validate_realloc;
     }
 
     JsonObject cand    = doc["candidate"];
     String candidateId = cand["candidateId"] | "";
+    float  scoreServer = cand["score_server"] | 0.5f;
 
     if (candidateId.length() == 0) {
       Serial.println("[VALIDATE] candidateId absent");
@@ -1184,19 +1296,37 @@ bool doValidate() {
       goto validate_realloc;
     }
 
-    float score = cand["score_server"] | 0.5f;
-    Serial.printf("[VALIDATE] candidateId=%s score=%.3f\n", candidateId.c_str(), score);
+    Serial.printf("[VALIDATE] candidateId=%s scoreServeur=%.3f\n",
+                  candidateId.c_str(), scoreServer);
 
-    String signature = signV1(candidateId, score);
-    char scoreStr[8];
-    dtostrf(score, 1, 3, scoreStr);
+    // ── V2 : calcul local des métriques ──────────────────────────────────────
+    // On télécharge le candidat binaire et on calcule entropy/transitions/rle.
+    // Si le fetch échoue (timeout, OOM, 409 expiré), on bascule en V1 :
+    // on recopie le score serveur pour tous les champs (vote de présence).
+    float entropy_v, transitions_v, rle_v, score_v;
+    bool v2ok = fetchAndComputeMetrics(candidateId, entropy_v, transitions_v,
+                                       rle_v, score_v);
+    if (!v2ok) {
+      Serial.println("[VALIDATE] Fallback V1 — echo du score serveur");
+      score_v = scoreServer;
+      entropy_v = transitions_v = rle_v = scoreServer;
+    }
+
+    String signature = signV1(candidateId, score_v);
+
+    // Construction du body JSON à la main (pas de DynamicJsonDocument pour économiser heap)
+    char entStr[8], transStr[8], rleStr[8], scoreStr[8];
+    dtostrf(entropy_v,     1, 3, entStr);
+    dtostrf(transitions_v, 1, 3, transStr);
+    dtostrf(rle_v,         1, 3, rleStr);
+    dtostrf(score_v,       1, 3, scoreStr);
 
     String body = String("{\"deviceId\":\"") + deviceId + "\","
                   "\"candidateId\":\"" + candidateId + "\","
-                  "\"entropy\":" + scoreStr + ","
-                  "\"transitions\":" + scoreStr + ","
-                  "\"rle\":" + scoreStr + ","
-                  "\"score\":" + scoreStr + ","
+                  "\"entropy\":"     + entStr   + ","
+                  "\"transitions\":" + transStr + ","
+                  "\"rle\":"         + rleStr   + ","
+                  "\"score\":"       + scoreStr + ","
                   "\"signature\":\"" + signature + "\"}";
 
     pendingCandidateId = "";
@@ -1207,11 +1337,11 @@ bool doValidate() {
     if (vOk) {
       Serial.println("[VALIDATE] Vote OK");
       if (vResp.indexOf("\"blockMined\":true") >= 0) {
-        Serial.println("[VALIDATE] BLOC MINE");
+        Serial.println("[VALIDATE] BLOC MINE !");
         frameReady = true;
       }
     } else {
-      Serial.println("[VALIDATE] Echec vote");
+      Serial.println("[VALIDATE] Echec vote HTTP");
     }
   }
 
@@ -1219,7 +1349,7 @@ validate_realloc:
   blackBuf = (uint8_t*)malloc(BUF_SIZE);
   redBuf   = (uint8_t*)malloc(BUF_SIZE);
   if (!blackBuf || !redBuf) {
-    Serial.println("[VALIDATE] malloc fail — restart");
+    Serial.println("[VALIDATE] malloc fail post-validate — restart");
     ESP.restart();
   }
   memset(blackBuf, 0xFF, BUF_SIZE);

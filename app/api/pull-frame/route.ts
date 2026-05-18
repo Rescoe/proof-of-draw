@@ -1,133 +1,116 @@
 // app/api/pull-frame/route.ts
+// Sert le frame binaire stocké pour un device — appelé par les ESP après /api/pull.
+//
+// Protocole binaire :
+//   screen=eink29bwr : black[4736] + red[4736] = 9472 bytes concaténés
+//   screen=eink27bw  : buffer[5808] bytes
+//   screen=oled096   : buffer[1024] bytes
+//
+// Le param &screen= est optionnel (le serveur lit le screen depuis la frame Redis).
+// &fmt=bin retourne les octets bruts ; sans ou &fmt=json retourne JSON.
+
 import { NextRequest, NextResponse } from "next/server";
 import { redis } from "@/lib/redis";
-import { getDevice } from "@/lib/deviceStore";
-import { getFrameForDevice } from "@/lib/queue";
+import { isBlacklisted, getIP, forbidden } from "@/lib/rateLimit";
 
 const DEVICE_ID_REGEX = /^dev_[A-Z0-9]{8}$/;
-const personalKey = (deviceId: string) => `personal:frame:${deviceId}`;
+
+// Taille attendue par screen — pour validation côté serveur
+const EXPECTED_SIZES: Record<string, number> = {
+  eink29bwr: 4736,  // par canal (black = 4736, red = 4736)
+  eink27bw:  5808,
+  oled096:   1024,
+};
+
+export const runtime = "nodejs"; // Buffer.from(b64) nécessite Node
 
 export async function GET(req: NextRequest) {
-  try {
-    const url      = new URL(req.url);
-    const deviceId = url.searchParams.get("deviceId");
-    const fmt      = url.searchParams.get("fmt");    // "bin" ou null
-    const screen   = url.searchParams.get("screen"); // "eink29bwr" | "eink27bw" | "oled096" | null
+  const ip = getIP(req);
+  if (await isBlacklisted(ip)) return forbidden("Accès refusé");
 
-    if (!deviceId || !DEVICE_ID_REGEX.test(deviceId))
-      return NextResponse.json({ error: "deviceId invalide" }, { status: 400 });
+  const url      = new URL(req.url);
+  const deviceId = url.searchParams.get("deviceId") ?? "";
+  const screenQ  = url.searchParams.get("screen")   ?? "";
+  const fmt      = url.searchParams.get("fmt")       ?? "json";
 
-    const device = await getDevice(deviceId);
-    if (!device)
-      return NextResponse.json({ error: "device inconnu" }, { status: 404 });
-
-    // Cherche consensus puis personal
-    let payload: any = null;
-    let frameId: string | undefined;
-
-    const consensusFrame = await getFrameForDevice(deviceId, []);
-    if (consensusFrame?.payload) {
-      payload = consensusFrame.payload;
-      frameId = consensusFrame.frameId;
-    } else {
-      const personalRaw = await redis.get(personalKey(deviceId));
-      if (personalRaw) {
-        const pf = typeof personalRaw === "string" ? JSON.parse(personalRaw) : personalRaw;
-        if (pf?.payload) {
-          payload = pf.payload;
-          frameId = pf.frameId;
-        }
-      }
-    }
-
-    if (!payload) {
-      return NextResponse.json({ error: "no frame" }, { status: 404 });
-    }
-
-    // ── Détermine le screen cible ──────────────────────────────────────────
-    // Priorité : paramètre &screen= > payload.screen > premier screen du device
-    const targetScreen = screen
-      ?? payload.screen
-      ?? (device.screens?.[0] as string | undefined);
-
-    if (!targetScreen) {
-      return NextResponse.json({ error: "screen indéterminable" }, { status: 400 });
-    }
-
-    // ── eink29bwr : black + red ────────────────────────────────────────────
-    if (targetScreen === "eink29bwr") {
-      const { black, red } = payload as { black?: string; red?: string };
-      if (!black || !red) {
-        console.error(`[pull-frame] payload manquant black/red pour ${deviceId}`);
-        return NextResponse.json({ error: "payload incomplet pour eink29bwr" }, { status: 404 });
-      }
-
-      if (fmt === "bin") {
-        const blackBytes = Buffer.from(black, "base64");
-        const redBytes   = Buffer.from(red,   "base64");
-        const combined   = Buffer.concat([blackBytes, redBytes]); // 9472 bytes
-
-        return new NextResponse(combined, {
-          status: 200,
-          headers: {
-            "Content-Type":   "application/octet-stream",
-            "Content-Length": String(combined.length),
-          },
-        });
-      }
-      return NextResponse.json({ frameId, ...payload });
-    }
-
-    // ── eink27bw : buffer unique ───────────────────────────────────────────
-    if (targetScreen === "eink27bw") {
-      const { buffer } = payload as { buffer?: string };
-      if (!buffer) {
-        console.error(`[pull-frame] payload manquant buffer pour ${deviceId} (eink27bw)`);
-        return NextResponse.json({ error: "payload incomplet pour eink27bw" }, { status: 404 });
-      }
-
-      if (fmt === "bin") {
-        const bytes = Buffer.from(buffer, "base64");
-
-        return new NextResponse(bytes, {
-          status: 200,
-          headers: {
-            "Content-Type":   "application/octet-stream",
-            "Content-Length": String(bytes.length),
-          },
-        });
-      }
-      return NextResponse.json({ frameId, ...payload });
-    }
-
-    // ── oled096 : buffer unique ────────────────────────────────────────────
-    if (targetScreen === "oled096") {
-      const { buffer } = payload as { buffer?: string };
-      if (!buffer) {
-        console.error(`[pull-frame] payload manquant buffer pour ${deviceId} (oled096)`);
-        return NextResponse.json({ error: "payload incomplet pour oled096" }, { status: 404 });
-      }
-
-      if (fmt === "bin") {
-        const bytes = Buffer.from(buffer, "base64");
-
-        return new NextResponse(bytes, {
-          status: 200,
-          headers: {
-            "Content-Type":   "application/octet-stream",
-            "Content-Length": String(bytes.length),
-          },
-        });
-      }
-      return NextResponse.json({ frameId, ...payload });
-    }
-
-    // ── Screen inconnu ─────────────────────────────────────────────────────
-    console.error(`[pull-frame] screen inconnu: ${targetScreen} pour ${deviceId}`);
-    return NextResponse.json({ error: `screen inconnu: ${targetScreen}` }, { status: 400 });
-
-  } catch (err) {
-    console.error("[pull-frame] error:", err);
-    return NextResponse.json({ error: "Erreur interne" }, { status: 500 });
+  if (!DEVICE_ID_REGEX.test(deviceId)) {
+    return NextResponse.json({ error: "deviceId invalide" }, { status: 400 });
   }
+
+  // ── Lecture frame depuis Redis ──────────────────────────────────────────────
+  const raw = await redis.get(`frame:${deviceId}`);
+  if (!raw) {
+    return new Response(null, { status: 404, headers: { "X-Reason": "no-frame" } });
+  }
+
+  let frame: Record<string, unknown>;
+  try {
+    frame = typeof raw === "string" ? JSON.parse(raw) : (raw as Record<string, unknown>);
+  } catch {
+    return NextResponse.json({ error: "Frame corrompue" }, { status: 500 });
+  }
+
+  const payload = frame["payload"] as Record<string, string> | undefined;
+  if (!payload) {
+    return new Response(null, { status: 404, headers: { "X-Reason": "no-payload" } });
+  }
+
+  const screen  = payload["screen"] ?? screenQ;
+  const frameId = (frame["frameId"] as string) ?? "";
+
+  // Vérification optionnelle : le device demande le bon écran
+  if (screenQ && screen !== screenQ) {
+    // Frame disponible mais pour un autre écran → 404 propre
+    return new Response(null, {
+      status: 404,
+      headers: { "X-Reason": `screen-mismatch:stored=${screen},requested=${screenQ}` },
+    });
+  }
+
+  if (fmt !== "bin") {
+    // Mode JSON : retourne les métadonnées sans payload binaire
+    return NextResponse.json({ frameId, screen, createdAt: frame["createdAt"] ?? null });
+  }
+
+  // ── Construction du buffer binaire ─────────────────────────────────────────
+  let data: Buffer;
+  try {
+    if (screen === "eink29bwr") {
+      if (!payload["black"] || !payload["red"]) {
+        return NextResponse.json({ error: "Payload BWR incomplet" }, { status: 500 });
+      }
+      const black = Buffer.from(payload["black"], "base64");
+      const red   = Buffer.from(payload["red"],   "base64");
+      // Validation taille
+      if (black.length !== EXPECTED_SIZES["eink29bwr"] || red.length !== EXPECTED_SIZES["eink29bwr"]) {
+        console.warn(`[pull-frame] size mismatch device=${deviceId} black=${black.length} red=${red.length}`);
+      }
+      data = Buffer.concat([black, red]); // 9472 bytes
+    } else {
+      if (!payload["buffer"]) {
+        return NextResponse.json({ error: "Payload buffer absent" }, { status: 500 });
+      }
+      data = Buffer.from(payload["buffer"], "base64");
+      const expected = EXPECTED_SIZES[screen];
+      if (expected && data.length !== expected) {
+        console.warn(`[pull-frame] size mismatch device=${deviceId} screen=${screen} got=${data.length} expected=${expected}`);
+      }
+    }
+  } catch (err) {
+    console.error("[pull-frame] decode error:", err);
+    return NextResponse.json({ error: "Décodage base64 impossible" }, { status: 500 });
+  }
+
+  console.log(`[pull-frame] device=${deviceId} screen=${screen} size=${data.length} frameId=${frameId.slice(0, 8)}`);
+
+  return new Response(new Uint8Array(data), {
+    status: 200,
+    headers: {
+      "Content-Type":   "application/octet-stream",
+      "Content-Length": String(data.length),
+      "X-Frame-Id":     frameId,
+      "X-Screen":       screen,
+      "Cache-Control":  "no-store, no-cache",
+    },
+  });
 }

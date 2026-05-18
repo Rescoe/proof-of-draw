@@ -57,6 +57,9 @@ export interface Block {
   drawArtistName?: string;     // artiste dessinateur si différent du propriétaire de l'ESP
   deviceOwnerName?: string;    // propriétaire de l'ESP (si ESP en prêt public)
 
+  // ── Minage ───────────────────────────────────────────────────────────────────
+  minerDeviceId?: string;      // ESP dont le vote a atteint le quorum (premier mineur)
+
   // ── Axe 3 : Ré-validation ────────────────────────────────────────────────────
   podHashEnriched?: string;    // SHA256(actionsHash + enrichment JSON) — Axe 4
   revalidated?: {              // blocs antérieurs re-vérifiés lors du minage
@@ -267,10 +270,13 @@ export async function castVote(
 
 // ─── Finalisation du bloc ────────────────────────────────────────────────────
 
+// minerDeviceId : deviceId de l'ESP dont le vote a déclenché le quorum.
+// Si absent, on prend le premier vote (ordre d'arrivée = ordre de soumission).
 export async function finalizeBlock(
   candidate: Candidate,
   votes: ValidationVote[],
   frameId: string,
+  minerDeviceId?: string,
 ): Promise<Block> {
   const head     = await getChainHead();
   const length   = await getChainLength();
@@ -317,6 +323,11 @@ export async function finalizeBlock(
     await redis.lpush(KEY_OBS_QUEUE, obsTask);
   }
 
+  // Le mineur est le device dont le vote a déclenché le quorum.
+  // votes[] est transmis dans l'ordre de réception — le dernier est le quorum-trigger.
+  // minerDeviceId est explicitement passé depuis /api/validation-result.
+  const effectiveMiner = minerDeviceId ?? votes[votes.length - 1]?.deviceId ?? candidate.deviceId;
+
   const block: Block = {
     blockIndex:      length,
     blockHash,
@@ -324,8 +335,9 @@ export async function finalizeBlock(
     imageHash:       candidate.imageHash,
     actionsHash:     candidate.actionsHash,
     drawScore:       candidate.drawScore,
-    deviceId:        candidate.deviceId,
-    artistName:      candidate.artistName,   // propriétaire de l'ESP
+    deviceId:        candidate.deviceId,    // artiste (device d'origine du dessin)
+    minerDeviceId:   effectiveMiner,        // ESP qui a atteint le quorum
+    artistName:      candidate.artistName,  // propriétaire de l'ESP artiste
     poolScreen:      candidate.poolScreen,
     validatorIds:    votes.map((v) => v.deviceId).sort(),
     score:           finalScore,
@@ -362,6 +374,16 @@ export async function finalizeBlock(
     redis.lpush(KEY_RECENT, blockHash),
     redis.ltrim(KEY_RECENT, 0, RECENT_MAX - 1),
     redis.set(KEY_LENGTH, String(length + 1)),
+    // Index bloc par mineur (pour "quel ESP possède quel bloc")
+    redis.lpush(`chain:device:${effectiveMiner}:blocks`, blockHash),
+    redis.ltrim(`chain:device:${effectiveMiner}:blocks`, 0, 99), // 100 blocs max par device
+    // Index bloc par artiste (device qui a soumis le dessin)
+    ...(candidate.deviceId !== effectiveMiner
+      ? [
+          redis.lpush(`chain:device:${candidate.deviceId}:drawn`, blockHash),
+          redis.ltrim(`chain:device:${candidate.deviceId}:drawn`, 0, 99),
+        ]
+      : []),
   ];
 
   // Axe 4 : stocker les events de replay (optionnel, peut être absent)
