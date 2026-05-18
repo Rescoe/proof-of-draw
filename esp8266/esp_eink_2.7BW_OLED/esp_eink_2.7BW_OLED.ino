@@ -532,20 +532,15 @@ void burnEinkCartel_landscape(uint8_t* buf,
   clearPortraitCols(buf, 0, BAND - 1);
   drawLandscapeSepLine(buf, BAND - 1);  // séparateur à ly=BAND-1
 
-  // Texte bande sup : artiste + titre
-  String topLine;
-  if (artistName.length() > 0 && workTitle.length() > 0)
-    topLine = artistName + " - " + workTitle;
-  else if (artistName.length() > 0)
-    topLine = artistName;
-  else if (workTitle.length() > 0)
-    topLine = workTitle;
-  else
-    topLine = "PROOF-OF-DRAW";
+  // Texte : timestamp + numéro de bloc
+  String topLine = ts.length() > 0 ? ts : "PROOF-OF-DRAW";
+  if (blockIndex >= 0) topLine += " Block #" + String(blockIndex);
+  // Tronquer si trop large (LW=264)
   while (topLine.length() > 0 && textWidthE27_landscape(topLine, 1) > E27_HEIGHT - 4)
     topLine.remove(topLine.length() - 1);
+  // Centrage en lx (LW=E27_HEIGHT=264)
   int topLx = max(0, (E27_HEIGHT - textWidthE27_landscape(topLine, 1)) / 2);
-  // Position ly : 2px depuis bord sup
+  // Position ly : 2px de marge depuis le bord (ly=2, glyphe 7px → s'étend jusqu'à ly=8)
   drawTextE27_landscape(buf, topLx, 2, topLine, 1);
 
   // ── Bande inférieure paysage : portrait cols [E27_WIDTH-BAND..E27_WIDTH-1] ──
@@ -553,11 +548,17 @@ void burnEinkCartel_landscape(uint8_t* buf,
   clearPortraitCols(buf, botPxStart, E27_WIDTH - 1);
   drawLandscapeSepLine(buf, botPxStart);  // séparateur à ly=163
 
-  // Texte bande inf : timestamp + numéro de bloc
-  String botLine = ts.length() > 0 ? ts : "PROOF-OF-DRAW";
-  if (blockIndex >= 0) botLine += " #" + String(blockIndex);
+  String botLine;
+  if (artistName.length() > 0 && workTitle.length() > 0)
+    botLine = artistName + " - " + workTitle;
+  else if (artistName.length() > 0)
+    botLine = artistName;
+  else if (workTitle.length() > 0)
+    botLine = workTitle;
+
   while (botLine.length() > 0 && textWidthE27_landscape(botLine, 1) > E27_HEIGHT - 4)
     botLine.remove(botLine.length() - 1);
+
   int botLx  = max(0, (E27_HEIGHT - textWidthE27_landscape(botLine, 1)) / 2);
   // Position ly : 2px au-dessus du séparateur (botPxStart+2 = 165)
   drawTextE27_landscape(buf, botLx, botPxStart + 2, botLine, 1);
