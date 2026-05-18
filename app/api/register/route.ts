@@ -83,12 +83,15 @@ export async function POST(req: NextRequest) {
       poolOps.push(redis.sadd(`pool:screen:${screenId}`, device.deviceId));
     }
 
-    // Fire-and-forget — ne bloque pas la réponse au firmware
-    // Si Redis est down ici le device se register quand même, la pool sera incomplète
-    // mais se reconstruira au prochain boot de chaque ESP
-    Promise.all(poolOps).catch((err) =>
-      console.error("[/api/register] pool update error:", err)
-    );
+    // CRITIQUE : on attend le résultat — si un ESP n'est pas dans pool:screen:*
+    // il ne recevra jamais pendingValidation et ne pourra pas participer au minage.
+    try {
+      await Promise.all(poolOps);
+      console.log(`[/api/register] pool ok device=${device.deviceId} screens=${screens.join(",")}`);
+    } catch (err) {
+      // Non-fatal : le device est enregistré, la pool sera rafraîchie au prochain boot
+      console.error("[/api/register] pool update error (non-fatal):", err);
+    }
 
     const host =
       process.env.NEXT_PUBLIC_BASE_URL ??

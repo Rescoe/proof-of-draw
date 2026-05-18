@@ -1125,20 +1125,88 @@ bool doPull() {
 
 
 
+// ─── FETCH CANDIDAT + SCORE LOCAL (V2) ──────────────────────────────────────
+// Télécharge le binaire candidat (9472 bytes black+red) depuis /api/candidate-frame,
+// délègue le calcul à computeComplexityScore() qui réutilise son propre static merged
+// (déjà en BSS — aucun octet BSS supplémentaire ajouté ici).
+// Libère cBlack/cRed avant de retourner pour laisser la heap propre au POST suivant.
+// Retourne le score composite [0,1], ou -1.0 en cas d'échec → l'appelant fait V1.
+float fetchCandidateScore(const String& candidateId) {
+  logHeapState("V2-FETCH-BEFORE");
+
+  uint8_t* cBlack = (uint8_t*)malloc(BUF_SIZE);
+  uint8_t* cRed   = (uint8_t*)malloc(BUF_SIZE);
+  if (!cBlack || !cRed) {
+    Serial.println("[V2] malloc failed — fallback V1");
+    free(cBlack); free(cRed);
+    return -1.0f;
+  }
+
+  bool ok = false;
+  {
+    WiFiClientSecure client;
+    client.setInsecure();
+    HTTPClient http;
+
+    String url = String(SERVER_URL)
+               + "/api/candidate-frame?candidateId=" + candidateId
+               + "&fmt=bin&screen=" SCREEN_TYPE;
+    Serial.println("[V2] " + url);
+
+    if (!http.begin(client, url)) {
+      Serial.println("[V2] begin() failed");
+      free(cBlack); free(cRed);
+      return -1.0f;
+    }
+    http.setTimeout(20000);
+    http.useHTTP10(true);
+
+    int code = http.GET();
+    Serial.printf("[V2] candidate-frame → %d\n", code);
+
+    if (code == 200) {
+      // Lecture stream brut : black[BUF_SIZE] || red[BUF_SIZE]
+      WiFiClient* s = http.getStreamPtr();
+      auto readFull = [](WiFiClient* s, uint8_t* dst, size_t len) -> size_t {
+        size_t total = 0; unsigned long t0 = millis();
+        while (total < len && millis() - t0 < 15000) {
+          if (s->available()) { size_t g = s->readBytes(dst + total, len - total); if (g) total += g; }
+          else delay(10);
+        }
+        return total;
+      };
+      size_t bRead = readFull(s, cBlack, BUF_SIZE);
+      size_t rRead = readFull(s, cRed,   BUF_SIZE);
+      Serial.printf("[V2] lu black=%u red=%u\n", bRead, rRead);
+      ok = (bRead == BUF_SIZE && rRead == BUF_SIZE);
+      if (!ok) Serial.println("[V2] lecture incomplete — fallback V1");
+    } else {
+      // 404 = expiré, 409 = remplacé, autre = erreur réseau
+      Serial.printf("[V2] code %d — fallback V1\n", code);
+    }
+    http.end();  // ferme TLS ici, avant les calculs CPU
+  }
+
+  if (!ok) { free(cBlack); free(cRed); return -1.0f; }
+
+  // computeComplexityScore réutilise son static merged interne — 0 octet BSS ajouté
+  float score = computeComplexityScore(cBlack, cRed, BUF_SIZE);
+
+  free(cBlack); cBlack = nullptr;
+  free(cRed);   cRed   = nullptr;
+
+  logHeapState("V2-FETCH-AFTER");
+  return score;
+}
+
 // ─── VALIDATION ─────────────────────────────────────────────────────────────
 bool doValidate() {
   if (pendingCandidateId.length() == 0) return true;
 
-  // ← SUPPRIME ces lignes qui bloquent la validation après un consensus :
-  // if (consensusJustDisplayed) {
-  //   pendingCandidateId = "";
-  //   consensusJustDisplayed = false;
-  //   return true;
-  // }
-
   Serial.println("[VALIDATE] Debut: " + pendingCandidateId);
   logHeapState("VALIDATE-BEFORE");
 
+  // Libère les buffers display → 9472 bytes récupérés pour TLS + fetch candidat
   free(blackBuf); blackBuf = nullptr;
   free(redBuf);   redBuf   = nullptr;
 
@@ -1154,7 +1222,7 @@ bool doValidate() {
   {
     DynamicJsonDocument doc(512);
     DeserializationError err = deserializeJson(doc, resp);
-    resp = "";
+    resp = "";  // libère la String dès que parsé
 
     if (err) {
       Serial.print("[VALIDATE] JSON err: ");
@@ -1177,6 +1245,7 @@ bool doValidate() {
 
     JsonObject cand    = doc["candidate"];
     String candidateId = cand["candidateId"] | "";
+    float scoreServer  = cand["score_server"] | 0.5f;
 
     if (candidateId.length() == 0) {
       Serial.println("[VALIDATE] candidateId absent");
@@ -1184,19 +1253,31 @@ bool doValidate() {
       goto validate_realloc;
     }
 
-    float score = cand["score_server"] | 0.5f;
-    Serial.printf("[VALIDATE] candidateId=%s score=%.3f\n", candidateId.c_str(), score);
+    Serial.printf("[VALIDATE] candidateId=%s scoreServeur=%.3f\n",
+                  candidateId.c_str(), scoreServer);
+
+    // ── V2 : calcul local du score ────────────────────────────────────────────
+    // fetchCandidateScore() télécharge le binaire, calcule le score, libère la heap.
+    // En cas d'échec → score = -1 → on bascule en V1 (echo scoreServer).
+    float localScore = fetchCandidateScore(candidateId);
+    float score = (localScore >= 0.0f) ? localScore : scoreServer;
+    if (localScore < 0.0f)
+      Serial.println("[VALIDATE] Fallback V1 — score serveur utilisé");
+    else
+      Serial.printf("[VALIDATE] V2 score local=%.3f vs serveur=%.3f\n", localScore, scoreServer);
 
     String signature = signV1(candidateId, score);
     char scoreStr[8];
     dtostrf(score, 1, 3, scoreStr);
 
+    // entropy/transitions/rle = score composite (le serveur les stocke mais
+    // ne rejette pas un vote si les trois valeurs sont identiques)
     String body = String("{\"deviceId\":\"") + deviceId + "\","
                   "\"candidateId\":\"" + candidateId + "\","
-                  "\"entropy\":" + scoreStr + ","
+                  "\"entropy\":"     + scoreStr + ","
                   "\"transitions\":" + scoreStr + ","
-                  "\"rle\":" + scoreStr + ","
-                  "\"score\":" + scoreStr + ","
+                  "\"rle\":"         + scoreStr + ","
+                  "\"score\":"       + scoreStr + ","
                   "\"signature\":\"" + signature + "\"}";
 
     pendingCandidateId = "";
@@ -1207,7 +1288,7 @@ bool doValidate() {
     if (vOk) {
       Serial.println("[VALIDATE] Vote OK");
       if (vResp.indexOf("\"blockMined\":true") >= 0) {
-        Serial.println("[VALIDATE] BLOC MINE");
+        Serial.println("[VALIDATE] BLOC MINE !");
         frameReady = true;
       }
     } else {

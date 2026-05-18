@@ -8,8 +8,9 @@ import { getChainHead, getCurrentCandidate, popObsTask } from "@/lib/chain";
 import type { ChainSummary } from "@/lib/chain";
 
 const DEVICE_ID_REGEX = /^dev_[A-Z0-9]{8}$/;
-const PULL_WINDOW_SEC = parseInt(process.env.PULL_WINDOW_SEC ?? "900");
-const PULL_MAX        = parseInt(process.env.PULL_LIMIT_PER_WINDOW ?? "2");
+// 5 pulls/min — compatible avec PULL_INTERVAL=60s + VALIDATE_INTERVAL=30s du firmware
+const PULL_WINDOW_SEC = parseInt(process.env.PULL_WINDOW_SEC ?? "60");
+const PULL_MAX        = parseInt(process.env.PULL_LIMIT_PER_WINDOW ?? "5");
 const BLACKLIST_TTL   = parseInt(process.env.BLACKLIST_TTL_SECONDS ?? "604800");
 
 const rlKey       = (deviceId: string) => `rl:pull:${deviceId}`;
