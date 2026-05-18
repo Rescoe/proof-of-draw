@@ -24,6 +24,59 @@ const SCREEN_LABELS: Record<string, string> = {
   oled096:   'OLED 0.96"',
 };
 
+// ─── Observer collapse ────────────────────────────────────────────────────────
+
+function ObserverSection({ revalidated }: { revalidated: NonNullable<BlockWithImage["revalidated"]> }) {
+  const [expanded, setExpanded] = useState(false);
+
+  // Agréger les observers uniques : deviceId → liste de timestamps de confirmation
+  const observerMap = new Map<string, number[]>();
+  for (const r of revalidated) {
+    for (const id of r.observerIds) {
+      const existing = observerMap.get(id) ?? [];
+      if (r.confirmedAt > 0) existing.push(r.confirmedAt);
+      observerMap.set(id, existing);
+    }
+  }
+  const observers = Array.from(observerMap.entries()); // [deviceId, confirmedAts[]]
+  const confirmedEntries = revalidated.filter(r => r.confirmedAt > 0).length;
+
+  if (observers.length === 0) return null;
+
+  return (
+    <div className="bd-section">
+      <button
+        className="bd-obs-header"
+        onClick={() => setExpanded(v => !v)}
+        aria-expanded={expanded}
+      >
+        <span className="bd-section-title" style={{ margin: 0 }}>
+          Observers ({observers.length})
+        </span>
+        <span className="bd-obs-badge">
+          {confirmedEntries}/{revalidated.length} validations
+        </span>
+        <span className="bd-obs-chevron">{expanded ? "▾" : "▸"}</span>
+      </button>
+
+      {expanded && (
+        <div className="bd-obs-list">
+          {observers.map(([id, ats]) => (
+            <div key={id} className="bd-obs-row">
+              <code className="bd-id-chip">{id}</code>
+              <span className="bd-obs-count">
+                {ats.length > 0
+                  ? `✓ ${ats.length} confirm.`
+                  : "⏳ en attente"}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ─── Tab : Détails ────────────────────────────────────────────────────────────
 
 function TabDetails({ block }: { block: BlockWithImage }) {
@@ -69,36 +122,9 @@ function TabDetails({ block }: { block: BlockWithImage }) {
         </div>
       )}
 
-      {/* Ré-validations */}
+      {/* Observers — collapsible */}
       {block.revalidated && block.revalidated.length > 0 && (
-        <div className="bd-section">
-          <div className="bd-section-title">
-            Ré-validations ({block.revalidated.filter(r => r.confirmedAt > 0).length}/{block.revalidated.length} confirmées)
-          </div>
-          <div className="bd-revalidated-list">
-            {block.revalidated.map((r) => (
-              <div key={r.blockHash} className={`bd-reval-row${r.confirmedAt > 0 ? " bd-reval-row--confirmed" : ""}`}>
-                <div className="bd-reval-hash">
-                  <span className="bd-hash-label">bloc</span>
-                  <code className="bd-hash-value">{r.blockHash.slice(0, 20)}…</code>
-                </div>
-                <div className="bd-reval-status">
-                  {r.confirmedAt > 0
-                    ? <span className="bd-reval-ok">✓ confirmé · {r.observerIds.length} observer{r.observerIds.length > 1 ? "s" : ""}</span>
-                    : <span className="bd-reval-pending">⏳ en attente</span>
-                  }
-                </div>
-                {r.observerIds.length > 0 && (
-                  <div className="bd-id-list bd-id-list--sm">
-                    {r.observerIds.map((id) => (
-                      <code key={id} className="bd-id-chip bd-id-chip--sm">{id}</code>
-                    ))}
-                  </div>
-                )}
-              </div>
-            ))}
-          </div>
-        </div>
+        <ObserverSection revalidated={block.revalidated} />
       )}
 
       <div className="bd-hashes">
@@ -498,19 +524,30 @@ export function BlockDetail({ block, onClose }: { block: BlockWithImage; onClose
         }
         .bd-id-chip--sm { font-size: 9px; padding: 1px 5px; }
 
-        /* Ré-validations */
-        .bd-revalidated-list { display: flex; flex-direction: column; gap: 6px; }
-        .bd-reval-row {
-          background: rgba(255,255,255,0.02);
-          border: 1px solid rgba(255,255,255,0.06);
-          border-radius: 6px; padding: 8px 10px;
-          display: flex; flex-direction: column; gap: 4px;
+        /* Observer collapse */
+        .bd-obs-header {
+          display: flex; align-items: center; gap: 8px;
+          background: none; border: none; cursor: pointer; padding: 0;
+          width: 100%; text-align: left;
         }
-        .bd-reval-row--confirmed { border-color: rgba(74,222,128,0.15); }
-        .bd-reval-hash { display: flex; gap: 6px; align-items: center; }
-        .bd-reval-status { font-size: 11px; }
-        .bd-reval-ok      { color: #4ade80; }
-        .bd-reval-pending { color: var(--text3, #64748b); }
+        .bd-obs-header:hover .bd-section-title { color: var(--text2, #94a3b8); }
+        .bd-obs-badge {
+          font-size: 10px; font-family: monospace;
+          color: #4ade80;
+          background: rgba(74,222,128,0.08);
+          border: 1px solid rgba(74,222,128,0.2);
+          border-radius: 4px; padding: 1px 6px;
+        }
+        .bd-obs-chevron { font-size: 11px; color: var(--text3, #64748b); margin-left: auto; }
+        .bd-obs-list { display: flex; flex-direction: column; gap: 4px; margin-top: 6px; }
+        .bd-obs-row {
+          display: flex; align-items: center; gap: 8px;
+          padding: 4px 6px;
+          background: rgba(255,255,255,0.02);
+          border: 1px solid rgba(255,255,255,0.05);
+          border-radius: 6px;
+        }
+        .bd-obs-count { font-size: 10px; color: #4ade80; margin-left: auto; white-space: nowrap; }
 
         /* Actions */
         .bd-muted { font-size: 12px; color: var(--text3, #64748b); }
