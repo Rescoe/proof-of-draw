@@ -94,6 +94,37 @@ export async function POST(req: NextRequest) {
 
   console.log(`[submit-candidate] device=${deviceId} screen=${screen} score=${metrics.score.toFixed(3)} drawScore=${drawScore}${warning ? " warning=low_complexity" : ""}`);
 
+  // ── Rejet automatique : image chargée non retravaillée ───────────────────────
+  // Condition : faible effort créatif (drawScore ≤ 1) ET faible complexité visuelle
+  // (score < MIN_COMPLEXITY_SCORE). Les deux conditions ensemble indiquent une image
+  // importée affichée telle quelle, sans travail artistique ajouté.
+  if (drawScore <= 1 && metrics.score < MIN_COMPLEXITY_SCORE) {
+    console.warn(
+      `[submit-candidate] REJET automatique device=${deviceId}` +
+      ` drawScore=${drawScore} complexity=${metrics.score.toFixed(4)}` +
+      ` — image chargée non retravaillée`,
+    );
+    // Stocker en Redis pour l'audit (sans TTL — blocs rejetés conservés)
+    const rejectedEntry = JSON.stringify({
+      deviceId, screen, drawScore,
+      score: metrics.score,
+      reason: "low_quality_imported_image",
+      rejectedAt: Date.now(),
+      workTitle: workTitle ?? null,
+      drawArtistName: drawArtistName ?? null,
+    });
+    await redis.lpush("rejected:draws", rejectedEntry);
+    await redis.ltrim("rejected:draws", 0, 199);  // garder les 200 derniers
+
+    return NextResponse.json({
+      rejected:  true,
+      reason:    "low_quality_imported_image",
+      message:   `Dessin rejeté : image chargée non retravaillée (Score PoD=${drawScore}, complexité=${(metrics.score * 100).toFixed(2)}%). Dessinez davantage pour enrichir l'œuvre.`,
+      drawScore,
+      score:     metrics.score,
+    }, { status: 400 });
+  }
+
   const existing = await getCurrentCandidate();
   if (existing) {
     return NextResponse.json({

@@ -116,7 +116,8 @@ String pendingDisplayTs  = "";   // timestamp formaté "DD/MM HH:MM" (UTC)
 // Tâche d'observation envoyée par le serveur quand le device est idle.
 // Contient les hashes des blocs à re-confirmer (JSON array stringifié).
 // Aucun changement d'affichage — confirmation purement réseau.
-String pendingObsHashes = "";   // ex: ["abcd...","1234..."]
+String pendingObsHashes  = "";   // ex: ["abcd...","1234..."]
+String pendingObsTarget  = "";   // hash du bloc cible (contient les entrées revalidated[])
 
 // ─── TICKER OLED NON-BLOQUANT ────────────────────────────────────────────────
 // Le buffer artwork est alloué une seule fois sur le heap et réutilisé.
@@ -444,9 +445,126 @@ void clearBandE27(uint8_t* buf, int yStart, int yEnd) {
   }
 }
 
-// Brûle un cartel fixe dans le buffer E27 :
-//   - Bande haute  (12px) : displayTs (horodatage)
-//   - Bande basse  (12px) : artistName + " · " + workTitle (tronqué)
+// ─── FONCTIONS PAYSAGE (câble à gauche, rotation 90° sens horaire) ────────────
+//
+// Repères :
+//   Portrait  : PW=176, PH=264 — tel que stocké dans le buffer
+//   Paysage   : LW=264, LH=176 — tel que vu par l'utilisateur
+//
+// Transformation paysage→portrait : px=ly, py=(PH-1)-lx
+//   soit : setPixelE27(buf, ly, E27_HEIGHT-1-lx)
+//
+// Caractère 5×7 en paysage (90° CW) :
+//   - lx : direction de lecture (gauche→droite en paysage)
+//   - ly : hauteur du caractère (haut→bas en paysage)
+//   - Largeur en lx : 7px (7 rows du font)   avance = 8px
+//   - Hauteur en ly : 5px (5 cols du font)
+
+// Efface des colonnes portrait (= bandes horizontales en paysage)
+void clearPortraitCols(uint8_t* buf, int pxStart, int pxEnd) {
+  for (int px = pxStart; px <= pxEnd && px < E27_WIDTH; px++) {
+    for (int py = 0; py < E27_HEIGHT; py++) {
+      int xr = E27_WIDTH - 1 - px;
+      int byteIdx = (xr / 8) + py * (E27_WIDTH / 8);
+      buf[byteIdx] |= (0x80 >> (xr & 7));  // bit=1 = blanc
+    }
+  }
+}
+
+// Ligne séparatrice : colonne portrait noire = ligne horizontale en paysage
+void drawLandscapeSepLine(uint8_t* buf, int portraitX) {
+  for (int py = 0; py < E27_HEIGHT; py++)
+    setPixelE27(buf, portraitX, py);
+}
+
+// Dessine un caractère rotationné 90° CW dans le repère paysage
+void drawCharE27_landscape(uint8_t* buf, int lx, int ly, char c, int scale = 1) {
+  int idx = charIndex(c);
+  for (int col = 0; col < 5; col++) {
+    uint8_t bits = pgm_read_byte(&FONT_5x7[idx][col]);
+    for (int row = 0; row < 7; row++) {
+      if (bits & (0x40 >> row)) {
+        for (int s1 = 0; s1 < scale; s1++)
+          for (int s2 = 0; s2 < scale; s2++) {
+            int lx_px = lx + row * scale + s1;   // rows → lx (direction lecture)
+            int ly_px = ly + col * scale + s2;   // cols → ly (hauteur)
+            // Paysage → portrait : px=ly_px, py=(PH-1)-lx_px
+            setPixelE27(buf, ly_px, E27_HEIGHT - 1 - lx_px);
+          }
+      }
+    }
+  }
+}
+
+void drawTextE27_landscape(uint8_t* buf, int lx, int ly, const String& text, int scale = 1) {
+  int cx = lx;
+  for (unsigned int i = 0; i < text.length(); i++) {
+    drawCharE27_landscape(buf, cx, ly, text.charAt(i), scale);
+    cx += 8 * scale;  // 7px char + 1px gap dans la direction de lecture (lx)
+    yield();
+  }
+}
+
+int textWidthE27_landscape(const String& text, int scale = 1) {
+  return (int)text.length() * 8 * scale;
+}
+
+// Brûle un cartel PAYSAGE dans le buffer E27 :
+//   - Bande SUPÉRIEURE paysage (ly=0..BAND-1 = portrait cols gauches)  : timestamp + bloc
+//   - Bande INFÉRIEURE paysage (ly=LH-BAND..LH-1 = portrait cols droites) : artiste + titre
+//
+// Les bandes couvrent ~13px sur chaque bord paysage (top/bottom).
+// L'artwork est légèrement rogné mais la composition reste lisible.
+
+void burnEinkCartel_landscape(uint8_t* buf,
+                               const String& workTitle,
+                               const String& artistName,
+                               const String& ts,
+                               int blockIndex = -1) {
+  if (!buf) return;
+  const int BAND = 13;    // largeur en paysage-Y (= colonnes portrait)
+  // LH = E27_WIDTH = 176 (hauteur paysage = largeur portrait)
+  // LW = E27_HEIGHT = 264 (largeur paysage = hauteur portrait)
+
+  // ── Bande supérieure paysage : portrait cols [0..BAND-1] ─────────────────
+  clearPortraitCols(buf, 0, BAND - 1);
+  drawLandscapeSepLine(buf, BAND - 1);  // séparateur à ly=BAND-1
+
+  // Texte : timestamp + numéro de bloc
+  String topLine = ts.length() > 0 ? ts : "PROOF-OF-DRAW";
+  if (blockIndex >= 0) topLine += " Block #" + String(blockIndex);
+  // Tronquer si trop large (LW=264)
+  while (topLine.length() > 0 && textWidthE27_landscape(topLine, 1) > E27_HEIGHT - 4)
+    topLine.remove(topLine.length() - 1);
+  // Centrage en lx (LW=E27_HEIGHT=264)
+  int topLx = max(0, (E27_HEIGHT - textWidthE27_landscape(topLine, 1)) / 2);
+  // Position ly : 2px de marge depuis le bord (ly=2, char s'étend sur 5px jusqu'à ly=6)
+  drawTextE27_landscape(buf, topLx, 2, topLine, 1);
+
+  // ── Bande inférieure paysage : portrait cols [E27_WIDTH-BAND..E27_WIDTH-1] ──
+  int botPxStart = E27_WIDTH - BAND;  // 163
+  clearPortraitCols(buf, botPxStart, E27_WIDTH - 1);
+  drawLandscapeSepLine(buf, botPxStart);  // séparateur à ly=163
+
+  String botLine;
+  if (artistName.length() > 0 && workTitle.length() > 0)
+    botLine = artistName + " - " + workTitle;
+  else if (artistName.length() > 0)
+    botLine = artistName;
+  else if (workTitle.length() > 0)
+    botLine = workTitle;
+
+  while (botLine.length() > 0 && textWidthE27_landscape(botLine, 1) > E27_HEIGHT - 4)
+    botLine.remove(botLine.length() - 1);
+
+  int botLx  = max(0, (E27_HEIGHT - textWidthE27_landscape(botLine, 1)) / 2);
+  // Position ly : 2px au-dessus du séparateur (botPxStart+2 = 165)
+  drawTextE27_landscape(buf, botLx, botPxStart + 2, botLine, 1);
+}
+
+// Brûle un cartel fixe dans le buffer E27 (mode portrait, conservé pour référence) :
+//   - Bande haute  (13px) : displayTs (horodatage)
+//   - Bande basse  (13px) : artistName + " · " + workTitle (tronqué)
 // Les bandes recouvrent le bord de l'artwork — pas de redimensionnement du canvas.
 
 // blockIndex : numéro du bloc courant (-1 = absent)
@@ -596,7 +714,7 @@ void tickerStep() {
   if (!oledTickActive || !oledArtBuf || oledTicker.length() == 0) return;
 
   unsigned long now = millis();
-  if (now - lastTickMs < 35) return;  // ~28 fps
+  if (now - lastTickMs < 60) return;  // ~16 fps — vitesse réduite pour lisibilité
   lastTickMs = now;
 
   // ── Réinitialisation bus si on vient du SPI (E-ink) ──────────────────────
@@ -958,7 +1076,7 @@ bool doFetchFrameOLED(const String& frameId, const String& frameSource) {
     if (pendingArtistName.length() > 0)
       ticker += (ticker.length() > 0 ? "  |  " : "") + pendingArtistName;
     if (currentBlockIndex >= 0)
-      ticker += "  #" + String(currentBlockIndex);
+      ticker += "  Block #" + String(currentBlockIndex);
     if (pendingDisplayTs.length() > 0)
       ticker += "  " + pendingDisplayTs;
 
@@ -1054,15 +1172,17 @@ bool doFetchFrameE27(const String& frameId, const String& frameSource) {
   }
   // TLS fermé
 
-  // ── Cartel e-ink : brûler le header/footer AVANT l'affichage ───────────────
-  // Bande haute : timestamp + numéro de bloc (#N)
-  // Bande basse : artiste · titre
+  // ── Cartel e-ink PAYSAGE (câble à gauche) : brûler AVANT l'affichage ────────
+  // Bande supérieure paysage : timestamp + "Block #N"
+  // Bande inférieure paysage : artiste - titre
+  // Texte rotationné 90° sens horaire pour être lisible en paysage.
   if (pendingWorkTitle.length() > 0 || pendingArtistName.length() > 0
       || pendingDisplayTs.length() > 0 || currentBlockIndex >= 0) {
-    Serial.printf("[E27] Cartel: ts=%s artist=%s title=%s bloc=%d\n",
+    Serial.printf("[E27] Cartel landscape: ts=%s artist=%s title=%s bloc=%d\n",
                   pendingDisplayTs.c_str(), pendingArtistName.c_str(),
                   pendingWorkTitle.c_str(), currentBlockIndex);
-    burnEinkCartel(e27Buf, pendingWorkTitle, pendingArtistName, pendingDisplayTs, currentBlockIndex);
+    burnEinkCartel_landscape(e27Buf, pendingWorkTitle, pendingArtistName,
+                             pendingDisplayTs, currentBlockIndex);
   }
 
   if (!displayE27Buffer(e27Buf)) {
@@ -1207,7 +1327,12 @@ bool doPull() {
           }
           hashArr += "]";
           pendingObsHashes = hashArr;
-          Serial.println("[PULL] Tâche obs: " + pendingObsHashes);
+          // targetBlockHash : identifie le bloc qui contient les entrées revalidated[]
+          const char* tgt = obs["targetBlockHash"] | "";
+          pendingObsTarget = String(tgt);
+          Serial.println("[PULL] Tâche obs hashes: " + pendingObsHashes);
+          if (pendingObsTarget.length() > 0)
+            Serial.println("[PULL] Tâche obs target: " + pendingObsTarget.substring(0, 12) + "...");
         }
       }
     }
@@ -1289,13 +1414,21 @@ bool doObsConfirm() {
 
   Serial.println("[OBS] Confirmation observation: " + pendingObsHashes);
 
+  // Inclure targetBlockHash pour que le serveur retrouve le bon bloc
+  // sans avoir à chercher dans toute la chaîne
   String body = "{\"deviceId\":\"" + deviceId
-              + "\",\"blockHashes\":" + pendingObsHashes + "}";
+              + "\",\"blockHashes\":" + pendingObsHashes;
+  if (pendingObsTarget.length() == 64) {  // hash valide = 64 chars hex
+    body += ",\"targetBlockHash\":\"" + pendingObsTarget + "\"";
+  }
+  body += "}";
+
   String resp;
   bool ok = httpPost("/api/obs-confirm", body, resp);
 
   Serial.printf("[OBS] confirm → %s resp: %s\n", ok ? "OK" : "FAIL", resp.c_str());
-  pendingObsHashes = "";  // toujours vider, même en cas d'échec
+  pendingObsHashes = "";   // toujours vider, même en cas d'échec
+  pendingObsTarget = "";
   return ok;
 }
 

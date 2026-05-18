@@ -35,6 +35,10 @@ export default async function HomePage() {
           <Link href="/my-devices" className="btn btn-ghost">
             Mes ESP
           </Link>
+
+          <Link href="/gallery" className="btn btn-ghost">
+            Block Explorer →
+          </Link>
         </div>
       </section>
 

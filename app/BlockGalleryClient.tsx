@@ -6,6 +6,7 @@
 // Axe 5 : modal avec 3 onglets (Détails, Actions, Replay).
 
 import { useState, useCallback } from "react";
+import Link from "next/link";
 import type { BlockWithImage } from "@/lib/chain";
 import { BlockFrameCanvas } from "./BlockFrameCanvas";
 import { BlockDetail } from "./BlockDetail";
@@ -113,6 +114,9 @@ export function BlockGalleryClient({ blocks }: { blocks: BlockWithImage[] }) {
           Blocs récents
         </h2>
         <span className="block-gallery__count">{blocks.length} bloc{blocks.length > 1 ? "s" : ""}</span>
+        <Link href="/gallery" className="block-gallery__explorer-link">
+          Voir tout →
+        </Link>
       </div>
 
       <div className="block-gallery__grid">
@@ -161,6 +165,16 @@ export function BlockGalleryClient({ blocks }: { blocks: BlockWithImage[] }) {
           padding: 3px 10px;
           border-radius: 20px;
         }
+        .block-gallery__explorer-link {
+          font-size: 12px;
+          color: var(--accent, #7c6bff);
+          text-decoration: none;
+          padding: 3px 10px;
+          border: 1px solid rgba(124,107,255,0.2);
+          border-radius: 20px;
+          transition: background 0.12s;
+        }
+        .block-gallery__explorer-link:hover { background: rgba(124,107,255,0.08); }
         .block-gallery__grid {
           display: grid;
           grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));

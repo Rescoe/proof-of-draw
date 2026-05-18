@@ -101,7 +101,16 @@ unsigned long lastPullMs        = 0;
 unsigned long nextPullIntervalMs = PULL_INTERVAL;  // adapté par retryAfter serveur
 
 bool lastFrameWasConsensus = false;
-// (renomme partout dans le code)
+
+// Métadonnées cartel (lues depuis cartelMeta du pull)
+String pendingWorkTitle  = "";
+String pendingArtistName = "";
+String pendingDisplayTs  = "";
+
+// Ré-validation (Axe 3)
+String pendingObsHashes  = "";   // JSON array de hashes en attente
+String pendingObsTarget  = "";   // targetBlockHash (hash du bloc portant les revalidated[])
+
 // ─── EEPROM helpers ────────────────────────────────────────────────────────
 
 bool onboardingAlreadyShown() {
@@ -427,6 +436,86 @@ void drawText(uint8_t* buf, int x, int y, const String& text) {
 }
 
 int textWidth(const String& t) { return t.length() * 6; }
+
+// ─── CARTEL HELPERS (E-Ink 2.9" BWR — 296×128, colonnes-majeures) ──────────
+
+// Mettre des lignes horizontales à blanc (e-ink: 1=blanc) dans le buffer colonne-major.
+// Coordonnées logiques : x=0..295, y=0..127.
+// byteIndex = x*(IMG_H/8) + y/8 ; bit = 0x80 >> (y & 7)
+void clearRows29(uint8_t* buf, int yStart, int yEnd) {
+  for (int x = 0; x < IMG_W; x++) {
+    for (int y = yStart; y <= yEnd && y < IMG_H; y++) {
+      buf[x * (IMG_H / 8) + (y / 8)] |= (0x80 >> (y & 7));
+    }
+  }
+}
+
+// Ligne horizontale pleine (noire) à la hauteur logique y.
+void drawHLine29(uint8_t* buf, int y) {
+  for (int x = 0; x < IMG_W; x++) setPixel(buf, x, y);
+}
+
+// Cartel paysage pour E-Ink 2.9" BWR (296×128) :
+//   Bande haute  y=0..12   → timestamp + "Bloc #N"
+//   Séparateur   y=13
+//   Bande basse  y=114
+//   Séparateur   y=115..127 → artiste + titre
+void burnEinkCartel_29(uint8_t* bBuf, uint8_t* rBuf,
+                       const String& workTitle, const String& artistName,
+                       const String& ts, int blockIndex) {
+  const int BAND = 13;  // hauteur des bandes en pixels
+
+  // ── Bande haute ──────────────────────────────────────────────────────────
+  clearRows29(bBuf, 0, BAND - 1);
+  if (rBuf) clearRows29(rBuf, 0, BAND - 1);
+  drawHLine29(bBuf, BAND);   // séparateur
+
+  String topLine = ts.length() > 0 ? ts : "PROOF-OF-DRAW";
+  if (blockIndex >= 0) topLine += " #" + String(blockIndex);
+  while (topLine.length() > 0 && textWidth(topLine) > IMG_W - 4)
+    topLine.remove(topLine.length() - 1);
+  int topX = max(0, (IMG_W - textWidth(topLine)) / 2);
+  drawText(bBuf, topX, 2, topLine);
+
+  // ── Bande basse ──────────────────────────────────────────────────────────
+  int botSep = IMG_H - BAND - 1;   // = 114
+  clearRows29(bBuf, botSep + 1, IMG_H - 1);
+  if (rBuf) clearRows29(rBuf, botSep + 1, IMG_H - 1);
+  drawHLine29(bBuf, botSep);       // séparateur
+
+  String botLine = "";
+  if (artistName.length() > 0 && workTitle.length() > 0)
+    botLine = artistName + " - " + workTitle;
+  else if (artistName.length() > 0)
+    botLine = artistName;
+  else if (workTitle.length() > 0)
+    botLine = workTitle;
+  if (botLine.length() == 0) botLine = "Proof-of-Draw";
+
+  while (botLine.length() > 0 && textWidth(botLine) > IMG_W - 4)
+    botLine.remove(botLine.length() - 1);
+  int botX = max(0, (IMG_W - textWidth(botLine)) / 2);
+  drawText(bBuf, botX, botSep + 2, botLine);
+}
+
+// ─── OBS-CONFIRM (Axe 3) ─────────────────────────────────────────────────────
+
+bool doObsConfirm() {
+  if (pendingObsHashes.length() == 0) return true;
+
+  String body = "{\"deviceId\":\"" + deviceId
+              + "\",\"blockHashes\":" + pendingObsHashes;
+  if (pendingObsTarget.length() == 64)
+    body += ",\"targetBlockHash\":\"" + pendingObsTarget + "\"";
+  body += "}";
+
+  String resp;
+  bool ok = httpPost("/api/obs-confirm", body, resp);
+  Serial.printf("[OBS-CONFIRM] ok=%d resp=%s\n", ok, resp.c_str());
+  pendingObsHashes = "";
+  pendingObsTarget = "";
+  return ok;
+}
 
 // ─── BASE64 (identique v1.5) ────────────────────────────────────────────────
 static const int8_t B64_TABLE[256] PROGMEM = {
@@ -826,6 +915,11 @@ bool doFetchFrame(const String& frameId, const String& frameSource) {
   }
   // TLS fermé ici — le panel a eu le temps de finir son refresh précédent
 
+  // ── Cartel (bandes de métadonnées en haut et bas) ────────────────────────
+  burnEinkCartel_29(blackBuf, redBuf,
+                    pendingWorkTitle, pendingArtistName,
+                    pendingDisplayTs, currentBlockIndex);
+
   if (hasDisplayedFrame) {
     clearDisplayWhite();
     // Pas de delay(3000) ici : initDisplayForRefresh() dans refreshDisplay()
@@ -908,7 +1002,7 @@ bool doPull() {
       return false;
     }
 
-    DynamicJsonDocument doc(1024);
+    DynamicJsonDocument doc(2048);
     DeserializationError err = deserializeJson(doc, http.getStream());
     http.end();
 
@@ -937,6 +1031,37 @@ bool doPull() {
     if (newFrameId.length() == 0) {
       JsonObject frameObj = doc["frame"];
       if (!frameObj.isNull()) newFrameId = frameObj["frameId"] | "";
+    }
+
+    // ── Métadonnées cartel ────────────────────────────────────────────────
+    JsonObject cm = doc["cartelMeta"];
+    if (!cm.isNull()) {
+      pendingWorkTitle  = cm["workTitle"]      | "";
+      pendingArtistName = cm["drawArtistName"] | "";
+      pendingDisplayTs  = cm["displayTs"]      | "";
+      currentBlockIndex = cm["blockIndex"]     | currentBlockIndex;
+      Serial.printf("[PULL] cartel: title=%s artist=%s ts=%s bloc=%d\n",
+                    pendingWorkTitle.c_str(), pendingArtistName.c_str(),
+                    pendingDisplayTs.c_str(), currentBlockIndex);
+    }
+
+    // ── Tâche d'observation (Axe 3) ───────────────────────────────────────
+    JsonObject obsObj = doc["pendingObservation"];
+    if (!obsObj.isNull()) {
+      JsonArray hArr = obsObj["blockHashes"];
+      if (!hArr.isNull() && hArr.size() > 0) {
+        pendingObsHashes = "[";
+        for (size_t i = 0; i < hArr.size(); i++) {
+          if (i > 0) pendingObsHashes += ",";
+          pendingObsHashes += "\"";
+          pendingObsHashes += hArr[i].as<String>();
+          pendingObsHashes += "\"";
+        }
+        pendingObsHashes += "]";
+        pendingObsTarget = obsObj["targetBlockHash"] | "";
+        Serial.printf("[PULL] obsTask hashes=%u target=%s\n",
+                      hArr.size(), pendingObsTarget.c_str());
+      }
     }
   }
 
@@ -1185,6 +1310,11 @@ void loop() {
       Serial.println("[LOOP] Nouveau candidat détecté, reset timer validation");
       lastValidateMs = millis();
     }
+  }
+
+  // ─── Ré-validation (Axe 3) ────────────────────────────────────────────
+  if (pendingObsHashes.length() > 0) {
+    doObsConfirm();
   }
 
   // ─── Validation d'un candidat en attente ───────────────────────────────

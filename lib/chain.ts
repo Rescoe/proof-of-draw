@@ -305,10 +305,13 @@ export async function finalizeBlock(
   }));
 
   // Pousser les tâches d'observation dans la queue (traitées quand des ESPs sont libres)
+  // targetBlockHash = hash du bloc qui contient les entrées revalidated[]
+  // → permet à obs-confirm de retrouver le bon bloc même si un nouveau bloc est miné entre-temps
   if (recentHashes.length > 0) {
     const obsTask = JSON.stringify({
       type: "revalidate",
       blockHashes: recentHashes,
+      targetBlockHash: blockHash,
       enqueuedAt: minedAt,
     });
     await redis.lpush(KEY_OBS_QUEUE, obsTask);
@@ -473,7 +476,7 @@ export async function getBlockReplay(hash: string): Promise<import("@/lib/types/
 // ─── Queue d'observation (Axe 3) ─────────────────────────────────────────────
 
 /** Dépile la prochaine tâche d'observation. Appelé par /api/pull quand un ESP est disponible. */
-export async function popObsTask(): Promise<{ type: string; blockHashes: string[]; enqueuedAt: number } | null> {
+export async function popObsTask(): Promise<{ type: string; blockHashes: string[]; targetBlockHash?: string; enqueuedAt: number } | null> {
   const raw = await redis.rpop<string>(KEY_OBS_QUEUE);
   if (!raw) return null;
   try {

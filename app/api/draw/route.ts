@@ -95,9 +95,17 @@ export async function POST(req: NextRequest) {
   const drawArtistName = typeof body.drawArtistName === "string" ? body.drawArtistName.trim().slice(0, 40) : undefined;
   const importWarning  = typeof body.importWarning === "string" ? body.importWarning : undefined;
 
-  // Timestamp formaté UTC pour le cartel ESP (DD/MM HH:MM)
+  // Timestamp heure de Paris (CET/CEST) pour le cartel ESP
   const _now = new Date();
-  const displayTs = `${String(_now.getUTCDate()).padStart(2,"0")}/${String(_now.getUTCMonth()+1).padStart(2,"0")} ${String(_now.getUTCHours()).padStart(2,"0")}:${String(_now.getUTCMinutes()).padStart(2,"0")}`;
+  const _parisParts = new Intl.DateTimeFormat("fr-FR", {
+    timeZone: "Europe/Paris",
+    day: "2-digit", month: "2-digit", year: "numeric",
+    hour: "2-digit", minute: "2-digit", hour12: false,
+  }).formatToParts(_now);
+  const _pm: Record<string, string> = {};
+  _parisParts.forEach(p => { if (p.type !== "literal") _pm[p.type] = p.value; });
+  // Format : "DD/MM/YYYY HH:MM (Paris)"
+  const displayTs = `${_pm.day}/${_pm.month}/${_pm.year} ${_pm.hour}:${_pm.minute} (Paris)`;
   // Métadonnées embarquées dans le frame Redis — lues par l'ESP au pull
   const frameMeta = { workTitle, drawArtistName, displayTs };
 
@@ -198,6 +206,20 @@ export async function POST(req: NextRequest) {
         message: "Un dessin est déjà en cours de validation. Le vôtre sera soumis à la prochaine fenêtre.",
         candidateId: candidateData.candidateId,
       });
+    }
+
+    // ── Rejet explicite (image non retravaillée) — PAS de fallback broadcast ──
+    if (candidateRes.status === 400 && candidateData.rejected === true) {
+      // Libérer le lock draw pour que l'utilisateur puisse redessiner immédiatement
+      await redis.del(lockKey(deviceId));
+      return NextResponse.json({
+        ok:         false,
+        validation: "rejected",
+        reason:     candidateData.reason,
+        message:    candidateData.message,
+        drawScore:  candidateData.drawScore,
+        score:      candidateData.score,
+      }, { status: 400 });
     }
 
     if (!candidateRes.ok) {

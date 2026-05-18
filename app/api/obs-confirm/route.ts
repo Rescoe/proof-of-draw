@@ -1,11 +1,17 @@
 // app/api/obs-confirm/route.ts
-// Un ESP idle envoie la confirmation qu'il a "observé" (re-vérifié) un ensemble
-// de blocs antérieurs. Met à jour le tableau `revalidated` du bloc head courant.
-// Aucun changement d'affichage côté ESP — confirmation purement réseau.
+// Un ESP idle confirme qu'il a re-vérifié un ensemble de blocs antérieurs.
+// Met à jour le tableau `revalidated` du bloc qui avait émis la tâche.
+//
+// Le corps attend :
+// {
+//   deviceId:        "dev_XXXXXXXX",
+//   blockHashes:     ["abc123...", "def456..."],   // hashes des blocs vérifiés
+//   targetBlockHash: "ghi789..."                   // hash du bloc qui contient les entrées
+// }
 
 import { NextRequest, NextResponse } from "next/server";
 import { redis } from "@/lib/redis";
-import { getChainHead } from "@/lib/chain";
+import { getBlockByHash, getChainHead } from "@/lib/chain";
 import { isBlacklisted, getIP, forbidden } from "@/lib/rateLimit";
 import { getDevice } from "@/lib/deviceStore";
 
@@ -25,9 +31,10 @@ export async function POST(req: NextRequest) {
     return json({ error: "JSON invalide" }, 400);
   }
 
-  const { deviceId, blockHashes } = body as {
-    deviceId:    string;
-    blockHashes: unknown;
+  const { deviceId, blockHashes, targetBlockHash } = body as {
+    deviceId:        string;
+    blockHashes:     unknown;
+    targetBlockHash: unknown;
   };
 
   if (!deviceId || !DEVICE_ID_REGEX.test(deviceId))
@@ -48,21 +55,48 @@ export async function POST(req: NextRequest) {
   const device = await getDevice(deviceId);
   if (!device) return json({ error: "device inconnu" }, 404);
 
-  // ── Lecture du bloc head ────────────────────────────────────────────────────
-  const head = await getChainHead();
-  if (!head) return json({ ok: true, confirmed: 0, note: "Chaîne vide" });
+  // ── Résoudre le bloc cible ───────────────────────────────────────────────────
+  // Priorité :
+  //   1. targetBlockHash fourni par le client (bloc qui a émis la tâche d'obs)
+  //   2. chain:head courant
+  //   3. Recherche dans les 10 derniers blocs (fallback si nouveau bloc miné entre-temps)
 
-  // Si le bloc head n'a pas de tableau revalidated, rien à faire
-  if (!head.revalidated || head.revalidated.length === 0)
+  let targetBlock = null;
+
+  if (typeof targetBlockHash === "string" && /^[0-9a-f]{64}$/.test(targetBlockHash)) {
+    targetBlock = await getBlockByHash(targetBlockHash);
+  }
+
+  if (!targetBlock) {
+    targetBlock = await getChainHead();
+  }
+
+  // Si le bloc trouvé n'a pas de revalidated correspondant, chercher dans les récents
+  if (targetBlock && (!targetBlock.revalidated?.length ||
+      !targetBlock.revalidated.some(r => validHashes.includes(r.blockHash)))) {
+    const recentHashes = await redis.lrange<string>("chain:recent", 0, 9);
+    for (const bHash of recentHashes) {
+      if (bHash === targetBlock.blockHash) continue;  // déjà essayé
+      const block = await getBlockByHash(bHash);
+      if (!block?.revalidated?.length) continue;
+      if (block.revalidated.some(r => validHashes.includes(r.blockHash))) {
+        targetBlock = block;
+        break;
+      }
+    }
+  }
+
+  if (!targetBlock) return json({ ok: true, confirmed: 0, note: "Chaîne vide" });
+
+  if (!targetBlock.revalidated?.length)
     return json({ ok: true, confirmed: 0, note: "Pas de tâche de revalidation" });
 
-  // ── Mise à jour des entrées correspondantes ─────────────────────────────────
-  let changed = 0;
+  // ── Mise à jour des entrées correspondantes ──────────────────────────────────
   const now = Date.now();
+  let changed = 0;
 
-  const newRevalidated = head.revalidated.map((r) => {
+  const newRevalidated = targetBlock.revalidated.map((r) => {
     if (!validHashes.includes(r.blockHash)) return r;
-    // Ajouter deviceId aux observers si pas déjà présent
     if (r.observerIds.includes(deviceId)) return r;
     changed++;
     return {
@@ -75,19 +109,28 @@ export async function POST(req: NextRequest) {
   if (changed > 0) {
     const allConfirmed = newRevalidated.every((r) => r.confirmedAt > 0);
     const updatedBlock = {
-      ...head,
+      ...targetBlock,
       revalidated:  newRevalidated,
       obsConfirmed: allConfirmed,
     };
 
-    await Promise.all([
-      redis.set("chain:head",                          JSON.stringify(updatedBlock)),
-      redis.set(`chain:block:${head.blockHash}`,       JSON.stringify(updatedBlock)),
-    ]);
+    // Mettre à jour le bloc dans Redis
+    await redis.set(`chain:block:${targetBlock.blockHash}`, JSON.stringify(updatedBlock));
+
+    // Mettre à jour chain:head si c'est lui
+    const head = await getChainHead();
+    if (head?.blockHash === targetBlock.blockHash) {
+      await redis.set("chain:head", JSON.stringify(updatedBlock));
+    }
 
     console.log(
-      `[obs-confirm] device=${deviceId} confirmed=${changed}/${validHashes.length}` +
-      ` block=#${head.blockIndex} allDone=${allConfirmed}`,
+      `[obs-confirm] device=${deviceId} block=#${targetBlock.blockIndex}` +
+      ` confirmed=${changed}/${validHashes.length} allDone=${allConfirmed}`,
+    );
+  } else {
+    console.log(
+      `[obs-confirm] device=${deviceId} block=#${targetBlock.blockIndex}` +
+      ` no new confirmations (already confirmed or no match)`,
     );
   }
 

@@ -182,10 +182,19 @@ export async function GET(req: NextRequest) {
     const fm = frameMeta as Record<string, unknown> | null;
 
     // Timestamp de minage depuis chain:head (fallback si displayTs absent du frame)
-    const minedDate = chainHead ? new Date(chainHead.minedAt) : null;
-    const fallbackTs = minedDate
-      ? `${String(minedDate.getUTCDate()).padStart(2, "0")}/${String(minedDate.getUTCMonth() + 1).padStart(2, "0")} ${String(minedDate.getUTCHours()).padStart(2, "0")}:${String(minedDate.getUTCMinutes()).padStart(2, "0")}`
-      : null;
+    // Converti en heure de Paris (CET/CEST) — même format que /api/draw
+    let fallbackTs: string | null = null;
+    if (chainHead?.minedAt) {
+      const _md = new Date(chainHead.minedAt);
+      const _pp = new Intl.DateTimeFormat("fr-FR", {
+        timeZone: "Europe/Paris",
+        day: "2-digit", month: "2-digit", year: "numeric",
+        hour: "2-digit", minute: "2-digit", hour12: false,
+      }).formatToParts(_md);
+      const _pm: Record<string, string> = {};
+      _pp.forEach(p => { if (p.type !== "literal") _pm[p.type] = p.value; });
+      fallbackTs = `${_pm.day}/${_pm.month}/${_pm.year} ${_pm.hour}:${_pm.minute} (Paris)`;
+    }
 
     const cartelMeta = {
       // Frame payload en priorité ; sinon lecture directe depuis le bloc chaîne
@@ -200,13 +209,14 @@ export async function GET(req: NextRequest) {
     // ── Tâche d'observation (device idle → revalide des blocs antérieurs) ────
     // L'ESP n'affiche rien de nouveau — il envoie juste une confirmation serveur.
     // La tâche est dépilée de la queue uniquement quand le device est vraiment idle.
-    let pendingObservation: { blockHashes: string[]; enqueuedAt: number } | null = null;
+    let pendingObservation: { blockHashes: string[]; targetBlockHash?: string; enqueuedAt: number } | null = null;
     if (isIdle) {
       const obsTask = await popObsTask();
       if (obsTask?.blockHashes?.length) {
         pendingObservation = {
-          blockHashes: obsTask.blockHashes,
-          enqueuedAt:  obsTask.enqueuedAt,
+          blockHashes:      obsTask.blockHashes,
+          targetBlockHash:  obsTask.targetBlockHash,
+          enqueuedAt:       obsTask.enqueuedAt,
         };
         console.log(`[pull] obs task → device=${deviceId} hashes=${obsTask.blockHashes.length}`);
       }

@@ -57,6 +57,50 @@ function TabDetails({ block }: { block: BlockWithImage }) {
         {block.obsConfirmed && <MetaRow label="Observer"  value="Confirmé ✓" green />}
       </div>
 
+      {/* Validateurs */}
+      {block.validatorIds.length > 0 && (
+        <div className="bd-section">
+          <div className="bd-section-title">Validateurs ({block.validatorIds.length})</div>
+          <div className="bd-id-list">
+            {block.validatorIds.map((id) => (
+              <code key={id} className="bd-id-chip">{id}</code>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Ré-validations */}
+      {block.revalidated && block.revalidated.length > 0 && (
+        <div className="bd-section">
+          <div className="bd-section-title">
+            Ré-validations ({block.revalidated.filter(r => r.confirmedAt > 0).length}/{block.revalidated.length} confirmées)
+          </div>
+          <div className="bd-revalidated-list">
+            {block.revalidated.map((r) => (
+              <div key={r.blockHash} className={`bd-reval-row${r.confirmedAt > 0 ? " bd-reval-row--confirmed" : ""}`}>
+                <div className="bd-reval-hash">
+                  <span className="bd-hash-label">bloc</span>
+                  <code className="bd-hash-value">{r.blockHash.slice(0, 20)}…</code>
+                </div>
+                <div className="bd-reval-status">
+                  {r.confirmedAt > 0
+                    ? <span className="bd-reval-ok">✓ confirmé · {r.observerIds.length} observer{r.observerIds.length > 1 ? "s" : ""}</span>
+                    : <span className="bd-reval-pending">⏳ en attente</span>
+                  }
+                </div>
+                {r.observerIds.length > 0 && (
+                  <div className="bd-id-list bd-id-list--sm">
+                    {r.observerIds.map((id) => (
+                      <code key={id} className="bd-id-chip bd-id-chip--sm">{id}</code>
+                    ))}
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
       <div className="bd-hashes">
         <HashRow label="Block hash"   value={block.blockHash} />
         <HashRow label="Parent hash"  value={block.parentHash} />
@@ -432,6 +476,41 @@ export function BlockDetail({ block, onClose }: { block: BlockWithImage; onClose
         .bd-hash-row:hover { background: rgba(255,255,255,0.04); }
         .bd-hash-label { font-size: 10px; color: var(--text3, #64748b); width: 80px; flex-shrink: 0; }
         .bd-hash-value { font-size: 10px; font-family: monospace; color: var(--text2, #94a3b8); }
+
+        /* Sections (validateurs, ré-validations) */
+        .bd-section {
+          display: flex; flex-direction: column; gap: 6px;
+          border-top: 1px solid rgba(255,255,255,0.05);
+          padding-top: 12px;
+        }
+        .bd-section-title {
+          font-size: 11px; font-weight: 700; text-transform: uppercase;
+          letter-spacing: 0.06em; color: var(--text3, #64748b);
+        }
+        .bd-id-list { display: flex; flex-wrap: wrap; gap: 4px; }
+        .bd-id-list--sm { margin-top: 4px; }
+        .bd-id-chip {
+          font-size: 10px; font-family: monospace;
+          color: var(--text2, #94a3b8);
+          background: rgba(255,255,255,0.04);
+          border: 1px solid rgba(255,255,255,0.07);
+          border-radius: 4px; padding: 2px 6px;
+        }
+        .bd-id-chip--sm { font-size: 9px; padding: 1px 5px; }
+
+        /* Ré-validations */
+        .bd-revalidated-list { display: flex; flex-direction: column; gap: 6px; }
+        .bd-reval-row {
+          background: rgba(255,255,255,0.02);
+          border: 1px solid rgba(255,255,255,0.06);
+          border-radius: 6px; padding: 8px 10px;
+          display: flex; flex-direction: column; gap: 4px;
+        }
+        .bd-reval-row--confirmed { border-color: rgba(74,222,128,0.15); }
+        .bd-reval-hash { display: flex; gap: 6px; align-items: center; }
+        .bd-reval-status { font-size: 11px; }
+        .bd-reval-ok      { color: #4ade80; }
+        .bd-reval-pending { color: var(--text3, #64748b); }
 
         /* Actions */
         .bd-muted { font-size: 12px; color: var(--text3, #64748b); }
