@@ -25,7 +25,7 @@ interface ImageImport {
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
-const DRAW_WINDOW_SEC  = 60;
+const DRAW_WINDOW_SEC  = 900;  // 15 min — doit correspondre à DRAW_WINDOW_SEC serveur
 const MAX_HISTORY      = 50;
 const LOCALSTORAGE_KEY = (deviceId: string, screenId: string) =>
   `pod_cooldown_${deviceId}_${screenId}`;
@@ -941,10 +941,23 @@ export default function DrawCanvasPage() {
         saveCooldown(deviceId, screenId, Date.now() + secs * 1000);
         startCooldown(secs); setBanWarning(true); setStatus({ type: "wait", msg: "" }); return;
       }
+      // File d'attente pleine (503)
+      if (res.status === 503 && data.queueFull) {
+        setStatus({ type: "error", msg: `File d'attente pleine (${data.queueLen}/${data.queueLen} dessins en attente). Réessayez dans quelques minutes.` });
+        setTimeout(() => setStatus(null), 8000);
+        return;
+      }
       if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
       const secs = data.nextDrawIn ?? DRAW_WINDOW_SEC;
       saveCooldown(deviceId, screenId, Date.now() + secs * 1000);
-      startCooldown(secs); setStatus({ type: "ok", msg: "" });
+      startCooldown(secs);
+      // Afficher la position en file si le dessin est mis en attente
+      if (data.validation === "queued") {
+        setStatus({ type: "ok", msg: `En file d'attente (position ${data.queuePosition}/${50}) — traitement dans ~${data.expiresIn ?? "?"}s` });
+        setTimeout(() => setStatus(null), 6000);
+      } else {
+        setStatus({ type: "ok", msg: "" });
+      }
       // Réinitialiser le titre et le tracking d'import après envoi réussi
       setWorkTitle("");
       hasFileImportRef.current = false;
@@ -1177,8 +1190,9 @@ export default function DrawCanvasPage() {
             color: status.type === "ok" ? "var(--success)" : status.type === "wait" ? "#fb923c" : "var(--error)",
             border: "1px solid currentColor",
           }}>
-            {status.type === "ok"    && cooldown > 0 && `✓ Soumis — ${formatTime(cooldown)}`}
-            {status.type === "ok"    && cooldown === 0 && "✓ Prêt"}
+            {status.type === "ok" && status.msg && status.msg.length > 0 && status.msg}
+            {status.type === "ok" && (!status.msg || status.msg.length === 0) && cooldown > 0 && `✓ Soumis — ${formatTime(cooldown)}`}
+            {status.type === "ok" && (!status.msg || status.msg.length === 0) && cooldown === 0 && "✓ Prêt"}
             {status.type === "wait"  && cooldown > 0  && `⏳ ${formatTime(cooldown)}`}
             {status.type === "error" && status.msg}
           </div>

@@ -24,6 +24,7 @@ import { redis } from "@/lib/redis";
 import { getDevice } from "@/lib/deviceStore";
 import { getCurrentCandidate, getVotes, castVote, finalizeBlock, clearCandidate, ValidationVote } from "@/lib/chain";
 import { isBlacklisted, getIP, forbidden } from "@/lib/rateLimit";
+import { dequeueNextDraw } from "@/lib/drawQueue";
 
 const DEVICE_ID_REGEX = /^dev_[A-Z0-9]{8}$/;
 const BLACKLIST_TTL = parseInt(process.env.BLACKLIST_TTL_SECONDS ?? "604800");
@@ -103,6 +104,28 @@ export async function POST(req: NextRequest) {
       Promise.all(poolMembers.map((dId) => redis.del(`personal:frame:${dId}`))).catch((err) => console.error("[validation-result] clear personal frames error:", err));
 
       console.log(`[validation-result] BLOC #${block.blockIndex} finalisé hash=${block.blockHash.slice(0, 12)}... display=${block.displayTime}s`);
+
+      // ── Traiter le prochain dessin en file d'attente ──────────────────────
+      const INTERNAL_SECRET = process.env.INTERNAL_API_SECRET ?? "";
+      const proto = req.headers.get("x-forwarded-proto") ?? "https";
+      const host  = req.headers.get("x-forwarded-host") ?? req.headers.get("host");
+      const base  = process.env.NEXT_PUBLIC_BASE_URL?.trim().replace(/\/$/, "")
+                    ?? (host ? `${proto}://${host}` : "https://proof-of-draw.vercel.app");
+
+      const nextEntry = await dequeueNextDraw();
+      if (nextEntry) {
+        console.log(`[validation-result] traitement file d'attente: device=${nextEntry.deviceId} screen=${nextEntry.screen}`);
+        // Fire-and-forget (la réponse principale n'attend pas)
+        fetch(`${base}/api/submit-candidate`, {
+          method:  "POST",
+          headers: { "Content-Type": "application/json", "x-internal-secret": INTERNAL_SECRET },
+          body:    JSON.stringify(nextEntry),
+        }).then((r) => {
+          if (!r.ok) console.error(`[validation-result] queue submit failed: ${r.status}`);
+          else console.log(`[validation-result] queue submit ok device=${nextEntry.deviceId}`);
+        }).catch((e) => console.error("[validation-result] queue submit error:", e));
+      }
+
       return json({ ok: true, blockMined: true, blockIndex: block.blockIndex, blockHash: block.blockHash, displayTime: block.displayTime, score: block.score, artistName: block.artistName, voteCount }, 200);
     }
 

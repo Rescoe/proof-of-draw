@@ -454,11 +454,11 @@ void clearBandE27(uint8_t* buf, int yStart, int yEnd) {
 // Transformation paysage→portrait : px=ly, py=(PH-1)-lx
 //   soit : setPixelE27(buf, ly, E27_HEIGHT-1-lx)
 //
-// Caractère 5×7 en paysage (90° CW) :
-//   - lx : direction de lecture (gauche→droite en paysage)
-//   - ly : hauteur du caractère (haut→bas en paysage)
-//   - Largeur en lx : 7px (7 rows du font)   avance = 8px
-//   - Hauteur en ly : 5px (5 cols du font)
+// Caractère 5×7 en paysage (rotation 90° CW dans le buffer portrait) :
+//   - lx : direction de lecture (gauche→droite en paysage) — avance de 6px/char (5 cols + gap)
+//   - ly : hauteur du glyphe (haut→bas en paysage)          — 7px (7 rows du font)
+//   - col du glyphe (0..4) → axe lx (lecture)
+//   - row du glyphe (0..6) → axe ly (hauteur)
 
 // Efface des colonnes portrait (= bandes horizontales en paysage)
 void clearPortraitCols(uint8_t* buf, int pxStart, int pxEnd) {
@@ -477,7 +477,9 @@ void drawLandscapeSepLine(uint8_t* buf, int portraitX) {
     setPixelE27(buf, portraitX, py);
 }
 
-// Dessine un caractère rotationné 90° CW dans le repère paysage
+// Dessine un caractère lisible en paysage (rotation 90° CW appliquée au buffer portrait).
+// Mapping : col du glyphe → direction lecture (lx), row du glyphe → hauteur (ly).
+// paysage(lx+col, ly+row) → portrait : px = ly+row, py = (PH-1) - (lx+col)
 void drawCharE27_landscape(uint8_t* buf, int lx, int ly, char c, int scale = 1) {
   int idx = charIndex(c);
   for (int col = 0; col < 5; col++) {
@@ -486,9 +488,9 @@ void drawCharE27_landscape(uint8_t* buf, int lx, int ly, char c, int scale = 1) 
       if (bits & (0x40 >> row)) {
         for (int s1 = 0; s1 < scale; s1++)
           for (int s2 = 0; s2 < scale; s2++) {
-            int lx_px = lx + row * scale + s1;   // rows → lx (direction lecture)
-            int ly_px = ly + col * scale + s2;   // cols → ly (hauteur)
-            // Paysage → portrait : px=ly_px, py=(PH-1)-lx_px
+            int lx_px = lx + col * scale + s1;  // cols  → lx (direction de lecture) ✓
+            int ly_px = ly + row * scale + s2;  // rows  → ly (hauteur du glyphe)    ✓
+            // Paysage → portrait : px = ly_px, py = (PH-1) - lx_px
             setPixelE27(buf, ly_px, E27_HEIGHT - 1 - lx_px);
           }
       }
@@ -500,13 +502,13 @@ void drawTextE27_landscape(uint8_t* buf, int lx, int ly, const String& text, int
   int cx = lx;
   for (unsigned int i = 0; i < text.length(); i++) {
     drawCharE27_landscape(buf, cx, ly, text.charAt(i), scale);
-    cx += 8 * scale;  // 7px char + 1px gap dans la direction de lecture (lx)
+    cx += 6 * scale;  // 5px de large (cols) + 1px gap dans la direction de lecture
     yield();
   }
 }
 
 int textWidthE27_landscape(const String& text, int scale = 1) {
-  return (int)text.length() * 8 * scale;
+  return (int)text.length() * 6 * scale;
 }
 
 // Brûle un cartel PAYSAGE dans le buffer E27 :
@@ -538,7 +540,7 @@ void burnEinkCartel_landscape(uint8_t* buf,
     topLine.remove(topLine.length() - 1);
   // Centrage en lx (LW=E27_HEIGHT=264)
   int topLx = max(0, (E27_HEIGHT - textWidthE27_landscape(topLine, 1)) / 2);
-  // Position ly : 2px de marge depuis le bord (ly=2, char s'étend sur 5px jusqu'à ly=6)
+  // Position ly : 2px de marge depuis le bord (ly=2, glyphe 7px → s'étend jusqu'à ly=8)
   drawTextE27_landscape(buf, topLx, 2, topLine, 1);
 
   // ── Bande inférieure paysage : portrait cols [E27_WIDTH-BAND..E27_WIDTH-1] ──
