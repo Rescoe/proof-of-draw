@@ -1,7 +1,7 @@
 import { ScreenId, SCREEN_PROFILES } from "@/lib/screenProfiles";
 
 export type ScreenPayload =
-  | { screen: "oled096" | "eink27bw"; buffer: string }
+  | { screen: "oled096" | "eink27bw" | "tft18"; buffer: string }
   | { screen: "eink29bwr"; black: string; red: string };
 
 function uint8ArrayToBase64(buf: Uint8Array): string {
@@ -226,6 +226,62 @@ if (screenId === "eink27bw") {
       black: uint8ArrayToBase64(blackBuf),
       red: uint8ArrayToBase64(redBuf),
     };
+  }
+
+  // ════════════════════════════════════════════════════════════════
+  // TFT 1.8" — ST7735, 128×160
+  //
+  // Buffer 1bpp row-major :
+  //   bytesPerRow = 128 / 8 = 16
+  //   taille totale = 16 × 160 = 2560 bytes
+  //
+  // Convention (identique e-ink) :
+  //   1 = blanc (fond)
+  //   0 = noir  (pixel actif)
+  //
+  // Mapping direct canvas(x,y) → buffer :
+  //   byteIndex = y * 16 + floor(x / 8)
+  //   bit       = 7 - (x % 8)   [MSB first]
+  //
+  // Le firmware convertit 1bpp → RGB565 :
+  //   0 (noir) → 0x0000   1 (blanc) → 0xFFFF
+  // ════════════════════════════════════════════════════════════════
+  if (screenId === "tft18") {
+    const TFT_W = 128;
+    const TFT_H = 160;
+    const bytesPerRow = TFT_W / 8; // 16
+    const BUF_SIZE = bytesPerRow * TFT_H; // 2560
+
+    if (w !== TFT_W || h !== TFT_H) {
+      throw new Error(
+        `tft18 canvas size mismatch: got ${w}x${h}, expected ${TFT_W}x${TFT_H}`
+      );
+    }
+
+    const buffer = new Uint8Array(BUF_SIZE).fill(0xFF); // tout blanc par défaut
+    let blackPixels = 0;
+
+    for (let y = 0; y < TFT_H; y++) {
+      for (let x = 0; x < TFT_W; x++) {
+        const i = (y * TFT_W + x) * 4;
+        const r = px[i];
+        const g = px[i + 1];
+        const b = px[i + 2];
+        const a = px[i + 3];
+
+        if (a < 32) continue; // transparent = fond blanc
+        const lum = (r * 3 + g * 6 + b) / 10;
+        if (lum >= 128) continue; // pixel clair = blanc, skip
+
+        const byteIndex = y * bytesPerRow + Math.floor(x / 8);
+        const bit = 7 - (x % 8);
+        buffer[byteIndex] &= ~(1 << bit); // bit → 0 = noir
+        blackPixels++;
+      }
+    }
+
+    console.log(`[canvasToScreen tft18] ${blackPixels} black pixels`);
+    return { screen: "tft18", buffer: uint8ArrayToBase64(buffer) };
   }
 
   throw new Error(`Unsupported screen: ${screenId}`);

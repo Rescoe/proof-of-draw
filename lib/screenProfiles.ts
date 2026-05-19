@@ -1,4 +1,4 @@
-export type ScreenId = "eink29bwr" | "oled096" | "eink27bw";
+export type ScreenId = "eink29bwr" | "oled096" | "eink27bw" | "tft18";
 
 export interface ScreenProfile {
   id: ScreenId;
@@ -49,6 +49,18 @@ export const SCREEN_PROFILES: Record<ScreenId, ScreenProfile> = {
     grayscale: true,
     description: "264×176px — NOIR / Blanc",
     pixelRatio: 2,
+  },
+  tft18: {
+    id: "tft18",
+    name: "TFT 1.8\"",
+    width: 128,
+    height: 160,
+    colors: ["#000000", "#FFFFFF"],
+    colorLabels: ["Noir", "Blanc"],
+    dithering: false,
+    grayscale: false,
+    description: "128×160px — TFT couleur (rendu 1bpp)",
+    pixelRatio: 3,
   },
 };
 

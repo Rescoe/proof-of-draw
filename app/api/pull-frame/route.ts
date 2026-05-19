@@ -122,6 +122,28 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ frameId, ...payload });
     }
 
+    // ── tft18 : buffer 1bpp unique (128×160 = 2560 bytes) ────────────────
+    if (targetScreen === "tft18") {
+      const { buffer } = payload as { buffer?: string };
+      if (!buffer) {
+        console.error(`[pull-frame] payload manquant buffer pour ${deviceId} (tft18)`);
+        return NextResponse.json({ error: "payload incomplet pour tft18" }, { status: 404 });
+      }
+
+      if (fmt === "bin") {
+        const bytes = Buffer.from(buffer, "base64");
+
+        return new NextResponse(new Uint8Array(bytes), {
+          status: 200,
+          headers: {
+            "Content-Type":   "application/octet-stream",
+            "Content-Length": String(bytes.length),
+          },
+        });
+      }
+      return NextResponse.json({ frameId, ...payload });
+    }
+
     // ── Screen inconnu ─────────────────────────────────────────────────────
     console.error(`[pull-frame] screen inconnu: ${targetScreen} pour ${deviceId}`);
     return NextResponse.json({ error: `screen inconnu: ${targetScreen}` }, { status: 400 });
