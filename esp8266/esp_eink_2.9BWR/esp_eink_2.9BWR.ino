@@ -50,19 +50,29 @@ const char* WIFI_PASSWORD = "Q2gueWg3UaYJo2VN7C";
 #define EINK_MIN_REFRESH_MS 10000UL
 
 // ─── EEPROM layout ─────────────────────────────────────────────────────────
-// [0..31]  : clé privée ED25519 (32 bytes) — ou seed aléatoire V1
-// [32..63] : blockHash courant (32 bytes, hex stocké en ASCII serait trop long
-//            → on stocke les 16 premiers bytes du hash = 32 hex chars)
-// [64]     : keyGenerated flag (0xFF = non généré, 0x01 = généré)
-// [65..96] : clé publique (32 bytes) pour affichage et envoi au serveur
-#define EEPROM_SIZE         128
-#define EEPROM_PRIVKEY_OFF  0
-#define EEPROM_BLOCKHASH_OFF 32
-#define EEPROM_FLAG_OFF     64
-#define EEPROM_PUBKEY_OFF   65
-#define KEY_GENERATED_FLAG  0x01
+// [0..31]   : clé privée ED25519 (32 bytes)
+// [32..63]  : blockHash courant (32 hex chars = première moitié du hash 64 chars)
+// [64]      : keyGenerated flag
+// [65..96]  : clé publique (32 bytes)
+// [97]      : onboarding shown flag
+// [98]      : owned_head   — index de tête du ring buffer (0-9)
+// [99]      : owned_count  — nombre de slots valides (0-10)
+// [100..419]: owned slots  — 10 × 32 bytes = 320 bytes (hashes de blocs possédés)
+// [420..511]: réservé
+#define EEPROM_SIZE           512
+#define EEPROM_PRIVKEY_OFF    0
+#define EEPROM_BLOCKHASH_OFF  32
+#define EEPROM_FLAG_OFF       64
+#define EEPROM_PUBKEY_OFF     65
+#define KEY_GENERATED_FLAG    0x01
 #define EEPROM_ONBOARDING_OFF 97
 #define ONBOARDING_SHOWN_FLAG 0x01
+// Slots de blocs possédés
+#define EEPROM_OWNED_HEAD_OFF  98
+#define EEPROM_OWNED_COUNT_OFF 99
+#define EEPROM_OWNED_SLOTS_OFF 100
+#define OWNED_SLOTS_MAX        10
+#define OWNED_HASH_LEN         32   // 32 premiers chars du hash hex (suffisant pour ID unique)
 
 // ─── ÉCRAN ─────────────────────────────────────────────────────────────────
 #define IMG_W    296
@@ -161,6 +171,86 @@ String loadBlockHashFromEEPROM() {
     hash += c;
   }
   return hash;
+}
+
+// ─── Blocs possédés (EEPROM ring buffer) ───────────────────────────────────
+
+// Sauvegarde un hash de bloc possédé dans le ring buffer EEPROM.
+// Écrit les 32 premiers chars du hash hex (suffisant pour identification unique).
+// Ring buffer circulaire : déborde proprement sur les plus vieux slots.
+void saveOwnedBlockHash(const String& fullHash) {
+  if (fullHash.length() < 16) return;  // hash trop court, ignore
+
+  // Tronque ou complète à OWNED_HASH_LEN chars
+  String h = fullHash.length() >= OWNED_HASH_LEN
+             ? fullHash.substring(0, OWNED_HASH_LEN)
+             : fullHash;
+  while ((int)h.length() < OWNED_HASH_LEN) h += ' ';
+
+  uint8_t head  = EEPROM.read(EEPROM_OWNED_HEAD_OFF);
+  uint8_t count = EEPROM.read(EEPROM_OWNED_COUNT_OFF);
+  if (head  >= OWNED_SLOTS_MAX) head  = 0;
+  if (count >  OWNED_SLOTS_MAX) count = 0;
+
+  // Vérifie si ce hash est déjà stocké (évite les doublons après re-notification)
+  for (uint8_t i = 0; i < count; i++) {
+    uint8_t slot = (head - count + i + OWNED_SLOTS_MAX) % OWNED_SLOTS_MAX;
+    int off = EEPROM_OWNED_SLOTS_OFF + slot * OWNED_HASH_LEN;
+    bool match = true;
+    for (int j = 0; j < OWNED_HASH_LEN && match; j++) {
+      if ((char)EEPROM.read(off + j) != h[j]) match = false;
+    }
+    if (match) {
+      Serial.println("[OWNED] Hash déjà stocké, skip");
+      return;
+    }
+  }
+
+  // Écriture dans le slot de tête
+  int slotOff = EEPROM_OWNED_SLOTS_OFF + head * OWNED_HASH_LEN;
+  for (int i = 0; i < OWNED_HASH_LEN; i++)
+    EEPROM.write(slotOff + i, (uint8_t)h[i]);
+
+  head  = (head + 1) % OWNED_SLOTS_MAX;
+  count = min((int)count + 1, (int)OWNED_SLOTS_MAX);
+
+  EEPROM.write(EEPROM_OWNED_HEAD_OFF,  head);
+  EEPROM.write(EEPROM_OWNED_COUNT_OFF, count);
+  EEPROM.commit();
+
+  Serial.printf("[OWNED] Bloc sauvegardé: %s... (%u/%u slots)\n",
+                h.substring(0, 8).c_str(), count, OWNED_SLOTS_MAX);
+}
+
+// Retourne un JSON array des hashes possédés stockés en EEPROM.
+// Du plus récent au plus ancien (lecture depuis la tête vers l'arrière).
+String loadOwnedHashesJson() {
+  uint8_t head  = EEPROM.read(EEPROM_OWNED_HEAD_OFF);
+  uint8_t count = EEPROM.read(EEPROM_OWNED_COUNT_OFF);
+  if (head  >= OWNED_SLOTS_MAX) head  = 0;
+  if (count  > OWNED_SLOTS_MAX) count = 0;
+  if (count == 0) return "[]";
+
+  String json = "[";
+  bool first = true;
+  // Du plus récent (head-1) au plus ancien
+  for (uint8_t i = 0; i < count; i++) {
+    uint8_t slot = (head - 1 - i + OWNED_SLOTS_MAX) % OWNED_SLOTS_MAX;
+    int off = EEPROM_OWNED_SLOTS_OFF + slot * OWNED_HASH_LEN;
+    String h = "";
+    for (int j = 0; j < OWNED_HASH_LEN; j++) {
+      char c = (char)EEPROM.read(off + j);
+      if (c == ' ' || c == '\0') break;
+      h += c;
+    }
+    if (h.length() >= 8) {
+      if (!first) json += ",";
+      json += "\"" + h + "\"";
+      first = false;
+    }
+  }
+  json += "]";
+  return json;
 }
 
 // ─── Génération de clés (V1 simplifiée) ────────────────────────────────────
@@ -740,9 +830,11 @@ bool doRegister() {
   String mac = WiFi.macAddress();
   mac.toLowerCase();
 
-  String pubHex = keysLoaded ? bytesToHex(publicKey, 32) : "";
+  String pubHex     = keysLoaded ? bytesToHex(publicKey, 32) : "";
+  String ownedHashes = loadOwnedHashesJson();  // ex: ["abc...","def..."] ou []
   String body = "{\"mac\":\"" + mac + "\",\"screens\":[\"" + SCREEN_TYPE + "\"],"
-                "\"firmware\":\"2.0\",\"publicKey\":\"" + pubHex + "\"}";
+                "\"firmware\":\"2.0\",\"publicKey\":\"" + pubHex + "\","
+                "\"ownedHashes\":" + ownedHashes + "}";
   String resp;
 
   Serial.printf("[REGISTER] heap avant: %u\n", ESP.getFreeHeap());
@@ -1062,6 +1154,15 @@ bool doPull() {
         Serial.printf("[PULL] obsTask hashes=%u target=%s\n",
                       hArr.size(), pendingObsTarget.c_str());
       }
+    }
+
+    // ── Bloc nouvellement possédé (one-shot, posé par finalizeBlock) ──────
+    // Présent uniquement le premier pull qui suit le minage de ce device.
+    // On sauvegarde en EEPROM ring buffer pour survivre aux redémarrages.
+    String newlyOwned = doc["ownedBlock"] | "";
+    if (newlyOwned.length() >= 16) {
+      Serial.println("[OWNED] Nouveau bloc possédé: " + newlyOwned.substring(0, 12) + "...");
+      saveOwnedBlockHash(newlyOwned);
     }
   }
 

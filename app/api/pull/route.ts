@@ -79,14 +79,21 @@ export async function GET(req: NextRequest) {
     // ── Fetch parallèle ─────────────────────────────────────────────────────
     // getChainHead() remplace getChainSummary() pour éviter un double read Redis
     // et accéder aux champs workTitle / drawArtistName du bloc (métadonnées cartel).
-    const [device, consensusFrame, personalFrame, chainHead, candidate] =
+    const [device, consensusFrame, personalFrame, chainHead, candidate, ownedNotif] =
       await Promise.all([
         getDevice(deviceId),
         getFrameForDevice(deviceId, []),
         getPersonalFrame(deviceId),
         getChainHead(),
         getCurrentCandidate(),
+        // Notification de propriété : posée par finalizeBlock quand ce device a miné
+        redis.get(`chain:notify:${deviceId}`) as Promise<string | null>,
       ]);
+
+    // Consomme la notification (one-shot) — le device la reçoit une seule fois
+    if (ownedNotif) {
+      await redis.del(`chain:notify:${deviceId}`);
+    }
 
     // Résumé chaîne (sous-ensemble de chainHead, rétrocompat réponse JSON)
     const chainSummary: ChainSummary | null = chainHead
@@ -243,6 +250,11 @@ export async function GET(req: NextRequest) {
       pendingValidation,
       pendingObservation,
       retryAfter,
+
+      // Notification de propriété (one-shot) : présent uniquement le pull qui suit le minage.
+      // L'ESP doit sauvegarder ce hash dans ses slots EEPROM "blocs possédés".
+      // null si ce device n'a pas miné de nouveau bloc depuis le dernier pull.
+      ownedBlock: ownedNotif ?? null,
     });
 
   } catch (err) {

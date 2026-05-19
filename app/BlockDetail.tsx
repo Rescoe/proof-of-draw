@@ -108,6 +108,15 @@ function TabDetails({ block }: { block: BlockWithImage }) {
         <MetaRow label="Affichage"  value={`${block.displayTime}s`} />
         <MetaRow label="Validateurs" value={block.validatorIds.length.toString()} />
         {block.obsConfirmed && <MetaRow label="Observer"  value="Confirmé ✓" green />}
+        {/* Propriété du bloc */}
+        {block.minerDeviceId && (
+          <MetaRow label="Mineur" value={block.minerDeviceId} />
+        )}
+        {block.ownerDeviceId && block.ownerDeviceId !== block.minerDeviceId ? (
+          <MetaRow label="Propriétaire" value={block.ownerDeviceId} accent />
+        ) : block.minerDeviceId && (
+          <MetaRow label="Propriétaire" value="(mineur)" />
+        )}
       </div>
 
       {/* Validateurs */}

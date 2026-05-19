@@ -41,15 +41,19 @@ const char* WIFI_PASSWORD = "Q2gueWg3UaYJo2VN7C";
 #define IDLE_DELAY_MS      100UL
 
 // ─── EEPROM layout ─────────────────────────────────────────────────────────
-// [0..31]    : clé privée (32 bytes)
-// [32..63]   : blockHash courant (32 bytes ASCII)
-// [64]       : keyGenerated flag
-// [65..96]   : clé publique (32 bytes)
-// [97]       : onboarding shown flag
-// [98]       : OLED frame saved flag (0x5A = valide)
-// [99..1122] : OLED frame buffer (1024 bytes)
+// [0..31]     : clé privée (32 bytes)
+// [32..63]    : blockHash courant (32 bytes ASCII)
+// [64]        : keyGenerated flag
+// [65..96]    : clé publique (32 bytes)
+// [97]        : onboarding shown flag
+// [98]        : OLED frame saved flag (0x5A = valide)
+// [99..1122]  : OLED frame buffer (1024 bytes)
 // [1123..1202]: OLED ticker text sauvegardé (80 bytes, null-terminated)
-#define EEPROM_SIZE            1210
+// [1203]      : owned_head   — index de tête du ring buffer (0-9)
+// [1204]      : owned_count  — nombre de slots valides (0-10)
+// [1205..1524]: owned slots  — 10 × 32 bytes = 320 bytes (hashes de blocs possédés)
+// [1525..1539]: réservé
+#define EEPROM_SIZE            1540
 #define EEPROM_PRIVKEY_OFF     0
 #define EEPROM_BLOCKHASH_OFF   32
 #define EEPROM_FLAG_OFF        64
@@ -62,6 +66,12 @@ const char* WIFI_PASSWORD = "Q2gueWg3UaYJo2VN7C";
 #define KEY_GENERATED_FLAG     0x01
 #define ONBOARDING_SHOWN_FLAG  0x01
 #define OLED_FRAME_SAVED_FLAG  0x5A
+// Slots de blocs possédés (ring buffer)
+#define EEPROM_OWNED_HEAD_OFF  1203
+#define EEPROM_OWNED_COUNT_OFF 1204
+#define EEPROM_OWNED_SLOTS_OFF 1205
+#define OWNED_SLOTS_MAX        10
+#define OWNED_HASH_LEN         32   // 32 premiers chars du hash hex
 
 // ─── OLED 128×64 ───────────────────────────────────────────────────────────
 #define OLED_SDA      D6
@@ -230,6 +240,85 @@ bool loadOLEDFrameFromEEPROM(uint8_t* buf, String& ticker) {
   }
   Serial.printf("[EEPROM] Frame OLED restaurée — ticker: \"%s\"\n", ticker.c_str());
   return true;
+}
+
+// ─── Blocs possédés (EEPROM ring buffer) ───────────────────────────────────
+
+// Sauvegarde un hash de bloc possédé dans le ring buffer EEPROM.
+// Écrit les 32 premiers chars du hash hex (suffisant pour identification unique).
+// Ring buffer circulaire : déborde proprement sur les plus vieux slots.
+void saveOwnedBlockHash(const String& fullHash) {
+  if (fullHash.length() < 16) return;  // hash trop court, ignore
+
+  // Tronque ou complète à OWNED_HASH_LEN chars
+  String h = fullHash.length() >= OWNED_HASH_LEN
+             ? fullHash.substring(0, OWNED_HASH_LEN)
+             : fullHash;
+  while ((int)h.length() < OWNED_HASH_LEN) h += ' ';
+
+  uint8_t head  = EEPROM.read(EEPROM_OWNED_HEAD_OFF);
+  uint8_t count = EEPROM.read(EEPROM_OWNED_COUNT_OFF);
+  if (head  >= OWNED_SLOTS_MAX) head  = 0;
+  if (count >  OWNED_SLOTS_MAX) count = 0;
+
+  // Vérifie si ce hash est déjà stocké (évite les doublons après re-notification)
+  for (uint8_t i = 0; i < count; i++) {
+    uint8_t slot = (head - count + i + OWNED_SLOTS_MAX) % OWNED_SLOTS_MAX;
+    int off = EEPROM_OWNED_SLOTS_OFF + slot * OWNED_HASH_LEN;
+    bool match = true;
+    for (int j = 0; j < OWNED_HASH_LEN && match; j++) {
+      if ((char)EEPROM.read(off + j) != h[j]) match = false;
+    }
+    if (match) {
+      Serial.println("[OWNED] Hash déjà stocké, skip");
+      return;
+    }
+  }
+
+  // Écriture dans le slot de tête
+  int slotOff = EEPROM_OWNED_SLOTS_OFF + head * OWNED_HASH_LEN;
+  for (int i = 0; i < OWNED_HASH_LEN; i++)
+    EEPROM.write(slotOff + i, (uint8_t)h[i]);
+
+  head  = (head + 1) % OWNED_SLOTS_MAX;
+  count = min((int)count + 1, (int)OWNED_SLOTS_MAX);
+
+  EEPROM.write(EEPROM_OWNED_HEAD_OFF,  head);
+  EEPROM.write(EEPROM_OWNED_COUNT_OFF, count);
+  EEPROM.commit();
+
+  Serial.printf("[OWNED] Bloc sauvegardé: %s... (%u/%u slots)\n",
+                h.substring(0, 8).c_str(), count, OWNED_SLOTS_MAX);
+}
+
+// Retourne un JSON array des hashes possédés stockés en EEPROM.
+// Du plus récent au plus ancien (lecture depuis la tête vers l'arrière).
+String loadOwnedHashesJson() {
+  uint8_t head  = EEPROM.read(EEPROM_OWNED_HEAD_OFF);
+  uint8_t count = EEPROM.read(EEPROM_OWNED_COUNT_OFF);
+  if (head  >= OWNED_SLOTS_MAX) head  = 0;
+  if (count  > OWNED_SLOTS_MAX) count = 0;
+  if (count == 0) return "[]";
+
+  String json = "[";
+  bool first = true;
+  for (uint8_t i = 0; i < count; i++) {
+    uint8_t slot = (head - 1 - i + OWNED_SLOTS_MAX) % OWNED_SLOTS_MAX;
+    int off = EEPROM_OWNED_SLOTS_OFF + slot * OWNED_HASH_LEN;
+    String h = "";
+    for (int j = 0; j < OWNED_HASH_LEN; j++) {
+      char c = (char)EEPROM.read(off + j);
+      if (c == ' ' || c == '\0') break;
+      h += c;
+    }
+    if (h.length() >= 8) {
+      if (!first) json += ",";
+      json += "\"" + h + "\"";
+      first = false;
+    }
+  }
+  json += "]";
+  return json;
 }
 
 // ─── Génération clés V1 ────────────────────────────────────────────────────
@@ -935,12 +1024,14 @@ bool doRegister() {
   String mac = WiFi.macAddress();
   mac.toLowerCase();
 
-  String pubHex = keysLoaded ? bytesToHex(publicKey, 32) : "";
+  String pubHex      = keysLoaded ? bytesToHex(publicKey, 32) : "";
+  String ownedHashes = loadOwnedHashesJson();  // ex: ["abc...","def..."] ou []
   String body =
     "{\"mac\":\"" + mac + "\","
     "\"screens\":[\"" + String(SCREEN_OLED) + "\",\"" + String(SCREEN_E27) + "\"],"
     "\"firmware\":\"" + String(FIRMWARE_VERSION) + "\","
-    "\"publicKey\":\"" + pubHex + "\"}";
+    "\"publicKey\":\"" + pubHex + "\","
+    "\"ownedHashes\":" + ownedHashes + "}";
 
   String resp;
   Serial.printf("[REGISTER] heap avant: %u\n", ESP.getFreeHeap());
@@ -1336,6 +1427,17 @@ bool doPull() {
           if (pendingObsTarget.length() > 0)
             Serial.println("[PULL] Tâche obs target: " + pendingObsTarget.substring(0, 12) + "...");
         }
+      }
+    }
+
+    // ── Bloc nouvellement possédé (one-shot, posé par finalizeBlock) ──────────
+    // Présent uniquement le premier pull qui suit le minage de ce device.
+    // On sauvegarde en EEPROM ring buffer pour survivre aux redémarrages.
+    {
+      const char* newlyOwned = doc["ownedBlock"] | "";
+      if (strlen(newlyOwned) >= 16) {
+        Serial.println("[OWNED] Nouveau bloc possédé: " + String(newlyOwned).substring(0, 12) + "...");
+        saveOwnedBlockHash(String(newlyOwned));
       }
     }
   }

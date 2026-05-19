@@ -60,17 +60,30 @@ export async function GET(req: NextRequest) {
       return json({ error: "deviceId invalide" }, 400);
     }
 
-    const [minedHashes, drawnHashes] = await Promise.all([
+    const [minedHashes, drawnHashes, ownedHashesRaw] = await Promise.all([
       redis.lrange(`chain:device:${deviceId}:blocks`, 0, limit - 1) as Promise<string[]>,
       redis.lrange(`chain:device:${deviceId}:drawn`,  0, limit - 1) as Promise<string[]>,
+      redis.smembers(`chain:device:${deviceId}:owned`) as Promise<string[]>,
     ]);
 
-    const [mined, drawn] = await Promise.all([
+    const ownedHashes = (ownedHashesRaw ?? []).slice(0, limit);
+
+    const [mined, drawn, owned] = await Promise.all([
       resolveHashes(minedHashes),
       resolveHashes(drawnHashes),
+      resolveHashes(ownedHashes),
     ]);
 
-    return json({ deviceId, mined, drawn, total: { mined: mined.length, drawn: drawn.length } });
+    return json({
+      deviceId,
+      // mined  : historique permanent (ESP qui a déclenché le quorum)
+      mined,
+      // drawn  : blocs dessinés par cet ESP mais minés par un autre
+      drawn,
+      // owned  : blocs actuellement possédés (peut changer via transfer-block)
+      owned,
+      total: { mined: mined.length, drawn: drawn.length, owned: owned.length },
+    });
   } catch (err) {
     console.error("[blocks-by-device] error:", err);
     return json({ error: "Erreur interne" }, 500);

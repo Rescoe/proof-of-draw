@@ -57,8 +57,9 @@ export interface Block {
   drawArtistName?: string;     // artiste dessinateur si différent du propriétaire de l'ESP
   deviceOwnerName?: string;    // propriétaire de l'ESP (si ESP en prêt public)
 
-  // ── Minage ───────────────────────────────────────────────────────────────────
-  minerDeviceId?: string;      // ESP dont le vote a déclenché le quorum (premier mineur)
+  // ── Minage & Propriété ──────────────────────────────────────────────────────
+  minerDeviceId?: string;      // ESP dont le vote a déclenché le quorum (premier mineur, immuable)
+  ownerDeviceId?: string;      // Propriétaire actuel du bloc (transférable — commence = minerDeviceId)
 
   // ── Axe 3 : Ré-validation ────────────────────────────────────────────────────
   podHashEnriched?: string;    // SHA256(actionsHash + enrichment JSON) — Axe 4
@@ -335,7 +336,8 @@ export async function finalizeBlock(
     actionsHash:     candidate.actionsHash,
     drawScore:       candidate.drawScore,
     deviceId:        candidate.deviceId,     // artiste (soumetteur du dessin)
-    minerDeviceId:   effectiveMiner,         // ESP qui a signé le bloc en premier
+    minerDeviceId:   effectiveMiner,         // ESP qui a signé le bloc en premier (immuable)
+    ownerDeviceId:   effectiveMiner,         // Propriétaire initial = mineur (transférable)
     artistName:      candidate.artistName,   // propriétaire de l'ESP
     poolScreen:      candidate.poolScreen,
     validatorIds:    votes.map((v) => v.deviceId).sort(),
@@ -373,9 +375,13 @@ export async function finalizeBlock(
     redis.lpush(KEY_RECENT, blockHash),
     redis.ltrim(KEY_RECENT, 0, RECENT_MAX - 1),
     redis.set(KEY_LENGTH, String(length + 1)),
-    // Index d'appartenance : blocs minés par l'ESP mineur
+    // Index d'appartenance : blocs minés par l'ESP mineur (historique permanent)
     redis.lpush(`chain:device:${effectiveMiner}:blocks`, blockHash),
     redis.ltrim(`chain:device:${effectiveMiner}:blocks`, 0, 99),
+    // Propriété courante (Set transférable — smove lors d'un transfer)
+    redis.sadd(`chain:device:${effectiveMiner}:owned`, blockHash),
+    // Notification au mineur : il sera informé lors de son prochain pull (TTL 24h)
+    redis.set(`chain:notify:${effectiveMiner}`, blockHash, { ex: 86400 }),
   ];
 
   // Si l'artiste ≠ mineur, index séparé pour les blocs dessinés
