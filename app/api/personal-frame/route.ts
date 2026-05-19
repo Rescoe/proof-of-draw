@@ -15,9 +15,10 @@ import { getDevice } from "@/lib/deviceStore";
 import { sessionOwnsDevice } from "@/lib/session";
 import { getIP, forbidden } from "@/lib/rateLimit";
 import { redis } from "@/lib/redis";
+import { SCREEN_IDS, isDualBuffer } from "@/lib/screenProfiles";
 
 const DEVICE_ID_REGEX = /^dev_[A-Z0-9]{8}$/;
-const VALID_SCREENS   = new Set(["eink29bwr", "eink27bw", "oled096"]);
+const VALID_SCREENS   = new Set<string>(SCREEN_IDS); // dérivé de lib/screenProfiles.ts
 const MAX_BODY_BYTES  = 20_000;
 const PERSONAL_TTL    = 7 * 24 * 3600; // 7 jours — s'efface quand le bloc est miné
 const BLACKLIST_TTL   = parseInt(process.env.BLACKLIST_TTL_SECONDS ?? "604800");
@@ -81,7 +82,7 @@ export async function POST(req: NextRequest) {
   }
 
   // ── 8. Stocker la personal frame ───────────────────────────────────────────
-  const payload = screen === "eink29bwr"
+  const payload = isDualBuffer(screen)
     ? { screen, black, red }
     : { screen, buffer };
 

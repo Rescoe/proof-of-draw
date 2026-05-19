@@ -16,6 +16,7 @@ export interface StoredFrame {
 export type FramePayload =
   | { screen: "oled096";   buffer: string }
   | { screen: "eink27bw";  buffer: string }
+  | { screen: "tft18";     buffer: string }
   | { screen: "eink29bwr"; black: string; red: string }
   | { screen: string; buffer?: string; black?: string; red?: string };
 

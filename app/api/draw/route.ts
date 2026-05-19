@@ -10,12 +10,13 @@ import { getIP, forbidden } from "@/lib/rateLimit";
 import { redis } from "@/lib/redis";
 import { getCurrentCandidate } from "@/lib/chain";
 import { enqueueDraw, getQueueLength, DRAW_QUEUE_MAX } from "@/lib/drawQueue";
+import { SCREEN_IDS, isDualBuffer } from "@/lib/screenProfiles";
 
 const DRAW_WINDOW_SEC = parseInt(process.env.DRAW_WINDOW_SEC ?? "900");
 const ABUSE_STRIKES   = parseInt(process.env.DRAW_LIMIT_PER_ROUND ?? "3");
 const BLACKLIST_TTL   = parseInt(process.env.BLACKLIST_TTL_SECONDS ?? "604800");
 const DEVICE_ID_REGEX = /^dev_[A-Z0-9]{8}$/;
-const VALID_SCREENS   = new Set(["eink29bwr", "eink27bw", "oled096"]);
+const VALID_SCREENS   = new Set<string>(SCREEN_IDS); // dérivé de lib/screenProfiles.ts
 const BYPASS_VALIDATION = process.env.BYPASS_VALIDATION === "true";
 const INTERNAL_SECRET   = process.env.INTERNAL_API_SECRET ?? "";
 
@@ -113,8 +114,8 @@ export async function POST(req: NextRequest) {
   }
 
   const hasPayload =
-    (screen === "eink29bwr" && black && red) ||
-    (screen !== "eink29bwr" && buffer);
+    (isDualBuffer(screen) && black && red) ||
+    (!isDualBuffer(screen) && buffer);
   if (!hasPayload) {
     return NextResponse.json({ error: "Payload incomplet" }, { status: 400 });
   }
@@ -171,7 +172,7 @@ export async function POST(req: NextRequest) {
   // ── BYPASS direct ───────────────────────────────────────────────────────────
   if (BYPASS_VALIDATION) {
     const payload: Record<string, string> =
-      screen === "eink29bwr" ? { black: black!, red: red! } : { buffer: buffer! };
+      isDualBuffer(screen) ? { black: black!, red: red! } : { buffer: buffer! };
     await broadcastDirect(screen, payload, deviceId, frameMeta);
     return NextResponse.json({ ok: true, nextDrawIn: DRAW_WINDOW_SEC, validation: "bypassed" });
   }
@@ -276,7 +277,7 @@ export async function POST(req: NextRequest) {
 
     // Fallback direct si le serveur interne est indisponible
     const payload: Record<string, string> =
-      screen === "eink29bwr" ? { black: black!, red: red! } : { buffer: buffer! };
+      isDualBuffer(screen) ? { black: black!, red: red! } : { buffer: buffer! };
     await broadcastDirect(screen, payload, deviceId, frameMeta);
     return NextResponse.json({
       ok:         true,

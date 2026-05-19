@@ -1,16 +1,13 @@
 // lib/networkSnapshot.ts
+// Les types d'écrans disponibles sont définis dans lib/screenProfiles.ts.
+// Ajouter un écran ici = uniquement dans screenProfiles.ts.
 
 import { unstable_cache } from "next/cache";
 import { redis } from "@/lib/redis";
+import { SCREEN_IDS, SCREEN_PROFILES, ScreenId } from "@/lib/screenProfiles";
 
-export const SCREEN_TYPES = [
-  "oled096",
-  "eink29bwr",
-  "eink27bw",
-] as const;
-
-export type ScreenType =
-  (typeof SCREEN_TYPES)[number];
+// Ré-exporté pour compatibilité avec les composants qui importent ScreenType
+export type ScreenType = ScreenId;
 
 type DeviceRecord = {
   deviceId: string;
@@ -120,40 +117,17 @@ const ONLINE_WINDOW_MS =
 
 const NETWORK_CACHE_SECONDS = 300;
 
-const SCREEN_META: Record<
-  string,
-  {
-    label: string;
-    description: string;
+// Métadonnées d’écran dérivées de screenProfiles — pas de liste hardcodée ici
+function getScreenMeta(screen: string): { label: string; description: string } {
+  const profile = SCREEN_PROFILES[screen as ScreenId];
+  if (profile) {
+    return { label: profile.name, description: profile.description };
   }
-> = {
-  oled096: {
-    label: 'OLED 0.96"',
-    description:
-      "128×64 · mono · onboarding / status",
-  },
-
-  eink29bwr: {
-    label: 'E-Ink 2.9" BWR',
-    description:
-      "296×128 · noir / blanc / rouge",
-  },
-
-  eink27bw: {
-    label: 'E-Ink 2.7" BW',
-    description:
-      "264×176 · noir / blanc",
-  },
-};
-
-function getScreenMeta(screen: string) {
-  return (
-    SCREEN_META[screen] ?? {
-      label: screen,
-      description:
-        "Type d’écran enregistré dans Redis",
-    }
-  );
+  // Écran inconnu du registre (firmware non mis à jour, etc.) — fallback gracieux
+  return {
+    label: screen,
+    description: "Type d’écran enregistré dans Redis",
+  };
 }
 
 function isOnline(
@@ -300,7 +274,7 @@ async function buildNetworkSnapshot(): Promise<NetworkSnapshot> {
 
   const poolResults =
     await Promise.all(
-      SCREEN_TYPES.map(
+      SCREEN_IDS.map(
         async (screen) => {
           const ids =
             await redis.smembers<
@@ -399,7 +373,7 @@ async function buildNetworkSnapshot(): Promise<NetworkSnapshot> {
   */
 
   const screenPools: NetworkScreenPool[] =
-    SCREEN_TYPES.map((screen) => {
+    SCREEN_IDS.map((screen) => {
       const meta =
         getScreenMeta(screen);
 
@@ -483,7 +457,7 @@ async function buildNetworkSnapshot(): Promise<NetworkSnapshot> {
       framesWaiting,
 
       screenTypes:
-        SCREEN_TYPES.length,
+        SCREEN_IDS.length,
     },
 
     devices,

@@ -58,8 +58,9 @@
 #include <EEPROM.h>
 
 // ─── CONFIG ────────────────────────────────────────────────────────────────
-const char* WIFI_SSID     = "AndroidF";
-const char* WIFI_PASSWORD = "Lincoln55";
+const char* WIFI_SSID = "Livebox-D190";
+const char* WIFI_PASSWORD = "Q2gueWg3UaYJo2VN7C";
+
 
 #define SERVER_URL        "https://proof-of-draw.vercel.app"
 #define SCREEN_TYPE       "tft18"
@@ -86,11 +87,13 @@ const char* WIFI_PASSWORD = "Lincoln55";
 #define TFT_H         160
 #define TFT_BUF_SIZE  ((TFT_W * TFT_H) / 8)   // 2560 bytes — 1bpp
 
-// Couleurs cartel (RGB565)
-#define C_BLACK   0x0000
-#define C_WHITE   0xFFFF
-#define C_CARTEL  0x2104   // gris très foncé (#222) pour les bandes cartel
-#define C_ACCENT  0x781F   // violet clair (#7c6bff approximé)
+// Couleurs web3/premium (RGB565)
+#define C_BLACK   0x0000   // noir pur
+#define C_WHITE   0xFFFF   // blanc pur
+#define C_NAVY    0x08C5   // navy profond (#0a1828) — fond principal
+#define C_GOLD    0xFEA0   // or (#FFD700) — accent premium
+#define C_DARK    0x10C4   // surface sombre (#111827) — bandes cartel
+#define C_GREY    0x7BEF   // gris moyen — texte secondaire
 
 // ─── EEPROM layout (identique esp_eink_2.9BWR) ────────────────────────────
 // [0..31]   : clé privée (32 bytes)
@@ -155,6 +158,8 @@ String pendingDisplayTs  = "";
 
 String pendingObsHashes = "";
 String pendingObsTarget = "";
+
+bool qrDisplayed = false;  // true quand le QR d'onboarding est à l'écran
 
 // ─── DEBUG HEAP ────────────────────────────────────────────────────────────
 void logHeapState(const char* tag) {
@@ -454,62 +459,82 @@ bool httpGet(const String& path, String& resp, int* codeOut = nullptr) {
 // Le RB-TFT1.8 (Joy-IT) requiert INITR_GREENTAB — confirmé par la doc officielle.
 // Si l'image reste décalée de 2px, c'est normal avec GREENTAB (offset interne du contrôleur).
 void initTFT() {
-  // RB-TFT1.8 (Joy-IT / ST7735) — INITR_GREENTAB confirmé par doc officielle
-  // Software SPI : pas de SPI.begin() ici, GPIO13/14 en mode OUTPUT par la lib
-  tft.initR(INITR_GREENTAB);
+  // RB-TFT1.8 (Joy-IT / ST7735) — INITR_BLACKTAB : colstart=0, rowstart=0
+  // Élimine le décalage 2px gauche / 1px haut produit par INITR_GREENTAB
+  // (GREENTAB ajoute colstart=2, rowstart=1 qui décale l'image sur ce module)
+  tft.initR(INITR_BLACKTAB);
   tft.setRotation(0);  // portrait, câble en bas
   tft.fillScreen(C_BLACK);
-  Serial.println("[TFT] initialisé 128×160");
+  Serial.println("[TFT] initialisé 128×160 (BLACKTAB, offset corrigé)");
 }
 
 // Affiche un message de status centré — utilisé pendant le boot et les erreurs.
-void tftStatus(const String& line1, const String& line2 = "", uint16_t bg = C_BLACK) {
+// Fond navy par défaut pour cohérence palette web3/premium.
+void tftStatus(const String& line1, const String& line2 = "", uint16_t bg = C_NAVY) {
   tft.fillScreen(bg);
+
+  // Mini barre RESCOE en haut
+  tft.fillRect(0, 0, TFT_W, 14, C_DARK);
+  tft.drawFastHLine(0, 14, TFT_W, C_GOLD);
+  tft.setTextColor(C_GOLD, C_DARK);
+  tft.setTextSize(1);
+  tft.setCursor(3, 4);
+  tft.print("RESCOE");
+
+  // Message centré verticalement
   tft.setTextColor(C_WHITE, bg);
   tft.setTextSize(1);
-  tft.setCursor(2, 70);
+  tft.setCursor(4, 72);
   tft.println(line1);
   if (line2.length() > 0) {
-    tft.setCursor(2, 82);
+    tft.setTextColor(C_GREY, bg);
+    tft.setCursor(4, 84);
     tft.println(line2);
   }
 }
 
-// Brûle les bandes cartel (header + footer 13px) directement sur le TFT.
+// Brûle les bandes cartel (header + footer 14px) directement sur le TFT.
 // Appelé après renderFrameToTFT() — surimpose le texte sur l'artwork.
-// Avantage TFT vs e-ink : pas de manipulation de buffer 1bpp, native Adafruit_GFX.
+// Palette web3/premium : fond C_DARK, séparateur C_GOLD, "RESCOE" en or.
 void burnTFTCartel() {
-  const int BAND = 13;
+  const int BAND = 14;
 
   // ── Bande supérieure ──────────────────────────────────────────────────────
-  tft.fillRect(0, 0, TFT_W, BAND, C_CARTEL);
-  tft.drawFastHLine(0, BAND, TFT_W, C_WHITE);
+  tft.fillRect(0, 0, TFT_W, BAND, C_DARK);
+  tft.drawFastHLine(0, BAND, TFT_W, C_GOLD);
 
-  String topLine = pendingDisplayTs.length() > 0 ? pendingDisplayTs : "PROOF-OF-DRAW";
-  if (currentBlockIndex >= 0) topLine += " #" + String(currentBlockIndex);
-  // police size=1 : 6px/char → 128/6 = 21 chars max
-  if ((int)topLine.length() > 21) topLine = topLine.substring(0, 21);
-
-  tft.setTextColor(C_WHITE, C_CARTEL);
+  // "RESCOE" en or à gauche
+  tft.setTextColor(C_GOLD, C_DARK);
   tft.setTextSize(1);
-  tft.setCursor(2, 3);
-  tft.print(topLine);
+  tft.setCursor(3, 4);
+  tft.print("RESCOE");
+
+  // Numéro de bloc à droite (gris clair)
+  if (currentBlockIndex >= 0) {
+    String blk = "#" + String(currentBlockIndex);
+    tft.setTextColor(C_GREY, C_DARK);
+    int bx = TFT_W - (int)blk.length() * 6 - 3;
+    if (bx < 50) bx = 50;
+    tft.setCursor(bx, 4);
+    tft.print(blk);
+  }
 
   // ── Bande inférieure ──────────────────────────────────────────────────────
   int footerY = TFT_H - BAND;
-  tft.fillRect(0, footerY, TFT_W, BAND, C_CARTEL);
-  tft.drawFastHLine(0, footerY, TFT_W, C_WHITE);
+  tft.fillRect(0, footerY, TFT_W, BAND, C_DARK);
+  tft.drawFastHLine(0, footerY, TFT_W, C_GOLD);
 
   String botLine = "";
   if (pendingArtistName.length() > 0 && pendingWorkTitle.length() > 0)
-    botLine = pendingArtistName + " - " + pendingWorkTitle;
+    botLine = pendingArtistName + " \x7E " + pendingWorkTitle;  // tilde ~ comme séparateur
   else if (pendingArtistName.length() > 0) botLine = pendingArtistName;
   else if (pendingWorkTitle.length() > 0)  botLine = pendingWorkTitle;
   if (botLine.length() == 0) botLine = "Proof-of-Draw";
   if ((int)botLine.length() > 21) botLine = botLine.substring(0, 21);
 
-  tft.setTextColor(C_WHITE, C_CARTEL);
-  tft.setCursor(2, footerY + 3);
+  tft.setTextColor(C_WHITE, C_DARK);
+  tft.setTextSize(1);
+  tft.setCursor(3, footerY + 4);
   tft.print(botLine);
 }
 
@@ -579,18 +604,24 @@ void displayOnboardingTFT(const String& onboardUrl, const String& code, const St
   Serial.println("[ONBOARD] displayOnboardingTFT() — url len=" + String(onboardUrl.length()));
   Serial.println("[ONBOARD] url: " + onboardUrl);
 
-  tft.fillScreen(C_WHITE);
+  // ── Fond navy ─────────────────────────────────────────────────────────────
+  tft.fillScreen(C_NAVY);
 
-  // ── Bande titre en haut ─────────────────────────────────────────────────
-  tft.fillRect(0, 0, TFT_W, 16, C_ACCENT);
-  tft.setTextColor(C_WHITE, C_ACCENT);
+  // ── Barre titre : "RESCOE" en or + "proof-of-draw" en gris ───────────────
+  const int TITLE_H = 18;
+  tft.fillRect(0, 0, TFT_W, TITLE_H, C_DARK);
+  tft.drawFastHLine(0, TITLE_H, TFT_W, C_GOLD);
+
   tft.setTextSize(1);
-  tft.setCursor(4, 4);
-  tft.print("PROOF-OF-DRAW");
+  tft.setTextColor(C_GOLD, C_DARK);
+  tft.setCursor(3, 3);
+  tft.print("RESCOE");
 
-  // ── QR code — buffer dimensionné pour v7, tentatives v3→v7 avec ECC_LOW ─
-  // URL ~52 chars — v5 ECC_LOW = 64 bytes de capacité → ça rentre
-  // Buffer sized for v7 max pour éviter overflow si on monte en version
+  tft.setTextColor(C_GREY, C_DARK);
+  tft.setCursor(52, 3);
+  tft.print("proof-of-draw");
+
+  // ── QR code — buffer v7, tentatives v3→v7 ECC_LOW ────────────────────────
   QRCode qrcode;
   uint8_t qrcodeData[qrcode_getBufferSize(7)];
   memset(qrcodeData, 0, qrcode_getBufferSize(7));
@@ -604,17 +635,17 @@ void displayOnboardingTFT(const String& onboardUrl, const String& code, const St
   if (qrResult >= 0) {
     Serial.printf("[ONBOARD] QR OK — size=%d modules\n", qrcode.size);
 
-    // Zone disponible : y=19..119 (100px hauteur) — code pair dessous
-    const int QR_ZONE_Y = 19;
-    const int QR_ZONE_H = 100;
-    int scale = min(QR_ZONE_H / qrcode.size, (TFT_W - 4) / qrcode.size);
+    // Zone QR : y=21..122 (101px) — fond blanc pour lisibilité scanner
+    const int QR_ZONE_Y = 21;
+    const int QR_ZONE_H = 96;
+    int scale = min(QR_ZONE_H / qrcode.size, (TFT_W - 8) / qrcode.size);
     if (scale < 1) scale = 1;
     int qrPx = qrcode.size * scale;
     int qrX0 = (TFT_W - qrPx) / 2;
     int qrY0 = QR_ZONE_Y + (QR_ZONE_H - qrPx) / 2;
 
-    // Fond blanc autour du QR (quiet zone minimale de 2px)
-    tft.fillRect(qrX0 - 2, qrY0 - 2, qrPx + 4, qrPx + 4, C_WHITE);
+    // Quiet zone blanche (4px margin) pour lisibilité maximale
+    tft.fillRect(qrX0 - 4, qrY0 - 4, qrPx + 8, qrPx + 8, C_WHITE);
 
     for (int qy = 0; qy < qrcode.size; qy++) {
       for (int qx = 0; qx < qrcode.size; qx++) {
@@ -628,68 +659,69 @@ void displayOnboardingTFT(const String& onboardUrl, const String& code, const St
       yield();
     }
 
-    // ── Code pair sous le QR (taille 2 = 12×16px/char) ────────────────────
-    int textY = QR_ZONE_Y + QR_ZONE_H + 2;
-    tft.setTextColor(C_BLACK, C_WHITE);
+    // ── Code pair en or, centré sous le QR ───────────────────────────────────
+    int codeY = QR_ZONE_Y + QR_ZONE_H + 5;  // y=122
+    tft.setTextColor(C_GOLD, C_NAVY);
     tft.setTextSize(2);
     int codeX = (TFT_W - (int)code.length() * 12) / 2;
     if (codeX < 0) codeX = 0;
-    tft.setCursor(codeX, textY);
+    tft.setCursor(codeX, codeY);
     tft.print(code);
 
-    // MAC compacte en bas
-    tft.setTextSize(1);
+    // MAC compacte en gris en bas
     String macShort = mac;
     macShort.replace(":", "");
     macShort.toUpperCase();
-    tft.setCursor(2, textY + 18);
-    tft.setTextColor(0x7BEF, C_WHITE);  // gris clair
+    tft.setTextSize(1);
+    tft.setTextColor(C_GREY, C_NAVY);
+    int macX = (TFT_W - (int)(4 + macShort.length()) * 6) / 2;
+    if (macX < 2) macX = 2;
+    tft.setCursor(macX, codeY + 20);
     tft.print("MAC:" + macShort);
 
   } else {
-    // ── Fallback : QR impossible — affiche code lisible en grand ────────────
+    // ── Fallback texte : QR impossible — affiche code pair en grand ──────────
     Serial.println("[ONBOARD] QR FAIL — fallback texte");
 
-    tft.setTextColor(C_BLACK, C_WHITE);
+    tft.setTextColor(C_GREY, C_NAVY);
     tft.setTextSize(1);
-    tft.setCursor(4, 22);
-    tft.println("Scan via navigateur :");
+    tft.setCursor(4, 26);
+    tft.println("Ouvrez ce lien :");
 
-    // URL tronquée sur 2 lignes (21 chars chacune)
-    tft.setTextSize(1);
-    tft.setCursor(2, 34);
+    // URL sur 2 lignes max
+    tft.setTextColor(C_WHITE, C_NAVY);
+    tft.setCursor(2, 38);
     tft.println(onboardUrl.substring(0, 21));
-    tft.setCursor(2, 44);
-    tft.println(onboardUrl.substring(21, 42));
-    if (onboardUrl.length() > 42) {
-      tft.setCursor(2, 54);
-      tft.println(onboardUrl.substring(42));
+    if (onboardUrl.length() > 21) {
+      tft.setCursor(2, 48);
+      tft.println(onboardUrl.substring(21, 42));
     }
 
-    tft.drawFastHLine(0, 68, TFT_W, C_BLACK);
+    tft.drawFastHLine(0, 62, TFT_W, C_GOLD);
 
-    // Code pair en très grand
-    tft.setTextColor(C_BLACK, C_WHITE);
+    // Code pair en or, taille 3
+    tft.setTextColor(C_GOLD, C_NAVY);
     tft.setTextSize(3);
     int codeX = (TFT_W - (int)code.length() * 18) / 2;
     if (codeX < 0) codeX = 0;
-    tft.setCursor(codeX, 80);
+    tft.setCursor(codeX, 72);
     tft.print(code);
 
     tft.setTextSize(1);
-    tft.setCursor(4, 116);
+    tft.setTextColor(C_GREY, C_NAVY);
+    tft.setCursor(4, 114);
     tft.print("Entrez ce code sur");
-    tft.setCursor(4, 126);
+    tft.setCursor(4, 124);
     tft.print("le site pour appairer");
 
     String macShort = mac;
     macShort.replace(":", "");
     macShort.toUpperCase();
-    tft.setTextColor(0x7BEF, C_WHITE);
-    tft.setCursor(2, 142);
+    tft.setCursor(2, 140);
     tft.print("MAC:" + macShort);
   }
 
+  qrDisplayed = true;  // flag : ne pas effacer lors des re-checks d'appairage
   Serial.println("[ONBOARD] Affichage terminé");
 }
 
@@ -735,7 +767,10 @@ bool doRegister() {
   String resp;
 
   Serial.printf("[REGISTER] heap avant: %u\n", ESP.getFreeHeap());
-  tftStatus("Enregistrement...", "");
+  // Ne pas écraser le QR d'onboarding si déjà affiché (re-check appairage)
+  if (!qrDisplayed) {
+    tftStatus("Enregistrement...", "");
+  }
 
   if (!httpPost("/api/register", body, resp)) {
     Serial.println("[REGISTER] Echec HTTP");
@@ -774,6 +809,7 @@ bool doRegister() {
     displayOnboardingTFT(String(SERVER_URL) + "/onboard?code=" + pairCode, pairCode, mac);
   } else {
     Serial.println("[REGISTER] Déjà appairé");
+    qrDisplayed = false;
     tftStatus("Connecte", deviceId.length() > 0 ? deviceId : "");
   }
 

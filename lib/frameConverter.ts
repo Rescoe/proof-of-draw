@@ -23,13 +23,16 @@
 //   → La conversion depuis e-ink (horizontal bit packing) nécessite une transposition.
 
 // ─── Profils d'écrans ─────────────────────────────────────────────────────────
+// Note : ce registre local utilise les dimensions DRIVER (espace de bits du firmware),
+// qui peuvent différer des dimensions CANVAS (espace de dessin web).
+// Ex: eink27bw — canvas 264×176 mais driver 176×264 (rotation 90°CCW appliquée côté firmware).
 
 export interface ScreenProfile {
   width:    number;
   height:   number;
-  type:     "eink_bwr" | "eink_bw" | "oled";
+  type:     "eink_bwr" | "eink_bw" | "oled" | "tft";
   buffers:  ("black" | "red" | "buffer")[];
-  byteSize: number; // taille attendue d'un buffer (sans base64)
+  byteSize: number; // taille en bytes d'un buffer (après décodage base64)
 }
 
 export const SCREEN_PROFILES_SERVER: Record<string, ScreenProfile> = {
@@ -40,9 +43,10 @@ export const SCREEN_PROFILES_SERVER: Record<string, ScreenProfile> = {
     byteSize: Math.ceil(296 * 128 / 8), // 4736
   },
   eink27bw: {
+    // Dimensions driver après rotation 90°CCW (canvas = 264×176, driver = 176×264)
     width: 176, height: 264,
     type: "eink_bw",
-    buffers: ["black"],
+    buffers: ["buffer"],
     byteSize: Math.ceil(176 * 264 / 8), // 5808
   },
   oled096: {
@@ -51,14 +55,22 @@ export const SCREEN_PROFILES_SERVER: Record<string, ScreenProfile> = {
     buffers: ["buffer"],
     byteSize: Math.ceil(128 * 64 / 8), // 1024
   },
+  tft18: {
+    // Mapping direct canvas=driver (128×160, pas de rotation)
+    width: 128, height: 160,
+    type: "tft",
+    buffers: ["buffer"],
+    byteSize: Math.ceil(128 * 160 / 8), // 2560
+  },
 };
 
 // ─── Types de frames ──────────────────────────────────────────────────────────
 
-export type FramePayloadBWR = { screen: "eink29bwr"; black: string; red: string };
-export type FramePayloadBW  = { screen: "eink27bw";  buffer: string };
-export type FramePayloadOLED = { screen: "oled096";  buffer: string };
-export type AnyFramePayload = FramePayloadBWR | FramePayloadBW | FramePayloadOLED;
+export type FramePayloadBWR  = { screen: "eink29bwr"; black: string; red: string };
+export type FramePayloadBW   = { screen: "eink27bw";  buffer: string };
+export type FramePayloadOLED = { screen: "oled096";   buffer: string };
+export type FramePayloadTFT  = { screen: "tft18";     buffer: string };
+export type AnyFramePayload  = FramePayloadBWR | FramePayloadBW | FramePayloadOLED | FramePayloadTFT;
 
 // ─── Utilitaires bas niveau ───────────────────────────────────────────────────
 
@@ -227,6 +239,14 @@ export function convertFrame(
         }
       }
     }
+  } else if (sourceScreenId === "tft18") {
+    // Format 1bpp row-major, même convention que eink : bit=1→blanc, bit=0→noir
+    // On inverse pour avoir 0=blanc, 1=noir (convention interne du convertisseur)
+    const p       = payload as FramePayloadTFT;
+    srcPixels     = decodeEinkBuffer(p.buffer, sourceProfile.width, sourceProfile.height);
+    // decodeEinkBuffer lit bit=1 comme "allumé" (noir ici convention inverse)
+    // Pour tft18 : bit=1=blanc, donc on inverse la convention
+    for (let i = 0; i < srcPixels.length; i++) srcPixels[i] ^= 1;
   } else {
     return null; // screen source inconnu
   }
@@ -270,6 +290,17 @@ export function convertFrame(
     return {
       screen: "oled096",
       buffer: encodeOledBuffer(dstPixels, dstW, dstH),
+    };
+  }
+
+  if (targetScreenId === "tft18") {
+    // tft18 : 1bpp row-major, même encodeur que eink, convention bit=1=blanc inversée
+    // On inverse 0/1 avant d'encoder (pixel actif "noir" → bit=0 dans le buffer tft)
+    const inverted = new Uint8Array(dstPixels.length);
+    for (let i = 0; i < dstPixels.length; i++) inverted[i] = dstPixels[i] ^ 1;
+    return {
+      screen: "tft18",
+      buffer: encodeEinkBuffer(inverted, dstW, dstH),
     };
   }
 

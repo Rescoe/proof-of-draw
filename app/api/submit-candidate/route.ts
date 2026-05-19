@@ -76,15 +76,25 @@ export async function POST(req: NextRequest) {
     const rPx = decodeEinkBuffer(red, 296, 128);
     pixels = mergeChannels(bPx, rPx);
   } else if (screen === "eink27bw" && buffer) {
+    // eink27bw : dimensions driver (176×264) après rotation 90° CCW
     pixels = decodeEinkBuffer(buffer, 176, 264);
   } else if (screen === "oled096" && buffer) {
     pixels = decodeEinkBuffer(buffer, 128, 64);
+  } else if (screen === "tft18" && buffer) {
+    // tft18 : 128×160, mapping direct sans rotation
+    pixels = decodeEinkBuffer(buffer, 128, 160);
   } else {
     return NextResponse.json({ error: "Payload incomplet" }, { status: 400 });
   }
 
-  const W = screen === "eink29bwr" ? 296 : screen === "eink27bw" ? 176 : 128;
-  const H = screen === "eink29bwr" ? 128 : screen === "eink27bw" ? 264 : 64;
+  const W = screen === "eink29bwr" ? 296
+          : screen === "eink27bw"  ? 176
+          : screen === "tft18"     ? 128
+          : 128;
+  const H = screen === "eink29bwr" ? 128
+          : screen === "eink27bw"  ? 264
+          : screen === "tft18"     ? 160
+          : 64;
 
   const metrics = computeComplexity(pixels, W, H);
   const warning =
