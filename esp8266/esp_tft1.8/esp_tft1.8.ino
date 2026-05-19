@@ -4,10 +4,10 @@
 // Identique dans son fonctionnement aux firmwares e-ink :
 //   1. Génération paire de clés ED25519 V1 au premier boot → EEPROM
 //   2. Affichage onboarding QR + clés sur TFT (unique au premier boot)
-//   3. Pull léger (metadata JSON) + fetch frame séparé (1bpp binaire)
+//   3. Pull léger (metadata JSON) + fetch frame séparé (RGB565, streaming ligne/ligne)
 //   4. Boucle validate → mine → pull immédiat
 //   5. Ring buffer EEPROM pour blocs possédés (10 slots × 32 chars)
-//   6. Carte SD pour persistence frame + log complet des blocs possédés
+//   6. Carte SD pour log blocs possédés (frame RGB565 trop grande pour malloc/restore)
 //
 // Hardware :
 //   ESP8266 NodeMCU — 3.3V logique → aucun convertisseur de tension requis
@@ -41,9 +41,9 @@
 //
 // Format frame (pull-frame) :
 //   /api/pull-frame?deviceId=...&screen=tft18&fmt=bin
-//   → 2560 bytes binaire 1bpp (128×160 / 8)
-//   Convention : 1 = blanc, 0 = noir (identique e-ink)
-//   Conversion firmware : 0 → 0x0000, 1 → 0xFFFF (RGB565)
+//   → 40960 bytes RGB565 little-endian (128×160×2)
+//   Convention little-endian : byte[off]=low, byte[off+1]=high
+//   Avantage streaming : aucun malloc large — lecture et affichage ligne par ligne
 
 #include <Arduino.h>
 #include <ESP8266WiFi.h>
@@ -83,9 +83,10 @@ const char* WIFI_PASSWORD = "Q2gueWg3UaYJo2VN7C";
 // SD MISO → D6 (GPIO12) — HW SPI MISO
 
 // ─── SCREEN ────────────────────────────────────────────────────────────────
-#define TFT_W         128
-#define TFT_H         160
-#define TFT_BUF_SIZE  ((TFT_W * TFT_H) / 8)   // 2560 bytes — 1bpp
+#define TFT_W           128
+#define TFT_H           160
+#define TFT_ROW_BYTES   (TFT_W * 2)              // 256 bytes par ligne RGB565
+#define TFT_BUF_SIZE    (TFT_W * TFT_H * 2)     // 40960 bytes — RGB565 complet (référence SD)
 
 // Couleurs web3/premium (RGB565)
 #define C_BLACK   0x0000   // noir pur
@@ -121,7 +122,7 @@ const char* WIFI_PASSWORD = "Q2gueWg3UaYJo2VN7C";
 
 // ─── SD paths ──────────────────────────────────────────────────────────────
 #define SD_DIR        "/pod"
-#define SD_FRAME_PATH "/pod/frame.bin"  // dernier frame 1bpp (2560 bytes)
+#define SD_FRAME_PATH "/pod/frame.bin"  // dernier frame RGB565 (40960 bytes) — non restauré au boot (malloc impossible)
 #define SD_OWNED_PATH "/pod/owned.txt"  // hash complet 64 chars par ligne
 
 // ─── OBJECTS ───────────────────────────────────────────────────────────────
@@ -538,29 +539,19 @@ void burnTFTCartel() {
   tft.print(botLine);
 }
 
-// Convertit un buffer 1bpp en RGB565 et pousse vers le TFT.
-// Convention : bit=1 → blanc (0xFFFF), bit=0 → noir (0x0000).
-// Utilise setAddrWindow + writePixels pour minimiser les transactions SPI.
-// rowBuf sur la stack : 128 × 2 = 256 bytes — OK.
+// Affiche un frame RGB565 depuis un buffer complet (restauration SD boot).
+// rowBuf temporaire sur la stack (256 bytes) — pas de malloc global.
 void renderFrameToTFT(const uint8_t* frameBuf) {
-  uint16_t rowBuf[TFT_W];
-
   tft.startWrite();
   tft.setAddrWindow(0, 0, TFT_W - 1, TFT_H - 1);
-
   for (int y = 0; y < TFT_H; y++) {
-    for (int x = 0; x < TFT_W; x++) {
-      int bitIdx = y * TFT_W + x;
-      bool isWhite = (frameBuf[bitIdx >> 3] >> (7 - (bitIdx & 7))) & 1;
-      rowBuf[x] = isWhite ? C_WHITE : C_BLACK;
-    }
-    // writePixels envoie 128 pixels (256 bytes) en une transaction SPI
-    tft.writePixels(rowBuf, TFT_W);
-    yield();  // watchdog ESP8266
+    // Les pixels RGB565 sont déjà little-endian — writePixels les envoie correctement
+    // (reinterprète chaque paire de bytes comme uint16_t natif ESP8266)
+    tft.writePixels((uint16_t*)(frameBuf + y * TFT_ROW_BYTES), TFT_W);
+    yield();
   }
   tft.endWrite();
-
-  burnTFTCartel();  // surimpose cartel sur l'artwork
+  burnTFTCartel();
 }
 
 // ─── AFFICHAGE ONBOARDING TFT ──────────────────────────────────────────────
@@ -817,83 +808,96 @@ bool doRegister() {
 }
 
 // ─── FETCH FRAME ────────────────────────────────────────────────────────────
+// Streaming ligne par ligne RGB565 — AUCUN malloc TFT_BUF_SIZE (40960 bytes).
+// Un seul rowBuf[256] sur la stack, lu depuis le stream réseau puis envoyé
+// directement au TFT via SW SPI. Limite mémoire ESP8266 respectée.
 bool doFetchFrame(const String& frameId, const String& frameSource) {
   logHeapState("FETCHFRAME-BEFORE");
 
-  // Alloue le buffer 1bpp : 2560 bytes — bien inférieur à la capacité
-  uint8_t* frameBuf = (uint8_t*)malloc(TFT_BUF_SIZE);
-  if (!frameBuf) {
-    Serial.println("[FETCHFRAME] malloc failed");
+  WiFiClientSecure client;
+  client.setInsecure();
+  HTTPClient http;
+
+  String url = String(SERVER_URL) + "/api/pull-frame?deviceId=" + deviceId
+               + "&screen=" + String(SCREEN_TYPE) + "&fmt=bin";
+
+  if (!http.begin(client, url)) {
+    Serial.println("[FETCHFRAME] begin() failed");
     return false;
   }
-  memset(frameBuf, 0xFF, TFT_BUF_SIZE);  // blanc par défaut
+  http.setTimeout(25000);
+  http.useHTTP10(true);
 
-  {
-    WiFiClientSecure client;
-    client.setInsecure();
-    HTTPClient http;
+  int code = http.GET();
+  Serial.printf("[HTTP GET] /api/pull-frame (tft18 RGB565 %uB) → %d\n",
+                (unsigned)TFT_BUF_SIZE, code);
 
-    String url = String(SERVER_URL) + "/api/pull-frame?deviceId=" + deviceId
-                 + "&screen=" + String(SCREEN_TYPE) + "&fmt=bin";
-
-    if (!http.begin(client, url)) {
-      Serial.println("[FETCHFRAME] begin() failed");
-      free(frameBuf);
-      return false;
-    }
-    http.setTimeout(20000);
-    http.useHTTP10(true);
-
-    int code = http.GET();
-    Serial.printf("[HTTP GET] /api/pull-frame (tft18) → %d\n", code);
-
-    if (code == 404) {
-      http.end();
-      Serial.println("[FETCHFRAME] Pas de frame disponible");
-      free(frameBuf);
-      return true;
-    }
-    if (code != 200) {
-      http.end();
-      Serial.printf("[FETCHFRAME] HTTP error: %d\n", code);
-      free(frameBuf);
-      return false;
-    }
-
-    // Lecture exacte de TFT_BUF_SIZE bytes depuis le stream
-    auto readFull = [](WiFiClient* s, uint8_t* dst, size_t len) -> size_t {
-      size_t total = 0;
-      unsigned long t0 = millis();
-      while (total < len && millis() - t0 < 15000) {
-        if (s->available()) {
-          size_t got = s->readBytes(dst + total, len - total);
-          if (got > 0) total += got;
-        } else { delay(10); }
-      }
-      return total;
-    };
-
-    WiFiClient* stream = http.getStreamPtr();
-    size_t bRead = readFull(stream, frameBuf, TFT_BUF_SIZE);
+  if (code == 404) {
     http.end();
-
-    Serial.printf("[FETCHFRAME] lu=%u expected=%u\n", bRead, TFT_BUF_SIZE);
-
-    if (bRead != TFT_BUF_SIZE) {
-      Serial.println("[FETCHFRAME] lecture incomplète");
-      free(frameBuf);
-      return false;
-    }
+    Serial.println("[FETCHFRAME] Pas de frame disponible");
+    return true;
   }
-  // TLS session fermée ici
+  if (code != 200) {
+    http.end();
+    Serial.printf("[FETCHFRAME] HTTP error: %d\n", code);
+    return false;
+  }
 
-  // Sauvegarde sur SD avant le rendu (persistence entre boots)
-  saveFrameToSD(frameBuf);
+  // ── Streaming ligne par ligne ─────────────────────────────────────────────
+  // Chaque ligne = TFT_ROW_BYTES (256 bytes) lu depuis le stream HTTP,
+  // puis écrit immédiatement au ST7735 via writePixels.
+  // La fenêtre d'adresse couvre l'écran entier — le contrôleur avance
+  // automatiquement de ligne en ligne sans re-envoyer CASET/RASET.
+  WiFiClient* stream = http.getStreamPtr();
+  uint8_t rowBuf[TFT_ROW_BYTES];  // 256 bytes sur la stack — sûr ✓
+  size_t totalRead = 0;
+  bool   success   = true;
+  unsigned long t0 = millis();
 
-  // Rendu 1bpp → RGB565 + cartel Adafruit_GFX
-  renderFrameToTFT(frameBuf);
+  tft.startWrite();
+  tft.setAddrWindow(0, 0, TFT_W - 1, TFT_H - 1);
 
-  free(frameBuf);  // buffer libéré — le TFT garde l'image sans RAM (controller interne)
+  for (int y = 0; y < TFT_H; y++) {
+    size_t rowRead = 0;
+    unsigned long rowT0 = millis();
+
+    // Lire exactement TFT_ROW_BYTES depuis le stream (timeout 4s par ligne)
+    while (rowRead < (size_t)TFT_ROW_BYTES && millis() - rowT0 < 4000) {
+      if (stream->available()) {
+        rowRead += stream->readBytes(rowBuf + rowRead, TFT_ROW_BYTES - rowRead);
+      } else {
+        delay(2);
+      }
+    }
+
+    if (rowRead != (size_t)TFT_ROW_BYTES) {
+      Serial.printf("[FETCHFRAME] ligne %d: lu=%u/%u — timeout\n",
+                    y, rowRead, TFT_ROW_BYTES);
+      success = false;
+      break;
+    }
+
+    // Les bytes sont RGB565 little-endian — writePixels les envoie byte-swapped
+    // au ST7735 (big-endian bus) en interne, ce qui donne les couleurs correctes.
+    tft.writePixels((uint16_t*)rowBuf, TFT_W);
+    totalRead += rowRead;
+    yield();  // watchdog ESP8266
+  }
+
+  tft.endWrite();
+  http.end();
+
+  Serial.printf("[FETCHFRAME] lu=%u/%u en %lums — %s\n",
+                totalRead, (unsigned)TFT_BUF_SIZE, millis() - t0,
+                success ? "OK" : "INCOMPLET");
+
+  if (!success) {
+    Serial.println("[FETCHFRAME] stream incomplet — frame partielle abandonnée");
+    return false;
+  }
+
+  // Superposer le cartel (header RESCOE + footer artiste/titre)
+  burnTFTCartel();
 
   hasDisplayedFrame     = true;
   lastFrameId           = frameId;
@@ -1187,18 +1191,22 @@ void setup() {
   if (currentBlockHash.length() > 0)
     Serial.println("[CHAIN] BlockHash restauré: " + currentBlockHash);
 
-  // Restauration dernière frame depuis SD (affichage immédiat avant pull)
-  if (sdAvailable) {
-    uint8_t* restoreBuf = (uint8_t*)malloc(TFT_BUF_SIZE);
-    if (restoreBuf) {
-      if (loadFrameFromSD(restoreBuf)) {
-        renderFrameToTFT(restoreBuf);
-        hasDisplayedFrame = true;
-        Serial.println("[BOOT] Frame restaurée depuis SD");
-      }
-      free(restoreBuf);
-    }
-  }
+  // Restauration dernière frame depuis SD — désactivée en RGB565 (TFT_BUF_SIZE=40960B).
+  // malloc(40960) échouerait sur ESP8266 (heap ~30KB après BearSSL).
+  // La frame sera rechargée au premier pull réseau.
+  // (Code conservé pour référence — ré-activer si streaming SD implémenté.)
+  //
+  // if (sdAvailable) {
+  //   uint8_t* restoreBuf = (uint8_t*)malloc(TFT_BUF_SIZE);
+  //   if (restoreBuf) {
+  //     if (loadFrameFromSD(restoreBuf)) {
+  //       renderFrameToTFT(restoreBuf);
+  //       hasDisplayedFrame = true;
+  //       Serial.println("[BOOT] Frame restaurée depuis SD");
+  //     }
+  //     free(restoreBuf);
+  //   }
+  // }
 
   // Register (TLS)
   while (!registered) {

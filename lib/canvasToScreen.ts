@@ -229,28 +229,23 @@ if (screenId === "eink27bw") {
   }
 
   // ════════════════════════════════════════════════════════════════
-  // TFT 1.8" — ST7735, 128×160
+  // TFT 1.8" — ST7735, 128×160, RGB565 couleur complète
   //
-  // Buffer 1bpp row-major :
-  //   bytesPerRow = 128 / 8 = 16
-  //   taille totale = 16 × 160 = 2560 bytes
+  // Buffer RGB565 little-endian row-major :
+  //   bytesPerPixel = 2
+  //   taille totale = 128 × 160 × 2 = 40960 bytes
   //
-  // Convention (identique e-ink) :
-  //   1 = blanc (fond)
-  //   0 = noir  (pixel actif)
+  // Convention little-endian pour ESP8266 :
+  //   byte[off]   = rgb565 & 0xFF        (low byte)
+  //   byte[off+1] = (rgb565 >> 8) & 0xFF (high byte)
   //
-  // Mapping direct canvas(x,y) → buffer :
-  //   byteIndex = y * 16 + floor(x / 8)
-  //   bit       = 7 - (x % 8)   [MSB first]
-  //
-  // Le firmware convertit 1bpp → RGB565 :
-  //   0 (noir) → 0x0000   1 (blanc) → 0xFFFF
+  // Le firmware lit le buffer via writePixels((uint16_t*)rowBuf, 128) —
+  // le hardware SPI envoie high byte en premier (MSB), conforme ST7735.
   // ════════════════════════════════════════════════════════════════
   if (screenId === "tft18") {
     const TFT_W = 128;
     const TFT_H = 160;
-    const bytesPerRow = TFT_W / 8; // 16
-    const BUF_SIZE = bytesPerRow * TFT_H; // 2560
+    const BUF_SIZE = TFT_W * TFT_H * 2; // 40960 bytes
 
     if (w !== TFT_W || h !== TFT_H) {
       throw new Error(
@@ -258,29 +253,36 @@ if (screenId === "eink27bw") {
       );
     }
 
-    const buffer = new Uint8Array(BUF_SIZE).fill(0xFF); // tout blanc par défaut
-    let blackPixels = 0;
+    const buffer = new Uint8Array(BUF_SIZE);
+    // Initialiser à blanc (0xFFFF little-endian = 0xFF, 0xFF)
+    buffer.fill(0xFF);
 
     for (let y = 0; y < TFT_H; y++) {
       for (let x = 0; x < TFT_W; x++) {
-        const i = (y * TFT_W + x) * 4;
-        const r = px[i];
-        const g = px[i + 1];
-        const b = px[i + 2];
-        const a = px[i + 3];
+        const pi = (y * TFT_W + x) * 4;
+        const r = px[pi];
+        const g = px[pi + 1];
+        const b = px[pi + 2];
+        const a = px[pi + 3];
 
-        if (a < 32) continue; // transparent = fond blanc
-        const lum = (r * 3 + g * 6 + b) / 10;
-        if (lum >= 128) continue; // pixel clair = blanc, skip
+        // Pixel transparent → blanc (fond)
+        const rr = a < 32 ? 255 : r;
+        const gg = a < 32 ? 255 : g;
+        const bb = a < 32 ? 255 : b;
 
-        const byteIndex = y * bytesPerRow + Math.floor(x / 8);
-        const bit = 7 - (x % 8);
-        buffer[byteIndex] &= ~(1 << bit); // bit → 0 = noir
-        blackPixels++;
+        // RGBA → RGB565 little-endian
+        const r5    = (rr >> 3) & 0x1F;
+        const g6    = (gg >> 2) & 0x3F;
+        const b5    = (bb >> 3) & 0x1F;
+        const rgb565 = (r5 << 11) | (g6 << 5) | b5;
+
+        const off = (y * TFT_W + x) * 2;
+        buffer[off]     = rgb565 & 0xFF;        // low byte
+        buffer[off + 1] = (rgb565 >> 8) & 0xFF; // high byte
       }
     }
 
-    console.log(`[canvasToScreen tft18] ${blackPixels} black pixels`);
+    console.log(`[canvasToScreen tft18] RGB565 ${BUF_SIZE} bytes`);
     return { screen: "tft18", buffer: uint8ArrayToBase64(buffer) };
   }
 

@@ -81,8 +81,18 @@ export async function POST(req: NextRequest) {
   } else if (screen === "oled096" && buffer) {
     pixels = decodeEinkBuffer(buffer, 128, 64);
   } else if (screen === "tft18" && buffer) {
-    // tft18 : 128×160, mapping direct sans rotation
-    pixels = decodeEinkBuffer(buffer, 128, 160);
+    // tft18 : RGB565 little-endian → luminance binaire pour calcul de complexité
+    const rgbBytes = Buffer.from(buffer, "base64");
+    pixels = new Uint8Array(128 * 160);
+    for (let i = 0; i < 128 * 160; i++) {
+      const rgb565 = rgbBytes[i * 2] | (rgbBytes[i * 2 + 1] << 8);
+      const r = ((rgb565 >> 11) & 0x1F) << 3;
+      const g = ((rgb565 >> 5)  & 0x3F) << 2;
+      const b = (rgb565 & 0x1F) << 3;
+      // Luminance BT.601 → pixel "actif" si non-blanc
+      const lum = (r * 77 + g * 150 + b * 29) >> 8;
+      pixels[i] = lum < 230 ? 1 : 0;
+    }
   } else {
     return NextResponse.json({ error: "Payload incomplet" }, { status: 400 });
   }

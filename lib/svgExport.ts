@@ -70,18 +70,24 @@ function decodeEink29(blackB64: string, redB64: string, fg: string, fg2: string)
   return { pixels, w: W, h: H, bg: SCREEN_PROFILES.eink29bwr.svgBg };
 }
 
-// ─── TFT 1.8" ST7735 128×160 ──────────────────────────────────────────────────
-// Buffer 1bpp row-major, bit=0 → noir (1=blanc=fond)
-function decodeTft18(bufferB64: string, fg: string): Decoded {
+// ─── TFT 1.8" ST7735 128×160 RGB565 ──────────────────────────────────────────
+// Buffer RGB565 little-endian, 40960 bytes — couleurs réelles
+// Les pixels blancs (#ffffff ± marge) sont skippés (fond = background)
+function decodeTft18(bufferB64: string, _fg: string): Decoded {
   const W = 128, H = 160;
-  const bytesPerRow = 16;
   const buf = b64ToBytes(bufferB64);
   const pixels: Pixel[] = [];
   for (let y = 0; y < H; y++) {
     for (let x = 0; x < W; x++) {
-      const byteIdx = y * bytesPerRow + Math.floor(x / 8);
-      const bit     = 7 - (x % 8);
-      if (!((buf[byteIdx] >> bit) & 1)) pixels.push({ x, y, color: fg });
+      const off    = (y * W + x) * 2;
+      const rgb565 = buf[off] | (buf[off + 1] << 8);
+      const r      = ((rgb565 >> 11) & 0x1F) << 3;
+      const g      = ((rgb565 >> 5)  & 0x3F) << 2;
+      const b      = (rgb565 & 0x1F) << 3;
+      // Skip pixels quasi-blancs (fond)
+      if (r > 230 && g > 230 && b > 230) continue;
+      const hex = `#${r.toString(16).padStart(2, "0")}${g.toString(16).padStart(2, "0")}${b.toString(16).padStart(2, "0")}`;
+      pixels.push({ x, y, color: hex });
     }
   }
   return { pixels, w: W, h: H, bg: SCREEN_PROFILES.tft18.svgBg };

@@ -130,32 +130,29 @@ export function eink29bwrToCanvas(blackB64: string, redB64: string): ImageData {
   return new ImageData(rgba, CANVAS_W, CANVAS_H);
 }
 
-// ─── TFT 1.8" ST7735 128×160 ─────────────────────────────────────────────────
-// Buffer 1bpp row-major, 2560 bytes, MSB-first
-// Convention : bit=1 → blanc (fond), bit=0 → noir (pixel actif)
-// Mapping direct : canvas(x,y) → byteIndex = y*16 + floor(x/8), bit = 7-(x%8)
+// ─── TFT 1.8" ST7735 128×160 RGB565 ─────────────────────────────────────────
+// Buffer RGB565 little-endian, 40960 bytes (128×160×2)
+// Convention : little-endian — byte[off]=low, byte[off+1]=high
+// Expansion des canaux : R5→R8, G6→G8, B5→B8 (shift left pour remplir les bits bas)
 export function tft18ToCanvas(bufferB64: string): ImageData {
   const W = 128, H = 160;
   const buf = b64ToBytes(bufferB64);
   const rgba = new Uint8ClampedArray(W * H * 4);
 
-  // Fond blanc
-  rgba.fill(255);
-  for (let i = 3; i < rgba.length; i += 4) rgba[i] = 255;
-
-  const bytesPerRow = 16; // 128/8
   for (let y = 0; y < H; y++) {
     for (let x = 0; x < W; x++) {
-      const byteIdx = y * bytesPerRow + Math.floor(x / 8);
-      const bit = 7 - (x % 8);
-      const isBlack = !((buf[byteIdx] >> bit) & 1); // 0 = noir
-
-      if (!isBlack) continue;
+      const off = (y * W + x) * 2;
+      // Lire RGB565 little-endian
+      const rgb565 = buf[off] | (buf[off + 1] << 8);
+      // Expansion 5→8 bits (répliquer les MSB dans les LSB pour meilleure fidélité)
+      const r = ((rgb565 >> 11) & 0x1F) << 3;
+      const g = ((rgb565 >> 5)  & 0x3F) << 2;
+      const b = (rgb565 & 0x1F) << 3;
 
       const idx = (y * W + x) * 4;
-      rgba[idx] = 0;
-      rgba[idx + 1] = 0;
-      rgba[idx + 2] = 0;
+      rgba[idx]     = r;
+      rgba[idx + 1] = g;
+      rgba[idx + 2] = b;
       rgba[idx + 3] = 255;
     }
   }

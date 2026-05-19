@@ -1065,38 +1065,87 @@ export default function DrawCanvasPage() {
     </div>
   );
 
+  // Taille des swatches adaptée à la palette :
+  // > 16 couleurs (TFT 48 couleurs) → grille compacte 28px
+  // ≤ 16 couleurs (e-ink mono/bwr, OLED) → swatches confortables 40px
+  const isFullColor  = screenId === "tft18";
+  const swatchSize   = colors.length > 16 ? 28 : 40;
+  const swatchRadius = colors.length > 16 ? 6  : 10;
+  const swatchGap    = colors.length > 16 ? 4  : 8;
+
   const PaletteContent = (
-    <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-      <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+    <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+
+      {/* Écrans RGB565 (TFT) : sélecteur libre en tête — toutes les couleurs possibles */}
+      {isFullColor && (
+        <div style={{ display: "flex", gap: 8, alignItems: "stretch", marginBottom: 2 }}>
+          <input
+            type="color"
+            value={activeColor}
+            onChange={e => setActiveColor(e.target.value)}
+            style={{ width: 56, height: 56, borderRadius: 10, border: "none", cursor: "pointer", padding: 0, flexShrink: 0 }}
+            title="Couleur libre — toutes les couleurs RGB565"
+          />
+          <div style={{
+            flex: 1, borderRadius: 10,
+            background: activeColor,
+            border: "2px solid rgba(255,255,255,0.18)",
+            display: "flex", flexDirection: "column",
+            alignItems: "center", justifyContent: "center", gap: 2,
+          }}>
+            <span style={{
+              fontSize: 13, fontFamily: "monospace", fontWeight: 700, letterSpacing: "0.05em",
+              color: parseInt(activeColor.slice(1, 3), 16) * 0.299
+                   + parseInt(activeColor.slice(3, 5), 16) * 0.587
+                   + parseInt(activeColor.slice(5, 7), 16) * 0.114 > 150 ? "#111" : "#fff",
+            }}>
+              {activeColor.toUpperCase()}
+            </span>
+          </div>
+        </div>
+      )}
+
+      {/* Grille de couleurs — compacte pour les grandes palettes */}
+      <div style={{
+        display: "grid",
+        gridTemplateColumns: `repeat(auto-fill, ${swatchSize}px)`,
+        gap: swatchGap,
+      }}>
         {colors.map((c, i) => (
           <button key={c} onClick={() => { setActiveColor(c); setMobileSheet(null); }}
             title={colorLabels[i]}
             style={{
-              width: 40, height: 40, borderRadius: 10, border: "none", cursor: "pointer",
+              width: swatchSize, height: swatchSize,
+              borderRadius: swatchRadius,
+              border: "none", cursor: "pointer",
               background: c,
-              outline: activeColor === c ? "3px solid var(--accent)" : "1px solid rgba(255,255,255,0.2)",
+              outline: activeColor === c ? "3px solid var(--accent)" : "1px solid rgba(255,255,255,0.18)",
               outlineOffset: 2, transition: "outline 0.1s", flexShrink: 0,
             }}
           />
         ))}
       </div>
-      <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-        <input type="color" defaultValue={activeColor}
-          onChange={e => setActiveColor(e.target.value)}
-          style={{ width: 44, height: 44, borderRadius: 8, border: "none", cursor: "pointer", padding: 0 }}
-          title="Couleur libre"
-        />
-        <div style={{
-          flex: 1, height: 44, borderRadius: 8,
-          background: activeColor,
-          border: "1px solid rgba(255,255,255,0.12)",
-          display: "flex", alignItems: "center", justifyContent: "center",
-        }}>
-          <span style={{ fontSize: 11, fontFamily: "monospace", color: activeColor === "#FFFFFF" ? "#333" : "#fff" }}>
-            {activeColor}
-          </span>
+
+      {/* Écrans mono/bwr : sélecteur libre en bas (couleur libre sur fond noir/blanc) */}
+      {!isFullColor && (
+        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+          <input type="color" value={activeColor}
+            onChange={e => setActiveColor(e.target.value)}
+            style={{ width: 44, height: 44, borderRadius: 8, border: "none", cursor: "pointer", padding: 0 }}
+            title="Couleur libre"
+          />
+          <div style={{
+            flex: 1, height: 44, borderRadius: 8,
+            background: activeColor,
+            border: "1px solid rgba(255,255,255,0.12)",
+            display: "flex", alignItems: "center", justifyContent: "center",
+          }}>
+            <span style={{ fontSize: 11, fontFamily: "monospace", color: activeColor === "#FFFFFF" ? "#333" : "#fff" }}>
+              {activeColor}
+            </span>
+          </div>
         </div>
-      </div>
+      )}
     </div>
   );
 
@@ -1115,6 +1164,19 @@ export default function DrawCanvasPage() {
   // ── RENDER ─────────────────────────────────────────────────────────────────
   // rootRef est posé sur le div racine — c'est lui qu'on passe à requestFullscreen
   return (
+    <>
+    {/* Animation CSS du ticker TFT — injectée une seule fois dans la page */}
+    {isFullColor && (
+      <style>{`
+        @keyframes tftTicker {
+          0%   { transform: translateX(0%); }
+          20%  { transform: translateX(0%); }
+          60%  { transform: translateX(-50%); }
+          80%  { transform: translateX(-50%); }
+          100% { transform: translateX(0%); }
+        }
+      `}</style>
+    )}
     <div
       ref={rootRef}
       style={{
@@ -1146,15 +1208,35 @@ export default function DrawCanvasPage() {
           cursor: "pointer", fontSize: "1.2rem", padding: "0 4px", flexShrink: 0,
         }}>←</button>
 
-        {/* Device info */}
+        {/* Device info — ticker animé pour TFT (plus d'infos à afficher) */}
         <div style={{ flexShrink: 1, overflow: "hidden", minWidth: 0 }}>
-          <div style={{ fontWeight: 700, fontSize: "0.85rem", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-            {isGuest ? `ESP de ${device?.artistName || deviceId}` : (device?.artistName || deviceId)}
-          </div>
-          {!isMobile && (
-            <div style={{ color: "var(--text3)", fontSize: "0.65rem", fontFamily: "monospace" }}>
-              {isGuest ? "🔓 ESP partagé · " : ""}{profile.name} · {W}×{H}px
+          {isFullColor ? (
+            /* TFT : marquee CSS pour faire défiler les infos dans la barre étroite */
+            <div style={{ overflow: "hidden", whiteSpace: "nowrap" }}>
+              <span style={{
+                display: "inline-block",
+                fontWeight: 700, fontSize: "0.82rem",
+                animation: "tftTicker 10s linear infinite",
+              }}>
+                {isGuest ? `🔓 ESP de ${device?.artistName || deviceId}` : (device?.artistName || deviceId)}
+                &nbsp;·&nbsp;
+                <span style={{ color: "var(--text3)", fontWeight: 400, fontFamily: "monospace", fontSize: "0.72rem" }}>
+                  {profile.name}&nbsp;{W}×{H}&nbsp;RGB565
+                </span>
+                &nbsp;&nbsp;&nbsp;&nbsp;
+              </span>
             </div>
+          ) : (
+            <>
+              <div style={{ fontWeight: 700, fontSize: "0.85rem", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                {isGuest ? `ESP de ${device?.artistName || deviceId}` : (device?.artistName || deviceId)}
+              </div>
+              {!isMobile && (
+                <div style={{ color: "var(--text3)", fontSize: "0.65rem", fontFamily: "monospace" }}>
+                  {isGuest ? "🔓 ESP partagé · " : ""}{profile.name} · {W}×{H}px
+                </div>
+              )}
+            </>
           )}
         </div>
 
@@ -1721,6 +1803,7 @@ export default function DrawCanvasPage() {
         </div>
       )}
     </div>
+    </>
   );
 }
 

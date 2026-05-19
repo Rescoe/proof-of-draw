@@ -57,10 +57,11 @@ export const SCREEN_PROFILES_SERVER: Record<string, ScreenProfile> = {
   },
   tft18: {
     // Mapping direct canvas=driver (128×160, pas de rotation)
+    // Format RGB565 little-endian : 2 bytes par pixel → 40960 bytes
     width: 128, height: 160,
     type: "tft",
     buffers: ["buffer"],
-    byteSize: Math.ceil(128 * 160 / 8), // 2560
+    byteSize: 128 * 160 * 2, // 40960 — RGB565 (2 bytes/pixel)
   },
 };
 
@@ -240,13 +241,18 @@ export function convertFrame(
       }
     }
   } else if (sourceScreenId === "tft18") {
-    // Format 1bpp row-major, même convention que eink : bit=1→blanc, bit=0→noir
-    // On inverse pour avoir 0=blanc, 1=noir (convention interne du convertisseur)
+    // Format RGB565 little-endian → luminance binaire (0=blanc, 1=actif)
     const p       = payload as FramePayloadTFT;
-    srcPixels     = decodeEinkBuffer(p.buffer, sourceProfile.width, sourceProfile.height);
-    // decodeEinkBuffer lit bit=1 comme "allumé" (noir ici convention inverse)
-    // Pour tft18 : bit=1=blanc, donc on inverse la convention
-    for (let i = 0; i < srcPixels.length; i++) srcPixels[i] ^= 1;
+    const rgbBytes = Buffer.from(p.buffer, "base64");
+    srcPixels      = new Uint8Array(sourceProfile.width * sourceProfile.height);
+    for (let i = 0; i < srcPixels.length; i++) {
+      const rgb565 = rgbBytes[i * 2] | (rgbBytes[i * 2 + 1] << 8);
+      const r = ((rgb565 >> 11) & 0x1F) << 3;
+      const g = ((rgb565 >> 5)  & 0x3F) << 2;
+      const b = (rgb565 & 0x1F) << 3;
+      const lum = (r * 77 + g * 150 + b * 29) >> 8;
+      srcPixels[i] = lum < 230 ? 1 : 0; // actif si non-blanc
+    }
   } else {
     return null; // screen source inconnu
   }
@@ -294,13 +300,17 @@ export function convertFrame(
   }
 
   if (targetScreenId === "tft18") {
-    // tft18 : 1bpp row-major, même encodeur que eink, convention bit=1=blanc inversée
-    // On inverse 0/1 avant d'encoder (pixel actif "noir" → bit=0 dans le buffer tft)
-    const inverted = new Uint8Array(dstPixels.length);
-    for (let i = 0; i < dstPixels.length; i++) inverted[i] = dstPixels[i] ^ 1;
+    // Convertit pixels binaires (0=blanc, 1=actif) → RGB565 little-endian
+    // La couleur "actif" est noir (0x0000) pour les conversions cross-screen
+    const buf = new Uint8Array(dstW * dstH * 2);
+    for (let i = 0; i < dstPixels.length; i++) {
+      const rgb565 = dstPixels[i] ? 0x0000 : 0xFFFF; // actif=noir, inactif=blanc
+      buf[i * 2]     = rgb565 & 0xFF;
+      buf[i * 2 + 1] = (rgb565 >> 8) & 0xFF;
+    }
     return {
       screen: "tft18",
-      buffer: encodeEinkBuffer(inverted, dstW, dstH),
+      buffer: Buffer.from(buf).toString("base64"),
     };
   }
 
