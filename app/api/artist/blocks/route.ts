@@ -35,7 +35,7 @@ export async function GET() {
         const isMiner  = !!b.minerDeviceId && deviceSet.has(b.minerDeviceId);
         if (!isArtist && !isMiner) return null;
 
-        const img = await getBlockImage(b.imageHash);
+        const img = await getBlockImage(b.blockHash);
         // On inclut le bloc même si l'image est manquante (rare) pour ne pas fausser les stats
         return { ...b, imagePayload: img ?? null };
       } catch { return null; }

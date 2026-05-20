@@ -8,9 +8,11 @@ export const metadata: Metadata = {
 };
 
 const links = [
-  { href: "/onboard", label: "+ Onboard" },
-  { href: "/draw", label: "Dessiner" },
-  { href: "/profile", label: "Mon profil" },
+  { href: "/learn",    label: "Apprendre" },
+  { href: "/draw",     label: "Dessiner" },
+  { href: "/artists",  label: "Artistes" },
+  { href: "/profile",  label: "Mon profil" },
+  { href: "/onboard",  label: "+ Onboard" },
 ];
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

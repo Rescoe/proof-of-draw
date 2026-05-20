@@ -2,12 +2,14 @@
   "name": "proof-of-draw",
   "version": "0.1.0",
   "private": true,
-"scripts": {
-  "dev": "next dev",
-  "build": "next build"
-},
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build"
+  },
   "dependencies": {
+    "@types/jszip": "^3.4.1",
     "@upstash/redis": "^1.38.0",
+    "jszip": "^3.10.1",
     "lucide-react": "^1.14.0",
     "next": "16.2.6",
     "react": "19.2.4",
