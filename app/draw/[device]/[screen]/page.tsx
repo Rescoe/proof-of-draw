@@ -941,7 +941,13 @@ export default function DrawCanvasPage() {
         setTimeout(() => setStatus(null), 8000);
         return;
       }
-      if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+      // Rejet explicite (dessin invalide) — affiche le message lisible sans bloquer le cooldown
+      if (!res.ok && data.validation === "rejected") {
+        setStatus({ type: "error", msg: data.message || data.reason || "Dessin rejeté" });
+        setTimeout(() => setStatus(null), 8000);
+        return;
+      }
+      if (!res.ok) throw new Error(data.message || data.error || `HTTP ${res.status}`);
       const secs = data.nextDrawIn ?? DRAW_WINDOW_SEC;
       saveCooldown(deviceId, screenId, Date.now() + secs * 1000);
       startCooldown(secs);

@@ -4,12 +4,13 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import {
+  getArtist,
   getArtistByDevice,
   createOrUpdateArtist,
   linkDeviceToArtist,
   setArtistName,
 } from "@/lib/deviceStore";
-import { getSession } from "@/lib/session";
+import { getSession, setArtistIdInSession } from "@/lib/session";
 import { getIP, isBlacklisted, forbidden } from "@/lib/rateLimit";
 
 export const dynamic = "force-dynamic";
@@ -24,9 +25,16 @@ function json(body: unknown, status = 200) {
 export async function GET() {
   try {
     const session = await getSession();
-    if (session.deviceIds.length === 0) return json({ profile: null });
 
-    // Cherche le profil depuis le premier device de la session
+    // Lookup prioritaire : artistId stocké dans le cookie de session
+    if (session.artistId) {
+      const profile = await getArtist(session.artistId);
+      if (profile) return json({ profile });
+      // artistId périmé → continuer sur le fallback device
+    }
+
+    // Fallback : cherche depuis le premier device de la session
+    if (session.deviceIds.length === 0) return json({ profile: null });
     const profile = await getArtistByDevice(session.deviceIds[0]);
     return json({ profile });
   } catch (err) {
@@ -47,20 +55,28 @@ export async function POST(req: NextRequest) {
     let body: Record<string, unknown>;
     try { body = await req.json(); } catch { return json({ error: "JSON invalide" }, 400); }
 
-    const displayName = typeof body.displayName === "string" ? body.displayName.trim() : "";
-    const bio         = typeof body.bio         === "string" ? body.bio.trim()         : undefined;
+    const displayName         = typeof body.displayName         === "string" ? body.displayName.trim()         : "";
+    const bio                 = typeof body.bio                 === "string" ? body.bio.trim()                 : undefined;
+    const profileImageBlockHash = typeof body.profileImageBlockHash === "string" ? body.profileImageBlockHash : undefined;
 
     if (!displayName)
       return json({ error: "displayName requis" }, 400);
 
-    // Résoudre l'artistId existant (depuis n'importe quel device de la session)
-    let existingArtistId: string | undefined;
-    for (const deviceId of session.deviceIds) {
-      const existing = await getArtistByDevice(deviceId);
-      if (existing) { existingArtistId = existing.artistId; break; }
+    // Résoudre l'artistId existant : cookie > device lookup
+    let existingArtistId = session.artistId;
+    if (!existingArtistId) {
+      for (const deviceId of session.deviceIds) {
+        const existing = await getArtistByDevice(deviceId);
+        if (existing) { existingArtistId = existing.artistId; break; }
+      }
     }
 
-    const profile = await createOrUpdateArtist(displayName, bio, existingArtistId);
+    const profile = await createOrUpdateArtist(
+      displayName,
+      bio,
+      existingArtistId,
+      profileImageBlockHash,
+    );
 
     // Lier tous les devices de la session à ce profil + mettre à jour artistName (rétrocompat)
     await Promise.all(
@@ -71,7 +87,13 @@ export async function POST(req: NextRequest) {
     );
 
     console.log(`[/api/artist] profil upsert artistId=${profile.artistId} devices=${session.deviceIds.length}`);
-    return json({ ok: true, profile });
+
+    // Stocker l'artistId dans le cookie de session pour le lookup rapide futur
+    const res = NextResponse.json({ ok: true, profile }, {
+      headers: { "Cache-Control": "private, no-store" },
+    });
+    await setArtistIdInSession(res, profile.artistId);
+    return res;
   } catch (err) {
     console.error("[/api/artist POST]", err);
     return json({ error: "Erreur serveur" }, 500);

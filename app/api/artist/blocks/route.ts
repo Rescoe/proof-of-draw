@@ -1,0 +1,51 @@
+// app/api/artist/blocks/route.ts
+// GET /api/artist/blocks
+// Retourne les blocs minés par les devices de la session courante (pour le picker de photo de profil).
+// Max 12 blocs les plus récents, triés par minedAt DESC.
+
+import { NextResponse } from "next/server";
+import { redis } from "@/lib/redis";
+import { getBlockByHash, getBlockImage, Block } from "@/lib/chain";
+import { getSession } from "@/lib/session";
+
+export const dynamic = "force-dynamic";
+
+export async function GET() {
+  try {
+    const session = await getSession();
+    if (session.deviceIds.length === 0) {
+      return NextResponse.json({ blocks: [] }, { headers: { "Cache-Control": "private, no-store" } });
+    }
+
+    const deviceSet = new Set(session.deviceIds);
+
+    // Lire les 100 derniers hashes de la chaîne
+    const hashes = await redis.lrange<string>("chain:recent", 0, 99);
+    if (!hashes || hashes.length === 0) {
+      return NextResponse.json({ blocks: [] }, { headers: { "Cache-Control": "private, no-store" } });
+    }
+
+    // Charger les blocs en parallèle puis filtrer par deviceId
+    const blocks = (
+      await Promise.all(hashes.map(async (hash: string) => {
+        try {
+          const b = await getBlockByHash(hash);
+          if (!b || !deviceSet.has(b.deviceId)) return null;
+          const img = await getBlockImage(b.imageHash);
+          return img ? { ...b, imagePayload: img } : null;
+        } catch { return null; }
+      }))
+    )
+      .filter((b): b is Block & { imagePayload: NonNullable<Awaited<ReturnType<typeof getBlockImage>>> } => b !== null)
+      .sort((a, b) => b.minedAt - a.minedAt)
+      .slice(0, 12);
+
+    return NextResponse.json(
+      { blocks },
+      { headers: { "Cache-Control": "private, no-store, max-age=0" } }
+    );
+  } catch (err) {
+    console.error("[/api/artist/blocks]", err);
+    return NextResponse.json({ blocks: [] }, { status: 500 });
+  }
+}

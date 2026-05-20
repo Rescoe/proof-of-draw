@@ -31,6 +31,7 @@ export interface ArtistProfile {
   artistId:    string;
   displayName: string;
   bio?:        string;
+  profileImageBlockHash?: string; // hash du bloc choisi comme avatar
   createdAt:   number;
   updatedAt:   number;
 }
@@ -333,7 +334,8 @@ export async function getArtistByDevice(deviceId: string): Promise<ArtistProfile
 export async function createOrUpdateArtist(
   displayName: string,
   bio?: string,
-  existingArtistId?: string
+  existingArtistId?: string,
+  profileImageBlockHash?: string,
 ): Promise<ArtistProfile> {
   const artistId = existingArtistId ?? crypto.randomUUID();
   const existing = existingArtistId ? await getArtist(existingArtistId) : null;
@@ -341,6 +343,8 @@ export async function createOrUpdateArtist(
     artistId,
     displayName: displayName.trim().slice(0, 60),
     bio:         bio?.trim().slice(0, 300),
+    // Conserver l'image existante si aucune nouvelle n'est fournie
+    profileImageBlockHash: profileImageBlockHash ?? existing?.profileImageBlockHash,
     createdAt:   existing?.createdAt ?? Date.now(),
     updatedAt:   Date.now(),
   };

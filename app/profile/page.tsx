@@ -3,15 +3,27 @@
 import { useEffect, useRef, useState } from "react";
 import { OwnedDevice } from "@/lib/deviceStore";
 import { SCREEN_PROFILES } from "@/lib/screenProfiles";
+import { BlockFrameCanvas } from "@/app/BlockFrameCanvas";
+import type { BlockImagePayload } from "@/lib/chain";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
 interface ArtistProfile {
-  artistId:    string;
-  displayName: string;
-  bio?:        string;
-  createdAt:   number;
-  updatedAt:   number;
+  artistId:              string;
+  displayName:           string;
+  bio?:                  string;
+  profileImageBlockHash?: string;
+  createdAt:             number;
+  updatedAt:             number;
+}
+
+interface MinedBlock {
+  blockHash:    string;
+  blockIndex:   number;
+  workTitle?:   string;
+  minedAt:      number;
+  poolScreen:   string;
+  imagePayload: BlockImagePayload;
 }
 
 interface PublicDevice {
@@ -41,22 +53,13 @@ function statusColor(isOnline: boolean, lastPing?: number): string {
   return Math.floor((Date.now() - lastPing) / 1000) < 3600 ? "#fb923c" : "var(--text3)";
 }
 
-// ── Composant inline d'édition de texte ──────────────────────────────────────
+// ── Composant édition inline ──────────────────────────────────────────────────
 
 function InlineEdit({
-  value,
-  placeholder,
-  onSave,
-  multiline = false,
-  maxLength = 60,
-  style,
+  value, placeholder, onSave, multiline = false, maxLength = 60, style,
 }: {
-  value: string;
-  placeholder: string;
-  onSave: (v: string) => Promise<void>;
-  multiline?: boolean;
-  maxLength?: number;
-  style?: React.CSSProperties;
+  value: string; placeholder: string; onSave: (v: string) => Promise<void>;
+  multiline?: boolean; maxLength?: number; style?: React.CSSProperties;
 }) {
   const [editing, setEditing] = useState(false);
   const [draft,   setDraft]   = useState(value);
@@ -77,12 +80,7 @@ function InlineEdit({
       <span
         onClick={() => { setDraft(value); setEditing(true); }}
         title="Cliquer pour modifier"
-        style={{
-          cursor: "text",
-          borderBottom: "1px dashed var(--border)",
-          paddingBottom: 1,
-          ...style,
-        }}
+        style={{ cursor: "text", borderBottom: "1px dashed var(--border)", paddingBottom: 1, ...style }}
       >
         {value || <span style={{ color: "var(--text3)" }}>{placeholder}</span>}
       </span>
@@ -90,27 +88,18 @@ function InlineEdit({
   }
 
   const commonProps = {
-    value:     draft,
-    maxLength,
-    disabled:  saving,
-    onChange:  (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => setDraft(e.target.value),
+    value: draft, maxLength, disabled: saving,
+    onChange: (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => setDraft(e.target.value),
     onKeyDown: (e: React.KeyboardEvent) => {
       if (!multiline && e.key === "Enter") { e.preventDefault(); save(); }
       if (e.key === "Escape") { setDraft(value); setEditing(false); }
     },
     style: {
-      border: "1px solid var(--accent)",
-      borderRadius: 6,
-      padding: "0.25rem 0.5rem",
-      background: "var(--bg)",
-      color: "var(--text)",
-      fontSize: "inherit",
-      fontFamily: "inherit",
-      fontWeight: "inherit",
-      width: "100%",
-      outline: "none",
-      resize: multiline ? ("vertical" as const) : ("none" as const),
-      ...style,
+      border: "1px solid var(--accent)", borderRadius: 6,
+      padding: "0.25rem 0.5rem", background: "var(--bg)",
+      color: "var(--text)", fontSize: "inherit", fontFamily: "inherit",
+      fontWeight: "inherit", width: "100%", outline: "none",
+      resize: multiline ? ("vertical" as const) : ("none" as const), ...style,
     },
   };
 
@@ -120,18 +109,11 @@ function InlineEdit({
         ? <textarea ref={ref as React.RefObject<HTMLTextAreaElement>} rows={3} {...commonProps} />
         : <input    ref={ref as React.RefObject<HTMLInputElement>}             {...commonProps} />}
       <button
-        onClick={save}
-        disabled={saving}
+        onClick={save} disabled={saving}
         style={{
-          padding: "0.2rem 0.6rem",
-          borderRadius: 5,
-          border: "none",
-          background: "var(--accent)",
-          color: "#fff",
-          fontSize: "0.75rem",
-          cursor: "pointer",
-          flexShrink: 0,
-          opacity: saving ? 0.6 : 1,
+          padding: "0.2rem 0.6rem", borderRadius: 5, border: "none",
+          background: "var(--accent)", color: "#fff", fontSize: "0.75rem",
+          cursor: "pointer", flexShrink: 0, opacity: saving ? 0.6 : 1,
         }}
       >
         {saving ? "…" : "✓"}
@@ -140,21 +122,187 @@ function InlineEdit({
   );
 }
 
+// ── Composant picker de photo de profil ───────────────────────────────────────
+
+function ProfileImagePicker({
+  blocks,
+  selectedHash,
+  onSelect,
+  onClose,
+}: {
+  blocks: MinedBlock[];
+  selectedHash?: string;
+  onSelect: (hash: string) => Promise<void>;
+  onClose: () => void;
+}) {
+  const [saving, setSaving] = useState<string | null>(null);
+
+  async function pick(hash: string) {
+    setSaving(hash);
+    try { await onSelect(hash); onClose(); }
+    finally { setSaving(null); }
+  }
+
+  return (
+    <div
+      onClick={onClose}
+      style={{
+        position: "fixed", inset: 0, zIndex: 50,
+        background: "rgba(0,0,0,0.6)", display: "flex",
+        alignItems: "center", justifyContent: "center", padding: "1rem",
+      }}
+    >
+      <div
+        onClick={e => e.stopPropagation()}
+        style={{
+          background: "var(--bg2)", borderRadius: 14,
+          border: "1px solid var(--border)", padding: "1.5rem",
+          maxWidth: 600, width: "100%", maxHeight: "80vh", overflowY: "auto",
+        }}
+      >
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "1rem" }}>
+          <h3 style={{ fontWeight: 800, fontSize: "1.1rem", margin: 0 }}>
+            Choisir une photo de profil
+          </h3>
+          <button onClick={onClose} style={{
+            background: "none", border: "none", fontSize: "1.2rem",
+            cursor: "pointer", color: "var(--text3)",
+          }}>✕</button>
+        </div>
+
+        {blocks.length === 0 ? (
+          <div style={{ textAlign: "center", padding: "2rem", color: "var(--text3)" }}>
+            <div style={{ fontSize: "2rem", marginBottom: "0.5rem" }}>🎨</div>
+            <p>Aucun bloc miné pour l&apos;instant. Dessinez et faites valider un bloc pour débloquer cette fonctionnalité !</p>
+          </div>
+        ) : (
+          <>
+            <p style={{ fontSize: "0.8rem", color: "var(--text3)", marginBottom: "1rem" }}>
+              Choisissez l&apos;un de vos dessins validés comme photo de profil.
+            </p>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(140px, 1fr))", gap: "0.75rem" }}>
+              {blocks.map(b => (
+                <button
+                  key={b.blockHash}
+                  onClick={() => pick(b.blockHash)}
+                  disabled={saving === b.blockHash}
+                  style={{
+                    border: `2px solid ${selectedHash === b.blockHash ? "var(--accent)" : "var(--border)"}`,
+                    borderRadius: 10, background: "var(--bg)", padding: "0.5rem",
+                    cursor: "pointer", position: "relative", opacity: saving === b.blockHash ? 0.6 : 1,
+                    transition: "border-color 0.15s",
+                  }}
+                >
+                  {selectedHash === b.blockHash && (
+                    <div style={{
+                      position: "absolute", top: 4, right: 4,
+                      background: "var(--accent)", color: "#fff",
+                      borderRadius: "50%", width: 18, height: 18,
+                      fontSize: "0.65rem", display: "flex", alignItems: "center", justifyContent: "center",
+                      fontWeight: 700,
+                    }}>✓</div>
+                  )}
+                  <div style={{ display: "flex", justifyContent: "center", pointerEvents: "none" }}>
+                    <BlockFrameCanvas payload={b.imagePayload} />
+                  </div>
+                  <div style={{
+                    marginTop: "0.4rem", fontSize: "0.68rem", color: "var(--text3)",
+                    textAlign: "center", lineHeight: 1.3,
+                  }}>
+                    <div style={{ color: "var(--text2)", fontWeight: 600, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                      {b.workTitle || "Sans titre"}
+                    </div>
+                    <div>#{b.blockIndex} · {b.poolScreen}</div>
+                  </div>
+                </button>
+              ))}
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ── Composant avatar ──────────────────────────────────────────────────────────
+
+function ProfileAvatar({
+  profile,
+  selectedBlock,
+  onClick,
+}: {
+  profile: ArtistProfile | null;
+  selectedBlock: MinedBlock | null;
+  onClick: () => void;
+}) {
+  const hasImage = !!selectedBlock;
+
+  return (
+    <button
+      onClick={onClick}
+      title="Changer la photo de profil"
+      style={{
+        width: 72, height: 72, borderRadius: "50%", flexShrink: 0,
+        border: hasImage ? "2px solid var(--accent)" : "2px dashed var(--border)",
+        background: hasImage ? "var(--bg3)" : "linear-gradient(135deg, var(--accent) 0%, #6366f1 100%)",
+        cursor: "pointer", overflow: "hidden", padding: 0,
+        display: "flex", alignItems: "center", justifyContent: "center",
+        position: "relative", transition: "border-color 0.15s",
+      }}
+    >
+      {hasImage ? (
+        <div style={{
+          width: "100%", height: "100%",
+          display: "flex", alignItems: "center", justifyContent: "center",
+          overflow: "hidden",
+        }}>
+          {/* Rendu inline du canvas — scale pour remplir le cercle */}
+          <div style={{ transform: "scale(0.38)", transformOrigin: "center" }}>
+            <BlockFrameCanvas payload={selectedBlock.imagePayload} />
+          </div>
+        </div>
+      ) : (
+        <span style={{ fontSize: "1.6rem" }}>🎨</span>
+      )}
+      {/* Overlay "modifier" au survol */}
+      <div style={{
+        position: "absolute", inset: 0, borderRadius: "50%",
+        background: "rgba(0,0,0,0.45)",
+        display: "flex", alignItems: "center", justifyContent: "center",
+        fontSize: "0.6rem", color: "#fff", fontWeight: 700,
+        opacity: 0,
+        transition: "opacity 0.15s",
+      }}
+        className="avatar-overlay"
+      >
+        ✏️
+      </div>
+    </button>
+  );
+}
+
 // ── Page principale ──────────────────────────────────────────────────────────
 
 export default function ProfilePage() {
-  const [tab,           setTab]           = useState<"mine" | "shared">("mine");
-  const [profile,       setProfile]       = useState<ArtistProfile | null>(null);
-  const [loadingProf,   setLoadingProf]   = useState(true);
-  const [devices,       setDevices]       = useState<OwnedDevice[]>([]);
-  const [publicDevices, setPublicDevices] = useState<PublicDevice[]>([]);
-  const [loading,       setLoading]       = useState(true);
-  const [loadingPub,    setLoadingPub]    = useState(false);
-  const [rotating,      setRotating]      = useState<string | null>(null);
-  const [newCode,       setNewCode]       = useState<Record<string, string>>({});
-  const [copyMsg,       setCopyMsg]       = useState<Record<string, string>>({});
-  const [toggling,      setToggling]      = useState<string | null>(null);
-  const [profError,     setProfError]     = useState<string | null>(null);
+  const [tab,            setTab]            = useState<"mine" | "shared">("mine");
+  const [profile,        setProfile]        = useState<ArtistProfile | null>(null);
+  const [loadingProf,    setLoadingProf]    = useState(true);
+  const [minedBlocks,    setMinedBlocks]    = useState<MinedBlock[]>([]);
+  const [showPicker,     setShowPicker]     = useState(false);
+  const [devices,        setDevices]        = useState<OwnedDevice[]>([]);
+  const [publicDevices,  setPublicDevices]  = useState<PublicDevice[]>([]);
+  const [loading,        setLoading]        = useState(true);
+  const [loadingPub,     setLoadingPub]     = useState(false);
+  const [rotating,       setRotating]       = useState<string | null>(null);
+  const [newCode,        setNewCode]        = useState<Record<string, string>>({});
+  const [copyMsg,        setCopyMsg]        = useState<Record<string, string>>({});
+  const [toggling,       setToggling]       = useState<string | null>(null);
+  const [profError,      setProfError]      = useState<string | null>(null);
+
+  // Bloc sélectionné comme avatar
+  const selectedBlock = profile?.profileImageBlockHash
+    ? (minedBlocks.find(b => b.blockHash === profile.profileImageBlockHash) ?? null)
+    : null;
 
   // ── Chargements ─────────────────────────────────────────────────────────────
 
@@ -166,6 +314,14 @@ export default function ProfilePage() {
       setProfile(data.profile ?? null);
     } catch { setProfile(null); }
     finally { setLoadingProf(false); }
+  }
+
+  async function loadMinedBlocks() {
+    try {
+      const res  = await fetch("/api/artist/blocks", { cache: "no-store" });
+      const data = await res.json();
+      setMinedBlocks(data.blocks ?? []);
+    } catch { setMinedBlocks([]); }
   }
 
   async function loadDevices() {
@@ -190,38 +346,49 @@ export default function ProfilePage() {
 
   useEffect(() => {
     loadProfile();
+    loadMinedBlocks();
     loadDevices();
     loadPublic();
   }, []);
 
-  // ── Actions profil ─────────────────────────────────────────────────────────
+  // ── Helpers POST /api/artist ─────────────────────────────────────────────
 
-  async function saveArtistName(displayName: string) {
+  async function postProfile(updates: {
+    displayName?: string;
+    bio?: string;
+    profileImageBlockHash?: string;
+  }) {
     setProfError(null);
+    const current = profile;
+    const displayName = updates.displayName ?? current?.displayName ?? "";
+    if (!displayName) { setProfError("Définissez d'abord un nom d'artiste."); return false; }
+
     const res  = await fetch("/api/artist", {
       method:  "POST",
       headers: { "Content-Type": "application/json" },
-      body:    JSON.stringify({ displayName, bio: profile?.bio }),
+      body:    JSON.stringify({
+        displayName,
+        bio:                  updates.bio ?? current?.bio,
+        profileImageBlockHash: updates.profileImageBlockHash ?? current?.profileImageBlockHash,
+      }),
     });
     const data = await res.json();
-    if (!res.ok) { setProfError(data.error ?? "Erreur"); return; }
+    if (!res.ok) { setProfError(data.error ?? "Erreur"); return false; }
     setProfile(data.profile);
-    // resync artistName dans les devices locaux
+    return true;
+  }
+
+  async function saveArtistName(displayName: string) {
+    await postProfile({ displayName });
     setDevices(prev => prev.map(d => ({ ...d, artistName: displayName })));
   }
 
   async function saveArtistBio(bio: string) {
-    setProfError(null);
-    const displayName = profile?.displayName ?? "";
-    if (!displayName) { setProfError("Définissez d'abord un nom d'artiste."); return; }
-    const res  = await fetch("/api/artist", {
-      method:  "POST",
-      headers: { "Content-Type": "application/json" },
-      body:    JSON.stringify({ displayName, bio }),
-    });
-    const data = await res.json();
-    if (!res.ok) { setProfError(data.error ?? "Erreur"); return; }
-    setProfile(data.profile);
+    await postProfile({ bio });
+  }
+
+  async function saveProfileImage(blockHash: string) {
+    await postProfile({ profileImageBlockHash: blockHash });
   }
 
   // ── Actions devices ────────────────────────────────────────────────────────
@@ -276,7 +443,7 @@ export default function ProfilePage() {
     setTimeout(() => setCopyMsg(p => ({ ...p, [deviceId]: "" })), 2000);
   }
 
-  // ── Stats rapides ─────────────────────────────────────────────────────────
+  // ── Stats ─────────────────────────────────────────────────────────────────
 
   const totalFrames = devices.reduce((acc, d) => acc + (d.framesSent ?? 0), 0);
   const onlineCount = devices.filter(d => d.isOnline).length;
@@ -285,6 +452,16 @@ export default function ProfilePage() {
 
   return (
     <div style={{ maxWidth: 740, margin: "0 auto", padding: "2rem 1rem" }}>
+
+      {/* ── Picker overlay ── */}
+      {showPicker && (
+        <ProfileImagePicker
+          blocks={minedBlocks}
+          selectedHash={profile?.profileImageBlockHash}
+          onSelect={saveProfileImage}
+          onClose={() => setShowPicker(false)}
+        />
+      )}
 
       {/* ── Carte profil artiste ── */}
       <div style={{
@@ -296,15 +473,12 @@ export default function ProfilePage() {
       }}>
         <div style={{ display: "flex", alignItems: "flex-start", gap: "1.25rem" }}>
 
-          {/* Avatar placeholder */}
-          <div style={{
-            width: 64, height: 64, borderRadius: "50%", flexShrink: 0,
-            background: "linear-gradient(135deg, var(--accent) 0%, #6366f1 100%)",
-            display: "flex", alignItems: "center", justifyContent: "center",
-            fontSize: "1.6rem",
-          }}>
-            🎨
-          </div>
+          {/* Avatar cliquable */}
+          <ProfileAvatar
+            profile={profile}
+            selectedBlock={selectedBlock}
+            onClick={() => setShowPicker(true)}
+          />
 
           <div style={{ flex: 1, minWidth: 0 }}>
             {loadingProf ? (
@@ -315,7 +489,7 @@ export default function ProfilePage() {
                 <div style={{ fontSize: "1.4rem", fontWeight: 800, letterSpacing: "-0.02em", marginBottom: "0.35rem" }}>
                   <InlineEdit
                     value={profile?.displayName ?? ""}
-                    placeholder="Votre nom d'artiste…"
+                    placeholder="Votre nom d'artiste… (cliquer pour définir)"
                     onSave={saveArtistName}
                     maxLength={60}
                   />
@@ -338,12 +512,28 @@ export default function ProfilePage() {
                   </div>
                 )}
 
+                {/* Photo de profil hint */}
+                {!profile?.profileImageBlockHash && minedBlocks.length > 0 && (
+                  <button
+                    onClick={() => setShowPicker(true)}
+                    style={{
+                      background: "none", border: "1px dashed var(--border)",
+                      borderRadius: 6, padding: "0.25rem 0.75rem",
+                      fontSize: "0.72rem", color: "var(--text3)", cursor: "pointer",
+                      marginBottom: "0.5rem",
+                    }}
+                  >
+                    🎨 Choisir un dessin miné comme photo de profil
+                  </button>
+                )}
+
                 {/* Stats */}
-                <div style={{ display: "flex", gap: "1.5rem", marginTop: "0.75rem", flexWrap: "wrap" }}>
+                <div style={{ display: "flex", gap: "1.5rem", marginTop: "0.5rem", flexWrap: "wrap" }}>
                   {[
-                    { label: "ESP liés",    value: devices.length },
-                    { label: "En ligne",    value: onlineCount },
-                    { label: "Frames envoyées", value: totalFrames },
+                    { label: "ESP liés",          value: devices.length },
+                    { label: "En ligne",           value: onlineCount },
+                    { label: "Frames envoyées",    value: totalFrames },
+                    { label: "Blocs minés",        value: minedBlocks.length },
                   ].map(s => (
                     <div key={s.label}>
                       <div style={{ fontSize: "1.1rem", fontWeight: 800, fontFamily: "JetBrains Mono, monospace" }}>
@@ -450,12 +640,10 @@ export default function ProfilePage() {
                       key={sid}
                       href={`/draw/${pub.deviceId}/${sid}`}
                       style={{
-                        padding: "0.45rem 1rem",
-                        borderRadius: 7,
+                        padding: "0.45rem 1rem", borderRadius: 7,
                         background: pub.isOnline ? "var(--accent)" : "var(--bg3)",
                         color: pub.isOnline ? "#fff" : "var(--text3)",
-                        textDecoration: "none",
-                        fontWeight: 600, fontSize: "0.8rem",
+                        textDecoration: "none", fontWeight: 600, fontSize: "0.8rem",
                         whiteSpace: "nowrap",
                         border: `1px solid ${pub.isOnline ? "transparent" : "var(--border)"}`,
                         pointerEvents: pub.isOnline ? "auto" : "none",
@@ -483,9 +671,7 @@ export default function ProfilePage() {
             border: "1px dashed var(--border)", borderRadius: 12,
           }}>
             <div style={{ fontSize: "3rem", marginBottom: "1rem" }}>📡</div>
-            <p style={{ color: "var(--text2)", marginBottom: "1rem" }}>
-              Aucun ESP associé à cette session.
-            </p>
+            <p style={{ color: "var(--text2)", marginBottom: "1rem" }}>Aucun ESP associé à cette session.</p>
             <a href="/onboard" style={{ color: "var(--accent)", textDecoration: "none", fontWeight: 600 }}>
               Connecter mon premier ESP →
             </a>
@@ -496,20 +682,13 @@ export default function ProfilePage() {
               const primaryScreen = d.screens?.[0];
               const drawUrl       = primaryScreen ? `/draw/${d.deviceId}/${primaryScreen}` : null;
               const displayCode   = newCode[d.deviceId];
-              // Nom affiché : deviceName en priorité, sinon artistName
-              const displayName   = d.deviceName || d.artistName || "Sans nom";
 
               return (
-                <div
-                  key={d.deviceId}
-                  style={{
-                    padding: "1.25rem 1.5rem",
-                    borderRadius: 10,
-                    border: "1px solid var(--border)",
-                    background: "var(--bg2)",
-                  }}
-                >
-                  {/* En-tête de la carte device */}
+                <div key={d.deviceId} style={{
+                  padding: "1.25rem 1.5rem", borderRadius: 10,
+                  border: "1px solid var(--border)", background: "var(--bg2)",
+                }}>
+                  {/* En-tête */}
                   <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: "1rem" }}>
                     <div style={{ flex: 1, minWidth: 0 }}>
                       <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", marginBottom: "0.2rem" }}>
@@ -528,27 +707,16 @@ export default function ProfilePage() {
                         </span>
                       </div>
                       <div style={{ fontFamily: "JetBrains Mono, monospace", fontSize: "0.7rem", color: "var(--text3)" }}>
-                        {d.firmware ?? "firmware inconnu"}
-                        {" · "}
-                        <span style={{ color: "var(--text3)" }}>{d.deviceId}</span>
+                        {d.firmware ?? "firmware inconnu"} · {d.deviceId}
                       </div>
                     </div>
-
                     {drawUrl && (
-                      <a
-                        href={drawUrl}
-                        style={{
-                          padding: "0.5rem 1.1rem",
-                          borderRadius: 6,
-                          background: "var(--accent)",
-                          color: "#fff",
-                          textDecoration: "none",
-                          fontWeight: 600,
-                          fontSize: "0.875rem",
-                          whiteSpace: "nowrap",
-                          flexShrink: 0,
-                        }}
-                      >
+                      <a href={drawUrl} style={{
+                        padding: "0.5rem 1.1rem", borderRadius: 6,
+                        background: "var(--accent)", color: "#fff",
+                        textDecoration: "none", fontWeight: 600, fontSize: "0.875rem",
+                        whiteSpace: "nowrap", flexShrink: 0,
+                      }}>
                         ✏️ Dessiner
                       </a>
                     )}
@@ -556,10 +724,8 @@ export default function ProfilePage() {
 
                   {/* Stats */}
                   <div style={{
-                    display: "grid",
-                    gridTemplateColumns: "repeat(3, 1fr)",
-                    gap: "0.75rem",
-                    marginTop: "1rem",
+                    display: "grid", gridTemplateColumns: "repeat(3, 1fr)",
+                    gap: "0.75rem", marginTop: "1rem",
                   }}>
                     {[
                       { label: "Frames envoyées", value: d.framesSent ?? 0 },
@@ -586,20 +752,12 @@ export default function ProfilePage() {
                       if (!isKnownScreen(sid)) return null;
                       const p = SCREEN_PROFILES[sid];
                       return (
-                        <a
-                          key={sid}
-                          href={`/draw/${d.deviceId}/${sid}`}
-                          style={{
-                            display: "flex", alignItems: "center", gap: "0.5rem",
-                            padding: "0.3rem 0.75rem",
-                            borderRadius: 6,
-                            border: "1px solid var(--border)",
-                            background: "var(--bg)",
-                            textDecoration: "none",
-                            color: "var(--text2)",
-                            fontSize: "0.78rem",
-                          }}
-                        >
+                        <a key={sid} href={`/draw/${d.deviceId}/${sid}`} style={{
+                          display: "flex", alignItems: "center", gap: "0.5rem",
+                          padding: "0.3rem 0.75rem", borderRadius: 6,
+                          border: "1px solid var(--border)", background: "var(--bg)",
+                          textDecoration: "none", color: "var(--text2)", fontSize: "0.78rem",
+                        }}>
                           {p.name}
                           <div style={{ display: "flex", gap: 3 }}>
                             {p.colors.map((c: string) => (
@@ -614,7 +772,7 @@ export default function ProfilePage() {
                     })}
                   </div>
 
-                  {/* Sécurité / code de jumelage */}
+                  {/* Sécurité */}
                   <div style={{
                     marginTop: "1.25rem", paddingTop: "1rem",
                     borderTop: "1px solid var(--border)",
@@ -623,12 +781,11 @@ export default function ProfilePage() {
                     <div style={{ fontSize: "0.72rem", color: "var(--text3)", textTransform: "uppercase", letterSpacing: "0.05em" }}>
                       Sécurité
                     </div>
-
                     {displayCode && (
                       <div style={{
                         display: "flex", alignItems: "center", gap: "0.75rem",
-                        padding: "0.6rem 0.9rem",
-                        borderRadius: 6, background: "var(--bg3)", border: "1px solid var(--border)",
+                        padding: "0.6rem 0.9rem", borderRadius: 6,
+                        background: "var(--bg3)", border: "1px solid var(--border)",
                       }}>
                         <span style={{
                           fontFamily: "JetBrains Mono, monospace",
@@ -636,23 +793,17 @@ export default function ProfilePage() {
                         }}>
                           {displayCode}
                         </span>
-                        <button
-                          onClick={() => copyCode(d.deviceId, displayCode)}
-                          style={{
-                            marginLeft: "auto", fontSize: "0.75rem",
-                            padding: "0.3rem 0.7rem",
-                            borderRadius: 4, border: "1px solid var(--border)",
-                            background: "var(--bg)", color: "var(--text2)", cursor: "pointer",
-                          }}
-                        >
+                        <button onClick={() => copyCode(d.deviceId, displayCode)} style={{
+                          marginLeft: "auto", fontSize: "0.75rem",
+                          padding: "0.3rem 0.7rem", borderRadius: 4,
+                          border: "1px solid var(--border)", background: "var(--bg)",
+                          color: "var(--text2)", cursor: "pointer",
+                        }}>
                           {copyMsg[d.deviceId] || "Copier"}
                         </button>
-                        <span style={{ fontSize: "0.72rem", color: "var(--text3)" }}>
-                          Nouveau code — à noter !
-                        </span>
+                        <span style={{ fontSize: "0.72rem", color: "var(--text3)" }}>Nouveau code — à noter !</span>
                       </div>
                     )}
-
                     <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap" }}>
                       <button
                         onClick={() => handleRotateCode(d.deviceId)}
@@ -666,19 +817,14 @@ export default function ProfilePage() {
                       >
                         🔄 {rotating === d.deviceId ? "En cours…" : "Nouveau code de jumelage"}
                       </button>
-
-                      <a
-                        href="/onboard"
-                        style={{
-                          padding: "0.4rem 0.9rem", borderRadius: 6,
-                          border: "1px solid var(--border)", background: "var(--bg)",
-                          color: "var(--text2)", fontSize: "0.78rem", textDecoration: "none",
-                        }}
-                      >
+                      <a href="/onboard" style={{
+                        padding: "0.4rem 0.9rem", borderRadius: 6,
+                        border: "1px solid var(--border)", background: "var(--bg)",
+                        color: "var(--text2)", fontSize: "0.78rem", textDecoration: "none",
+                      }}>
                         📲 Connecter un autre appareil
                       </a>
                     </div>
-
                     <p style={{ fontSize: "0.7rem", color: "var(--text3)", marginTop: "0.25rem" }}>
                       Pour reprendre le contrôle depuis un autre appareil, utilisez{" "}
                       <a href="/onboard" style={{ color: "var(--accent)" }}>/onboard</a>{" "}
@@ -721,6 +867,10 @@ export default function ProfilePage() {
           </div>
         )
       )}
+
+      <style>{`
+        button:hover .avatar-overlay { opacity: 1 !important; }
+      `}</style>
     </div>
   );
 }

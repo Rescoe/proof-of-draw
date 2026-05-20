@@ -76,6 +76,7 @@ async function decode(token: string): Promise<SessionData | null> {
 // ─── Types ───────────────────────────────────────────────────────────────────
 export interface SessionData {
   deviceIds: string[]; // devices que ce client a le droit de contrôler
+  artistId?:  string;  // profil artiste associé à cette session (lookup rapide)
 }
 
 // ─── API publique ─────────────────────────────────────────────────────────────
@@ -118,4 +119,13 @@ export async function addDeviceToSession(
 export async function sessionOwnsDevice(deviceId: string): Promise<boolean> {
   const session = await getSession();
   return session.deviceIds.includes(deviceId);
+}
+
+/** Met à jour l'artistId dans le cookie de session. */
+export async function setArtistIdInSession(
+  res: NextResponse,
+  artistId: string
+): Promise<void> {
+  const current = await getSession();
+  await setSession(res, { ...current, artistId });
 }
