@@ -65,17 +65,15 @@ export async function POST(req: NextRequest) {
   } else if (screen === "oled096" && buffer) {
     pixels = decodeEinkBuffer(buffer, 128, 64);
   } else if (screen === "tft18" && buffer) {
-    // tft18 : RGB565 little-endian → luminance binaire pour calcul de complexité
+    // tft18 : RGB565 little-endian → binaire "dessiné / fond blanc"
+    // On compare directement à 0xFFFF (blanc pur) plutôt que via luminance :
+    // la luminance rate les couleurs claires (sable, ciel, jaune) dont lum > 230.
+    // Tout pixel qui n'est pas blanc pur = dessiné.
     const rgbBytes = Buffer.from(buffer, "base64");
     pixels = new Uint8Array(128 * 160);
     for (let i = 0; i < 128 * 160; i++) {
       const rgb565 = rgbBytes[i * 2] | (rgbBytes[i * 2 + 1] << 8);
-      const r = ((rgb565 >> 11) & 0x1F) << 3;
-      const g = ((rgb565 >> 5)  & 0x3F) << 2;
-      const b = (rgb565 & 0x1F) << 3;
-      // Luminance BT.601 → pixel "actif" si non-blanc
-      const lum = (r * 77 + g * 150 + b * 29) >> 8;
-      pixels[i] = lum < 230 ? 1 : 0;
+      pixels[i] = rgb565 !== 0xFFFF ? 1 : 0;
     }
   } else {
     return NextResponse.json({ error: "Payload incomplet" }, { status: 400 });
@@ -111,44 +109,15 @@ export async function POST(req: NextRequest) {
     (thresholds.mode === "adaptive" ? ` (basé sur ${thresholds.adaptedFrom} blocs, moy=${thresholds.avgComplexity.toFixed(3)})` : " (plancher seul)"),
   );
 
+  // ── Vérifications côté serveur ────────────────────────────────────────────────
+  // Le serveur n'est PAS juge de la qualité artistique — c'est le réseau ESP qui vote.
+  // Le serveur bloque uniquement ce que le réseau ne peut pas détecter lui-même :
+  //   • comportement automatisé prouvé (bot)
+  // Tout le reste passe et les validateurs ESP décident.
+  const qualityWarnings: string[] = [];
+
   if (podGeometry) {
-    // 1. Durée minimale de session (seuil adaptatif par écran)
-    if (podGeometry.sessionDurationMs < thresholds.durationMs) {
-      console.warn(`[submit-candidate] REJET session_trop_courte device=${deviceId} dur=${podGeometry.sessionDurationMs}ms < ${thresholds.durationMs}ms`);
-      return NextResponse.json({
-        rejected: true,
-        reason:   "session_too_short",
-        message:  `Session trop courte (${(podGeometry.sessionDurationMs / 1000).toFixed(1)}s < ${(thresholds.durationMs / 1000).toFixed(0)}s minimum pour ${screen}). Prenez le temps de dessiner.`,
-        sessionDurationMs: podGeometry.sessionDurationMs,
-        threshold: thresholds.durationMs,
-      }, { status: 400 });
-    }
-
-    // 2. Nombre de strokes minimal
-    if (podGeometry.strokeCount < thresholds.strokes) {
-      console.warn(`[submit-candidate] REJET strokes_insuffisants device=${deviceId} strokes=${podGeometry.strokeCount} < ${thresholds.strokes}`);
-      return NextResponse.json({
-        rejected: true,
-        reason:   "too_few_strokes",
-        message:  `Trop peu de traits (${podGeometry.strokeCount} détecté${podGeometry.strokeCount > 1 ? "s" : ""}, minimum ${thresholds.strokes} pour ${screen}). Dessinez davantage.`,
-        strokeCount: podGeometry.strokeCount,
-        threshold: thresholds.strokes,
-      }, { status: 400 });
-    }
-
-    // 3. Couverture spatiale minimale
-    if (podGeometry.gridCoverage < thresholds.coverage) {
-      console.warn(`[submit-candidate] REJET couverture_insuffisante device=${deviceId} coverage=${(podGeometry.gridCoverage * 100).toFixed(1)}% < ${(thresholds.coverage * 100).toFixed(1)}%`);
-      return NextResponse.json({
-        rejected: true,
-        reason:   "insufficient_coverage",
-        message:  `Dessin trop localisé (couverture ${(podGeometry.gridCoverage * 100).toFixed(1)}% < ${(thresholds.coverage * 100).toFixed(1)}% de la toile pour ${screen}). Utilisez plus de surface.`,
-        gridCoverage: podGeometry.gridCoverage,
-        threshold: thresholds.coverage,
-      }, { status: 400 });
-    }
-
-    // 4. Suspicion d'automatisation (rythme non-humain) — seuil global
+    // Seul vrai rejet : automatisation (rythme de machine, > 80 % d'intervalles < 15 ms)
     if (podGeometry.automationRatio > MAX_AUTOMATION_RATIO) {
       console.warn(`[submit-candidate] REJET automation_suspected device=${deviceId} ratio=${(podGeometry.automationRatio * 100).toFixed(1)}%`);
       return NextResponse.json({
@@ -159,19 +128,16 @@ export async function POST(req: NextRequest) {
       }, { status: 400 });
     }
 
-    // 5. Action "move" (import image) présente dans la séquence — signal d'abus
-    if (podGeometry.moveActionCount > 0) {
-      console.warn(`[submit-candidate] REJET move_action_detected device=${deviceId} moveCount=${podGeometry.moveActionCount}`);
-      return NextResponse.json({
-        rejected: true,
-        reason:   "image_import_detected",
-        message:  `Import d'image détecté dans la séquence d'actions. L'image doit rester un guide visuel, pas être soumise.`,
-        moveActionCount: podGeometry.moveActionCount,
-      }, { status: 400 });
-    }
+    // Avertissements informatifs — transmis au candidat, affichés dans l'UI
+    if (podGeometry.sessionDurationMs < thresholds.durationMs)
+      qualityWarnings.push(`session courte (${(podGeometry.sessionDurationMs / 1000).toFixed(1)}s)`);
+    if (podGeometry.strokeCount < thresholds.strokes)
+      qualityWarnings.push(`peu de traits (${podGeometry.strokeCount})`);
+    if (podGeometry.gridCoverage < thresholds.coverage)
+      qualityWarnings.push(`couverture limitée (${(podGeometry.gridCoverage * 100).toFixed(1)}%)`);
 
     console.log(
-      `[submit-candidate] geometry OK device=${deviceId}` +
+      `[submit-candidate] geometry device=${deviceId}` +
       ` dur=${(podGeometry.sessionDurationMs / 1000).toFixed(1)}s` +
       ` strokes=${podGeometry.strokeCount}` +
       ` coverage=${(podGeometry.gridCoverage * 100).toFixed(1)}%` +
@@ -179,18 +145,10 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  // 6. Complexité visuelle minimale (seuil adaptatif par écran)
-  // Calculée depuis les pixels du buffer — indépendante du replay
-  if (metrics.score < thresholds.complexity) {
-    console.warn(`[submit-candidate] REJET complexity device=${deviceId} score=${metrics.score.toFixed(3)} < ${thresholds.complexity.toFixed(3)}`);
-    return NextResponse.json({
-      rejected: true,
-      reason:   "insufficient_complexity",
-      message:  `Dessin trop simple (complexité ${(metrics.score * 100).toFixed(1)}% < ${(thresholds.complexity * 100).toFixed(1)}% attendu pour ${screen}). Enrichissez votre dessin.`,
-      score: metrics.score,
-      threshold: thresholds.complexity,
-    }, { status: 400 });
-  }
+  // Complexité visuelle — warning seulement
+  if (metrics.score < thresholds.complexity)
+    qualityWarnings.push(`complexité basse (${(metrics.score * 100).toFixed(1)}%)`);
+
 
   const existing = await getCurrentCandidate();
   if (existing) {
@@ -223,12 +181,12 @@ export async function POST(req: NextRequest) {
   const poolSize = await getGlobalActiveCount();
   const CANDIDATE_TTL_SEC = parseInt(process.env.CANDIDATE_TTL_SEC ?? "600");
 
-  // Warning informatif (non-bloquant) si le dessin reste proche du seuil
-  const warning = metrics.score < thresholds.complexity * 1.5
-    ? `Dessin simple (complexité ${(metrics.score * 100).toFixed(1)}%). Validateurs décident.`
+  // Warning consolidé — résumé des observations de qualité (non-bloquant)
+  const warning = qualityWarnings.length > 0
+    ? `Observations : ${qualityWarnings.join(", ")}. Les validateurs du réseau décident.`
     : null;
 
-  console.log(`[submit-candidate] device=${deviceId} screen=${screen} score=${metrics.score.toFixed(3)} drawScore=${drawScore} thresholds=${thresholds.mode}${warning ? " warning=near_floor" : ""}`);
+  console.log(`[submit-candidate] device=${deviceId} screen=${screen} score=${metrics.score.toFixed(3)} drawScore=${drawScore} thresholds=${thresholds.mode}${warning ? ` warnings=[${qualityWarnings.join(", ")}]` : ""}`);
 
   const candidate: Candidate = {
     candidateId: crypto.randomUUID(),
