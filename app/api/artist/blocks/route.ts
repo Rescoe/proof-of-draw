@@ -1,11 +1,11 @@
 // app/api/artist/blocks/route.ts
 // GET /api/artist/blocks
-// Retourne les blocs minés par les devices de la session courante (pour le picker de photo de profil).
+// Retourne les blocs liés aux devices de la session (artiste OU mineur).
 // Max 12 blocs les plus récents, triés par minedAt DESC.
 
 import { NextResponse } from "next/server";
 import { redis } from "@/lib/redis";
-import { getBlockByHash, getBlockImage, Block } from "@/lib/chain";
+import { getBlockByHash, getBlockImage } from "@/lib/chain";
 import { getSession } from "@/lib/session";
 
 export const dynamic = "force-dynamic";
@@ -25,19 +25,25 @@ export async function GET() {
       return NextResponse.json({ blocks: [] }, { headers: { "Cache-Control": "private, no-store" } });
     }
 
-    // Charger les blocs en parallèle puis filtrer par deviceId
-    const blocks = (
-      await Promise.all(hashes.map(async (hash: string) => {
-        try {
-          const b = await getBlockByHash(hash);
-          if (!b || !deviceSet.has(b.deviceId)) return null;
-          const img = await getBlockImage(b.imageHash);
-          return img ? { ...b, imagePayload: img } : null;
-        } catch { return null; }
-      }))
-    )
-      .filter((b): b is Block & { imagePayload: NonNullable<Awaited<ReturnType<typeof getBlockImage>>> } => b !== null)
-      .sort((a, b) => b.minedAt - a.minedAt)
+    // Charger les blocs, filtrer par deviceId (artiste) OU minerDeviceId (validateur décisif)
+    const results = await Promise.all(hashes.map(async (hash: string) => {
+      try {
+        const b = await getBlockByHash(hash);
+        if (!b) return null;
+
+        const isArtist = deviceSet.has(b.deviceId);
+        const isMiner  = !!b.minerDeviceId && deviceSet.has(b.minerDeviceId);
+        if (!isArtist && !isMiner) return null;
+
+        const img = await getBlockImage(b.imageHash);
+        // On inclut le bloc même si l'image est manquante (rare) pour ne pas fausser les stats
+        return { ...b, imagePayload: img ?? null };
+      } catch { return null; }
+    }));
+
+    const blocks = results
+      .filter(Boolean)
+      .sort((a, b) => (b!.minedAt ?? 0) - (a!.minedAt ?? 0))
       .slice(0, 12);
 
     return NextResponse.json(

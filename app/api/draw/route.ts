@@ -167,13 +167,15 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Screen non supporté" }, { status: 400 });
   }
 
-  await Promise.all([incrementFramesSent(deviceId), redis.del(strikeKey(deviceId))]);
+  // Strike reset (non-conditionnel — la tentative était légitime)
+  await redis.del(strikeKey(deviceId));
 
   // ── BYPASS direct ───────────────────────────────────────────────────────────
   if (BYPASS_VALIDATION) {
     const payload: Record<string, string> =
       isDualBuffer(screen) ? { black: black!, red: red! } : { buffer: buffer! };
     await broadcastDirect(screen, payload, deviceId, frameMeta);
+    await incrementFramesSent(deviceId); // compte uniquement les envois réels
     return NextResponse.json({ ok: true, nextDrawIn: DRAW_WINDOW_SEC, validation: "bypassed" });
   }
 
@@ -214,6 +216,7 @@ export async function POST(req: NextRequest) {
       ` (candidat=${existingCandidate.candidateId.slice(0, 8)} expire dans ${expiresIn}s)`,
     );
 
+    await incrementFramesSent(deviceId); // le dessin est accepté dans la file
     return NextResponse.json({
       ok:           true,
       nextDrawIn:   DRAW_WINDOW_SEC,
@@ -260,6 +263,7 @@ export async function POST(req: NextRequest) {
       throw new Error(candidateData.error ?? `submit-candidate failed (${candidateRes.status})`);
     }
 
+    await incrementFramesSent(deviceId); // soumission acceptée par le réseau
     return NextResponse.json({
       ok:          true,
       nextDrawIn:  DRAW_WINDOW_SEC,

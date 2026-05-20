@@ -23,7 +23,7 @@ interface MinedBlock {
   workTitle?:   string;
   minedAt:      number;
   poolScreen:   string;
-  imagePayload: BlockImagePayload;
+  imagePayload: BlockImagePayload | null; // peut être null si image non trouvée
 }
 
 interface PublicDevice {
@@ -203,7 +203,10 @@ function ProfileImagePicker({
                     }}>✓</div>
                   )}
                   <div style={{ display: "flex", justifyContent: "center", pointerEvents: "none" }}>
-                    <BlockFrameCanvas payload={b.imagePayload} />
+                    {b.imagePayload
+                      ? <BlockFrameCanvas payload={b.imagePayload} />
+                      : <div style={{ width: 80, height: 60, background: "var(--bg3)", borderRadius: 6, display: "flex", alignItems: "center", justifyContent: "center", color: "var(--text3)", fontSize: "0.7rem" }}>image manquante</div>
+                    }
                   </div>
                   <div style={{
                     marginTop: "0.4rem", fontSize: "0.68rem", color: "var(--text3)",
@@ -250,7 +253,7 @@ function ProfileAvatar({
         position: "relative", transition: "border-color 0.15s",
       }}
     >
-      {hasImage ? (
+      {hasImage && selectedBlock?.imagePayload ? (
         <div style={{
           width: "100%", height: "100%",
           display: "flex", alignItems: "center", justifyContent: "center",
@@ -471,7 +474,7 @@ export default function ProfilePage() {
         background: "var(--bg2)",
         marginBottom: "2rem",
       }}>
-        <div style={{ display: "flex", alignItems: "flex-start", gap: "1.25rem" }}>
+        <div className="profile-header" style={{ display: "flex", alignItems: "flex-start", gap: "1.25rem" }}>
 
           {/* Avatar cliquable */}
           <ProfileAvatar
@@ -528,7 +531,7 @@ export default function ProfilePage() {
                 )}
 
                 {/* Stats */}
-                <div style={{ display: "flex", gap: "1.5rem", marginTop: "0.5rem", flexWrap: "wrap" }}>
+                <div className="profile-stats" style={{ display: "flex", gap: "1.5rem", marginTop: "0.5rem", flexWrap: "wrap" }}>
                   {[
                     { label: "ESP liés",          value: devices.length },
                     { label: "En ligne",           value: onlineCount },
@@ -689,7 +692,7 @@ export default function ProfilePage() {
                   border: "1px solid var(--border)", background: "var(--bg2)",
                 }}>
                   {/* En-tête */}
-                  <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: "1rem" }}>
+                  <div className="device-header" style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: "1rem" }}>
                     <div style={{ flex: 1, minWidth: 0 }}>
                       <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", marginBottom: "0.2rem" }}>
                         <div style={{
@@ -711,7 +714,7 @@ export default function ProfilePage() {
                       </div>
                     </div>
                     {drawUrl && (
-                      <a href={drawUrl} style={{
+                      <a href={drawUrl} className="device-draw-btn" style={{
                         padding: "0.5rem 1.1rem", borderRadius: 6,
                         background: "var(--accent)", color: "#fff",
                         textDecoration: "none", fontWeight: 600, fontSize: "0.875rem",
@@ -723,7 +726,7 @@ export default function ProfilePage() {
                   </div>
 
                   {/* Stats */}
-                  <div style={{
+                  <div className="device-stats-grid" style={{
                     display: "grid", gridTemplateColumns: "repeat(3, 1fr)",
                     gap: "0.75rem", marginTop: "1rem",
                   }}>
@@ -870,6 +873,50 @@ export default function ProfilePage() {
 
       <style>{`
         button:hover .avatar-overlay { opacity: 1 !important; }
+
+        /* ── Mobile responsive ── */
+        @media (max-width: 600px) {
+          /* Carte profil : avatar + info empilés */
+          .profile-header {
+            flex-direction: column !important;
+            align-items: flex-start !important;
+            gap: 1rem !important;
+          }
+          .profile-avatar-col {
+            display: flex !important;
+            align-items: center !important;
+            gap: 1rem !important;
+            width: 100% !important;
+          }
+          .profile-info-col { width: 100% !important; }
+          .profile-add-btn { align-self: flex-start !important; }
+
+          /* Stats : 2 colonnes sur mobile */
+          .profile-stats {
+            display: grid !important;
+            grid-template-columns: 1fr 1fr !important;
+            gap: 0.75rem !important;
+          }
+
+          /* Device card : stats en 2 colonnes */
+          .device-stats-grid {
+            grid-template-columns: repeat(2, 1fr) !important;
+          }
+
+          /* Bouton dessiner pleine largeur */
+          .device-draw-btn {
+            width: 100% !important;
+            text-align: center !important;
+            margin-top: 0.75rem !important;
+          }
+
+          /* En-tête device : empilé */
+          .device-header {
+            flex-direction: column !important;
+            align-items: flex-start !important;
+            gap: 0.5rem !important;
+          }
+        }
       `}</style>
     </div>
   );
