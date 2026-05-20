@@ -32,8 +32,8 @@ export default async function HomePage() {
             Dessiner →
           </Link>
 
-          <Link href="/my-devices" className="btn btn-ghost">
-            Mes ESP
+          <Link href="/profile" className="btn btn-ghost">
+            Mon profil
           </Link>
 
           <Link href="/gallery" className="btn btn-ghost">

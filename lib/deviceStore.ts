@@ -11,7 +11,9 @@ export interface Device {
   mac:        string;   // sensible — jamais exposé publiquement
   screens:    string[];
   firmware:   string;
-  artistName?: string;
+  artistName?: string;              // rétrocompat — remplacé par ArtistProfile.displayName
+  deviceName?: string;             // nom humain de l'appareil (distinct du nom d'artiste)
+  artistId?:  string;              // lien vers ArtistProfile
   pairCode:   string;   // sensible — jamais exposé publiquement
   lastSeen:   number;
   lastPing:   number;
@@ -21,6 +23,16 @@ export interface Device {
   // ── Axe 2 : ESP en prêt public ──────────────────────────────────────────────
   publicMode?: boolean;             // toggle manuel : l'ESP est disponible pour d'autres artistes
   lastFrameReceivedAt?: number;     // mis à jour sur /api/ack-frame
+}
+
+// ─── ArtistProfile ────────────────────────────────────────────────────────────
+
+export interface ArtistProfile {
+  artistId:    string;
+  displayName: string;
+  bio?:        string;
+  createdAt:   number;
+  updatedAt:   number;
 }
 
 export interface PublicDevice {
@@ -33,6 +45,8 @@ export interface PublicDevice {
 export interface OwnedDevice {
   deviceId:   string;
   artistName?: string;
+  deviceName?: string;
+  artistId?:  string;
   screens:    string[];
   firmware:   string;
   framesSent: number;
@@ -48,9 +62,11 @@ export interface OwnedDevice {
 const TTL_SECONDS = 48 * 60 * 60;
 const ONLINE_MS   = 10 * 60 * 1000;
 
-function deviceKey(deviceId: string) { return `device:${deviceId}`; }
-function macKey(mac: string)         { return `mac:${mac}`; }
-function pairKey(code: string)       { return `pair:${code.toUpperCase()}`; }
+function deviceKey(deviceId: string)    { return `device:${deviceId}`; }
+function macKey(mac: string)            { return `mac:${mac}`; }
+function pairKey(code: string)          { return `pair:${code.toUpperCase()}`; }
+function artistKey(artistId: string)    { return `artist:${artistId}`; }
+function artistDevKey(deviceId: string) { return `artist:device:${deviceId}`; }
 
 function isOnline(d: Device): boolean {
   return Date.now() - d.lastPing < ONLINE_MS;
@@ -80,6 +96,8 @@ export function toOwnedDevice(d: Device): OwnedDevice {
   return {
     deviceId:           d.deviceId,
     artistName:         d.artistName,
+    deviceName:         d.deviceName,
+    artistId:           d.artistId,
     screens:            d.screens,
     firmware:           d.firmware,
     framesSent:         d.framesSent,
@@ -284,4 +302,74 @@ export async function ackFrameReceived(deviceId: string): Promise<void> {
   if (!device) return;
   device.lastFrameReceivedAt = Date.now();
   await saveDevice(device);
+}
+
+// ─── Profils artistes ─────────────────────────────────────────────────────────
+
+const ARTIST_TTL = 90 * 24 * 3600; // 90 jours
+
+export async function getArtist(artistId: string): Promise<ArtistProfile | null> {
+  const raw = await redis.get(artistKey(artistId));
+  if (!raw) return null;
+  try { return typeof raw === "string" ? JSON.parse(raw) : raw as ArtistProfile; } catch { return null; }
+}
+
+/**
+ * Cherche le profil artiste associé à un device.
+ * Utilise la clé inverse `artist:device:{deviceId}` pour éviter un scan.
+ */
+export async function getArtistByDevice(deviceId: string): Promise<ArtistProfile | null> {
+  const rawId = await redis.get(artistDevKey(deviceId));
+  if (!rawId) return null;
+  const artistId = typeof rawId === "string" ? rawId : String(rawId);
+  return getArtist(artistId);
+}
+
+/**
+ * Crée ou met à jour un profil artiste.
+ * Si existingArtistId est fourni, met à jour le profil existant.
+ * Retourne le profil persisté.
+ */
+export async function createOrUpdateArtist(
+  displayName: string,
+  bio?: string,
+  existingArtistId?: string
+): Promise<ArtistProfile> {
+  const artistId = existingArtistId ?? crypto.randomUUID();
+  const existing = existingArtistId ? await getArtist(existingArtistId) : null;
+  const profile: ArtistProfile = {
+    artistId,
+    displayName: displayName.trim().slice(0, 60),
+    bio:         bio?.trim().slice(0, 300),
+    createdAt:   existing?.createdAt ?? Date.now(),
+    updatedAt:   Date.now(),
+  };
+  await redis.set(artistKey(artistId), JSON.stringify(profile), { ex: ARTIST_TTL });
+  await redis.sadd("artists:all", artistId);
+  return profile;
+}
+
+/**
+ * Lie un device à un profil artiste (stocke le lien dans la clé inverse
+ * et met à jour le champ artistId sur le device).
+ */
+export async function linkDeviceToArtist(deviceId: string, artistId: string): Promise<void> {
+  const device = await getDevice(deviceId);
+  if (!device) return;
+  device.artistId = artistId;
+  await Promise.all([
+    saveDevice(device),
+    redis.set(artistDevKey(deviceId), artistId, { ex: ARTIST_TTL }),
+  ]);
+}
+
+/**
+ * Renomme un appareil (deviceName distinct de artistName).
+ */
+export async function setDeviceName(deviceId: string, deviceName: string): Promise<Device | null> {
+  const device = await getDevice(deviceId);
+  if (!device) return null;
+  device.deviceName = deviceName.trim().slice(0, 40);
+  await saveDevice(device);
+  return device;
 }

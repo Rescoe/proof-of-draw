@@ -10,7 +10,7 @@ export const metadata: Metadata = {
 const links = [
   { href: "/onboard", label: "+ Onboard" },
   { href: "/draw", label: "Dessiner" },
-  { href: "/my-devices", label: "Mes ESP" },
+  { href: "/profile", label: "Mon profil" },
 ];
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
