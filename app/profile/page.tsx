@@ -187,11 +187,16 @@ function CropEditor({
   const dragging = useRef(false);
   const lastPos  = useRef({ x: 0, y: 0 });
 
-  // Recalculate cover transform for the preview
-  const coverScale = Math.max(AVATAR_SIZE / ds.w, AVATAR_SIZE / ds.h);
-  const scale = coverScale * zoom;
-  const tx = AVATAR_SIZE / 2 - cx * ds.w * scale;
-  const ty = AVATAR_SIZE / 2 - cy * ds.h * scale;
+  // The crop editor operates in the PREVIEW circle — all drag math uses previewScale.
+  // The small "aperçu réel" uses avatarScale; both scales yield the same visible region.
+  const PREVIEW = 160;
+  const previewScale = Math.max(PREVIEW / ds.w, PREVIEW / ds.h) * zoom;
+  const ptx = PREVIEW / 2 - cx * ds.w * previewScale;
+  const pty = PREVIEW / 2 - cy * ds.h * previewScale;
+
+  const avatarScale = Math.max(AVATAR_SIZE / ds.w, AVATAR_SIZE / ds.h) * zoom;
+  const tx = AVATAR_SIZE / 2 - cx * ds.w * avatarScale;
+  const ty = AVATAR_SIZE / 2 - cy * ds.h * avatarScale;
 
   function onMouseDown(e: React.MouseEvent | React.TouchEvent) {
     dragging.current = true;
@@ -205,31 +210,17 @@ function CropEditor({
     const dx = pt.clientX - lastPos.current.x;
     const dy = pt.clientY - lastPos.current.y;
     lastPos.current = { x: pt.clientX, y: pt.clientY };
-
-    setCx(prev => {
-      const next = prev - dx / (ds.w * scale);
-      return clampCrop(next, cy, zoom, ds).cx;
-    });
-    setCy(prev => {
-      const next = prev - dy / (ds.h * scale);
-      return clampCrop(cx, next, zoom, ds).cy;
-    });
+    // Drag happens inside the 160px circle → sensitivity must match previewScale
+    setCx(prev => clampCrop(prev - dx / (ds.w * previewScale), cy,   zoom, ds).cx);
+    setCy(prev => clampCrop(cx,   prev - dy / (ds.h * previewScale), zoom, ds).cy);
   }
 
   function onMouseUp() { dragging.current = false; }
 
   function onWheel(e: React.WheelEvent) {
     e.preventDefault();
-    setZoom(prev => {
-      const next = Math.max(1, Math.min(4, prev - e.deltaY * 0.002));
-      return clampCrop(cx, cy, next, ds).zoom;
-    });
+    setZoom(prev => clampCrop(cx, cy, Math.max(1, Math.min(4, prev - e.deltaY * 0.002)), ds).zoom);
   }
-
-  const PREVIEW = 160; // larger preview for the crop editor
-  const previewScale = Math.max(PREVIEW / ds.w, PREVIEW / ds.h) * zoom;
-  const ptx = PREVIEW / 2 - cx * ds.w * previewScale;
-  const pty = PREVIEW / 2 - cy * ds.h * previewScale;
 
   return (
     <div>
@@ -286,7 +277,7 @@ function CropEditor({
           {block.imagePayload && (
             <div style={{
               position: "absolute", transformOrigin: "top left",
-              transform: `translate(${tx}px, ${ty}px) scale(${scale})`,
+              transform: `translate(${tx}px, ${ty}px) scale(${avatarScale})`,
               pointerEvents: "none",
             }}>
               <BlockFrameCanvas payload={block.imagePayload} />
