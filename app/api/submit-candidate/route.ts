@@ -3,7 +3,7 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { redis } from "@/lib/redis";
-import { getDevice } from "@/lib/deviceStore";
+import { getDevice, getGlobalActiveCount } from "@/lib/deviceStore";
 import {
   computeComplexity,
   decodeEinkBuffer,
@@ -12,33 +12,17 @@ import {
   hashActions,
   hashPodEnriched,
   computeEnrichment,
-  MIN_COMPLEXITY_SCORE,
+  analyzeReplay,
+  MAX_AUTOMATION_RATIO,
 } from "@/lib/crypto";
 import { setCandidate, getCurrentCandidate, Candidate } from "@/lib/chain";
+import { getEffectiveThresholds } from "@/lib/adaptiveValidation";
 import type { ActionEvent, ReplayEvent } from "@/lib/types/actions";
 
 const INTERNAL_SECRET  = process.env.INTERNAL_API_SECRET ?? "";
-const ACTIVE_WINDOW_MS = 30 * 60 * 1000;
 
-async function getActivePoolSize(screenId: string): Promise<number> {
-  const members = (await redis.smembers(`pool:screen:${screenId}`)) as string[];
-  if (!members || members.length === 0) return 1;
-
-  const devices = await Promise.all(
-    members.map(async (deviceId) => {
-      const raw = await redis.get(`device:${deviceId}`);
-      if (!raw) return null;
-      try {
-        const d = typeof raw === "string" ? JSON.parse(raw) : raw;
-        return Date.now() - d.lastPing < ACTIVE_WINDOW_MS ? d : null;
-      } catch {
-        return null;
-      }
-    }),
-  );
-
-  return Math.max(1, devices.filter(Boolean).length);
-}
+// Le quorum est désormais global : tous les ESP actifs du réseau votent,
+// peu importe leur type d'écran. Seul le broadcast d'affichage reste filtré par écran.
 
 export async function POST(req: NextRequest) {
   const secret = req.headers.get("x-internal-secret");
@@ -106,42 +90,105 @@ export async function POST(req: NextRequest) {
           : screen === "tft18"     ? 160
           : 64;
 
+  // ── Métriques visuelles + seuils adaptatifs ──────────────────────────────────
+  // Calculés en parallèle : metrics depuis les pixels, thresholds depuis l'historique Redis.
   const metrics = computeComplexity(pixels, W, H);
-  const warning =
-    metrics.score < MIN_COMPLEXITY_SCORE
-      ? `Dessin très simple (score ${metrics.score.toFixed(3)} < ${MIN_COMPLEXITY_SCORE}). Le validateur décidera.`
-      : null;
 
-  console.log(`[submit-candidate] device=${deviceId} screen=${screen} score=${metrics.score.toFixed(3)} drawScore=${drawScore}${warning ? " warning=low_complexity" : ""}`);
+  // ── Analyse géométrique et temporelle du replay ──────────────────────────────
+  const [podGeometry, thresholds] = await Promise.all([
+    replayEvents.length > 0
+      ? Promise.resolve(analyzeReplay(replayEvents, W, H, actions))
+      : Promise.resolve(null),
+    getEffectiveThresholds(screen),
+  ]);
 
-  // ── Rejet automatique : image chargée non retravaillée ───────────────────────
-  // Condition : faible effort créatif (drawScore ≤ 1) ET faible complexité visuelle
-  // (score < MIN_COMPLEXITY_SCORE). Les deux conditions ensemble indiquent une image
-  // importée affichée telle quelle, sans travail artistique ajouté.
-  if (drawScore <= 1 && metrics.score < MIN_COMPLEXITY_SCORE) {
-    console.warn(
-      `[submit-candidate] REJET automatique device=${deviceId}` +
-      ` drawScore=${drawScore} complexity=${metrics.score.toFixed(4)}` +
-      ` — image chargée non retravaillée`,
+  console.log(
+    `[submit-candidate] seuils ${thresholds.mode} screen=${screen}` +
+    ` dur≥${(thresholds.durationMs / 1000).toFixed(0)}s` +
+    ` strokes≥${thresholds.strokes}` +
+    ` coverage≥${(thresholds.coverage * 100).toFixed(1)}%` +
+    ` complexity≥${thresholds.complexity.toFixed(3)}` +
+    (thresholds.mode === "adaptive" ? ` (basé sur ${thresholds.adaptedFrom} blocs, moy=${thresholds.avgComplexity.toFixed(3)})` : " (plancher seul)"),
+  );
+
+  if (podGeometry) {
+    // 1. Durée minimale de session (seuil adaptatif par écran)
+    if (podGeometry.sessionDurationMs < thresholds.durationMs) {
+      console.warn(`[submit-candidate] REJET session_trop_courte device=${deviceId} dur=${podGeometry.sessionDurationMs}ms < ${thresholds.durationMs}ms`);
+      return NextResponse.json({
+        rejected: true,
+        reason:   "session_too_short",
+        message:  `Session trop courte (${(podGeometry.sessionDurationMs / 1000).toFixed(1)}s < ${(thresholds.durationMs / 1000).toFixed(0)}s minimum pour ${screen}). Prenez le temps de dessiner.`,
+        sessionDurationMs: podGeometry.sessionDurationMs,
+        threshold: thresholds.durationMs,
+      }, { status: 400 });
+    }
+
+    // 2. Nombre de strokes minimal
+    if (podGeometry.strokeCount < thresholds.strokes) {
+      console.warn(`[submit-candidate] REJET strokes_insuffisants device=${deviceId} strokes=${podGeometry.strokeCount} < ${thresholds.strokes}`);
+      return NextResponse.json({
+        rejected: true,
+        reason:   "too_few_strokes",
+        message:  `Trop peu de traits (${podGeometry.strokeCount} détecté${podGeometry.strokeCount > 1 ? "s" : ""}, minimum ${thresholds.strokes} pour ${screen}). Dessinez davantage.`,
+        strokeCount: podGeometry.strokeCount,
+        threshold: thresholds.strokes,
+      }, { status: 400 });
+    }
+
+    // 3. Couverture spatiale minimale
+    if (podGeometry.gridCoverage < thresholds.coverage) {
+      console.warn(`[submit-candidate] REJET couverture_insuffisante device=${deviceId} coverage=${(podGeometry.gridCoverage * 100).toFixed(1)}% < ${(thresholds.coverage * 100).toFixed(1)}%`);
+      return NextResponse.json({
+        rejected: true,
+        reason:   "insufficient_coverage",
+        message:  `Dessin trop localisé (couverture ${(podGeometry.gridCoverage * 100).toFixed(1)}% < ${(thresholds.coverage * 100).toFixed(1)}% de la toile pour ${screen}). Utilisez plus de surface.`,
+        gridCoverage: podGeometry.gridCoverage,
+        threshold: thresholds.coverage,
+      }, { status: 400 });
+    }
+
+    // 4. Suspicion d'automatisation (rythme non-humain) — seuil global
+    if (podGeometry.automationRatio > MAX_AUTOMATION_RATIO) {
+      console.warn(`[submit-candidate] REJET automation_suspected device=${deviceId} ratio=${(podGeometry.automationRatio * 100).toFixed(1)}%`);
+      return NextResponse.json({
+        rejected: true,
+        reason:   "automation_suspected",
+        message:  `Séquence d'actions suspecte (rythme non-humain détecté). Soumission rejetée.`,
+        automationRatio: podGeometry.automationRatio,
+      }, { status: 400 });
+    }
+
+    // 5. Action "move" (import image) présente dans la séquence — signal d'abus
+    if (podGeometry.moveActionCount > 0) {
+      console.warn(`[submit-candidate] REJET move_action_detected device=${deviceId} moveCount=${podGeometry.moveActionCount}`);
+      return NextResponse.json({
+        rejected: true,
+        reason:   "image_import_detected",
+        message:  `Import d'image détecté dans la séquence d'actions. L'image doit rester un guide visuel, pas être soumise.`,
+        moveActionCount: podGeometry.moveActionCount,
+      }, { status: 400 });
+    }
+
+    console.log(
+      `[submit-candidate] geometry OK device=${deviceId}` +
+      ` dur=${(podGeometry.sessionDurationMs / 1000).toFixed(1)}s` +
+      ` strokes=${podGeometry.strokeCount}` +
+      ` coverage=${(podGeometry.gridCoverage * 100).toFixed(1)}%` +
+      ` autoRatio=${(podGeometry.automationRatio * 100).toFixed(0)}%`,
     );
-    // Stocker en Redis pour l'audit (sans TTL — blocs rejetés conservés)
-    const rejectedEntry = JSON.stringify({
-      deviceId, screen, drawScore,
-      score: metrics.score,
-      reason: "low_quality_imported_image",
-      rejectedAt: Date.now(),
-      workTitle: workTitle ?? null,
-      drawArtistName: drawArtistName ?? null,
-    });
-    await redis.lpush("rejected:draws", rejectedEntry);
-    await redis.ltrim("rejected:draws", 0, 199);  // garder les 200 derniers
+  }
 
+  // 6. Complexité visuelle minimale (seuil adaptatif par écran)
+  // Calculée depuis les pixels du buffer — indépendante du replay
+  if (metrics.score < thresholds.complexity) {
+    console.warn(`[submit-candidate] REJET complexity device=${deviceId} score=${metrics.score.toFixed(3)} < ${thresholds.complexity.toFixed(3)}`);
     return NextResponse.json({
-      rejected:  true,
-      reason:    "low_quality_imported_image",
-      message:   `Dessin rejeté : image chargée non retravaillée (Score PoD=${drawScore}, complexité=${(metrics.score * 100).toFixed(2)}%). Dessinez davantage pour enrichir l'œuvre.`,
-      drawScore,
-      score:     metrics.score,
+      rejected: true,
+      reason:   "insufficient_complexity",
+      message:  `Dessin trop simple (complexité ${(metrics.score * 100).toFixed(1)}% < ${(thresholds.complexity * 100).toFixed(1)}% attendu pour ${screen}). Enrichissez votre dessin.`,
+      score: metrics.score,
+      threshold: thresholds.complexity,
     }, { status: 400 });
   }
 
@@ -172,8 +219,16 @@ export async function POST(req: NextRequest) {
   const deviceOwnerName = device.artistName ?? "Artiste inconnu";
   const effectiveArtistName = drawArtistName || deviceOwnerName;
 
-  const poolSize = await getActivePoolSize(screen);
+  // Quorum global : tous les ESP actifs du réseau, tous écrans confondus
+  const poolSize = await getGlobalActiveCount();
   const CANDIDATE_TTL_SEC = parseInt(process.env.CANDIDATE_TTL_SEC ?? "600");
+
+  // Warning informatif (non-bloquant) si le dessin reste proche du seuil
+  const warning = metrics.score < thresholds.complexity * 1.5
+    ? `Dessin simple (complexité ${(metrics.score * 100).toFixed(1)}%). Validateurs décident.`
+    : null;
+
+  console.log(`[submit-candidate] device=${deviceId} screen=${screen} score=${metrics.score.toFixed(3)} drawScore=${drawScore} thresholds=${thresholds.mode}${warning ? " warning=near_floor" : ""}`);
 
   const candidate: Candidate = {
     candidateId: crypto.randomUUID(),
@@ -192,6 +247,7 @@ export async function POST(req: NextRequest) {
     actionSequence: actions,
     replayEvents:   replayEvents.length > 0 ? replayEvents : undefined,
     podHashEnriched: podEnrichedHash,
+    podGeometry:     podGeometry ?? undefined,
     score: metrics.score,
     submittedAt: Date.now(),
     expiresAt: Date.now() + CANDIDATE_TTL_SEC * 1000,
@@ -213,6 +269,7 @@ export async function POST(req: NextRequest) {
       transitions: metrics.transitions,
       rle:         metrics.rle,
     },
+    podGeometry: podGeometry ?? null,
     poolSize,
     expiresIn: CANDIDATE_TTL_SEC,
   });

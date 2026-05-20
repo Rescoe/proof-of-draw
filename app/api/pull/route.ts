@@ -145,12 +145,11 @@ export async function GET(req: NextRequest) {
     }
 
     // ── Validation en attente ───────────────────────────────────────────────
+    // Validation globale : tout ESP actif peut voter, peu importe son écran.
+    // Le filtre pool:screen ne s'applique plus ici (seulement au broadcast d'affichage).
     let pendingValidation: any = null;
 
     if (candidate) {
-      const isInPool = await redis.sismember(
-        `pool:screen:${candidate.poolScreen}`, deviceId
-      );
       const votesRaw = await redis.get("candidate:votes");
       let alreadyVoted = false;
       if (votesRaw) {
@@ -160,10 +159,10 @@ export async function GET(req: NextRequest) {
           alreadyVoted = !!voteMap?.votes?.[deviceId];
         } catch {}
       }
-      if (isInPool && !alreadyVoted) {
+      if (!alreadyVoted) {
         pendingValidation = {
           candidateId: candidate.candidateId,
-          poolScreen:  candidate.poolScreen,
+          poolScreen:  candidate.poolScreen, // info seulement — l'ESP peut l'afficher si son écran correspond
           expiresIn:   Math.max(
             Math.ceil((candidate.expiresAt - Date.now()) / 1000), 0
           ),
@@ -173,7 +172,7 @@ export async function GET(req: NextRequest) {
       console.log(
         `[pull] device=${deviceId} frame=${frameSource}` +
         ` candidate=${candidate.candidateId}` +
-        ` inPool=${isInPool} alreadyVoted=${alreadyVoted}`
+        ` alreadyVoted=${alreadyVoted}`
       );
     } else {
       console.log(`[pull] device=${deviceId} frame=${frameSource} no_candidate`);

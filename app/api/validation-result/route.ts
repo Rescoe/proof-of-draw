@@ -25,6 +25,7 @@ import { getDevice } from "@/lib/deviceStore";
 import { getCurrentCandidate, getVotes, castVote, finalizeBlock, clearCandidate, ValidationVote } from "@/lib/chain";
 import { isBlacklisted, getIP, forbidden } from "@/lib/rateLimit";
 import { dequeueNextDraw } from "@/lib/drawQueue";
+import { invalidateThresholdsCache } from "@/lib/adaptiveValidation";
 
 const DEVICE_ID_REGEX = /^dev_[A-Z0-9]{8}$/;
 const BLACKLIST_TTL = parseInt(process.env.BLACKLIST_TTL_SECONDS ?? "604800");
@@ -100,6 +101,8 @@ export async function POST(req: NextRequest) {
 
       await broadcastValidatedFrame(candidate.poolScreen, candidate.payload, frameId, block.displayTime, block.blockIndex, candidate.artistName);
       await clearCandidate();
+      // Invalider le cache des seuils adaptatifs pour cet écran (nouveau bloc = nouvelle moyenne)
+      invalidateThresholdsCache(candidate.poolScreen).catch(() => {});
       // La galerie de blocs se revalidera automatiquement dans ≤60s (TTL unstable_cache)
       const poolMembers = (await redis.smembers(`pool:screen:${candidate.poolScreen}`)) as string[];
       Promise.all(poolMembers.map((dId) => redis.del(`personal:frame:${dId}`))).catch((err) => console.error("[validation-result] clear personal frames error:", err));

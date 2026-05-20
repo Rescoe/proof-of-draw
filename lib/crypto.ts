@@ -152,6 +152,109 @@ export function isComplexityValid(metrics: ComplexityMetrics): boolean {
   return metrics.score >= MIN_COMPLEXITY_SCORE;
 }
 
+// ─── Analyse géométrique et temporelle du replay ──────────────────────────────
+//
+// Mesure la qualité du processus de création depuis la séquence de ReplayEvent.
+// Ces métriques prouvent qu'un dessin a été FAIT (et non importé) :
+//
+//   gridCoverage     : fraction de la grille 8×8 touchée par des strokes [0,1]
+//                      → zigzag localisé ≠ composition qui couvre la toile
+//
+//   sessionDurationMs: durée totale de la session
+//                      → soumission instantanée = import probable
+//
+//   strokeCount      : nombre de strokes (down→up séquences)
+//                      → moins de 3 = pas dessiné
+//
+//   automationRatio  : fraction d'intervalles < 15ms entre events consécutifs [0,1]
+//                      → script/bot → intervalles réguliers très courts
+//
+//   boundingBoxRatio : surface bounding-box des strokes / surface canvas [0,1]
+//                      → dessin concentré dans un coin vs occupant la toile
+//
+//   colorCount       : couleurs distinctes utilisées (pertinent pour tft18)
+//
+//   moveActionCount  : actions de type "move" (import image désormais supprimé)
+//                      → devrait être 0 ; valeur > 0 = tentative de contournement
+
+export interface ReplayAnalysis {
+  sessionDurationMs: number;
+  strokeCount:       number;
+  gridCoverage:      number;   // [0,1] grille 8×8
+  boundingBoxRatio:  number;   // [0,1]
+  automationRatio:   number;   // [0,1]
+  colorCount:        number;
+  moveActionCount:   number;
+}
+
+// Seuils configurables via variables d'environnement
+export const MIN_SESSION_DURATION_MS = parseInt(process.env.MIN_SESSION_DURATION_MS ?? "15000");
+export const MIN_GRID_COVERAGE       = parseFloat(process.env.MIN_GRID_COVERAGE       ?? "0.05");
+export const MIN_STROKE_COUNT        = parseInt(process.env.MIN_STROKE_COUNT          ?? "3");
+export const MAX_AUTOMATION_RATIO    = parseFloat(process.env.MAX_AUTOMATION_RATIO    ?? "0.80");
+
+export function analyzeReplay(
+  replay:  ReplayEvent[],
+  canvasW: number,
+  canvasH: number,
+  actions: { kind: string; t: number }[],
+): ReplayAnalysis {
+  const moveActionCount = actions.filter(a => a.kind === "move").length;
+
+  if (replay.length < 2) {
+    return { sessionDurationMs: 0, strokeCount: 0, gridCoverage: 0,
+             boundingBoxRatio: 0, automationRatio: 0, colorCount: 0, moveActionCount };
+  }
+
+  const GRID = 8;
+  const cellW = canvasW / GRID;
+  const cellH = canvasH / GRID;
+  const gridTouched = new Set<number>();
+
+  let strokeCount = 0;
+  let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+  const colors = new Set<string>();
+  let fastIntervals = 0;
+  let totalIntervals = 0;
+
+  for (let i = 0; i < replay.length; i++) {
+    const ev = replay[i];
+    if (ev.kind === "down") strokeCount++;
+
+    if (ev.x !== undefined && ev.y !== undefined) {
+      minX = Math.min(minX, ev.x); maxX = Math.max(maxX, ev.x);
+      minY = Math.min(minY, ev.y); maxY = Math.max(maxY, ev.y);
+      const cx = Math.min(GRID - 1, Math.floor(ev.x / cellW));
+      const cy = Math.min(GRID - 1, Math.floor(ev.y / cellH));
+      gridTouched.add(cy * GRID + cx);
+    }
+
+    if (ev.color) colors.add(ev.color);
+
+    if (i > 0) {
+      totalIntervals++;
+      if (replay[i].t - replay[i - 1].t < 15) fastIntervals++;
+    }
+  }
+
+  const sessionDurationMs = replay[replay.length - 1].t - replay[0].t;
+  const gridCoverage      = gridTouched.size / (GRID * GRID);
+  const bboxW             = Math.max(0, maxX - minX);
+  const bboxH             = Math.max(0, maxY - minY);
+  const boundingBoxRatio  = Math.min(1, (bboxW * bboxH) / (canvasW * canvasH));
+  const automationRatio   = totalIntervals > 0 ? fastIntervals / totalIntervals : 0;
+
+  return {
+    sessionDurationMs,
+    strokeCount,
+    gridCoverage,
+    boundingBoxRatio,
+    automationRatio,
+    colorCount: colors.size,
+    moveActionCount,
+  };
+}
+
 // ─── Hash de bloc ─────────────────────────────────────────────────────────────
 //
 // Hash SHA-256 d'un bloc pour la chaîne légère.

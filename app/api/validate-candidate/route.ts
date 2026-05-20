@@ -7,14 +7,18 @@
 //     → vote avec score_server comme valeur de référence
 //     → POST /api/validation-result
 //
-// Pas de payload dans la réponse (V1) : l'ESP vote sur présence dans la pool.
-// V2 ajoutera /api/candidate-payload (binaire, sans overhead base64+JSON)
-// pour que l'ESP puisse calculer ses propres métriques indépendamment.
+// Design : VALIDATION GLOBALE, AFFICHAGE PAR ÉCRAN
+//   Tout ESP actif du réseau peut voter, peu importe son type d'écran.
+//   Seul le broadcast d'affichage reste filtré (pool:screen:{id}).
+//   Un ESP OLED peut valider un bloc TFT — il ne l'affichera pas, mais sa
+//   présence et son vote comptent pour le quorum du réseau.
+//
+//   Avantage : inclusif pour les petits réseaux multi-écrans. Un seul ESP
+//   par type d'écran ne bloque plus le consensus.
 //
 // Un ESP ne peut valider que si :
 //   1. Il est enregistré et actif (lastPing < 30min)
-//   2. Il fait partie de la pool du screen candidat
-//   3. Il n'a pas déjà voté pour ce candidat
+//   2. Il n'a pas déjà voté pour ce candidat
 
 import { NextRequest, NextResponse } from "next/server";
 import { redis } from "@/lib/redis";
@@ -64,13 +68,10 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ candidate: null });
   }
 
-  // ── 5. Vérifier pool + vote en parallèle (O(1) chacun) ───────────────────
-  const [isInPool, voteMap] = await Promise.all([
-    redis.sismember(`pool:screen:${candidate.poolScreen}`, deviceId),
-    getVotes(),
-  ]);
+  // ── 5. Vérifier si déjà voté ─────────────────────────────────────────────
+  // Validation globale : tout ESP actif peut voter, peu importe son écran.
+  const voteMap = await getVotes();
 
-  // ── 6. Déjà voté ? ────────────────────────────────────────────────────────
   if (voteMap && voteMap.candidateId === candidate.candidateId && voteMap.votes[deviceId]) {
     return NextResponse.json({
       candidate: null,
@@ -79,15 +80,11 @@ export async function GET(req: NextRequest) {
     });
   }
 
-  // ── 7. Retourner les métadonnées du candidat (sans payload) ──────────────
-  // Le payload n'est pas envoyé : 13KB de base64 épuiserait le heap TLS de
-  // l'ESP8266. En V1, l'ESP vote avec score_server comme référence.
-  // En V2 : endpoint /api/candidate-payload (binaire) pour les métriques réelles.
-
-  if (!isInPool) {
-    // Ne devrait pas arriver (pull envoie pendingValidation seulement aux membres)
-    return NextResponse.json({ candidate: null });
-  }
+  // ── 6. Retourner les métadonnées du candidat (sans payload) ──────────────
+  // Le payload n'est pas envoyé : 40Ko de base64 épuiserait le heap TLS de
+  // l'ESP8266. En V1, l'ESP vote avec score_server comme valeur de référence.
+  // En V2 : endpoint /api/candidate-payload (binaire) pour métriques réelles.
+  // poolScreen est fourni pour info — l'ESP peut l'afficher si son écran correspond.
 
   const expiresIn = Math.ceil((candidate.expiresAt - Date.now()) / 1000);
 
@@ -95,6 +92,7 @@ export async function GET(req: NextRequest) {
     candidate: {
       candidateId:  candidate.candidateId,
       score_server: candidate.score,
+      poolScreen:   candidate.poolScreen, // info : type d'écran du dessin candidat
       expiresIn,
     },
   });

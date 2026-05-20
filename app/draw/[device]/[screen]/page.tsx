@@ -446,10 +446,11 @@ export default function DrawCanvasPage() {
   const [canRedo, setCanRedo] = useState(false);
 
   const [imgImport, setImgImport] = useState<ImageImport>({
-    data: null, x: 0, y: 0, scale: 1, opacity: 0.6,
+    data: null, x: 0, y: 0, scale: 1, opacity: 0.3,
     dithering: "floyd", threshold: 0.4,
   });
   const [imgMode, setImgMode] = useState(false);
+  const [guideActive, setGuideActive] = useState(false);
 
   const [cooldown, setCooldown]     = useState(0);
   const cooldownRef                 = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -472,8 +473,7 @@ export default function DrawCanvasPage() {
   const replaySnapshots      = useRef<number[]>([]);
 
   // ── Import d'image — tracking provenance ──────────────────────────────────
-  const hasFileImportRef     = useRef(false);   // true si une image a été importée
-  const actionsAtImportRef   = useRef(0);       // score après application de l'import
+  // (Anciens refs d'import supprimés — l'image ne peut plus être appliquée au canvas)
 
   // ── Titre de l'œuvre ───────────────────────────────────────────────────────
   const [workTitle, setWorkTitle]     = useState("");
@@ -852,54 +852,49 @@ export default function DrawCanvasPage() {
 
   const cancelImport = useCallback(() => {
     setImgMode(false);
+    setGuideActive(false);
     setImgImport(s => ({ ...s, data: null }));
     overlayRef.current?.getContext("2d")?.clearRect(0, 0, W, H);
     setMobileSheet(null);
   }, [W, H]);
 
-  const applyImport = useCallback(() => {
-    if (!imgImport.data || !canvasRef.current) return;
-    const ctx     = canvasRef.current.getContext("2d")!;
-    const palette = profile?.colors ?? ["#000000", "#FFFFFF"];
-    let processed = imgImport.data;
-    if (imgImport.dithering === "floyd")   processed = ditherFloyd(processed, palette);
-    if (imgImport.dithering === "ordered") processed = ditherOrdered(processed, palette, imgImport.threshold);
-    const off = document.createElement("canvas");
-    off.width = W; off.height = H;
-    off.getContext("2d")!.putImageData(processed, 0, 0);
-    ctx.globalAlpha = 1;
-    ctx.drawImage(off, 0, 0, W, H, imgImport.x, imgImport.y,
-      Math.round(W * imgImport.scale), Math.round(H * imgImport.scale));
-    actionsRef.current.push({ kind: "move", t: Date.now() - sessionStartRef.current, tool: "import" });
-    scoreRef.current += 1;
-    lastActionWasClearRef.current = false;
-    // Marquer la provenance : score au moment de l'import (pour mesurer les actions suivantes)
-    hasFileImportRef.current = true;
-    actionsAtImportRef.current = scoreRef.current;
-    saveHistory();
+  // Activer l'image comme guide visuel — NE la dessine PAS sur le canvas principal.
+  // L'image reste sur le canvas overlay à 30% d'opacité comme repère de dessin.
+  // Elle ne sera jamais incluse dans le payload soumis.
+  const activateGuide = useCallback(() => {
+    if (!imgImport.data) return;
+    setImgMode(false);
+    setGuideActive(true);
+    setMobileSheet(null);
+  }, [imgImport.data]);
+
+  // Retirer le guide sans toucher au canvas de dessin
+  const deactivateGuide = useCallback(() => {
+    setGuideActive(false);
     setImgMode(false);
     setImgImport(s => ({ ...s, data: null }));
+    overlayRef.current?.getContext("2d")?.clearRect(0, 0, W, H);
     setMobileSheet(null);
-  }, [imgImport, W, H, profile, saveHistory]);
+  }, [W, H]);
 
   // ── Image overlay rendering ────────────────────────────────────────────────
+  // Deux modes :
+  //   guideActive=true → guide visuel brut (sans tramage), semi-transparent
+  //   imgMode=true     → aperçu de positionnement avant activation (même rendu brut)
   useEffect(() => {
     const overlay = overlayRef.current?.getContext("2d");
     if (!overlay) return;
     overlay.clearRect(0, 0, W, H);
-    if (!imgMode || !imgImport.data) return;
-    const palette = profile?.colors ?? ["#000000", "#FFFFFF"];
-    let processed = imgImport.data;
-    if (imgImport.dithering === "floyd")   processed = ditherFloyd(processed, palette);
-    if (imgImport.dithering === "ordered") processed = ditherOrdered(processed, palette, imgImport.threshold);
+    if (!imgImport.data || (!imgMode && !guideActive)) return;
+    // Rendu brut sans tramage — l'image est un guide visuel, pas un dessin à convertir
     const off = document.createElement("canvas");
     off.width = W; off.height = H;
-    off.getContext("2d")!.putImageData(processed, 0, 0);
+    off.getContext("2d")!.putImageData(imgImport.data, 0, 0);
     overlay.globalAlpha = imgImport.opacity;
     overlay.drawImage(off, imgImport.x, imgImport.y,
       Math.round(W * imgImport.scale), Math.round(H * imgImport.scale));
     overlay.globalAlpha = 1;
-  }, [imgImport, imgMode, W, H, profile]);
+  }, [imgImport, imgMode, guideActive, W, H]);
 
   // ── Send ───────────────────────────────────────────────────────────────────
   // titleOverride / guestOverride : utilisés par le toast mobile pour passer les valeurs saisies
@@ -925,18 +920,9 @@ export default function DrawCanvasPage() {
       // Mode invité : inclure le nom de l'artiste dessinateur
       const drawArtistName = isGuest && effectiveGuest.trim() ? effectiveGuest.trim() : undefined;
 
-      // Provenance : détecter les imports d'image avec peu d'actions supplémentaires
-      let importWarning: string | undefined;
-      if (hasFileImportRef.current) {
-        const actionsAfterImport = scoreRef.current - actionsAtImportRef.current;
-        if (actionsAfterImport <= 2) importWarning = "image_forte";       // quasi aucune modification
-        else if (actionsAfterImport <= 10) importWarning = "image_legere"; // modifications légères
-      }
-
       const baseBody = {
         screen: screenId, deviceId, actions, replayEvents, drawScore, drawArtistName,
         workTitle: effectiveTitle.trim(),
-        importWarning,
       };
       const body =
         screenId === "eink29bwr"
@@ -966,10 +952,8 @@ export default function DrawCanvasPage() {
       } else {
         setStatus({ type: "ok", msg: "" });
       }
-      // Réinitialiser le titre et le tracking d'import après envoi réussi
+      // Réinitialiser après envoi réussi
       setWorkTitle("");
-      hasFileImportRef.current = false;
-      actionsAtImportRef.current = 0;
     } catch (err: any) {
       setStatus({ type: "error", msg: err.message || "Erreur réseau" });
       setTimeout(() => setStatus(null), 5000);
@@ -1152,10 +1136,11 @@ export default function DrawCanvasPage() {
   const ImageContent = (
     <ImagePanel
       imgImport={imgImport} setImgImport={setImgImport}
-      imgMode={imgMode}
+      imgMode={imgMode} guideActive={guideActive}
       onLoad={() => fileInputRef.current?.click()}
-      onApply={applyImport}
+      onApply={activateGuide}
       onCancel={cancelImport}
+      onDeactivate={deactivateGuide}
       W={W} H={H}
       smallBtn={smallBtn} label={label}
     />
@@ -1252,14 +1237,30 @@ export default function DrawCanvasPage() {
             style={{ ...smallBtn(imgMode), padding: "5px 9px" }}>📷</button>
         </div>
 
-        {/* imgMode badge */}
+        {/* Guide actif badge */}
+        {guideActive && !imgMode && (
+          <div
+            onClick={deactivateGuide}
+            title="Cliquer pour retirer le guide"
+            style={{
+              padding: "3px 8px", borderRadius: 6, fontSize: 11, fontWeight: 600,
+              background: "rgba(96,165,250,0.12)", color: "#60a5fa",
+              border: "1px solid rgba(96,165,250,0.35)", flexShrink: 0, whiteSpace: "nowrap",
+              cursor: "pointer",
+            }}
+          >
+            🎯 {isMobile ? "Guide" : "Guide actif — cliquer pour retirer"}
+          </div>
+        )}
+
+        {/* imgMode badge (positionnement en cours) */}
         {imgMode && (
           <div style={{
             padding: "3px 8px", borderRadius: 6, fontSize: 11, fontWeight: 600,
-            background: "rgba(251,146,60,0.15)", color: "#fb923c",
-            border: "1px solid rgba(251,146,60,0.4)", flexShrink: 0, whiteSpace: "nowrap",
+            background: "rgba(96,165,250,0.12)", color: "#60a5fa",
+            border: "1px solid rgba(96,165,250,0.35)", flexShrink: 0, whiteSpace: "nowrap",
           }}>
-            ⚠️ {isMobile ? "Valider" : "Image non validée — valider avant envoi"}
+            🎯 {isMobile ? "Positionner" : "Positionnez le guide, puis activez"}
           </div>
         )}
 
@@ -1309,13 +1310,10 @@ export default function DrawCanvasPage() {
             style={{
               padding: isMobile ? "7px 14px" : "6px 20px",
               borderRadius: 9, border: "none",
-              background: imgMode
-                ? "rgba(251,146,60,0.3)"
-                : needsTitle
+              background: needsTitle
                   ? "rgba(248,113,113,0.18)"
                   : canSend ? "var(--accent)" : "var(--bg3)",
-              color: canSend && !imgMode && !needsTitle ? "#fff"
-                : imgMode ? "#fb923c"
+              color: canSend && !needsTitle ? "#fff"
                 : needsTitle ? "#f87171"
                 : "var(--text3)",
               cursor: canSend ? "pointer" : "not-allowed",
@@ -1325,7 +1323,7 @@ export default function DrawCanvasPage() {
             }}
           >
             {sending        ? "Envoi…"
-              : imgMode     ? "⚠️ Valider"
+
               : cooldown > 0 ? `⏳ ${formatTime(cooldown)}`
               : needsTitle  ? "✏️ Titre ?"
               : "📡 Envoyer"}
@@ -1810,36 +1808,43 @@ export default function DrawCanvasPage() {
 // ─── ImagePanel ───────────────────────────────────────────────────────────────
 
 function ImagePanel({
-  imgImport, setImgImport, imgMode,
-  onLoad, onApply, onCancel,
+  imgImport, setImgImport, imgMode, guideActive,
+  onLoad, onApply, onCancel, onDeactivate,
   W, H, smallBtn, label,
 }: {
   imgImport: ImageImport;
   setImgImport: React.Dispatch<React.SetStateAction<ImageImport>>;
   imgMode: boolean;
-  onLoad: () => void; onApply: () => void; onCancel: () => void;
+  guideActive: boolean;
+  onLoad: () => void; onApply: () => void; onCancel: () => void; onDeactivate: () => void;
   W: number; H: number;
   smallBtn: (accent?: boolean) => React.CSSProperties;
   label: React.CSSProperties;
 }) {
+  // Aucune image chargée — proposer le chargement
   if (!imgImport.data) {
     return (
       <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
         <button onClick={onLoad} style={{ ...smallBtn(), width: "100%", padding: "12px" }}>
-          📂 Charger une image
+          📂 Charger une image de référence
         </button>
         <div style={{
           border: "1px dashed var(--border)", borderRadius: 8, padding: "14px",
-          textAlign: "center", fontSize: 12, color: "var(--text3)", lineHeight: 1.6,
+          textAlign: "center", fontSize: 11, color: "var(--text3)", lineHeight: 1.6,
         }}>
-          Ou glisser-déposer<br />sur le canvas
+          Ou glisser-déposer sur le canvas
+          <br />
+          <span style={{ color: "#60a5fa", fontWeight: 600 }}>
+            🎯 Guide uniquement — jamais soumis
+          </span>
         </div>
       </div>
     );
   }
 
-  return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+  // Contrôles communs position/échelle/opacité
+  const posControls = (
+    <>
       <div style={{ display: "flex", gap: 6 }}>
         <div style={{ flex: 1 }}>
           <span style={label}>X</span>
@@ -1856,43 +1861,55 @@ function ImagePanel({
           />
         </div>
       </div>
-
       <div>
         <span style={label}>Échelle · {Math.round(imgImport.scale * 100)}%</span>
         <input type="range" min={0.1} max={3} step={0.05} value={imgImport.scale}
           onChange={e => setImgImport(im => ({ ...im, scale: Number(e.target.value) }))}
           style={{ width: "100%", accentColor: "var(--accent)" }} />
       </div>
-
       <div>
-        <span style={label}>Aperçu opacité · {Math.round(imgImport.opacity * 100)}%</span>
-        <input type="range" min={0.1} max={1} step={0.05} value={imgImport.opacity}
+        <span style={label}>Opacité guide · {Math.round(imgImport.opacity * 100)}%</span>
+        <input type="range" min={0.1} max={0.6} step={0.05} value={imgImport.opacity}
           onChange={e => setImgImport(im => ({ ...im, opacity: Number(e.target.value) }))}
           style={{ width: "100%", accentColor: "var(--accent)" }} />
       </div>
+    </>
+  );
 
-      <div>
-        <span style={label}>Tramage</span>
-        <select value={imgImport.dithering}
-          onChange={e => setImgImport(im => ({ ...im, dithering: e.target.value as any }))}
-          style={{ width: "100%", fontSize: 12, borderRadius: 6, border: "1px solid var(--border)", background: "var(--bg3)", color: "var(--text)", padding: "5px 6px" }}>
-          <option value="none">Aucun (seuil)</option>
-          <option value="floyd">Floyd-Steinberg</option>
-          <option value="ordered">Bayer ordonné</option>
-        </select>
-      </div>
-
-      {imgImport.dithering !== "floyd" && (
-        <div>
-          <span style={label}>Seuil · {Math.round(imgImport.threshold * 100)}%</span>
-          <input type="range" min={0} max={1} step={0.05} value={imgImport.threshold}
-            onChange={e => setImgImport(im => ({ ...im, threshold: Number(e.target.value) }))}
-            style={{ width: "100%", accentColor: "var(--accent)" }} />
+  // Guide actif — l'image est visible sur le canvas comme référence
+  if (guideActive) {
+    return (
+      <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+        <div style={{
+          padding: "8px 10px", borderRadius: 8, fontSize: 11, lineHeight: 1.5,
+          background: "rgba(96,165,250,0.08)", color: "#60a5fa",
+          border: "1px solid rgba(96,165,250,0.25)",
+        }}>
+          🎯 Guide visible sur le canvas<br />
+          <span style={{ color: "var(--text3)" }}>Dessinez par-dessus — l'image n'est pas dans le dessin soumis.</span>
         </div>
-      )}
+        {posControls}
+        <button onClick={onDeactivate} style={{ ...smallBtn(), width: "100%", padding: "9px 0", marginTop: 4 }}>
+          🗑 Retirer le guide
+        </button>
+      </div>
+    );
+  }
 
+  // Mode positionnement (image chargée, pas encore activée comme guide)
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+      <div style={{
+        padding: "6px 10px", borderRadius: 7, fontSize: 11, lineHeight: 1.5,
+        background: "rgba(96,165,250,0.06)", color: "var(--text3)",
+        border: "1px solid rgba(96,165,250,0.18)",
+      }}>
+        Positionnez l'image puis activez-la comme guide de dessin.
+        <br /><span style={{ color: "#60a5fa", fontWeight: 600 }}>Elle ne sera jamais soumise.</span>
+      </div>
+      {posControls}
       <div style={{ display: "flex", gap: 6, marginTop: 4 }}>
-        <button onClick={onApply} style={{ ...smallBtn(true), flex: 1, padding: "10px 0" }}>✓ Appliquer</button>
+        <button onClick={onApply} style={{ ...smallBtn(true), flex: 1, padding: "10px 0" }}>🎯 Activer comme guide</button>
         <button onClick={onCancel} style={{ ...smallBtn(), flex: 1, padding: "10px 0" }}>✕ Annuler</button>
       </div>
     </div>

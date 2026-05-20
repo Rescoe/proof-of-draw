@@ -33,6 +33,7 @@
 import { unstable_cache } from "next/cache";
 import { redis } from "@/lib/redis";
 import { sha256Hex, computeDisplayTime } from "@/lib/crypto";
+import type { ReplayAnalysis } from "@/lib/crypto";
 import { FramePayload } from "@/lib/queue";
 import type { ActionEvent } from "@/lib/types/actions";
 
@@ -63,6 +64,7 @@ export interface Block {
 
   // ── Axe 3 : Ré-validation ────────────────────────────────────────────────────
   podHashEnriched?: string;    // SHA256(actionsHash + enrichment JSON) — Axe 4
+  podGeometry?: ReplayAnalysis; // Analyse géométrique et temporelle du replay (preuve de dessin)
   revalidated?: {              // blocs antérieurs re-vérifiés lors du minage
     blockHash: string;
     observerIds: string[];
@@ -102,6 +104,7 @@ export interface Candidate {
   // ── Axe 4 : Replay + enrichissement PoD ─────────────────────────────────────
   replayEvents?: import("@/lib/types/actions").ReplayEvent[];
   podHashEnriched?: string;
+  podGeometry?: ReplayAnalysis; // Métriques géométriques et temporelles (preuve de dessin)
 }
 
 export interface ValidationVote {
@@ -269,6 +272,52 @@ export async function castVote(
   return { quorumReached, voteCount, needed };
 }
 
+// ─── Sélection équitable du mineur ───────────────────────────────────────────
+//
+// Tire au sort le mineur parmi les validateurs, pondéré inversement
+// par leur nombre de blocs minés récents (liste chain:device:{id}:blocks).
+// Un validateur qui n'a jamais miné a un poids de WEIGHT_BASE.
+// Un validateur qui a miné N blocs récents a un poids de WEIGHT_BASE / (N+1).
+// Favorise la décentralisation : les devices "pauvres en blocs" gagnent plus souvent.
+
+const MINER_WEIGHT_BASE = 10;
+
+async function selectEquitableMiner(
+  votes: ValidationVote[],
+  lastVoter?: string,
+): Promise<string | null> {
+  if (votes.length === 0) return lastVoter ?? null;
+  if (votes.length === 1) return votes[0].deviceId;
+
+  // Récupérer le nombre de blocs récents par validateur
+  const blockCounts = await Promise.all(
+    votes.map(async (v) => {
+      try {
+        const count = await redis.llen(`chain:device:${v.deviceId}:blocks`);
+        return { deviceId: v.deviceId, count: count ?? 0 };
+      } catch {
+        return { deviceId: v.deviceId, count: 0 };
+      }
+    }),
+  );
+
+  // Poids inversement proportionnel au nombre de blocs minés
+  const weights = blockCounts.map(({ deviceId, count }) => ({
+    deviceId,
+    weight: MINER_WEIGHT_BASE / (count + 1),
+  }));
+
+  const totalWeight = weights.reduce((s, w) => s + w.weight, 0);
+  let rnd = Math.random() * totalWeight;
+
+  for (const { deviceId, weight } of weights) {
+    rnd -= weight;
+    if (rnd <= 0) return deviceId;
+  }
+
+  return votes[votes.length - 1].deviceId; // fallback
+}
+
 // ─── Finalisation du bloc ────────────────────────────────────────────────────
 
 export async function finalizeBlock(
@@ -322,9 +371,12 @@ export async function finalizeBlock(
     await redis.lpush(KEY_OBS_QUEUE, obsTask);
   }
 
-  // L'ESP mineur est celui passé en paramètre (dernier vote qui a atteint le quorum).
-  // Fallback : dernier votant, ou à défaut l'artiste lui-même.
-  const effectiveMiner = minerDeviceId
+  // ── Sélection équitable du mineur ────────────────────────────────────────────
+  // Au lieu du "dernier votant = mineur" (favorise le ping le plus rapide),
+  // on tire au sort parmi tous les validateurs, pondéré inversement par le nombre
+  // de blocs récents minés par chaque device.
+  // Un device qui n'a pas miné depuis longtemps a plus de chances.
+  const effectiveMiner = await selectEquitableMiner(votes, minerDeviceId)
     ?? votes[votes.length - 1]?.deviceId
     ?? candidate.deviceId;
 
@@ -354,6 +406,7 @@ export async function finalizeBlock(
     obsConfirmed:    false,
     // Axe 4
     podHashEnriched: candidate.podHashEnriched,
+    podGeometry:     candidate.podGeometry,
   };
 
   // Image à conserver de manière permanente

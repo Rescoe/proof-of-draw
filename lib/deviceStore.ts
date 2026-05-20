@@ -134,6 +134,8 @@ export async function registerDevice(
     existing.screens  = screens;
     existing.lastSeen = Date.now();
     await saveDevice(existing);
+    // S'assurer que l'index global contient bien ce device (idempotent)
+    await redis.sadd("devices:all", existing.deviceId);
     return { device: existing, isNew: false };
   }
 
@@ -150,6 +152,7 @@ export async function registerDevice(
   };
 
   await saveDevice(device);
+  await redis.sadd("devices:all", device.deviceId);
   await incrementDeviceCount();
   console.log(`[deviceStore] NEW ${device.deviceId} (mac: ${mac})`);
   return { device, isNew: true };
@@ -215,8 +218,39 @@ export async function deleteDevice(deviceId: string): Promise<void> {
     redis.del(deviceKey(deviceId)),
     redis.del(macKey(device.mac)),
     redis.del(pairKey(device.pairCode)),
+    redis.srem("devices:all", deviceId),
   ]);
   await decrementDeviceCount();
+}
+
+/**
+ * Compte les devices actifs sur l'ensemble du réseau (tous écrans confondus).
+ * Un device est "actif" si son lastPing est récent (< ACTIVE_WINDOW_MS).
+ * Utilisé pour le quorum global de validation Proof-of-Draw.
+ */
+export async function getGlobalActiveCount(activeWindowMs = 30 * 60 * 1000): Promise<number> {
+  const allIds = (await redis.smembers("devices:all")) as string[];
+  if (!allIds || allIds.length === 0) return 1; // minimum 1 pour éviter division par zéro
+
+  const now = Date.now();
+  const devices = await Promise.all(
+    allIds.map(async (id) => {
+      try {
+        const raw = await redis.get(deviceKey(id));
+        if (!raw) {
+          // Device expiré (TTL Redis) — nettoyer l'index
+          redis.srem("devices:all", id).catch(() => {});
+          return null;
+        }
+        const d = typeof raw === "string" ? JSON.parse(raw) : raw;
+        return now - d.lastPing < activeWindowMs ? d : null;
+      } catch {
+        return null;
+      }
+    }),
+  );
+
+  return Math.max(1, devices.filter(Boolean).length);
 }
 
 // ─── Axe 2 : ESP en prêt public ──────────────────────────────────────────────
