@@ -122,7 +122,7 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ frameId, ...payload });
     }
 
-    // ── tft18 : buffer 1bpp unique (128×160 = 2560 bytes) ────────────────
+    // ── tft18 : buffer RGB565 little-endian (128×160×2 = 40960 bytes) ───────
     if (targetScreen === "tft18") {
       const { buffer } = payload as { buffer?: string };
       if (!buffer) {

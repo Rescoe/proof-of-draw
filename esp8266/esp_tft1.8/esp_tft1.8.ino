@@ -540,14 +540,32 @@ void burnTFTCartel() {
 }
 
 // Affiche un frame RGB565 depuis un buffer complet (restauration SD boot).
-// rowBuf temporaire sur la stack (256 bytes) — pas de malloc global.
+//
+// ⚠️ ORDRE DES BYTES — explication complète :
+//   Le serveur stocke le RGB565 en LITTLE-ENDIAN : buf[off]=LSB, buf[off+1]=MSB.
+//   Le ST7735 attend les pixels en BIG-ENDIAN sur le bus SPI : high byte en premier.
+//   writePixels() avec bigEndian=false tente de corriger l'ordre, MAIS le résultat
+//   dépend de la version de la bibliothèque et du mode SPI (HW vs SW).
+//
+//   Solution sans ambiguïté : swapper explicitement les bytes avant writePixels(),
+//   puis appeler writePixels(..., bigEndian=true) pour qu'il n'y ait AUCUN swap interne.
+//   Ainsi : rowBuf[0]=MSB, rowBuf[1]=LSB → writePixels envoie MSB en premier ✓
+//
+// ⚠️ setAddrWindow(x, y, w, h) : w et h sont LARGEUR et HAUTEUR (pas des coords de fin).
 void renderFrameToTFT(const uint8_t* frameBuf) {
+  uint8_t rowBuf[TFT_ROW_BYTES];  // 256 bytes sur la stack pour le swap
+
   tft.startWrite();
-  tft.setAddrWindow(0, 0, TFT_W - 1, TFT_H - 1);
+  tft.setAddrWindow(0, 0, TFT_W, TFT_H);   // fenêtre exacte 128×160 ✓
   for (int y = 0; y < TFT_H; y++) {
-    // Les pixels RGB565 sont déjà little-endian — writePixels les envoie correctement
-    // (reinterprète chaque paire de bytes comme uint16_t natif ESP8266)
-    tft.writePixels((uint16_t*)(frameBuf + y * TFT_ROW_BYTES), TFT_W);
+    const uint8_t* src = frameBuf + y * TFT_ROW_BYTES;
+    // Swap little-endian → big-endian pour le ST7735
+    for (int i = 0; i < TFT_ROW_BYTES; i += 2) {
+      rowBuf[i]     = src[i + 1]; // MSB en premier
+      rowBuf[i + 1] = src[i];     // LSB en second
+    }
+    // bigEndian=true : pas de swap interne — les bytes sont déjà dans le bon ordre
+    tft.writePixels((uint16_t*)rowBuf, TFT_W, true, true);
     yield();
   }
   tft.endWrite();
@@ -855,7 +873,7 @@ bool doFetchFrame(const String& frameId, const String& frameSource) {
   unsigned long t0 = millis();
 
   tft.startWrite();
-  tft.setAddrWindow(0, 0, TFT_W - 1, TFT_H - 1);
+  tft.setAddrWindow(0, 0, TFT_W, TFT_H);   // w=128, h=160 — largeur/hauteur, pas coords de fin ✓
 
   for (int y = 0; y < TFT_H; y++) {
     size_t rowRead = 0;
@@ -877,9 +895,16 @@ bool doFetchFrame(const String& frameId, const String& frameSource) {
       break;
     }
 
-    // Les bytes sont RGB565 little-endian — writePixels les envoie byte-swapped
-    // au ST7735 (big-endian bus) en interne, ce qui donne les couleurs correctes.
-    tft.writePixels((uint16_t*)rowBuf, TFT_W);
+    // Swap little-endian (serveur) → big-endian (ST7735 attend MSB en premier sur SPI).
+    // On fait le swap ici explicitement et on passe bigEndian=true pour qu'il n'y ait
+    // AUCUN swap interne dans writePixels — résultat sans ambiguïté quelle que soit
+    // la version de la bibliothèque Adafruit.
+    for (int i = 0; i < TFT_ROW_BYTES; i += 2) {
+      uint8_t t   = rowBuf[i];
+      rowBuf[i]   = rowBuf[i + 1]; // MSB en premier
+      rowBuf[i+1] = t;             // LSB en second
+    }
+    tft.writePixels((uint16_t*)rowBuf, TFT_W, true, true); // bigEndian=true ✓
     totalRead += rowRead;
     yield();  // watchdog ESP8266
   }

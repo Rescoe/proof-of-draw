@@ -51,6 +51,7 @@ const SCREEN_LABELS: Record<string, string> = {
   eink29bwr: 'E-Ink 2.9" BWR',
   eink27bw:  'E-Ink 2.7" BW',
   oled096:   'OLED 0.96"',
+  tft18:     'TFT 1.8" RGB',
 };
 
 // ─── Block Card ───────────────────────────────────────────────────────────────

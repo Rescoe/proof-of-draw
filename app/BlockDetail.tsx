@@ -22,6 +22,7 @@ const SCREEN_LABELS: Record<string, string> = {
   eink29bwr: 'E-Ink 2.9" BWR',
   eink27bw:  'E-Ink 2.7" BW',
   oled096:   'OLED 0.96"',
+  tft18:     'TFT 1.8" RGB',
 };
 
 // ─── Observer collapse ────────────────────────────────────────────────────────
@@ -248,10 +249,11 @@ function TabReplay({ block }: { block: BlockWithImage }) {
 
   const W = block.imagePayload?.screen === "eink29bwr" ? 296
           : block.imagePayload?.screen === "eink27bw"  ? 264
-          : 128;
+          : 128; // tft18=128, oled096=128
   const H = block.imagePayload?.screen === "eink29bwr" ? 128
           : block.imagePayload?.screen === "eink27bw"  ? 176
-          : 64;
+          : block.imagePayload?.screen === "tft18"     ? 160
+          : 64; // oled096=64
 
   useEffect(() => {
     fetch(`/api/block-replay?hash=${block.blockHash}`)
