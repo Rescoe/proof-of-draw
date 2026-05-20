@@ -198,12 +198,12 @@ export function BlockGalleryClient({ blocks }: { blocks: BlockWithImage[] }) {
           outline-offset: 2px;
         }
         .block-card__preview {
-          background: #fff;
+          background: var(--bg2, #1e2533);
           display: flex;
           align-items: center;
           justify-content: center;
           min-height: 80px;
-          padding: 12px;
+          padding: 4px;
           border-bottom: 1px solid var(--border, rgba(255,255,255,0.06));
         }
         .block-card__no-image { font-size: 11px; color: #94a3b8; }

@@ -10,6 +10,7 @@ export const metadata: Metadata = {
 const links = [
   { href: "/learn",    label: "Apprendre" },
   { href: "/draw",     label: "Dessiner" },
+  { href: "/gallery",  label: "Explorer" },
   { href: "/artists",  label: "Artistes" },
   { href: "/profile",  label: "Mon profil" },
   { href: "/onboard",  label: "+ Onboard" },

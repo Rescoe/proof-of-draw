@@ -24,20 +24,12 @@ export default async function HomePage() {
         </h1>
 
         <div className="hero-actions">
-          <Link href="/onboard" className="btn btn-ghost">
-            + Ajouter un device
-          </Link>
-
-          <Link href="/draw" className="btn btn-ghost">
-            Dessiner →
-          </Link>
-
-          <Link href="/profile" className="btn btn-ghost">
-            Mon profil
-          </Link>
-
           <Link href="/gallery" className="btn btn-ghost">
             Block Explorer →
+          </Link>
+
+          <Link href="/learn" className="btn btn-ghost">
+            Comment ça marche →
           </Link>
         </div>
       </section>

@@ -16,6 +16,12 @@
   --text2: #a2a3bb;
   --text3: #70728d;
   --shadow: 0 24px 80px rgba(0,0,0,0.28);
+  /* Rescoe brand palette */
+  --navy: #011C39;
+  --gold: #FFEDA6;
+  /* Teal — scoped to onboard/hardware context only */
+  --accent-teal: #06b6d4;
+  --accent-teal2: #0ea5e9;
 }
 
 * { box-sizing: border-box; }
@@ -26,6 +32,7 @@ body {
   background:
     radial-gradient(circle at 20% 10%, rgba(124,107,255,0.14), transparent 0 28%),
     radial-gradient(circle at 80% 0%, rgba(255,107,157,0.10), transparent 0 22%),
+    radial-gradient(ellipse at 50% 100%, rgba(1,28,57,0.40), transparent 60%),
     linear-gradient(180deg, #0a0a10 0%, #09090d 100%);
   color: var(--text);
   font-family: "DM Sans", "Segoe UI", system-ui, sans-serif;
@@ -73,7 +80,7 @@ code { font-family: "JetBrains Mono", monospace; }
   color: white;
   box-shadow: 0 0 0 1px rgba(255,255,255,0.08) inset;
 }
-.site-brand em { color: var(--accent); font-style: normal; }
+.site-brand em { color: var(--gold); font-style: normal; }
 .site-nav__links {
   margin-left: auto;
   display: flex;
@@ -647,28 +654,12 @@ code { font-family: "JetBrains Mono", monospace; }
    Glassmorphism + shadows profonds + responsive parfait
    ============================================================ */
 
-/* ── Variables globales (mise à jour accent teal) ──────────── */
-:root {
-  --bg: #09090d;
-  --bg2: #101018;
-  --bg3: #171724;
-  --bg4: #1e1e2d;
-  --border: #2a2a3d;
-  --border-soft: rgba(255,255,255,0.06);
-  --accent: #06b6d4; /* CHANGÉ : teal froid */
-  --accent2: #0ea5e9; /* cyan froid complémentaire */
-  --success: #4ade80;
-  --warning: #fbbf24;
-  --error: #f87171;
-  --text: #ececf6;
-  --text2: #a2a3bb;
-  --text3: #70728d;
-  --shadow: 0 24px 80px rgba(0,0,0,0.28);
-  --shadow-glow: 0 0 60px rgba(6, 182, 212, 0.08);
-}
-
 /* ── Onboard Container (page principale) ───────────────────── */
 .onboard-container {
+  /* Scoped teal accent for the hardware-pairing context */
+  --accent: var(--accent-teal);
+  --accent2: var(--accent-teal2);
+  --shadow-glow: 0 0 60px rgba(6, 182, 212, 0.08);
   min-height: 100vh;
   display: flex;
   align-items: center;

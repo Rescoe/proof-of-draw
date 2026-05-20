@@ -632,8 +632,8 @@ export default function ProfilePage() {
                   }} />
                   <div>
                     <div style={{ fontWeight: 700, fontSize: "0.95rem" }}>{pub.artistName}</div>
-                    <div style={{ fontSize: "0.72rem", color: "var(--text3)", fontFamily: "monospace" }}>
-                      {pub.screens.join(", ")}
+                    <div style={{ fontSize: "0.72rem", color: "var(--text3)" }}>
+                      {pub.screens.map(sid => isKnownScreen(sid) ? SCREEN_PROFILES[sid].name : sid).join(" · ")}
                     </div>
                   </div>
                 </div>
@@ -754,6 +754,7 @@ export default function ProfilePage() {
                     {d.screens?.map(sid => {
                       if (!isKnownScreen(sid)) return null;
                       const p = SCREEN_PROFILES[sid];
+                      const isTft = sid === "tft18";
                       return (
                         <a key={sid} href={`/draw/${d.deviceId}/${sid}`} style={{
                           display: "flex", alignItems: "center", gap: "0.5rem",
@@ -761,15 +762,28 @@ export default function ProfilePage() {
                           border: "1px solid var(--border)", background: "var(--bg)",
                           textDecoration: "none", color: "var(--text2)", fontSize: "0.78rem",
                         }}>
-                          {p.name}
-                          <div style={{ display: "flex", gap: 3 }}>
-                            {p.colors.map((c: string) => (
-                              <div key={c} style={{
-                                width: 8, height: 8, borderRadius: 2,
-                                background: c, border: "1px solid rgba(255,255,255,0.1)",
-                              }} />
-                            ))}
+                          <div>
+                            <div>{p.name}</div>
+                            <div style={{ fontSize: "0.65rem", color: "var(--text3)", fontFamily: "JetBrains Mono, monospace" }}>
+                              {p.width}×{p.height}
+                            </div>
                           </div>
+                          {isTft ? (
+                            <span style={{
+                              fontSize: "0.65rem", fontWeight: 700,
+                              background: "linear-gradient(90deg, #f55, #4f4, #55f)",
+                              WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent",
+                            }}>RGB</span>
+                          ) : (
+                            <div style={{ display: "flex", gap: 3 }}>
+                              {p.colors.map((c: string) => (
+                                <div key={c} style={{
+                                  width: 8, height: 8, borderRadius: 2,
+                                  background: c, border: "1px solid rgba(255,255,255,0.1)",
+                                }} />
+                              ))}
+                            </div>
+                          )}
                         </a>
                       );
                     })}

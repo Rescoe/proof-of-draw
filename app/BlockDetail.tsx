@@ -493,7 +493,7 @@ export function BlockDetail({ block, onClose }: { block: BlockWithImage; onClose
 
         /* Détails */
         .bd-details { display: flex; flex-direction: column; gap: 16px; }
-        .bd-preview { display: flex; justify-content: center; background: #fff; border-radius: 8px; padding: 12px; }
+        .bd-preview { display: flex; justify-content: center; background: var(--bg2, #1e2533); border-radius: 8px; padding: 4px; }
         .bd-meta-grid { display: flex; flex-direction: column; gap: 4px; }
         .bd-meta-row {
           display: flex; justify-content: space-between; align-items: center;
@@ -580,7 +580,7 @@ export function BlockDetail({ block, onClose }: { block: BlockWithImage; onClose
 
         /* Replay */
         .bd-replay { display: flex; flex-direction: column; gap: 12px; }
-        .bd-replay-canvas-wrap { display: flex; justify-content: center; }
+        .bd-replay-canvas-wrap { display: flex; justify-content: center; width: 100%; align-items: center; }
         .bd-replay-controls { display: flex; flex-direction: column; align-items: center; gap: 8px; }
         .bd-replay-btn {
           padding: 8px 20px; border-radius: 8px;

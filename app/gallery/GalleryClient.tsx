@@ -491,9 +491,9 @@ export function GalleryClient() {
         .gc-card:hover { border-color: rgba(124,107,255,0.3); transform: translateY(-1px); }
         .gc-card:focus-visible { outline: 2px solid var(--accent, #7c6bff); outline-offset: 2px; }
         .gc-card__preview {
-          background: #fff;
+          background: var(--bg2, #1e2533);
           display: flex; align-items: center; justify-content: center;
-          min-height: 70px; padding: 10px;
+          min-height: 70px; padding: 4px;
           border-bottom: 1px solid rgba(255,255,255,0.05);
         }
         .gc-card__no-image { font-size: 11px; color: #94a3b8; }
