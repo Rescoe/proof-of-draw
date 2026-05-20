@@ -639,13 +639,79 @@ code { font-family: "JetBrains Mono", monospace; }
   .network-panel__grid {
     grid-template-columns: 1fr;
   }
-  .site-nav__inner {
-    flex-direction: column;
-    align-items: stretch;
-  }
-  .site-nav__links {
-    margin-left: 0;
-  }
+  /* Desktop links hidden on mobile — burger takes over */
+  .site-nav__links { display: none !important; }
+  .nav-burger { display: flex !important; }
+}
+
+/* ── Hamburger button ──────────────────────────────────────── */
+.nav-burger {
+  display: none;
+  align-items: center;
+  justify-content: center;
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 7px 9px;
+  cursor: pointer;
+  margin-left: auto;
+  flex-shrink: 0;
+}
+.nav-burger:hover { background: rgba(255,255,255,0.05); }
+
+.nav-burger__icon {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  width: 18px;
+}
+.nav-burger__bar {
+  display: block;
+  height: 2px;
+  background: var(--text2);
+  border-radius: 2px;
+  transition: transform 0.2s ease, opacity 0.15s ease;
+}
+.nav-burger__icon--open .nav-burger__bar:nth-child(1) { transform: translateY(6px) rotate(45deg); }
+.nav-burger__icon--open .nav-burger__bar:nth-child(2) { opacity: 0; transform: scaleX(0); }
+.nav-burger__icon--open .nav-burger__bar:nth-child(3) { transform: translateY(-6px) rotate(-45deg); }
+
+/* ── Mobile overlay + drawer ──────────────────────────────── */
+.nav-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 48;
+  background: rgba(0,0,0,0.45);
+  backdrop-filter: blur(3px);
+}
+.nav-drawer {
+  position: fixed;
+  top: 57px;
+  right: 0;
+  z-index: 50;
+  background: var(--bg2);
+  border-left: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+  border-radius: 0 0 0 14px;
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 200px;
+  box-shadow: -6px 8px 32px rgba(0,0,0,0.45);
+}
+.nav-drawer__link {
+  display: block;
+  padding: 11px 16px;
+  border-radius: 8px;
+  color: var(--text2);
+  font-size: 0.9rem;
+  font-weight: 500;
+  transition: background 0.12s, color 0.12s;
+}
+.nav-drawer__link:hover {
+  background: rgba(255,255,255,0.06);
+  color: var(--text);
 }
 
 /* ============================================================

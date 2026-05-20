@@ -13,8 +13,50 @@ interface ArtistProfile {
   displayName:           string;
   bio?:                  string;
   profileImageBlockHash?: string;
+  profileImageCrop?:     { cx: number; cy: number; zoom: number };
   createdAt:             number;
   updatedAt:             number;
+}
+
+// Display sizes matching BlockFrameCanvas.tsx
+const DISPLAY_SIZES: Record<string, { w: number; h: number }> = {
+  eink29bwr: { w: 222, h: 96  },
+  eink27bw:  { w: 132, h: 88  },
+  oled096:   { w: 128, h: 64  },
+  tft18:     { w: 128, h: 160 },
+};
+
+const AVATAR_SIZE = 72;
+
+function coverTransform(
+  screen: string,
+  crop?: { cx: number; cy: number; zoom: number },
+): { tx: number; ty: number; scale: number } {
+  const ds = DISPLAY_SIZES[screen] ?? { w: 128, h: 128 };
+  const coverScale = Math.max(AVATAR_SIZE / ds.w, AVATAR_SIZE / ds.h);
+  const zoom  = crop?.zoom ?? 1;
+  const scale = coverScale * zoom;
+  const cx    = crop?.cx ?? 0.5;
+  const cy    = crop?.cy ?? 0.5;
+  return {
+    tx: AVATAR_SIZE / 2 - cx * ds.w * scale,
+    ty: AVATAR_SIZE / 2 - cy * ds.h * scale,
+    scale,
+  };
+}
+
+function clampCrop(
+  cx: number, cy: number, zoom: number,
+  ds: { w: number; h: number },
+): { cx: number; cy: number; zoom: number } {
+  const scale  = Math.max(AVATAR_SIZE / ds.w, AVATAR_SIZE / ds.h) * zoom;
+  const halfCx = (AVATAR_SIZE / 2) / (ds.w * scale);
+  const halfCy = (AVATAR_SIZE / 2) / (ds.h * scale);
+  return {
+    cx:   Math.max(halfCx, Math.min(1 - halfCx, cx)),
+    cy:   Math.max(halfCy, Math.min(1 - halfCy, cy)),
+    zoom: Math.max(1, zoom),
+  };
 }
 
 interface MinedBlock {
@@ -122,30 +164,201 @@ function InlineEdit({
   );
 }
 
+// ── CropEditor ────────────────────────────────────────────────────────────────
+
+function CropEditor({
+  block,
+  initialCrop,
+  onConfirm,
+  onBack,
+}: {
+  block: MinedBlock;
+  initialCrop?: { cx: number; cy: number; zoom: number };
+  onConfirm: (crop: { cx: number; cy: number; zoom: number }) => void;
+  onBack: () => void;
+}) {
+  const screen = block.imagePayload?.screen ?? "eink29bwr";
+  const ds = DISPLAY_SIZES[screen] ?? { w: 128, h: 128 };
+
+  const [cx,   setCx]   = useState(initialCrop?.cx   ?? 0.5);
+  const [cy,   setCy]   = useState(initialCrop?.cy   ?? 0.5);
+  const [zoom, setZoom] = useState(initialCrop?.zoom ?? 1);
+
+  const dragging = useRef(false);
+  const lastPos  = useRef({ x: 0, y: 0 });
+
+  // Recalculate cover transform for the preview
+  const coverScale = Math.max(AVATAR_SIZE / ds.w, AVATAR_SIZE / ds.h);
+  const scale = coverScale * zoom;
+  const tx = AVATAR_SIZE / 2 - cx * ds.w * scale;
+  const ty = AVATAR_SIZE / 2 - cy * ds.h * scale;
+
+  function onMouseDown(e: React.MouseEvent | React.TouchEvent) {
+    dragging.current = true;
+    const pt = "touches" in e ? e.touches[0] : e;
+    lastPos.current = { x: pt.clientX, y: pt.clientY };
+  }
+
+  function onMouseMove(e: React.MouseEvent | React.TouchEvent) {
+    if (!dragging.current) return;
+    const pt = "touches" in e ? e.touches[0] : e;
+    const dx = pt.clientX - lastPos.current.x;
+    const dy = pt.clientY - lastPos.current.y;
+    lastPos.current = { x: pt.clientX, y: pt.clientY };
+
+    setCx(prev => {
+      const next = prev - dx / (ds.w * scale);
+      return clampCrop(next, cy, zoom, ds).cx;
+    });
+    setCy(prev => {
+      const next = prev - dy / (ds.h * scale);
+      return clampCrop(cx, next, zoom, ds).cy;
+    });
+  }
+
+  function onMouseUp() { dragging.current = false; }
+
+  function onWheel(e: React.WheelEvent) {
+    e.preventDefault();
+    setZoom(prev => {
+      const next = Math.max(1, Math.min(4, prev - e.deltaY * 0.002));
+      return clampCrop(cx, cy, next, ds).zoom;
+    });
+  }
+
+  const PREVIEW = 160; // larger preview for the crop editor
+  const previewScale = Math.max(PREVIEW / ds.w, PREVIEW / ds.h) * zoom;
+  const ptx = PREVIEW / 2 - cx * ds.w * previewScale;
+  const pty = PREVIEW / 2 - cy * ds.h * previewScale;
+
+  return (
+    <div>
+      <div style={{ display: "flex", alignItems: "center", gap: "0.75rem", marginBottom: "1.25rem" }}>
+        <button onClick={onBack} style={{
+          background: "none", border: "1px solid var(--border)", borderRadius: 6,
+          padding: "0.35rem 0.75rem", color: "var(--text3)", cursor: "pointer", fontSize: "0.8rem",
+        }}>← Retour</button>
+        <div style={{ fontSize: "0.9rem", fontWeight: 700, color: "var(--text1)" }}>
+          Recadrer la photo
+        </div>
+      </div>
+
+      {/* Large crop circle */}
+      <div style={{ display: "flex", justifyContent: "center", marginBottom: "1rem" }}>
+        <div
+          style={{
+            width: PREVIEW, height: PREVIEW, borderRadius: "50%",
+            overflow: "hidden", cursor: "grab", position: "relative",
+            border: "3px solid var(--accent)",
+            boxShadow: "0 0 0 4px rgba(124,107,255,0.15)",
+            userSelect: "none", flexShrink: 0,
+          }}
+          onMouseDown={onMouseDown}
+          onMouseMove={onMouseMove}
+          onMouseUp={onMouseUp}
+          onMouseLeave={onMouseUp}
+          onTouchStart={onMouseDown}
+          onTouchMove={e => { e.preventDefault(); onMouseMove(e); }}
+          onTouchEnd={onMouseUp}
+          onWheel={onWheel}
+        >
+          {block.imagePayload && (
+            <div style={{
+              position: "absolute",
+              transformOrigin: "top left",
+              transform: `translate(${ptx}px, ${pty}px) scale(${previewScale})`,
+              pointerEvents: "none",
+            }}>
+              <BlockFrameCanvas payload={block.imagePayload} />
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Result preview at actual avatar size */}
+      <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: "0.5rem", marginBottom: "1.25rem" }}>
+        <div style={{ fontSize: "0.72rem", color: "var(--text3)" }}>Aperçu réel</div>
+        <div style={{
+          width: AVATAR_SIZE, height: AVATAR_SIZE, borderRadius: "50%",
+          overflow: "hidden", position: "relative",
+          border: "2px solid var(--accent)",
+        }}>
+          {block.imagePayload && (
+            <div style={{
+              position: "absolute", transformOrigin: "top left",
+              transform: `translate(${tx}px, ${ty}px) scale(${scale})`,
+              pointerEvents: "none",
+            }}>
+              <BlockFrameCanvas payload={block.imagePayload} />
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Zoom slider */}
+      <div style={{ marginBottom: "1.25rem" }}>
+        <div style={{ fontSize: "0.72rem", color: "var(--text3)", marginBottom: "0.4rem" }}>
+          Zoom · {zoom.toFixed(2)}×
+        </div>
+        <input
+          type="range" min={1} max={4} step={0.01}
+          value={zoom}
+          onChange={e => {
+            const z = parseFloat(e.target.value);
+            const clamped = clampCrop(cx, cy, z, ds);
+            setZoom(clamped.zoom);
+            setCx(clamped.cx);
+            setCy(clamped.cy);
+          }}
+          style={{ width: "100%", accentColor: "var(--accent)" }}
+        />
+        <div style={{ fontSize: "0.68rem", color: "var(--text3)", marginTop: "0.3rem" }}>
+          Glissez l&apos;image pour repositionner · Molette ou slider pour zoomer
+        </div>
+      </div>
+
+      <button
+        onClick={() => onConfirm({ cx, cy, zoom })}
+        style={{
+          width: "100%", padding: "0.75rem",
+          borderRadius: 8, border: "none",
+          background: "var(--accent)", color: "#fff",
+          fontWeight: 700, fontSize: "0.9rem", cursor: "pointer",
+        }}
+      >
+        Confirmer ce recadrage
+      </button>
+    </div>
+  );
+}
+
 // ── Composant picker de photo de profil ───────────────────────────────────────
 
 function ProfileImagePicker({
   blocks,
   selectedHash,
+  selectedCrop,
   onSelect,
   onClose,
 }: {
   blocks: MinedBlock[];
   selectedHash?: string;
-  onSelect: (hash: string) => Promise<void>;
+  selectedCrop?: { cx: number; cy: number; zoom: number };
+  onSelect: (hash: string, crop: { cx: number; cy: number; zoom: number }) => Promise<void>;
   onClose: () => void;
 }) {
-  const [saving, setSaving] = useState<string | null>(null);
+  const [cropping, setCropping] = useState<MinedBlock | null>(null);
+  const [saving,   setSaving]   = useState(false);
 
-  async function pick(hash: string) {
-    setSaving(hash);
-    try { await onSelect(hash); onClose(); }
-    finally { setSaving(null); }
+  async function confirmCrop(hash: string, crop: { cx: number; cy: number; zoom: number }) {
+    setSaving(true);
+    try { await onSelect(hash, crop); onClose(); }
+    finally { setSaving(false); }
   }
 
   return (
     <div
-      onClick={onClose}
+      onClick={cropping ? undefined : onClose}
       style={{
         position: "fixed", inset: 0, zIndex: 50,
         background: "rgba(0,0,0,0.6)", display: "flex",
@@ -157,69 +370,77 @@ function ProfileImagePicker({
         style={{
           background: "var(--bg2)", borderRadius: 14,
           border: "1px solid var(--border)", padding: "1.5rem",
-          maxWidth: 600, width: "100%", maxHeight: "80vh", overflowY: "auto",
+          maxWidth: 560, width: "100%", maxHeight: "90vh", overflowY: "auto",
         }}
       >
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "1rem" }}>
-          <h3 style={{ fontWeight: 800, fontSize: "1.1rem", margin: 0 }}>
-            Choisir une photo de profil
-          </h3>
-          <button onClick={onClose} style={{
-            background: "none", border: "none", fontSize: "1.2rem",
-            cursor: "pointer", color: "var(--text3)",
-          }}>✕</button>
-        </div>
-
-        {blocks.length === 0 ? (
-          <div style={{ textAlign: "center", padding: "2rem", color: "var(--text3)" }}>
-            <div style={{ fontSize: "2rem", marginBottom: "0.5rem" }}>🎨</div>
-            <p>Aucun bloc miné pour l&apos;instant. Dessinez et faites valider un bloc pour débloquer cette fonctionnalité !</p>
-          </div>
+        {cropping ? (
+          <CropEditor
+            block={cropping}
+            initialCrop={cropping.blockHash === selectedHash ? selectedCrop : undefined}
+            onConfirm={(crop) => confirmCrop(cropping.blockHash, crop)}
+            onBack={() => setCropping(null)}
+          />
         ) : (
           <>
-            <p style={{ fontSize: "0.8rem", color: "var(--text3)", marginBottom: "1rem" }}>
-              Choisissez l&apos;un de vos dessins validés comme photo de profil.
-            </p>
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(140px, 1fr))", gap: "0.75rem" }}>
-              {blocks.map(b => (
-                <button
-                  key={b.blockHash}
-                  onClick={() => pick(b.blockHash)}
-                  disabled={saving === b.blockHash}
-                  style={{
-                    border: `2px solid ${selectedHash === b.blockHash ? "var(--accent)" : "var(--border)"}`,
-                    borderRadius: 10, background: "var(--bg)", padding: "0.5rem",
-                    cursor: "pointer", position: "relative", opacity: saving === b.blockHash ? 0.6 : 1,
-                    transition: "border-color 0.15s",
-                  }}
-                >
-                  {selectedHash === b.blockHash && (
-                    <div style={{
-                      position: "absolute", top: 4, right: 4,
-                      background: "var(--accent)", color: "#fff",
-                      borderRadius: "50%", width: 18, height: 18,
-                      fontSize: "0.65rem", display: "flex", alignItems: "center", justifyContent: "center",
-                      fontWeight: 700,
-                    }}>✓</div>
-                  )}
-                  <div style={{ display: "flex", justifyContent: "center", pointerEvents: "none" }}>
-                    {b.imagePayload
-                      ? <BlockFrameCanvas payload={b.imagePayload} />
-                      : <div style={{ width: 80, height: 60, background: "var(--bg3)", borderRadius: 6, display: "flex", alignItems: "center", justifyContent: "center", color: "var(--text3)", fontSize: "0.7rem" }}>image manquante</div>
-                    }
-                  </div>
-                  <div style={{
-                    marginTop: "0.4rem", fontSize: "0.68rem", color: "var(--text3)",
-                    textAlign: "center", lineHeight: 1.3,
-                  }}>
-                    <div style={{ color: "var(--text2)", fontWeight: 600, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-                      {b.workTitle || "Sans titre"}
-                    </div>
-                    <div>#{b.blockIndex} · {b.poolScreen}</div>
-                  </div>
-                </button>
-              ))}
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "1rem" }}>
+              <h3 style={{ fontWeight: 800, fontSize: "1.1rem", margin: 0 }}>
+                Choisir une photo de profil
+              </h3>
+              <button onClick={onClose} style={{
+                background: "none", border: "none", fontSize: "1.2rem",
+                cursor: "pointer", color: "var(--text3)",
+              }}>✕</button>
             </div>
+
+            {blocks.length === 0 ? (
+              <div style={{ textAlign: "center", padding: "2rem", color: "var(--text3)" }}>
+                <div style={{ fontSize: "2rem", marginBottom: "0.5rem" }}>🎨</div>
+                <p>Aucun bloc miné pour l&apos;instant. Dessinez et faites valider un bloc !</p>
+              </div>
+            ) : (
+              <>
+                <p style={{ fontSize: "0.8rem", color: "var(--text3)", marginBottom: "1rem" }}>
+                  Choisissez un dessin validé comme photo de profil — vous pourrez le recadrer à l&apos;étape suivante.
+                </p>
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(140px, 1fr))", gap: "0.75rem" }}>
+                  {blocks.map(b => (
+                    <button
+                      key={b.blockHash}
+                      onClick={() => setCropping(b)}
+                      disabled={saving}
+                      style={{
+                        border: `2px solid ${selectedHash === b.blockHash ? "var(--accent)" : "var(--border)"}`,
+                        borderRadius: 10, background: "var(--bg)", padding: "0.5rem",
+                        cursor: "pointer", position: "relative", opacity: saving ? 0.6 : 1,
+                        transition: "border-color 0.15s",
+                      }}
+                    >
+                      {selectedHash === b.blockHash && (
+                        <div style={{
+                          position: "absolute", top: 4, right: 4,
+                          background: "var(--accent)", color: "#fff",
+                          borderRadius: "50%", width: 18, height: 18,
+                          fontSize: "0.65rem", display: "flex", alignItems: "center", justifyContent: "center",
+                          fontWeight: 700,
+                        }}>✓</div>
+                      )}
+                      <div style={{ display: "flex", justifyContent: "center", pointerEvents: "none", overflow: "hidden" }}>
+                        {b.imagePayload
+                          ? <BlockFrameCanvas payload={b.imagePayload} />
+                          : <div style={{ width: 80, height: 60, background: "var(--bg3)", borderRadius: 6, display: "flex", alignItems: "center", justifyContent: "center", color: "var(--text3)", fontSize: "0.7rem" }}>image manquante</div>
+                        }
+                      </div>
+                      <div style={{ marginTop: "0.4rem", fontSize: "0.68rem", color: "var(--text3)", textAlign: "center", lineHeight: 1.3 }}>
+                        <div style={{ color: "var(--text2)", fontWeight: 600, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                          {b.workTitle || "Sans titre"}
+                        </div>
+                        <div>#{b.blockIndex} · {b.poolScreen}</div>
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              </>
+            )}
           </>
         )}
       </div>
@@ -238,46 +459,46 @@ function ProfileAvatar({
   selectedBlock: MinedBlock | null;
   onClick: () => void;
 }) {
-  const hasImage = !!selectedBlock;
+  const hasImage = !!(selectedBlock?.imagePayload);
+  const crop = profile?.profileImageCrop;
+  const screen = selectedBlock?.imagePayload?.screen ?? "eink29bwr";
+  const { tx, ty, scale } = coverTransform(screen, crop);
 
   return (
     <button
       onClick={onClick}
       title="Changer la photo de profil"
       style={{
-        width: 72, height: 72, borderRadius: "50%", flexShrink: 0,
+        width: AVATAR_SIZE, height: AVATAR_SIZE, borderRadius: "50%", flexShrink: 0,
         border: hasImage ? "2px solid var(--accent)" : "2px dashed var(--border)",
         background: hasImage ? "var(--bg3)" : "linear-gradient(135deg, var(--accent) 0%, #6366f1 100%)",
         cursor: "pointer", overflow: "hidden", padding: 0,
-        display: "flex", alignItems: "center", justifyContent: "center",
         position: "relative", transition: "border-color 0.15s",
       }}
     >
-      {hasImage && selectedBlock?.imagePayload ? (
+      {hasImage ? (
         <div style={{
-          width: "100%", height: "100%",
-          display: "flex", alignItems: "center", justifyContent: "center",
-          overflow: "hidden",
+          position: "absolute",
+          transformOrigin: "top left",
+          transform: `translate(${tx}px, ${ty}px) scale(${scale})`,
+          pointerEvents: "none",
         }}>
-          {/* Rendu inline du canvas — scale pour remplir le cercle */}
-          <div style={{ transform: "scale(0.38)", transformOrigin: "center" }}>
-            <BlockFrameCanvas payload={selectedBlock.imagePayload} />
-          </div>
+          <BlockFrameCanvas payload={selectedBlock!.imagePayload!} />
         </div>
       ) : (
-        <span style={{ fontSize: "1.6rem" }}>🎨</span>
+        <span style={{
+          position: "absolute", inset: 0,
+          display: "flex", alignItems: "center", justifyContent: "center",
+          fontSize: "1.6rem",
+        }}>🎨</span>
       )}
-      {/* Overlay "modifier" au survol */}
       <div style={{
         position: "absolute", inset: 0, borderRadius: "50%",
         background: "rgba(0,0,0,0.45)",
         display: "flex", alignItems: "center", justifyContent: "center",
         fontSize: "0.6rem", color: "#fff", fontWeight: 700,
-        opacity: 0,
-        transition: "opacity 0.15s",
-      }}
-        className="avatar-overlay"
-      >
+        opacity: 0, transition: "opacity 0.15s",
+      }} className="avatar-overlay">
         ✏️
       </div>
     </button>
@@ -360,6 +581,7 @@ export default function ProfilePage() {
     displayName?: string;
     bio?: string;
     profileImageBlockHash?: string;
+    profileImageCrop?: { cx: number; cy: number; zoom: number };
   }) {
     setProfError(null);
     const current = profile;
@@ -371,8 +593,9 @@ export default function ProfilePage() {
       headers: { "Content-Type": "application/json" },
       body:    JSON.stringify({
         displayName,
-        bio:                  updates.bio ?? current?.bio,
+        bio:                   updates.bio ?? current?.bio,
         profileImageBlockHash: updates.profileImageBlockHash ?? current?.profileImageBlockHash,
+        profileImageCrop:      updates.profileImageCrop ?? current?.profileImageCrop,
       }),
     });
     const data = await res.json();
@@ -390,8 +613,8 @@ export default function ProfilePage() {
     await postProfile({ bio });
   }
 
-  async function saveProfileImage(blockHash: string) {
-    await postProfile({ profileImageBlockHash: blockHash });
+  async function saveProfileImage(hash: string, crop: { cx: number; cy: number; zoom: number }) {
+    await postProfile({ profileImageBlockHash: hash, profileImageCrop: crop });
   }
 
   // ── Actions devices ────────────────────────────────────────────────────────
@@ -461,6 +684,7 @@ export default function ProfilePage() {
         <ProfileImagePicker
           blocks={minedBlocks}
           selectedHash={profile?.profileImageBlockHash}
+          selectedCrop={profile?.profileImageCrop}
           onSelect={saveProfileImage}
           onClose={() => setShowPicker(false)}
         />

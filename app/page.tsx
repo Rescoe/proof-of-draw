@@ -23,15 +23,6 @@ export default async function HomePage() {
           <span> ESP8266, e-ink et OLED</span>
         </h1>
 
-        <div className="hero-actions">
-          <Link href="/gallery" className="btn btn-ghost">
-            Block Explorer →
-          </Link>
-
-          <Link href="/learn" className="btn btn-ghost">
-            Comment ça marche →
-          </Link>
-        </div>
       </section>
 
       {/* NETWORK MAP - PLEIN ÉCRAN */}

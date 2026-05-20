@@ -58,6 +58,16 @@ export async function POST(req: NextRequest) {
     const displayName         = typeof body.displayName         === "string" ? body.displayName.trim()         : "";
     const bio                 = typeof body.bio                 === "string" ? body.bio.trim()                 : undefined;
     const profileImageBlockHash = typeof body.profileImageBlockHash === "string" ? body.profileImageBlockHash : undefined;
+    const profileImageCrop = (() => {
+      const c = body.profileImageCrop;
+      if (c && typeof c === "object" && !Array.isArray(c)) {
+        const { cx, cy, zoom } = c as Record<string, unknown>;
+        if (typeof cx === "number" && typeof cy === "number" && typeof zoom === "number") {
+          return { cx, cy, zoom };
+        }
+      }
+      return undefined;
+    })();
 
     if (!displayName)
       return json({ error: "displayName requis" }, 400);
@@ -76,6 +86,7 @@ export async function POST(req: NextRequest) {
       bio,
       existingArtistId,
       profileImageBlockHash,
+      profileImageCrop,
     );
 
     // Lier tous les devices de la session à ce profil + mettre à jour artistName (rétrocompat)

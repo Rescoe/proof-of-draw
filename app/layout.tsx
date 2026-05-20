@@ -1,20 +1,12 @@
 import type { Metadata } from "next";
 import Link from "next/link";
+import { NavMenu } from "./NavMenu";
 import "./globals.css";
 
 export const metadata: Metadata = {
   title: "Proof-of-Draw",
   description: "Réseau de dessins distribués entre ESP8266, écrans e-ink et OLED.",
 };
-
-const links = [
-  { href: "/learn",    label: "Apprendre" },
-  { href: "/draw",     label: "Dessiner" },
-  { href: "/gallery",  label: "Explorer" },
-  { href: "/artists",  label: "Artistes" },
-  { href: "/profile",  label: "Mon profil" },
-  { href: "/onboard",  label: "+ Onboard" },
-];
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
@@ -31,18 +23,12 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <nav className="site-nav">
           <div className="site-nav__inner">
             <Link href="/" className="site-brand">
-<span className="site-brand__mark">
-  <img src="/logo.png" alt="Logo" className="site-logo" />
-</span>              <span>Proof-of-<em>Draw</em></span>
+              <span className="site-brand__mark">
+                <img src="/logo.png" alt="Logo" className="site-logo" />
+              </span>
+              <span>Proof-of-<em>Draw</em></span>
             </Link>
-
-            <div className="site-nav__links">
-              {links.map((link) => (
-                <Link key={link.href} href={link.href} className="site-nav__link">
-                  {link.label}
-                </Link>
-              ))}
-            </div>
+            <NavMenu />
           </div>
         </nav>
 

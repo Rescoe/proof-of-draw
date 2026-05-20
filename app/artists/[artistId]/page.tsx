@@ -16,7 +16,29 @@ interface ArtistProfile {
   displayName: string;
   bio?:        string;
   profileImageBlockHash?: string;
+  profileImageCrop?:      { cx: number; cy: number; zoom: number };
   createdAt:   number;
+}
+
+const DISPLAY_SIZES_PUB: Record<string, { w: number; h: number }> = {
+  eink29bwr: { w: 222, h: 96  },
+  eink27bw:  { w: 132, h: 88  },
+  oled096:   { w: 128, h: 64  },
+  tft18:     { w: 128, h: 160 },
+};
+
+function pubCoverTransform(screen: string, size: number, crop?: { cx: number; cy: number; zoom: number }) {
+  const ds = DISPLAY_SIZES_PUB[screen] ?? { w: 128, h: 128 };
+  const coverScale = Math.max(size / ds.w, size / ds.h);
+  const zoom  = crop?.zoom ?? 1;
+  const scale = coverScale * zoom;
+  const cx = crop?.cx ?? 0.5;
+  const cy = crop?.cy ?? 0.5;
+  return {
+    tx: size / 2 - cx * ds.w * scale,
+    ty: size / 2 - cy * ds.h * scale,
+    scale,
+  };
 }
 
 interface ArtistDevice {
@@ -84,36 +106,42 @@ function isKnownScreen(sid: string): sid is keyof typeof SCREEN_PROFILES {
 // ── Composant Avatar ──────────────────────────────────────────────────────────
 
 function ProfileAvatar({
-  profileImageBlockHash,
-  displayName,
+  profile,
   blocks,
   size = 80,
 }: {
-  profileImageBlockHash?: string;
-  displayName: string;
+  profile: ArtistProfile;
   blocks: ArtistBlock[];
   size?: number;
 }) {
-  const selectedBlock = profileImageBlockHash
-    ? blocks.find((b) => b.blockHash === profileImageBlockHash) ?? null
+  const selectedBlock = profile.profileImageBlockHash
+    ? blocks.find((b) => b.blockHash === profile.profileImageBlockHash) ?? null
     : null;
 
   if (selectedBlock?.imagePayload) {
-    const scale = size / 222; // base display size
+    const { tx, ty, scale } = pubCoverTransform(
+      selectedBlock.imagePayload.screen,
+      size,
+      profile.profileImageCrop,
+    );
     return (
       <div style={{
         width: size, height: size, borderRadius: "50%", flexShrink: 0,
         border: "3px solid var(--accent)", background: "var(--bg3)",
-        overflow: "hidden", display: "flex", alignItems: "center", justifyContent: "center",
+        overflow: "hidden", position: "relative",
       }}>
-        <div style={{ transform: `scale(${scale * 0.9})`, transformOrigin: "center" }}>
+        <div style={{
+          position: "absolute", transformOrigin: "top left",
+          transform: `translate(${tx}px, ${ty}px) scale(${scale})`,
+          pointerEvents: "none",
+        }}>
           <BlockFrameCanvas payload={selectedBlock.imagePayload} />
         </div>
       </div>
     );
   }
 
-  const initials = displayName.split(" ").slice(0, 2).map((w) => w[0]?.toUpperCase() ?? "").join("");
+  const initials = profile.displayName.split(" ").slice(0, 2).map((w) => w[0]?.toUpperCase() ?? "").join("");
   return (
     <div style={{
       width: size, height: size, borderRadius: "50%", flexShrink: 0,
@@ -321,8 +349,7 @@ export default function ArtistDetailPage() {
         <div style={{ display: "flex", alignItems: "flex-start", gap: "1.5rem", flexWrap: "wrap" }}>
 
           <ProfileAvatar
-            profileImageBlockHash={profile.profileImageBlockHash}
-            displayName={profile.displayName}
+            profile={profile}
             blocks={blocks}
             size={80}
           />

@@ -97,6 +97,7 @@ export async function GET(
           displayName: profile.displayName,
           bio:         profile.bio,
           profileImageBlockHash: profile.profileImageBlockHash,
+          profileImageCrop:      profile.profileImageCrop,
           createdAt:   profile.createdAt,
         },
         devices: artistDevices,
