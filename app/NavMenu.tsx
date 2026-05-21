@@ -1,27 +1,39 @@
 "use client";
 
-// app/NavMenu.tsx — Navigation links + hamburger mobile menu
-
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import Link from "next/link";
+import { usePathname } from "next/navigation";
 
 const links = [
-  { href: "/learn",    label: "Apprendre" },
+  { href: "/",         label: "Accueil" },
   { href: "/draw",     label: "Dessiner" },
   { href: "/gallery",  label: "Explorer" },
   { href: "/artists",  label: "Artistes" },
+  { href: "/learn",    label: "Apprendre" },
   { href: "/profile",  label: "Mon profil" },
   { href: "/onboard",  label: "+ Onboard" },
 ];
 
 export function NavMenu() {
+  const pathname = usePathname();
   const [open, setOpen] = useState(false);
+  const close = useCallback(() => setOpen(false), []);
 
+  // Close on route change
+  useEffect(() => { close(); }, [pathname, close]);
+
+  // Close on Escape
   useEffect(() => {
     if (!open) return;
-    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") setOpen(false); };
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") close(); };
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
+  }, [open, close]);
+
+  // Lock body scroll when open
+  useEffect(() => {
+    document.body.style.overflow = open ? "hidden" : "";
+    return () => { document.body.style.overflow = ""; };
   }, [open]);
 
   return (
@@ -29,7 +41,11 @@ export function NavMenu() {
       {/* Desktop */}
       <div className="site-nav__links">
         {links.map((link) => (
-          <Link key={link.href} href={link.href} className="site-nav__link">
+          <Link
+            key={link.href}
+            href={link.href}
+            className={`site-nav__link${pathname === link.href ? " site-nav__link--active" : ""}`}
+          >
             {link.label}
           </Link>
         ))}
@@ -52,14 +68,14 @@ export function NavMenu() {
       {/* Mobile drawer */}
       {open && (
         <>
-          <div className="nav-overlay" onClick={() => setOpen(false)} aria-hidden="true" />
+          <div className="nav-overlay" onClick={close} aria-hidden="true" />
           <nav className="nav-drawer" aria-label="Navigation">
             {links.map((link) => (
               <Link
                 key={link.href}
                 href={link.href}
-                className="nav-drawer__link"
-                onClick={() => setOpen(false)}
+                className={`nav-drawer__link${pathname === link.href ? " nav-drawer__link--active" : ""}`}
+                onClick={close}
               >
                 {link.label}
               </Link>

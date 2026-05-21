@@ -25,11 +25,11 @@ export default async function HomePage() {
 
       </section>
 
-      {/* NETWORK MAP - PLEIN ÉCRAN */}
-      <NetworkMap snapshot={snapshot} />
-
       {/* GALERIE DES BLOCS MINÉS */}
       <BlockGallery />
+
+      {/* NETWORK MAP - PLEIN ÉCRAN */}
+      <NetworkMap snapshot={snapshot} />
 
     </div>
   );

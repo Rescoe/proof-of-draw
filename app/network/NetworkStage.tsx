@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState, useCallback } from "react";
+import { useMemo, useRef, useState, useCallback, useEffect } from "react";
 import type { NetworkSnapshot, NetworkDevice } from "@/lib/networkSnapshot";
 
 type Props = {
@@ -9,48 +9,57 @@ type Props = {
   selectedDeviceId?: string;
 };
 
+// Couleur par type d'écran — même palette que SidePanel
+const SCREEN_COLOR: Record<string, string> = {
+  eink29bwr: "#f87171",
+  eink27bw:  "#94a3b8",
+  oled096:   "#60a5fa",
+  tft18:     "#fbbf24",
+};
+function screenColor(s: string) { return SCREEN_COLOR[s] ?? "#a2a3bb"; }
+
+const PARTICLE_COUNT = 3; // particules par lien
+
+type ViewBox = { x: number; y: number; w: number; h: number };
+const ZOOM_MIN  = 0.4;
+const ZOOM_MAX  = 4.0;
+const ZOOM_STEP = 0.25;
+
 export function NetworkStage({ snapshot, onDeviceSelect, selectedDeviceId }: Props) {
   const stageRef = useRef<HTMLDivElement | null>(null);
-  const [bounds, setBounds] = useState({ width: 900, height: 600 });
-  const [tick, setTick] = useState(0);
+  const svgRef   = useRef<SVGSVGElement | null>(null);
+  const [dims, setDims] = useState({ width: 900, height: 600 });
+  const [vb, setVb]     = useState<ViewBox>({ x: 0, y: 0, w: 900, h: 600 });
+  const dragging   = useRef(false);
+  const lastPos    = useRef({ x: 0, y: 0 });
 
-  // Responsive
+  // Responsive + init viewBox
   useEffect(() => {
     const el = stageRef.current;
     if (!el || typeof ResizeObserver === "undefined") return;
     const ro = new ResizeObserver(([e]) => {
       const w = e.contentRect.width;
-      setBounds({ width: w, height: Math.max(420, Math.min(680, w * 0.62)) });
+      const h = Math.max(420, Math.min(680, w * 0.62));
+      setDims({ width: w, height: h });
+      setVb((prev) => ({ ...prev, w, h }));
     });
     ro.observe(el);
     return () => ro.disconnect();
   }, []);
 
-  // Animation flux
-  useEffect(() => {
-    const id = setInterval(() => setTick((t) => t + 1), 80);
-    return () => clearInterval(id);
-  }, []);
-
   const devices = snapshot.devices;
-  const cx = bounds.width / 2;
-  const cy = bounds.height / 2;
+  const cx = dims.width / 2;
+  const cy = dims.height / 2;
 
-  // Layout ESP (cercle autour du core)
   const espLayout = useMemo((): { device: NetworkDevice; x: number; y: number }[] => {
     if (devices.length === 0) return [];
-    const radius = Math.min(bounds.width * 0.32, bounds.height * 0.32);
+    const radius = Math.min(dims.width * 0.32, dims.height * 0.32);
     return devices.map((device, i) => {
       const angle = (Math.PI * 2 * i) / devices.length - Math.PI / 2;
-      return {
-        device,
-        x: cx + Math.cos(angle) * radius,
-        y: cy + Math.sin(angle) * radius,
-      };
+      return { device, x: cx + Math.cos(angle) * radius, y: cy + Math.sin(angle) * radius };
     });
-  }, [bounds.width, bounds.height, devices]);
+  }, [dims.width, dims.height, devices, cx, cy]);
 
-  // Layout écrans satellites
   const screenNodes = useMemo(() => {
     return espLayout.flatMap((node) =>
       node.device.screens.slice(0, 4).map((screen, si) => {
@@ -62,21 +71,74 @@ export function NetworkStage({ snapshot, onDeviceSelect, selectedDeviceId }: Pro
         return {
           screen,
           deviceId: node.device.deviceId,
-          device: node.device,   // référence complète pour handleSelect
+          device: node.device,
           x: node.x + Math.cos(angle) * dist,
           y: node.y + Math.sin(angle) * dist,
           espX: node.x,
           espY: node.y,
+          color: screenColor(screen.screen),
         };
       })
     );
-  }, [espLayout]);
+  }, [espLayout, cx, cy]);
+
+  // ── Zoom/pan ────────────────────────────────────────────────────────────────
+
+  const zoom = dims.width / vb.w;
+
+  const zoomAt = useCallback((factor: number, pivotSvgX: number, pivotSvgY: number) => {
+    setVb((prev) => {
+      const newW = prev.w / factor;
+      const newH = prev.h / factor;
+      const newZ = dims.width / newW;
+      if (newZ < ZOOM_MIN || newZ > ZOOM_MAX) return prev;
+      const rx = (pivotSvgX - prev.x) / prev.w;
+      const ry = (pivotSvgY - prev.y) / prev.h;
+      return { x: pivotSvgX - rx * newW, y: pivotSvgY - ry * newH, w: newW, h: newH };
+    });
+  }, [dims.width]);
+
+  const resetZoom = useCallback(() => {
+    setVb({ x: 0, y: 0, w: dims.width, h: dims.height });
+  }, [dims]);
+
+  const onWheel = useCallback((e: React.WheelEvent<SVGSVGElement>) => {
+    e.preventDefault();
+    const svg = svgRef.current;
+    if (!svg) return;
+    const rect = svg.getBoundingClientRect();
+    const mx = vb.x + ((e.clientX - rect.left) / rect.width)  * vb.w;
+    const my = vb.y + ((e.clientY - rect.top)  / rect.height) * vb.h;
+    const factor = e.deltaY < 0 ? 1 + ZOOM_STEP : 1 / (1 + ZOOM_STEP);
+    zoomAt(factor, mx, my);
+  }, [vb, zoomAt]);
+
+  const onPointerDown = useCallback((e: React.PointerEvent<SVGSVGElement>) => {
+    if (e.button !== 0) return;
+    dragging.current = true;
+    lastPos.current = { x: e.clientX, y: e.clientY };
+    (e.currentTarget as SVGSVGElement).setPointerCapture(e.pointerId);
+  }, []);
+
+  const onPointerMove = useCallback((e: React.PointerEvent<SVGSVGElement>) => {
+    if (!dragging.current) return;
+    const svg = svgRef.current;
+    if (!svg) return;
+    const rect = svg.getBoundingClientRect();
+    const dx = ((e.clientX - lastPos.current.x) / rect.width)  * vb.w;
+    const dy = ((e.clientY - lastPos.current.y) / rect.height) * vb.h;
+    lastPos.current = { x: e.clientX, y: e.clientY };
+    setVb((prev) => ({ ...prev, x: prev.x - dx, y: prev.y - dy }));
+  }, [vb]);
+
+  const onPointerUp = useCallback(() => { dragging.current = false; }, []);
 
   const handleSelect = useCallback((device: NetworkDevice) => {
     onDeviceSelect(device);
   }, [onDeviceSelect]);
 
-  const dashOffset = -(tick * 2);
+  const viewBoxStr = `${vb.x} ${vb.y} ${vb.w} ${vb.h}`;
+  const zoomPct    = Math.round(zoom * 100);
 
   return (
     <div className="nv2-stage-wrap">
@@ -104,25 +166,44 @@ export function NetworkStage({ snapshot, onDeviceSelect, selectedDeviceId }: Pro
       </div>
 
       {/* Canvas */}
-      <div className="nv2-stage" ref={stageRef}>
+      <div className="nv2-stage" ref={stageRef} style={{ position: "relative" }}>
         <svg
+          ref={svgRef}
           className="nv2-svg"
-          viewBox={`0 0 ${bounds.width} ${bounds.height}`}
+          viewBox={viewBoxStr}
           preserveAspectRatio="xMidYMid meet"
           aria-hidden="true"
+          style={{ cursor: "grab", userSelect: "none" }}
+          onWheel={onWheel}
+          onPointerDown={onPointerDown}
+          onPointerMove={onPointerMove}
+          onPointerUp={onPointerUp}
+          onPointerCancel={onPointerUp}
         >
-          {/* Grille de fond */}
           <defs>
             <pattern id="nv2-grid" x="0" y="0" width="40" height="40" patternUnits="userSpaceOnUse">
               <path d="M 40 0 L 0 0 0 40" fill="none" stroke="rgba(255,255,255,0.025)" strokeWidth="1" />
             </pattern>
+            {/* CSS animations — supprime le setInterval tick */}
+            <style>{`
+              @keyframes nv2-dash-fwd  { to { stroke-dashoffset: -48; } }
+              @keyframes nv2-dash-back { to { stroke-dashoffset:  48; } }
+              @keyframes nv2-pulse-ring { 0%,100%{opacity:.15} 50%{opacity:.4} }
+              @keyframes nv2-sel-dash   { to { stroke-dashoffset: -24; } }
+              .nv2-link-flow      { animation: nv2-dash-fwd  2s linear infinite; }
+              .nv2-link-flow-back { animation: nv2-dash-back 2.5s linear infinite; }
+              .nv2-screen-link    { animation: nv2-dash-fwd  3s linear infinite; }
+              .nv2-core-pulse     { animation: nv2-pulse-ring 3s ease-in-out infinite; }
+              .nv2-sel-ring       { animation: nv2-sel-dash  1.2s linear infinite; }
+            `}</style>
           </defs>
-          <rect width={bounds.width} height={bounds.height} fill="url(#nv2-grid)" />
 
-          {/* Core central (Redis) */}
+          <rect width={dims.width} height={dims.height} fill="url(#nv2-grid)" />
+
+          {/* Core */}
           <g transform={`translate(${cx},${cy})`}>
-            <circle r="54" fill="none" stroke="rgba(59,130,246,0.15)" strokeWidth="1.5" className="nv2-core-ring nv2-core-ring--1" />
-            <circle r="42" fill="none" stroke="rgba(59,130,246,0.25)" strokeWidth="1" className="nv2-core-ring nv2-core-ring--2" />
+            <circle r="54" fill="none" stroke="rgba(59,130,246,0.15)" strokeWidth="1.5" className="nv2-core-pulse" />
+            <circle r="42" fill="none" stroke="rgba(59,130,246,0.25)" strokeWidth="1" />
             <circle r="32" fill="rgba(59,130,246,0.12)" />
             <circle r="26" fill="rgba(10,10,15,0.95)" stroke="var(--accent)" strokeWidth="2.5" />
             <text x="0" y="-6" textAnchor="middle" fontSize="9" fill="var(--accent)"
@@ -132,13 +213,12 @@ export function NetworkStage({ snapshot, onDeviceSelect, selectedDeviceId }: Pro
           </g>
 
           {/* Orbite ESP */}
-          <circle 
-            cx={cx} 
-            cy={cy} 
-            r={Math.min(bounds.width * 0.32, bounds.height * 0.32)}
-            fill="none" 
-            stroke="rgba(59,130,246,0.12)" 
-            strokeWidth="1.5" 
+          <circle
+            cx={cx} cy={cy}
+            r={Math.min(dims.width * 0.32, dims.height * 0.32)}
+            fill="none"
+            stroke="rgba(59,130,246,0.1)"
+            strokeWidth="1.5"
             strokeDasharray="5, 10"
           />
 
@@ -148,63 +228,90 @@ export function NetworkStage({ snapshot, onDeviceSelect, selectedDeviceId }: Pro
             const active = node.device.isOnline;
             return (
               <g key={`esp-link-${node.device.deviceId}`}>
-                {/* Lien de base */}
+                {/* Base */}
                 <line
                   x1={cx} y1={cy} x2={node.x} y2={node.y}
-                  stroke={active ? "rgba(59,130,246,0.2)" : "rgba(255,255,255,0.05)"}
+                  stroke={active ? "rgba(59,130,246,0.18)" : "rgba(255,255,255,0.05)"}
                   strokeWidth={isSelected ? 2.5 : 1.5}
                   strokeLinecap="round"
                 />
-                {/* Flux animé (online seulement) */}
+                {/* Flux animé avant (core→esp, frames) */}
                 {active && (
                   <line
                     x1={cx} y1={cy} x2={node.x} y2={node.y}
-                    stroke={isSelected ? "var(--accent)" : "rgba(59,130,246,0.5)"}
+                    stroke={isSelected ? "var(--accent)" : "rgba(59,130,246,0.45)"}
                     strokeWidth={isSelected ? 3 : 2}
                     strokeDasharray="8, 16"
-                    strokeDashoffset={dashOffset + i * 10}
                     strokeLinecap="round"
+                    className="nv2-link-flow"
+                    style={{ animationDelay: `${i * 0.18}s` }}
                   />
                 )}
-                {/* Particule animée (frame récente) */}
-                {active && node.device.recentFrame && (
-                  <circle r="3.5" fill="var(--accent)" opacity="0.9">
-                    <animateMotion 
-                      dur={`${3.5 + i * 0.8}s`} 
+                {/* Flux animé retour (esp→core, pings) */}
+                {active && (
+                  <line
+                    x1={node.x} y1={node.y} x2={cx} y2={cy}
+                    stroke="rgba(167,139,250,0.22)"
+                    strokeWidth="1.5"
+                    strokeDasharray="4, 20"
+                    strokeLinecap="round"
+                    className="nv2-link-flow-back"
+                    style={{ animationDelay: `${i * 0.25}s` }}
+                  />
+                )}
+                {/* Particules multiples staggerées (frames récentes) */}
+                {active && node.device.recentFrame && Array.from({ length: PARTICLE_COUNT }).map((_, pi) => (
+                  <circle key={pi} r={pi === 0 ? 3.5 : 2.5} fill="var(--accent)" opacity={pi === 0 ? 0.9 : 0.5}>
+                    <animateMotion
+                      dur={`${3.5 + i * 0.6 + pi * 0.9}s`}
+                      begin={`${pi * (3.5 / PARTICLE_COUNT)}s`}
                       repeatCount="indefinite"
-                      path={`M ${cx} ${cy} L ${node.x} ${node.y}`} 
+                      path={`M ${cx} ${cy} L ${node.x} ${node.y}`}
                     />
                   </circle>
-                )}
+                ))}
+                {/* Particules retour (pings) */}
+                {active && Array.from({ length: 2 }).map((_, pi) => (
+                  <circle key={`ping-${pi}`} r="2" fill="#a78bfa" opacity="0.35">
+                    <animateMotion
+                      dur={`${5 + i * 0.7 + pi * 1.2}s`}
+                      begin={`${pi * 2.5}s`}
+                      repeatCount="indefinite"
+                      path={`M ${node.x} ${node.y} L ${cx} ${cy}`}
+                    />
+                  </circle>
+                ))}
               </g>
             );
           })}
 
-          {/* Liens ESP ↔ Écrans */}
+          {/* Liens ESP ↔ Écrans (colorés par type) */}
           {screenNodes.map((sn, i) => {
-            const active = snapshot.devices.find((d) => d.deviceId === sn.deviceId)?.isOnline;
+            const active = sn.device.isOnline;
             return (
               <line
                 key={`screen-link-${sn.deviceId}-${sn.screen.screen}`}
                 x1={sn.espX} y1={sn.espY} x2={sn.x} y2={sn.y}
-                stroke={active ? "rgba(16,185,129,0.3)" : "rgba(148,163,184,0.15)"}
+                stroke={active ? `${sn.color}55` : "rgba(148,163,184,0.1)"}
                 strokeWidth="1.2"
                 strokeDasharray="4, 8"
-                strokeDashoffset={-(tick * 1.5) + i * 6}
                 strokeLinecap="round"
+                className={active ? "nv2-screen-link" : undefined}
+                style={active ? { animationDelay: `${i * 0.1}s` } : undefined}
               />
             );
           })}
 
-          {/* Écrans satellites — cliquables, ouvrent le SidePanel du parent ESP */}
+          {/* Écrans satellites — colorés par type, cliquables */}
           {screenNodes.map((sn) => {
-            const active    = sn.device.isOnline;
+            const active = sn.device.isOnline;
             const isParentSelected = selectedDeviceId === sn.deviceId;
+            const color = sn.color;
             return (
               <g
                 key={`screen-node-${sn.deviceId}-${sn.screen.screen}`}
                 transform={`translate(${sn.x},${sn.y})`}
-                opacity={active ? 1 : 0.35}
+                opacity={active ? 1 : 0.3}
                 style={{ cursor: "pointer" }}
                 onClick={() => handleSelect(sn.device)}
                 role="button"
@@ -212,39 +319,29 @@ export function NetworkStage({ snapshot, onDeviceSelect, selectedDeviceId }: Pro
                 aria-label={`Écran ${sn.screen.label} — ${sn.device.artistName || sn.deviceId}`}
                 onKeyDown={(e) => e.key === "Enter" && handleSelect(sn.device)}
               >
-                {/* Anneau de sélection (parent ESP sélectionné) */}
                 {isParentSelected && (
-                  <circle r="26" fill="none" stroke="var(--accent)" strokeWidth="1.5"
-                          strokeOpacity="0.5" strokeDasharray="4,4"
-                          strokeDashoffset={tick * 2} />
+                  <circle r="26" fill="none" stroke={color} strokeWidth="1.5"
+                          strokeOpacity="0.6" strokeDasharray="4,4"
+                          className="nv2-sel-ring" />
                 )}
-                {/* Halo */}
-                <circle r="20" fill={isParentSelected ? "rgba(124,107,255,0.1)" : "rgba(16,185,129,0.08)"} />
-                {/* Boîtier écran */}
+                <circle r="20" fill={active ? `${color}12` : "rgba(255,255,255,0.04)"} />
                 <rect
-                  x="-14" y="-11"
-                  width="28" height="18"
-                  rx="3.5"
+                  x="-14" y="-11" width="28" height="18" rx="3.5"
                   fill="rgba(10,10,15,0.98)"
-                  stroke={isParentSelected ? "var(--accent)" : active ? "rgba(16,185,129,0.5)" : "rgba(148,163,184,0.2)"}
+                  stroke={isParentSelected ? color : active ? `${color}80` : "rgba(148,163,184,0.15)"}
                   strokeWidth={isParentSelected ? 2 : 1.8}
                 />
-                {/* Écran actif */}
                 <rect
-                  x="-11" y="-8"
-                  width="22" height="12"
-                  rx="1.5"
-                  fill={active ? "rgba(16,185,129,0.12)" : "rgba(255,255,255,0.03)"}
+                  x="-11" y="-8" width="22" height="12" rx="1.5"
+                  fill={active ? `${color}1a` : "rgba(255,255,255,0.03)"}
                 />
-                {/* Stand */}
                 <rect x="-3" y="7" width="6" height="6" rx="1" fill="rgba(10,10,15,0.9)" />
                 <line x1="0" y1="13" x2="0" y2="16" stroke="rgba(148,163,184,0.4)" strokeWidth="1.5" strokeLinecap="round" />
-                {/* Label écran */}
                 <text
                   x="0" y="24"
                   textAnchor="middle"
                   fontSize="8.5"
-                  fill={isParentSelected ? "var(--accent)" : active ? "var(--text2)" : "var(--text3)"}
+                  fill={isParentSelected ? color : active ? color : "var(--text3)"}
                   fontFamily="monospace"
                   fontWeight="500"
                 >
@@ -254,11 +351,10 @@ export function NetworkStage({ snapshot, onDeviceSelect, selectedDeviceId }: Pro
             );
           })}
 
-          {/* ESP nodes (hexagones → cercles pro) */}
+          {/* ESP nodes */}
           {espLayout.map((node) => {
             const isSelected = selectedDeviceId === node.device.deviceId;
             const online = node.device.isOnline;
-            
             return (
               <g
                 key={`esp-${node.device.deviceId}`}
@@ -270,71 +366,48 @@ export function NetworkStage({ snapshot, onDeviceSelect, selectedDeviceId }: Pro
                 aria-label={`ESP ${node.device.artistName || node.device.deviceId}`}
                 onKeyDown={(e) => e.key === "Enter" && handleSelect(node.device)}
               >
-                {/* Anneau sélection */}
                 {isSelected && (
-                  <circle
-                    r="38"
-                    fill="none"
-                    stroke="var(--accent)"
-                    strokeWidth="2"
-                    strokeOpacity="0.6"
-                    strokeDasharray="6, 6"
-                    strokeDashoffset={tick * 3}
-                  />
+                  <circle r="38" fill="none" stroke="var(--accent)"
+                          strokeWidth="2" strokeOpacity="0.6"
+                          strokeDasharray="6, 6"
+                          className="nv2-sel-ring" />
                 )}
-                {/* Halo online */}
-                {online && <circle r="36" fill="rgba(59,130,246,0.08)" />}
-                {/* ESP principal */}
+                {online && <circle r="36" fill="rgba(59,130,246,0.07)" />}
                 <circle
                   r="30"
                   fill={isSelected ? "rgba(59,130,246,0.15)" : "rgba(10,10,15,0.95)"}
                   stroke={online ? "var(--accent)" : "rgba(148,163,184,0.3)"}
                   strokeWidth={isSelected ? 3 : 2}
                 />
-                {/* Label ESP */}
-                <text 
-                  x="0" y="-8" 
-                  textAnchor="middle" 
-                  fontSize="8" 
-                  fill={online ? "var(--accent)" : "var(--text3)"}
-                  fontFamily="monospace" 
-                  fontWeight="700"
-                >
-                  ESP
-                </text>
-                {/* Nom/ID */}
-                <text 
-                  x="0" y="3" 
-                  textAnchor="middle" 
-                  fontSize="10" 
-                  fill="var(--text)"
-                  fontFamily="monospace" 
-                  fontWeight="700"
-                >
+                <text x="0" y="-8" textAnchor="middle" fontSize="8"
+                      fill={online ? "var(--accent)" : "var(--text3)"}
+                      fontFamily="monospace" fontWeight="700">ESP</text>
+                <text x="0" y="3" textAnchor="middle" fontSize="10"
+                      fill="var(--text)" fontFamily="monospace" fontWeight="700">
                   {(node.device.artistName || node.device.deviceId).slice(0, 10)}
                 </text>
-                {/* Nb écrans */}
-                <text 
-                  x="0" y="16" 
-                  textAnchor="middle" 
-                  fontSize="8" 
-                  fill="var(--text2)"
-                  fontFamily="monospace"
-                >
+                <text x="0" y="16" textAnchor="middle" fontSize="8"
+                      fill="var(--text2)" fontFamily="monospace">
                   {node.device.screens.length} écran{node.device.screens.length > 1 ? "s" : ""}
                 </text>
-                {/* Status dot */}
-                <circle 
-                  cx="22" cy="-22" 
-                  r="6"
-                  fill={online ? "var(--success)" : "var(--text3)"}
-                  stroke="rgba(10,10,15,0.9)" 
-                  strokeWidth="1.5"
-                />
+                <circle cx="22" cy="-22" r="6"
+                        fill={online ? "var(--success)" : "var(--text3)"}
+                        stroke="rgba(10,10,15,0.9)" strokeWidth="1.5" />
               </g>
             );
           })}
         </svg>
+
+        {/* Contrôles zoom */}
+        <div className="nv2-zoom-controls">
+          <button className="nv2-zoom-btn" aria-label="Zoom avant" title="Zoom avant"
+            onClick={() => zoomAt(1 + ZOOM_STEP, vb.x + vb.w / 2, vb.y + vb.h / 2)}>+</button>
+          <span className="nv2-zoom-pct">{zoomPct}%</span>
+          <button className="nv2-zoom-btn" aria-label="Zoom arrière" title="Zoom arrière"
+            onClick={() => zoomAt(1 / (1 + ZOOM_STEP), vb.x + vb.w / 2, vb.y + vb.h / 2)}>−</button>
+          <button className="nv2-zoom-btn nv2-zoom-btn--reset" aria-label="Réinitialiser" title="Réinitialiser"
+            onClick={resetZoom}>↺</button>
+        </div>
       </div>
     </div>
   );

@@ -101,6 +101,46 @@ code { font-family: "JetBrains Mono", monospace; }
   border-color: rgba(124,107,255,0.45);
   transform: translateY(-1px);
 }
+.site-nav__link--active {
+  color: var(--text);
+  border-color: rgba(124,107,255,0.5);
+  background: rgba(124,107,255,0.1);
+}
+.nav-drawer__link--active {
+  background: rgba(124,107,255,0.12);
+  color: var(--text);
+  border-color: rgba(124,107,255,0.3);
+}
+
+/* ── Zoom controls overlay (NetworkStage) ───────────────────── */
+.nv2-zoom-controls {
+  position: absolute; bottom: 1rem; right: 1rem;
+  display: flex; flex-direction: column; gap: 2px;
+  z-index: 10;
+}
+.nv2-zoom-btn {
+  width: 34px; height: 34px;
+  display: flex; align-items: center; justify-content: center;
+  border-radius: 0.5rem;
+  border: 1px solid rgba(255,255,255,0.1);
+  background: rgba(10,10,20,0.85);
+  color: var(--text2);
+  font-size: 1.2rem; font-weight: 700;
+  cursor: pointer;
+  backdrop-filter: blur(8px);
+  transition: 150ms ease;
+}
+.nv2-zoom-btn:hover { background: rgba(59,130,246,0.18); color: var(--text); border-color: rgba(59,130,246,0.4); }
+.nv2-zoom-btn--reset { font-size: 1rem; margin-top: 4px; }
+.nv2-zoom-pct {
+  text-align: center;
+  font-size: 0.72rem;
+  font-family: "JetBrains Mono", monospace;
+  color: var(--text3);
+  line-height: 1;
+  padding: 2px 0;
+}
+
 .site-main {
   min-height: calc(100vh - 69px);
 }

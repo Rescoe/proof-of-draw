@@ -115,7 +115,7 @@ export type NetworkSnapshot = {
 const ONLINE_WINDOW_MS =
   20 * 60 * 1000;
 
-const NETWORK_CACHE_SECONDS = 300;
+const NETWORK_CACHE_SECONDS = 3600;
 
 // Métadonnées d’écran dérivées de screenProfiles — pas de liste hardcodée ici
 function getScreenMeta(screen: string): { label: string; description: string } {

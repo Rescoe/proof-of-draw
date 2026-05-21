@@ -115,6 +115,34 @@ function FramePreviewMini({
   );
 }
 
+// ─── Types activité on-chain ──────────────────────────────────────────────────
+
+interface ActivityBlock {
+  blockHash: string;
+  blockIndex: number;
+  artistName: string;
+  poolScreen: string;
+  score: number;
+  minedAt: number;
+  role: "author" | "validator";
+  validatorCount: number;
+}
+
+interface DeviceActivity {
+  minedCount: number;
+  validatedCount: number;
+  totalBlocks: number;
+  recentActivity: ActivityBlock[];
+}
+
+const SCREEN_COLOR: Record<string, string> = {
+  eink29bwr: "#f87171",
+  eink27bw:  "#94a3b8",
+  oled096:   "#60a5fa",
+  tft18:     "#fbbf24",
+};
+function screenColor(s: string) { return SCREEN_COLOR[s] ?? "#a2a3bb"; }
+
 // ─── SidePanel ────────────────────────────────────────────────────────────────
 
 export function SidePanel({ device, onClose }: { device: NetworkDevice | null; onClose: () => void }) {
@@ -124,15 +152,22 @@ export function SidePanel({ device, onClose }: { device: NetworkDevice | null; o
   const [lastImage,    setLastImage]    = useState<BlockImagePayload | null>(null);
   const [loadingBlock, setLoadingBlock] = useState(false);
 
+  // ── Activité on-chain ────────────────────────────────────────────────────
+  const [activity,        setActivity]        = useState<DeviceActivity | null>(null);
+  const [loadingActivity, setLoadingActivity] = useState(false);
+
   useEffect(() => {
     if (!device) {
       setLastBlock(null);
       setLastImage(null);
+      setActivity(null);
       return;
     }
     setLoadingBlock(true);
     setLastBlock(null);
     setLastImage(null);
+    setLoadingActivity(true);
+    setActivity(null);
 
     fetch(`/api/device-last-block?deviceId=${device.deviceId}`)
       .then((r) => r.json())
@@ -145,6 +180,12 @@ export function SidePanel({ device, onClose }: { device: NetworkDevice | null; o
         setLastImage(null);
       })
       .finally(() => setLoadingBlock(false));
+
+    fetch(`/api/network/device-activity?deviceId=${device.deviceId}`)
+      .then((r) => r.ok ? r.json() : null)
+      .then((data) => setActivity(data ?? null))
+      .catch(() => setActivity(null))
+      .finally(() => setLoadingActivity(false));
   }, [device?.deviceId]);
 
   // ── Empty state ─────────────────────────────────────────────────────────
@@ -193,6 +234,52 @@ export function SidePanel({ device, onClose }: { device: NetworkDevice | null; o
             </div>
           ))}
         </div>
+      </div>
+
+      {/* ── Activité on-chain ── */}
+      <div className="nv2-panel__section">
+        <div className="nv2-panel__section-label">Activité on-chain</div>
+        {loadingActivity && <p className="nv2-muted nv2-small nv2-loading">Chargement…</p>}
+        {!loadingActivity && activity && (
+          <>
+            <div className="nv2-metrics-grid" style={{ marginBottom: "0.85rem" }}>
+              <div className="nv2-metric">
+                <span>Blocs minés</span>
+                <strong style={{ color: "var(--accent)" }}>{activity.minedCount}</strong>
+              </div>
+              <div className="nv2-metric">
+                <span>Validations</span>
+                <strong style={{ color: "#a78bfa" }}>{activity.validatedCount}</strong>
+              </div>
+            </div>
+            {activity.recentActivity.length > 0 && (
+              <div className="nv2-activity-list">
+                {activity.recentActivity.slice(0, 5).map((b) => (
+                  <div key={b.blockHash} className="nv2-activity-item">
+                    <span className="nv2-activity-dot"
+                          style={{ background: b.role === "author" ? "var(--accent)" : "#a78bfa" }} />
+                    <div className="nv2-activity-body">
+                      <span className="nv2-activity-role">
+                        {b.role === "author" ? "Miné" : "Validé"}
+                        {" · "}
+                        <span style={{ color: screenColor(b.poolScreen) }}>{b.poolScreen}</span>
+                      </span>
+                      <span className="nv2-activity-meta">
+                        #{b.blockIndex} · {(b.score * 100).toFixed(0)}% · {formatRelativeTime(b.minedAt)}
+                      </span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+            {activity.recentActivity.length === 0 && (
+              <p className="nv2-muted nv2-small">Aucune activité récente</p>
+            )}
+          </>
+        )}
+        {!loadingActivity && !activity && (
+          <p className="nv2-muted nv2-small">Non disponible</p>
+        )}
       </div>
 
       {/* ── Métriques ── */}
@@ -380,6 +467,16 @@ export function SidePanel({ device, onClose }: { device: NetworkDevice | null; o
         }
         .nv2-accent { color: var(--accent, #7c6bff) !important; }
         .nv2-green  { color: #4ade80 !important; }
+        .nv2-activity-list { display:flex; flex-direction:column; gap:0.45rem; }
+        .nv2-activity-item {
+          display:flex; align-items:flex-start; gap:0.5rem; padding:0.5rem 0.6rem;
+          border-radius:0.6rem; background:rgba(255,255,255,0.025);
+          border:1px solid rgba(255,255,255,0.04);
+        }
+        .nv2-activity-dot { width:8px; height:8px; border-radius:50%; flex-shrink:0; margin-top:3px; }
+        .nv2-activity-body { display:flex; flex-direction:column; gap:1px; }
+        .nv2-activity-role { font-size:0.8rem; color:var(--text2); font-weight:600; }
+        .nv2-activity-meta { font-size:0.72rem; color:var(--text3); font-family:monospace; }
       `}</style>
     </aside>
   );
