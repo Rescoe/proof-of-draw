@@ -162,6 +162,14 @@ export function NetworkStage({ snapshot, onDeviceSelect, selectedDeviceId }: Pro
             <strong>{snapshot.totals.screens}</strong>
             <span>écrans</span>
           </div>
+          <button
+            className="nv2-overview-btn"
+            onClick={resetZoom}
+            title="Vue d'ensemble"
+            aria-label="Réinitialiser le zoom"
+          >
+            ⊞ Vue d&apos;ensemble
+          </button>
         </div>
       </div>
 
