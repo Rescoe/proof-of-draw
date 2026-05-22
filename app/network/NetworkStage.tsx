@@ -102,16 +102,27 @@ export function NetworkStage({ snapshot, onDeviceSelect, selectedDeviceId }: Pro
     setVb({ x: 0, y: 0, w: dims.width, h: dims.height });
   }, [dims]);
 
-  const onWheel = useCallback((e: React.WheelEvent<SVGSVGElement>) => {
-    e.preventDefault();
+  // Ref pour éviter les stale closures dans le handler natif
+  const vbRef = useRef(vb);
+  useEffect(() => { vbRef.current = vb; }, [vb]);
+
+  // Wheel zoom — addEventListener avec { passive: false } pour pouvoir preventDefault
+  // (React enregistre onWheel en mode passif depuis React 17, ce qui empêche preventDefault)
+  useEffect(() => {
     const svg = svgRef.current;
     if (!svg) return;
-    const rect = svg.getBoundingClientRect();
-    const mx = vb.x + ((e.clientX - rect.left) / rect.width)  * vb.w;
-    const my = vb.y + ((e.clientY - rect.top)  / rect.height) * vb.h;
-    const factor = e.deltaY < 0 ? 1 + ZOOM_STEP : 1 / (1 + ZOOM_STEP);
-    zoomAt(factor, mx, my);
-  }, [vb, zoomAt]);
+    const handleWheel = (e: WheelEvent) => {
+      e.preventDefault();
+      const rect = svg.getBoundingClientRect();
+      const cur  = vbRef.current;
+      const mx   = cur.x + ((e.clientX - rect.left) / rect.width)  * cur.w;
+      const my   = cur.y + ((e.clientY - rect.top)  / rect.height) * cur.h;
+      const factor = e.deltaY < 0 ? 1 + ZOOM_STEP : 1 / (1 + ZOOM_STEP);
+      zoomAt(factor, mx, my);
+    };
+    svg.addEventListener("wheel", handleWheel, { passive: false });
+    return () => svg.removeEventListener("wheel", handleWheel);
+  }, [zoomAt]); // zoomAt est stable (useCallback avec [dims.width])
 
   const onPointerDown = useCallback((e: React.PointerEvent<SVGSVGElement>) => {
     if (e.button !== 0) return;
@@ -182,7 +193,6 @@ export function NetworkStage({ snapshot, onDeviceSelect, selectedDeviceId }: Pro
           preserveAspectRatio="xMidYMid meet"
           aria-hidden="true"
           style={{ cursor: "grab", userSelect: "none" }}
-          onWheel={onWheel}
           onPointerDown={onPointerDown}
           onPointerMove={onPointerMove}
           onPointerUp={onPointerUp}
