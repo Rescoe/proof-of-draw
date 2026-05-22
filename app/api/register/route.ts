@@ -2,7 +2,7 @@
 // Ajout : indexation dans pool:screen:{screenId} pour le broadcast inter-devices
 
 import { NextRequest, NextResponse } from "next/server";
-import { registerDevice } from "@/lib/deviceStore";
+import { registerDevice, updateDevicePublicKey } from "@/lib/deviceStore";
 import {
   checkRateLimit, isBlacklisted, isDeviceCapReached,
   getIP, tooManyRequests, forbidden,
@@ -29,7 +29,7 @@ export async function POST(req: NextRequest) {
 
   try {
     const body = await req.json();
-    const { mac, screens, firmware } = body;
+    const { mac, screens, firmware, publicKey } = body;
 
     if (!mac || typeof mac !== "string")
       return NextResponse.json({ error: "mac requis" }, { status: 400 });
@@ -91,6 +91,12 @@ export async function POST(req: NextRequest) {
     } catch (err) {
       // Non-fatal : le device est enregistré, la pool sera rafraîchie au prochain boot
       console.error("[/api/register] pool update error (non-fatal):", err);
+    }
+
+    // Stocker la clé publique ED25519 si fournie (firmware v2+)
+    // Validation stricte : exactement 64 chars hex (32 bytes)
+    if (typeof publicKey === "string" && /^[a-f0-9]{64}$/i.test(publicKey)) {
+      await updateDevicePublicKey(device.deviceId, publicKey.toLowerCase());
     }
 
     const host =

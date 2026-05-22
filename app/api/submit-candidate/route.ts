@@ -103,14 +103,10 @@ export async function POST(req: NextRequest) {
     getEffectiveThresholds(screen),
   ]);
 
-  console.log(
-    `[submit-candidate] seuils ${thresholds.mode} screen=${screen}` +
-    ` dur≥${(thresholds.durationMs / 1000).toFixed(0)}s` +
-    ` strokes≥${thresholds.strokes}` +
-    ` coverage≥${(thresholds.coverage * 100).toFixed(1)}%` +
-    ` complexity≥${thresholds.complexity.toFixed(3)}` +
-    (thresholds.mode === "adaptive" ? ` (basé sur ${thresholds.adaptedFrom} blocs, moy=${thresholds.avgComplexity.toFixed(3)})` : " (plancher seul)"),
-  );
+  // seuils adaptatifs — loggés uniquement si mode adaptatif actif
+  if (thresholds.mode === "adaptive") {
+    console.log(`[submit-candidate] seuils adaptatifs screen=${screen} basé sur ${thresholds.adaptedFrom} blocs (moy complexité=${thresholds.avgComplexity.toFixed(3)})`);
+  }
 
   // ── Vérifications côté serveur ────────────────────────────────────────────────
   // Le serveur n'est PAS juge de la qualité artistique — c'est le réseau ESP qui vote.
@@ -139,13 +135,6 @@ export async function POST(req: NextRequest) {
     if (podGeometry.gridCoverage < thresholds.coverage)
       qualityWarnings.push(`couverture limitée (${(podGeometry.gridCoverage * 100).toFixed(1)}%)`);
 
-    console.log(
-      `[submit-candidate] geometry device=${deviceId}` +
-      ` dur=${(podGeometry.sessionDurationMs / 1000).toFixed(1)}s` +
-      ` strokes=${podGeometry.strokeCount}` +
-      ` coverage=${(podGeometry.gridCoverage * 100).toFixed(1)}%` +
-      ` autoRatio=${(podGeometry.automationRatio * 100).toFixed(0)}%`,
-    );
   }
 
   // Complexité visuelle — warning seulement
@@ -201,7 +190,7 @@ export async function POST(req: NextRequest) {
     poolScreen: screen,
     payload: screen === "eink29bwr"
       ? { screen: "eink29bwr", black: black!, red: red! }
-      : { screen: screen as any, buffer: buffer! },
+      : { screen: screen as string, buffer: buffer! } as import("@/lib/queue").FramePayload,
     imageHash,
     actionsHash,
     drawScore,

@@ -22,7 +22,7 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ error: "device inconnu" }, { status: 404 });
 
     // Cherche consensus puis personal
-    let payload: any = null;
+    let payload: Record<string, unknown> | null = null;
     let frameId: string | undefined;
 
     const consensusFrame = await getFrameForDevice(deviceId, []);

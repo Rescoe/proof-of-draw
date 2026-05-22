@@ -25,6 +25,7 @@
 #include <EEPROM.h>
 #include "epd2in7_V2.h"
 #include "epdif.h"
+#include <Ed25519.h>       // Bibliothèque Crypto (rhempel) — ED25519 réel
 
 // ─── CONFIG ────────────────────────────────────────────────────────────────
 const char* WIFI_SSID     = "Livebox-D190";
@@ -63,7 +64,7 @@ const char* WIFI_PASSWORD = "Q2gueWg3UaYJo2VN7C";
 #define EEPROM_OLED_BUF_OFF    99
 #define EEPROM_OLED_TICK_OFF   (EEPROM_OLED_BUF_OFF + OLED_BUF_SIZE)  // 99+1024 = 1123
 #define EEPROM_OLED_TICK_LEN   80
-#define KEY_GENERATED_FLAG     0x01
+#define KEY_GENERATED_FLAG     0xED   // 0xED = ED25519 réel (0x01 = ancienne V1 fake)
 #define ONBOARDING_SHOWN_FLAG  0x01
 #define OLED_FRAME_SAVED_FLAG  0x5A
 // Slots de blocs possédés (ring buffer)
@@ -321,23 +322,20 @@ String loadOwnedHashesJson() {
   return json;
 }
 
-// ─── Génération clés V1 ────────────────────────────────────────────────────
-void derivePublicKeyV1(const uint8_t* priv, uint8_t* pub) {
-  for (int i = 0; i < 32; i++)
-    pub[i] = (~priv[i]) ^ (uint8_t)(i * 0x37 + 0xAB);
-}
+// ─── Génération de clés ED25519 réelle ───────────────────────────────────────
 
 void generateKeys() {
-  Serial.println("[KEYS] Génération nouvelle paire...");
+  Serial.println("[KEYS] Génération paire ED25519...");
   randomSeed(analogRead(A0) ^ millis() ^ (uint32_t)WiFi.RSSI());
   for (int i = 0; i < 32; i++) {
     privateKey[i] = (uint8_t)(random(256) ^ (analogRead(A0) & 0xFF));
     delayMicroseconds(100);
   }
-  derivePublicKeyV1(privateKey, publicKey);
+  Ed25519::derivePublicKey(publicKey, privateKey);
   keysLoaded = true;
   saveKeysToEEPROM();
-  Serial.println("[KEYS] Clés générées et sauvegardées");
+  Serial.println("[KEYS] Paire ED25519 générée et sauvegardée");
+  Serial.println("[KEYS] PubKey: " + bytesToHex(publicKey, 32));
 }
 
 String bytesToHex(const uint8_t* buf, size_t len) {
@@ -350,11 +348,17 @@ String bytesToHex(const uint8_t* buf, size_t len) {
   return hex;
 }
 
-// ─── Signature V1 ──────────────────────────────────────────────────────────
-String signV1(const String& candidateId, float score) {
-  char buf[8];
-  dtostrf(score, 1, 3, buf);
-  return deviceId + ":" + candidateId + ":" + String(buf);
+// ─── Signature ED25519 ───────────────────────────────────────────────────────
+String signED25519(const String& candidateId, float score) {
+  char scoreStr[8];
+  dtostrf(score, 1, 3, scoreStr);
+  String message = deviceId + ":" + candidateId + ":" + String(scoreStr);
+
+  uint8_t sig[64];
+  Ed25519::sign(sig, privateKey, publicKey,
+                (const uint8_t*)message.c_str(), message.length());
+
+  return bytesToHex(sig, 64);  // 128 chars hex
 }
 
 // ─── BASE64 ────────────────────────────────────────────────────────────────
@@ -1588,7 +1592,7 @@ bool doValidate() {
   float score = cand["score_server"] | 0.5f;
   Serial.printf("[VALIDATE] candidateId=%s score=%.3f\n", candidateId.c_str(), score);
 
-  String signature = signV1(candidateId, score);
+  String signature = signED25519(candidateId, score);
   char   scoreStr[8];
   dtostrf(score, 1, 3, scoreStr);
 
@@ -1638,10 +1642,18 @@ void setup() {
   Serial.println("[WIFI] IP: " + WiFi.localIP().toString());
   Serial.printf("[HEAP] après WiFi: %u bytes\n", ESP.getFreeHeap());
 
+  // Migration V1 → ED25519 réel
+  if (EEPROM.read(EEPROM_FLAG_OFF) == 0x01) {
+    Serial.println("[KEYS] Clés V1 détectées — migration vers ED25519 réel");
+    EEPROM.write(EEPROM_FLAG_OFF,       0x00);
+    EEPROM.write(EEPROM_ONBOARDING_OFF, 0x00);
+    EEPROM.commit();
+  }
+
   if (keysAlreadyGenerated()) {
     loadKeysFromEEPROM();
-    Serial.println("[KEYS] Clés chargées depuis EEPROM");
-    Serial.println("[KEYS] Public: " + bytesToHex(publicKey, 32));
+    Serial.println("[KEYS] Clés ED25519 chargées depuis EEPROM");
+    Serial.println("[KEYS] PubKey: " + bytesToHex(publicKey, 32));
   }
 
   currentBlockHash = loadBlockHashFromEEPROM();

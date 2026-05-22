@@ -144,24 +144,24 @@ const RECENT_MAX        = 100; // blocs dans chain:recent
 // ─── Helpers de migration ─────────────────────────────────────────────────────
 
 /** Corrige les anciens blocs qui ont drawingHash au lieu de imageHash. */
-function migrateBlock(raw: any): Block {
-  if (raw.drawingHash && !raw.imageHash) {
-    raw.imageHash   = raw.drawingHash;
-    raw.actionsHash = raw.actionsHash ?? "";
-    raw.drawScore   = raw.drawScore   ?? 0;
+function migrateBlock(raw: Record<string, unknown>): Block {
+  if (raw["drawingHash"] && !raw["imageHash"]) {
+    raw["imageHash"]   = raw["drawingHash"];
+    raw["actionsHash"] = raw["actionsHash"] ?? "";
+    raw["drawScore"]   = raw["drawScore"]   ?? 0;
   }
-  return raw as Block;
+  return raw as unknown as Block;
 }
 
 /** Corrige les anciens candidats qui ont drawingHash au lieu de imageHash. */
-function migrateCandidate(raw: any): Candidate {
-  if (raw.drawingHash && !raw.imageHash) {
-    raw.imageHash      = raw.drawingHash;
-    raw.actionsHash    = raw.actionsHash    ?? "";
-    raw.drawScore      = raw.drawScore      ?? 0;
-    raw.actionSequence = raw.actionSequence ?? [];
+function migrateCandidate(raw: Record<string, unknown>): Candidate {
+  if (raw["drawingHash"] && !raw["imageHash"]) {
+    raw["imageHash"]      = raw["drawingHash"];
+    raw["actionsHash"]    = raw["actionsHash"]    ?? "";
+    raw["drawScore"]      = raw["drawScore"]      ?? 0;
+    raw["actionSequence"] = raw["actionSequence"] ?? [];
   }
-  return raw as Candidate;
+  return raw as unknown as Candidate;
 }
 
 // ─── Lecture de la chaîne ────────────────────────────────────────────────────
@@ -538,7 +538,7 @@ export async function getBlockActions(hash: string): Promise<import("@/lib/types
   const raw = await redis.get(actionsKey(hash));
   if (!raw) return null;
   try {
-    return typeof raw === "string" ? JSON.parse(raw) : (raw as any);
+    return typeof raw === "string" ? JSON.parse(raw) : raw as import("@/lib/types/actions").ActionEvent[];
   } catch {
     return null;
   }
@@ -548,7 +548,7 @@ export async function getBlockReplay(hash: string): Promise<import("@/lib/types/
   const raw = await redis.get(replayKey(hash));
   if (!raw) return null;
   try {
-    return typeof raw === "string" ? JSON.parse(raw) : (raw as any);
+    return typeof raw === "string" ? JSON.parse(raw) : raw as import("@/lib/types/actions").ReplayEvent[];
   } catch {
     return null;
   }
@@ -561,7 +561,7 @@ export async function popObsTask(): Promise<{ type: string; blockHashes: string[
   const raw = await redis.rpop<string>(KEY_OBS_QUEUE);
   if (!raw) return null;
   try {
-    return typeof raw === "string" ? JSON.parse(raw) : (raw as any);
+    return typeof raw === "string" ? JSON.parse(raw) : raw as { type: string; blockHashes: string[]; targetBlockHash?: string; enqueuedAt: number };
   } catch {
     return null;
   }

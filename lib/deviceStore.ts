@@ -23,6 +23,7 @@ export interface Device {
   // ── Axe 2 : ESP en prêt public ──────────────────────────────────────────────
   publicMode?: boolean;             // toggle manuel : l'ESP est disponible pour d'autres artistes
   lastFrameReceivedAt?: number;     // mis à jour sur /api/ack-frame
+  publicKey?: string;               // clé publique ED25519 hex 64 chars (firmware v2+)
 }
 
 // ─── ArtistProfile ────────────────────────────────────────────────────────────
@@ -368,6 +369,17 @@ export async function linkDeviceToArtist(deviceId: string, artistId: string): Pr
     saveDevice(device),
     redis.set(artistDevKey(deviceId), artistId, { ex: ARTIST_TTL }),
   ]);
+}
+
+/**
+ * Met à jour la clé publique ED25519 d'un device (envoyée à chaque register).
+ * No-op si la clé est identique à celle déjà stockée.
+ */
+export async function updateDevicePublicKey(deviceId: string, publicKey: string): Promise<void> {
+  const device = await getDevice(deviceId);
+  if (!device || device.publicKey === publicKey) return;
+  device.publicKey = publicKey;
+  await saveDevice(device);
 }
 
 /**

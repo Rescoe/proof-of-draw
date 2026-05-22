@@ -24,6 +24,7 @@ import { redis } from "@/lib/redis";
 import { getDevice } from "@/lib/deviceStore";
 import { getCurrentCandidate, getVotes, castVote, finalizeBlock, clearCandidate, ValidationVote } from "@/lib/chain";
 import { isBlacklisted, getIP, forbidden } from "@/lib/rateLimit";
+import { verifyEd25519 } from "@/lib/ed25519";
 import { dequeueNextDraw } from "@/lib/drawQueue";
 import { invalidateThresholdsCache } from "@/lib/adaptiveValidation";
 
@@ -31,7 +32,7 @@ const DEVICE_ID_REGEX = /^dev_[A-Z0-9]{8}$/;
 const BLACKLIST_TTL = parseInt(process.env.BLACKLIST_TTL_SECONDS ?? "604800");
 const FRAME_TTL_SEC = parseInt(process.env.DRAW_WINDOW_SEC ?? "900");
 
-async function broadcastValidatedFrame(poolScreen: string, payload: any, frameId: string, displayTime: number, blockIndex: number, artistName: string): Promise<void> {
+async function broadcastValidatedFrame(poolScreen: string, payload: Record<string, unknown>, frameId: string, displayTime: number, blockIndex: number, artistName: string): Promise<void> {
   const members = (await redis.smembers(`pool:screen:${poolScreen}`)) as string[];
   if (!members || members.length === 0) return;
 
@@ -50,7 +51,7 @@ async function broadcastValidatedFrame(poolScreen: string, payload: any, frameId
   console.log(`[validation-result] broadcast pool=${poolScreen} devices=${eligible.length} ttl=${ttl}s`);
 }
 
-function json(body: any, status = 200) { return NextResponse.json(body, { status }); }
+function json(body: unknown, status = 200) { return NextResponse.json(body, { status }); }
 
 export async function POST(req: NextRequest) {
   try {
@@ -75,11 +76,26 @@ export async function POST(req: NextRequest) {
     const espScore = Number(score);
     const serverScore = candidate.score;
     const drift = Math.abs(espScore - serverScore);
-    console.log(`[validation-result] device=${deviceId} candidate=${candidateId} esp=${espScore.toFixed(3)} server=${serverScore.toFixed(3)} drift=${drift.toFixed(3)}`);
-    if (drift > 0.4) console.warn(`[validation-result] drift élevé device=${deviceId} candidate=${candidateId} drift=${drift.toFixed(3)}`);
+    if (drift > 0.4) console.warn(`[validation-result] drift élevé device=${deviceId} drift=${drift.toFixed(3)}`);
 
-    const expectedSig = `${deviceId}:${candidateId}:${espScore.toFixed(3)}`;
-    if (signature && String(signature) !== expectedSig) console.warn(`[validation-result] signature invalide device=${deviceId}`);
+    // ── Vérification signature ED25519 ────────────────────────────────────────
+    const sigStr = String(signature ?? "");
+    if (device.publicKey) {
+      // Firmware v2+ : signature ED25519 réelle attendue (128 chars hex)
+      if (sigStr.length !== 128) {
+        console.warn(`[validation-result] signature invalide (longueur ${sigStr.length}) device=${deviceId}`);
+        return json({ error: "Signature invalide" }, 403);
+      }
+      const message = `${deviceId}:${String(candidateId)}:${espScore.toFixed(3)}`;
+      const valid   = verifyEd25519(device.publicKey, message, sigStr);
+      if (!valid) {
+        console.warn(`[validation-result] signature ED25519 rejetée device=${deviceId}`);
+        return json({ error: "Signature invalide" }, 403);
+      }
+    } else {
+      // Firmware v1 sans publicKey enregistrée — vote accepté avec avertissement
+      console.warn(`[validation-result] pas de publicKey device=${deviceId} — mise à jour firmware requise`);
+    }
 
     const vote: ValidationVote = { deviceId: String(deviceId), entropy: Number(entropy), transitions: Number(transitions), rle: Number(rle), score: espScore, signature: String(signature ?? ""), votedAt: Date.now() };
     const { quorumReached, voteCount, needed } = await castVote(vote, candidate);

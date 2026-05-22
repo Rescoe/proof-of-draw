@@ -23,7 +23,7 @@ async function getPersonalFrame(deviceId: string) {
   try { return typeof raw === "string" ? JSON.parse(raw) : raw; } catch { return null; }
 }
 
-function json(body: any, status = 200) {
+function json(body: unknown, status = 200) {
   return NextResponse.json(body, { status });
 }
 
@@ -136,18 +136,18 @@ export async function GET(req: NextRequest) {
       frameMeta    = payloadMeta(consensusFrame.payload);
       frameSource  = "consensus";
       frameId      = consensusFrame.frameId ?? null;
-      screen       = (consensusFrame.payload as any).screen ?? null;
+      screen       = (consensusFrame.payload as Record<string, unknown>).screen as string ?? null;
     } else if (personalFrame?.payload) {
       frameMeta    = payloadMeta(personalFrame.payload);
       frameSource  = "personal";
       frameId      = personalFrame.frameId ?? null;
-      screen       = (personalFrame.payload as any).screen ?? null;
+      screen       = (personalFrame.payload as Record<string, unknown>).screen as string ?? null;
     }
 
     // ── Validation en attente ───────────────────────────────────────────────
     // Validation globale : tout ESP actif peut voter, peu importe son écran.
     // Le filtre pool:screen ne s'applique plus ici (seulement au broadcast d'affichage).
-    let pendingValidation: any = null;
+    let pendingValidation: { candidateId: string; poolScreen: string; expiresIn: number; warning: string | null } | null = null;
 
     if (candidate) {
       const votesRaw = await redis.get("candidate:votes");
@@ -169,13 +169,6 @@ export async function GET(req: NextRequest) {
           warning: candidate.warning ?? null,
         };
       }
-      console.log(
-        `[pull] device=${deviceId} frame=${frameSource}` +
-        ` candidate=${candidate.candidateId}` +
-        ` alreadyVoted=${alreadyVoted}`
-      );
-    } else {
-      console.log(`[pull] device=${deviceId} frame=${frameSource} no_candidate`);
     }
 
     // ── retryAfter : hint pour les ESP afin de réduire le polling en idle ───

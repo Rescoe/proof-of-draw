@@ -86,7 +86,7 @@ export async function GET(
 
       blocks = results
         .filter(Boolean)
-        .sort((a: any, b: any) => (b.minedAt ?? 0) - (a.minedAt ?? 0))
+        .sort((a, b) => ((b as { minedAt?: number }).minedAt ?? 0) - ((a as { minedAt?: number }).minedAt ?? 0))
         .slice(0, BLOCKS_MAX);
     }
 
