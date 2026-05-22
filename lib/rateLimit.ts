@@ -152,7 +152,11 @@ export function forbidden(reason: string): NextResponse {
 import { redis } from "@/lib/redis";
 import { NextRequest, NextResponse } from "next/server";
 
-const DEV_RELAXED = process.env.NODE_ENV !== "production";
+// DEV_RELAXED : actif uniquement si NODE_ENV !== "production" ET que RATE_LIMIT_ENABLED
+// n'est pas explicitement forcé à "true" (permet de tester les limites en staging).
+const DEV_RELAXED =
+  process.env.NODE_ENV !== "production" &&
+  process.env.RATE_LIMIT_ENABLED !== "true";
 
 const MAX_ACTIVE_DEVICES = parseInt(process.env.MAX_ACTIVE_DEVICES ?? (DEV_RELAXED ? "20" : "5"));
 const REGISTER_LIMIT = parseInt(process.env.REGISTER_LIMIT_PER_MINUTE ?? (DEV_RELAXED ? "60" : "5"));
@@ -163,7 +167,8 @@ const PING_LIMIT = parseInt(process.env.PING_LIMIT_PER_HOUR ?? (DEV_RELAXED ? "1
 const DRAW_LIMIT = parseInt(process.env.DRAW_LIMIT_PER_ROUND ?? (DEV_RELAXED ? "20" : "3"));
 const ABUSE_STRIKE_THRESHOLD = parseInt(process.env.ABUSE_STRIKE_THRESHOLD ?? (DEV_RELAXED ? "9999" : "10"));
 const BLACKLIST_TTL = parseInt(process.env.BLACKLIST_TTL_SECONDS ?? String(7 * 24 * 3600));
-const AUTO_BLACKLIST_ENABLED = process.env.AUTO_BLACKLIST_ENABLED !== "false" && !DEV_RELAXED ? true : false;
+// AUTO_BLACKLIST désactivé en dev relaxed mais toujours actif en prod
+const AUTO_BLACKLIST_ENABLED = !DEV_RELAXED && process.env.AUTO_BLACKLIST_ENABLED !== "false";
 
 const key = {
   blacklistIP: (ip: string) => `bl:ip:${ip}`,
@@ -194,8 +199,9 @@ export async function unblacklist(target: string, type: "ip" | "device"): Promis
 async function strike(id: string, type: "ip" | "device"): Promise<void> {
   if (!AUTO_BLACKLIST_ENABLED) return;
   const k = key.strikes(id);
-  const count = await redis.incr(k);
-  if (count === 1) await redis.expire(k, 3600);
+  // Pipeline atomique : INCR + EXPIRE NX (TTL posé une seule fois à la création)
+  const results = await redis.pipeline().incr(k).expire(k, 3600, "NX").exec();
+  const count = results[0] as number;
   if (count >= ABUSE_STRIKE_THRESHOLD) {
     await blacklist(id, type);
     await redis.del(k);
@@ -221,8 +227,13 @@ export async function checkRateLimit(opts: RateLimitOptions): Promise<RateLimitR
   if (DEV_RELAXED) return { allowed: true, retryAfter: 0 };
 
   const k = key.rateLimit(opts.route, opts.id);
-  const count = await redis.incr(k);
-  if (count === 1) await redis.expire(k, opts.windowSec);
+
+  // Pipeline atomique : INCR + EXPIRE NX dans le même round-trip réseau.
+  // "NX" = pose le TTL uniquement si la clé n'en a pas encore (création).
+  // Évite le pattern INCR séparé + EXPIRE séparé qui laisse des clés orphelines
+  // en cas de crash lambda entre les deux opérations.
+  const results = await redis.pipeline().incr(k).expire(k, opts.windowSec, "NX").exec();
+  const count = results[0] as number;
 
   if (count > opts.limit) {
     const ttl = await redis.ttl(k);
@@ -251,8 +262,8 @@ export async function decrementDeviceCount(): Promise<void> {
 
 export function getIP(req: NextRequest): string {
   return (
-    req.headers.get("x-forwarded-for")?.split(",")[0].trim() ??
     req.headers.get("x-real-ip") ??
+    req.headers.get("x-forwarded-for")?.split(",").at(-1)?.trim() ??
     "unknown"
   );
 }

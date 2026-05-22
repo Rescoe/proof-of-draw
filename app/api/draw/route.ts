@@ -120,6 +120,12 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Payload incomplet" }, { status: 400 });
   }
 
+  // Limite de taille des buffers base64 (~45KB décodé max)
+  const MAX_B64 = 60_000;
+  if ((black && black.length > MAX_B64) || (red && red.length > MAX_B64) || (buffer && buffer.length > MAX_B64)) {
+    return NextResponse.json({ error: "Buffer trop grand" }, { status: 413 });
+  }
+
   if (drawScore !== null && drawScore <= 0) {
     return NextResponse.json(
       { error: "Dessin vide — score Proof-of-Draw ≤ 0" },

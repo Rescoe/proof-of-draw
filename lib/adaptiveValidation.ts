@@ -109,13 +109,16 @@ async function fetchRecentGeometry(screenId: string): Promise<BlockGeometrySampl
 
   if (!hashes || hashes.length === 0) return [];
 
+  // Un seul round-trip Redis pour tous les hashes
+  const keys = hashes.map((h) => `chain:block:${h}`);
+  const raws = await redis.mget<(string | null)[]>(...keys);
+
   const samples: BlockGeometrySample[] = [];
 
-  for (const hash of hashes) {
+  for (const raw of raws) {
     if (samples.length >= HISTORY_WINDOW) break;
+    if (!raw) continue;
     try {
-      const raw = await redis.get(`chain:block:${hash}`);
-      if (!raw) continue;
       const block = typeof raw === "string" ? JSON.parse(raw) : raw;
       if (block.poolScreen !== screenId) continue;
       if (!block.podGeometry) continue;
@@ -128,7 +131,7 @@ async function fetchRecentGeometry(screenId: string): Promise<BlockGeometrySampl
         complexity: block.score ?? 0,
       });
     } catch {
-      // Bloc corrompu ou absent — on ignore
+      // Bloc corrompu — on ignore
     }
   }
 

@@ -25,8 +25,11 @@ const INTERNAL_SECRET  = process.env.INTERNAL_API_SECRET ?? "";
 // peu importe leur type d'écran. Seul le broadcast d'affichage reste filtré par écran.
 
 export async function POST(req: NextRequest) {
+  // Sécurité : le secret DOIT être configuré ET correspondre.
+  // Si INTERNAL_API_SECRET est absent de l'environnement, on refuse toujours
+  // (évite qu'un oubli de variable ouvre l'endpoint publiquement).
   const secret = req.headers.get("x-internal-secret");
-  if (INTERNAL_SECRET && secret !== INTERNAL_SECRET) {
+  if (!INTERNAL_SECRET || secret !== INTERNAL_SECRET) {
     return NextResponse.json({ error: "Non autorisé" }, { status: 403 });
   }
 

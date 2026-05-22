@@ -25,6 +25,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { redis } from "@/lib/redis";
 import { isBlacklisted, getIP, forbidden } from "@/lib/rateLimit";
+import { sessionOwnsDevice } from "@/lib/session";
 import type { Block } from "@/lib/chain";
 
 const DEVICE_ID_REGEX = /^dev_[A-Z0-9]{8}$/;
@@ -52,6 +53,11 @@ export async function POST(req: NextRequest) {
       return json({ error: "toDeviceId invalide" }, 400);
     if (fromDeviceId === toDeviceId)
       return json({ error: "fromDeviceId et toDeviceId identiques" }, 400);
+
+    // Vérification session : seul le propriétaire du device peut transférer
+    if (!(await sessionOwnsDevice(fromDeviceId))) {
+      return json({ error: "Non autorisé — ce device n'appartient pas à votre session" }, 403);
+    }
 
     // 1. Charger le bloc
     const rawBlock = await redis.get(`chain:block:${blockHash}`);

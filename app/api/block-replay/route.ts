@@ -10,8 +10,9 @@ export async function GET(req: NextRequest) {
   if (await isBlacklisted(ip)) return forbidden("Accès refusé");
 
   const hash = new URL(req.url).searchParams.get("hash");
-  if (!hash || hash.length < 10) {
-    return NextResponse.json({ error: "hash invalide" }, { status: 400 });
+  const BLOCK_HASH_REGEX = /^[a-f0-9]{64}$/;
+  if (!hash || !BLOCK_HASH_REGEX.test(hash)) {
+    return NextResponse.json({ error: "hash invalide (64 hex chars requis)" }, { status: 400 });
   }
 
   const [block, replay] = await Promise.all([

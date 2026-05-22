@@ -20,7 +20,15 @@ const COOKIE_MAX_AGE = 60 * 60 * 24 * 30; // 30 jours
 function getSecret(): string {
   const s = process.env.SESSION_SECRET;
   if (!s) {
-    console.warn("[session] ⚠️  SESSION_SECRET manquant — fallback dev UNIQUEMENT");
+    if (process.env.NODE_ENV === "production") {
+      // En production, un secret manquant est une erreur fatale :
+      // le fallback est public dans le code source → cookies forgeables.
+      throw new Error(
+        "[session] FATAL : SESSION_SECRET est requis en production. " +
+        "Configurez cette variable dans votre environnement Vercel."
+      );
+    }
+    console.warn("[session] ⚠️  SESSION_SECRET manquant — fallback dev UNIQUEMENT, jamais en prod");
     return "dev_fallback_secret_change_in_production_please";
   }
   return s;

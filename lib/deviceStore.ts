@@ -253,22 +253,23 @@ export async function getGlobalActiveCount(activeWindowMs = 30 * 60 * 1000): Pro
   if (!allIds || allIds.length === 0) return 1; // minimum 1 pour éviter division par zéro
 
   const now = Date.now();
-  const devices = await Promise.all(
-    allIds.map(async (id) => {
-      try {
-        const raw = await redis.get(deviceKey(id));
-        if (!raw) {
-          // Device expiré (TTL Redis) — nettoyer l'index
-          redis.srem("devices:all", id).catch(() => {});
-          return null;
-        }
-        const d = typeof raw === "string" ? JSON.parse(raw) : raw;
-        return now - d.lastPing < activeWindowMs ? d : null;
-      } catch {
-        return null;
-      }
-    }),
-  );
+  const values = await redis.mget<(string | null)[]>(...allIds.map(deviceKey));
+
+  // Nettoyer les IDs expirés en fire-and-forget
+  const expired = allIds.filter((_, i) => !values[i]);
+  if (expired.length > 0) {
+    Promise.all(expired.map((id) => redis.srem("devices:all", id))).catch(() => {});
+  }
+
+  const devices = values.map((raw) => {
+    if (!raw) return null;
+    try {
+      const d = typeof raw === "string" ? JSON.parse(raw) : raw;
+      return now - d.lastPing < activeWindowMs ? d : null;
+    } catch {
+      return null;
+    }
+  });
 
   return Math.max(1, devices.filter(Boolean).length);
 }

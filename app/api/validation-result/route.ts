@@ -35,8 +35,8 @@ async function broadcastValidatedFrame(poolScreen: string, payload: any, frameId
   const members = (await redis.smembers(`pool:screen:${poolScreen}`)) as string[];
   if (!members || members.length === 0) return;
 
-  const banChecks = await Promise.all(members.map(async (dId) => ({ deviceId: dId, banned: !!(await redis.get(`bl:dev:${dId}`)) })));
-  const eligible = banChecks.filter((x) => !x.banned).map((x) => x.deviceId);
+  const banValues = await redis.mget<(string | null)[]>(...members.map((dId) => `bl:dev:${dId}`));
+  const eligible = members.filter((_, i) => !banValues[i]);
 
   const enrichedPayload = {
     ...payload,
