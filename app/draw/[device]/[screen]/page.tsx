@@ -955,6 +955,10 @@ export default function DrawCanvasPage() {
       if (data.validation === "queued") {
         setStatus({ type: "ok", msg: `En file d'attente (position ${data.queuePosition}/${50}) — traitement dans ~${data.expiresIn ?? "?"}s` });
         setTimeout(() => setStatus(null), 6000);
+      } else if (data.validation === "fallback_direct") {
+        // Diffusion directe sans validation blockchain — erreur de configuration serveur
+        setStatus({ type: "error", msg: `⚠ Diffusé sans validation (INTERNAL_API_SECRET manquant ou submit-candidate indisponible). Vérifiez les variables d'environnement Vercel.` });
+        setTimeout(() => setStatus(null), 12000);
       } else {
         setStatus({ type: "ok", msg: "" });
       }
