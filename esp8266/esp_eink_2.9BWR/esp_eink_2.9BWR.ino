@@ -41,8 +41,8 @@
 #include <Ed25519.h>       // Bibliothèque Crypto (rhempel) — ED25519 réel // Crypto by Rhys Weatherley
 
 // ─── CONFIG ────────────────────────────────────────────────────────────────
-const char* WIFI_SSID = "Livebox-D190";
-const char* WIFI_PASSWORD = "Q2gueWg3UaYJo2VN7C";
+const char* WIFI_SSID = "";
+const char* WIFI_PASSWORD = "";
 
 #define SERVER_URL      "https://proof-of-draw.vercel.app"
 #define SCREEN_TYPE     "eink29bwr"
