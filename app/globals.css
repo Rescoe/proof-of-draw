@@ -160,140 +160,210 @@ code { font-family: "JetBrains Mono", monospace; }
   border-color: rgba(59,130,246,0.55);
 }
 
-/* ── Terminal global (GlobalTerminal) ───────────────────────── */
-.gterm {
-  border-radius: 1rem;
-  overflow: hidden;
-  border: 1px solid rgba(255,255,255,0.07);
-  background: #07090f;
-  font-family: "JetBrains Mono", "Fira Mono", "Consolas", monospace;
-  font-size: 0.8rem;
-  line-height: 1.6;
-  margin: 0 auto;
-  max-width: 1360px;
-  width: 100%;
-}
-
-/* Barre de titre macOS-style */
-.gterm__bar {
-  display: flex;
-  align-items: center;
-  gap: 0.75rem;
-  padding: 0.55rem 1rem;
-  background: rgba(255,255,255,0.04);
-  border-bottom: 1px solid rgba(255,255,255,0.06);
-  user-select: none;
-}
-.gterm__bar-dots { display: flex; gap: 6px; }
-.gterm__dot {
-  width: 12px; height: 12px; border-radius: 50%;
-  opacity: 0.7;
-}
-.gterm__dot--red    { background: #ff5f57; }
-.gterm__dot--yellow { background: #ffbd2e; }
-.gterm__dot--green  { background: #28c840; }
-.gterm__title {
-  flex: 1;
-  text-align: center;
-  color: var(--text3);
-  font-size: 0.75rem;
-  letter-spacing: 0.04em;
-}
-.gterm__bar-actions { display: flex; align-items: center; gap: 0.5rem; }
-.gterm__status {
-  font-size: 0.72rem;
-  color: var(--text3);
-  letter-spacing: 0.06em;
-}
-.gterm__status--on { color: #4ade80; }
-.gterm__btn {
-  padding: 0.2rem 0.55rem;
-  border-radius: 0.35rem;
+/* ── Bouton navigation (NetworkStage) ───────────────────────── */
+.nv2-nav-btn {
+  padding: 0.3rem 0.75rem;
+  border-radius: 0.5rem;
   border: 1px solid rgba(255,255,255,0.1);
   background: rgba(255,255,255,0.04);
   color: var(--text3);
-  font-family: inherit;
-  font-size: 0.72rem;
+  font-size: 0.78rem;
+  font-family: "JetBrains Mono", monospace;
   cursor: pointer;
-  transition: 120ms ease;
+  transition: 150ms ease;
+  white-space: nowrap;
 }
-.gterm__btn:hover { background: rgba(255,255,255,0.08); color: var(--text2); }
+.nv2-nav-btn:hover {
+  background: rgba(255,255,255,0.08);
+  color: var(--text2);
+  border-color: rgba(255,255,255,0.18);
+}
+.nv2-nav-btn--active {
+  border-color: rgba(74,222,128,0.35);
+  background: rgba(74,222,128,0.08);
+  color: #4ade80;
+}
+.nv2-nav-btn--active:hover {
+  background: rgba(74,222,128,0.12);
+  border-color: rgba(74,222,128,0.55);
+}
+
+/* Hint de verrouillage (bas de la carte réseau) */
+.nv2-lock-hint {
+  position: absolute;
+  bottom: 0.75rem;
+  left: 50%;
+  transform: translateX(-50%);
+  font-size: 0.72rem;
+  color: rgba(148,163,184,0.4);
+  font-family: "JetBrains Mono", monospace;
+  pointer-events: none;
+  white-space: nowrap;
+  background: rgba(8,12,20,0.7);
+  padding: 0.25rem 0.65rem;
+  border-radius: 999px;
+  border: 1px solid rgba(255,255,255,0.06);
+  z-index: 5;
+}
+
+/* ── Terminal global (GlobalTerminal) — style Linux ─────────── */
+.gterm {
+  position: relative;
+  border-radius: 0.75rem;
+  overflow: hidden;
+  border: 1px solid rgba(255,255,255,0.07);
+  background: #030507;
+  font-family: "JetBrains Mono", "Fira Mono", "Consolas", monospace;
+  font-size: 0.76rem;
+  line-height: 1.55;
+  margin: 0 auto;
+  max-width: 1360px;
+  width: 100%;
+  cursor: default;
+  transition: border-color 150ms ease, box-shadow 150ms ease;
+}
+.gterm--active {
+  border-color: rgba(74,222,128,0.25);
+  box-shadow: 0 0 0 1px rgba(74,222,128,0.08);
+  cursor: auto;
+}
+/* Version panel (côté droit de la carte réseau) */
+.gterm--panel {
+  border-radius: 0;
+  border: none;
+  max-width: none;
+  background: transparent;
+}
+.gterm--panel .gterm__body { max-height: 480px; }
+
+/* Barre de titre — style shell Linux */
+.gterm__bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.6rem;
+  padding: 0.45rem 0.9rem;
+  background: rgba(255,255,255,0.025);
+  border-bottom: 1px solid rgba(255,255,255,0.05);
+  user-select: none;
+}
+.gterm__prompt {
+  font-size: 0.74rem;
+  display: flex;
+  align-items: center;
+  gap: 0;
+}
+.gterm__prompt-user  { color: #4ade80; font-weight: 700; }
+.gterm__prompt-sep   { color: rgba(255,255,255,0.3); }
+.gterm__prompt-host  { color: #60a5fa; font-weight: 700; }
+.gterm__prompt-cmd   { color: rgba(255,255,255,0.45); }
+
+.gterm__bar-right { display: flex; align-items: center; gap: 0.4rem; }
+.gterm__live {
+  font-size: 0.68rem;
+  color: var(--text3);
+  letter-spacing: 0.06em;
+}
+.gterm__live--on { color: #4ade80; }
+
+.gterm__btn {
+  padding: 0.15rem 0.45rem;
+  border-radius: 0.25rem;
+  border: 1px solid rgba(255,255,255,0.09);
+  background: rgba(255,255,255,0.03);
+  color: var(--text3);
+  font-family: inherit;
+  font-size: 0.68rem;
+  cursor: pointer;
+  transition: 100ms ease;
+}
+.gterm__btn:hover { background: rgba(255,255,255,0.07); color: var(--text2); }
+.gterm__btn--close:hover { background: rgba(248,113,113,0.1); color: #f87171; }
 
 /* Corps */
 .gterm__body {
-  padding: 0.75rem 1.25rem 1rem;
+  padding: 0.6rem 0.9rem 0.75rem;
   display: flex;
   flex-direction: column;
   gap: 0;
-  max-height: 340px;
-  overflow-y: auto;
+  max-height: 220px;
+  overflow-y: hidden;   /* verrouillé par défaut — scroll activé inline quand .active */
   scrollbar-width: thin;
-  scrollbar-color: rgba(255,255,255,0.1) transparent;
+  scrollbar-color: rgba(74,222,128,0.15) transparent;
 }
 
 .gterm__line {
   display: flex;
   align-items: baseline;
-  gap: 0.6rem;
-  padding: 0.12rem 0;
-  flex-wrap: wrap;        /* les lignes longues passent à la ligne */
+  gap: 0.5rem;
+  padding: 0.06rem 0;
+  flex-wrap: wrap;
   row-gap: 0;
 }
-.gterm__line--muted { opacity: 0.5; }
-.gterm__line--prompt {
-  margin-bottom: 0.35rem;
-  gap: 0.5rem;
-}
+.gterm__line--muted   { opacity: 0.45; }
+.gterm__line--prompt  { gap: 0.45rem; margin-top: 0.25rem; }
 
-/* Timestamp fixe à gauche */
+/* Timestamp */
 .gterm__ts {
-  color: #475569;
+  color: #374151;
   flex-shrink: 0;
-  font-size: 0.78em;
+  font-size: 0.74em;
   padding-top: 0.1em;
 }
 
-/* Corps de la ligne (tous les tags + segments) */
+/* Corps de la ligne */
 .gterm__line-body {
   display: flex;
   flex-wrap: wrap;
   align-items: baseline;
-  gap: 0.45rem;
+  gap: 0.4rem;
   min-width: 0;
 }
 
 /* Tag coloré (type d'event, type d'écran) */
 .gterm__tag {
   font-weight: 700;
-  font-size: 0.78em;
-  letter-spacing: 0.06em;
-  padding: 0.05em 0.45em;
-  border-radius: 0.3em;
-  background: rgba(255,255,255,0.06);
+  font-size: 0.74em;
+  letter-spacing: 0.05em;
+  padding: 0.04em 0.38em;
+  border-radius: 0.25em;
+  background: rgba(255,255,255,0.05);
   flex-shrink: 0;
 }
 
-/* Segment texte — s'adapte et wrap normalement */
-.gterm__seg {
-  color: #cbd5e1;
-  word-break: break-word;
-}
+/* Segments texte */
+.gterm__seg         { color: #9ca3af; word-break: break-word; }
 .gterm__seg--accent { color: var(--accent); font-weight: 700; }
-.gterm__seg--muted  { color: #94a3b8; font-style: italic; }
-.gterm__seg--dim    { color: #475569; }
+.gterm__seg--muted  { color: #6b7280; font-style: italic; }
+.gterm__seg--dim    { color: #374151; }
 
+/* Curseur clignotant */
 @keyframes gterm-blink { 0%,100%{opacity:1} 50%{opacity:0} }
 .gterm__cursor {
   color: #4ade80;
   animation: gterm-blink 1.1s step-end infinite;
-  font-size: 0.95em;
+  font-size: 0.9em;
   flex-shrink: 0;
+  margin-left: 0.2em;
 }
 
+/* Hint de déverrouillage */
+.gterm__lock-hint {
+  position: absolute;
+  bottom: 0.5rem;
+  right: 0.75rem;
+  font-size: 0.66rem;
+  color: rgba(74,222,128,0.35);
+  font-family: inherit;
+  pointer-events: none;
+  letter-spacing: 0.05em;
+}
+.gterm--active .gterm__lock-hint { display: none; }
+
 @media (max-width: 768px) {
-  .gterm { font-size: 0.76rem; }
-  .gterm__body { max-height: 260px; padding: 0.6rem 0.9rem 0.8rem; }
-  .gterm__bar  { padding: 0.5rem 0.75rem; }
+  .gterm { font-size: 0.72rem; }
+  .gterm__body { max-height: 180px; padding: 0.5rem 0.7rem 0.65rem; }
+  .gterm__bar  { padding: 0.4rem 0.7rem; }
 }
 
 .site-main {

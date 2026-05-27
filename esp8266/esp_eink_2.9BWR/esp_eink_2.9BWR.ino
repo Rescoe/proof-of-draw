@@ -38,11 +38,11 @@
 #include <EEPROM.h>
 #include "epd2in9b_V4.h"
 #include "epdif.h"
-#include <Ed25519.h>       // Bibliothèque Crypto (rhempel) — ED25519 réel
+#include <Ed25519.h>       // Bibliothèque Crypto (rhempel) — ED25519 réel // Crypto by Rhys Weatherley
 
 // ─── CONFIG ────────────────────────────────────────────────────────────────
-const char* WIFI_SSID = "";//"Livebox-D190";
-const char* WIFI_PASSWORD = ""; //"Q2gueWg3UaYJo2VN7C";
+const char* WIFI_SSID = "Livebox-D190";
+const char* WIFI_PASSWORD = "Q2gueWg3UaYJo2VN7C";
 
 #define SERVER_URL      "https://proof-of-draw.vercel.app"
 #define SCREEN_TYPE     "eink29bwr"
@@ -638,6 +638,8 @@ bool initDisplayForRefresh() {
     Serial.printf("[EINK] attente refresh %lums\n", wait);
     delay(wait);
   }
+  // Nourrir le watchdog avant les boucles busy du driver e-paper (jusqu'à ~3s)
+  ESP.wdtFeed();
   if (epd.Init() != 0) {
     Serial.println("[EINK] Init failed");
     return false;
@@ -789,8 +791,9 @@ void displayKeyMaterialOnce() {
   String pubHex = bytesToHex(publicKey, 32);
   String privHex = bytesToHex(privateKey, 32);
 
-  Serial.println(pubHex);
-  Serial.println(privHex);
+  // NE PAS imprimer la clé privée sur Serial — reste strictement dans l'EEPROM
+  Serial.println("[KEYS] Affichage clé publique (une seule fois)");
+  Serial.println("[KEYS] PubKey: " + pubHex);
 
   String title = "PROOF-OF-DRAW KEYS";
   String warn1 = "SAVE THESE KEYS NOW";
@@ -879,11 +882,9 @@ bool doRegister() {
   }
 
   if (!paired && !onboardingAlreadyShown()) {
-    if (!keysAlreadyGenerated()) {
-      generateKeys();
-    }
-
-    displayKeyMaterialOnce();   // clé publique + clé privée, une seule fois
+    // Premier boot non appairé : affiche clé publique + QR, mémorise le flag, redémarre
+    // Les clés sont déjà générées dans setup() — pas de génération ici
+    displayKeyMaterialOnce();
     String onboardUrl = String(SERVER_URL) + "/onboard?code=" + pairCode;
     displayQR(onboardUrl, pairCode, mac);
 
@@ -893,7 +894,10 @@ bool doRegister() {
     delay(3000);
     ESP.restart();
   } else if (!paired) {
-    Serial.println("[REGISTER] Déjà en onboarding, attente du pairing serveur...");
+    // Boots suivants non appairés : ré-afficher le QR (clé publique déjà vue, pas besoin de la reafficher)
+    Serial.println("[REGISTER] Non appairé — ré-affichage QR code...");
+    String onboardUrl = String(SERVER_URL) + "/onboard?code=" + pairCode;
+    displayQR(onboardUrl, pairCode, mac);
   } else {
     Serial.println("[REGISTER] Déjà appairé, pas de QR");
   }
@@ -1369,13 +1373,30 @@ void setup() {
     EEPROM.commit();
   }
 
-  if (keysAlreadyGenerated()) {
+  // ── Clés ED25519 : générer ou charger AVANT tout register/TLS ────────────
+  // CRITIQUE : générer ici (pas dans doRegister) pour garantir que l'EEPROM.commit()
+  // se fait dans un contexte stable, avant les opérations e-paper qui peuvent
+  // déclencher un watchdog reset et corrompre un commit en cours.
+  if (!keysAlreadyGenerated()) {
+    generateKeys();   // génère, sauvegarde en EEPROM, set keysLoaded=true
+  } else {
     loadKeysFromEEPROM();
     Serial.println("[KEYS] Clés ED25519 chargées depuis EEPROM");
     Serial.println("[KEYS] PubKey: " + bytesToHex(publicKey, 32));
   }
 
+  // ── BlockHash EEPROM : valider avant utilisation ──────────────────────────
+  // EEPROM vierge = 0xFF sur chaque octet → caractères garbage, rejeter
   currentBlockHash = loadBlockHashFromEEPROM();
+  {
+    bool validHex = currentBlockHash.length() >= 8;
+    for (unsigned int i = 0; i < currentBlockHash.length() && validHex; i++) {
+      char c = currentBlockHash[i];
+      if (!((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F')))
+        validHex = false;
+    }
+    if (!validHex) currentBlockHash = "";
+  }
   if (currentBlockHash.length() > 0) {
     Serial.println("[CHAIN] BlockHash restauré: " + currentBlockHash);
   }

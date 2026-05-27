@@ -891,8 +891,9 @@ void displayKeyMaterialOnce() {
   String pubHex  = bytesToHex(publicKey,  32);
   String privHex = bytesToHex(privateKey, 32);
 
-  Serial.println("[KEYS] Public:  " + pubHex);
-  Serial.println("[KEYS] Private: " + privHex);
+  // NE PAS imprimer la clé privée sur Serial — reste strictement dans l'EEPROM
+  Serial.println("[KEYS] Affichage clé publique (une seule fois)");
+  Serial.println("[KEYS] PubKey: " + pubHex);
 
   // ── OLED : clé publique ──
   if (ensureOLEDReady()) {
@@ -1063,9 +1064,7 @@ bool doRegister() {
   Serial.println("[REGISTER] paired: " + String(paired ? "oui" : "non"));
 
   if (!paired && !onboardingAlreadyShown()) {
-    // Génère les clés si premier boot
-    if (!keysAlreadyGenerated()) generateKeys();
-
+    // Premier boot non appairé : clés déjà générées dans setup() — afficher seulement
     displayKeyMaterialOnce();
 
     String onboardUrl = String(SERVER_URL) + "/onboard?code=" + pairCode;
@@ -1076,7 +1075,11 @@ bool doRegister() {
     Serial.println("[REGISTER] Onboarding affiché. En attente d'appairage...");
 
   } else if (!paired) {
-    Serial.println("[REGISTER] Déjà en onboarding, attente...");
+    // Boots suivants non appairés : ré-afficher QR (clé publique déjà vue)
+    Serial.println("[REGISTER] Non appairé — ré-affichage QR code...");
+    String onboardUrl = String(SERVER_URL) + "/onboard?code=" + pairCode;
+    displayOnboardingOLED(pairCode, mac);
+    displayOnboardingE27(onboardUrl, pairCode, mac);
   } else {
     Serial.println("[REGISTER] Déjà appairé");
   }
@@ -1650,13 +1653,26 @@ void setup() {
     EEPROM.commit();
   }
 
-  if (keysAlreadyGenerated()) {
+  // ── Clés ED25519 : générer ou charger AVANT tout register/TLS ────────────
+  if (!keysAlreadyGenerated()) {
+    generateKeys();
+  } else {
     loadKeysFromEEPROM();
     Serial.println("[KEYS] Clés ED25519 chargées depuis EEPROM");
     Serial.println("[KEYS] PubKey: " + bytesToHex(publicKey, 32));
   }
 
+  // ── BlockHash EEPROM : valider avant utilisation ──────────────────────────
   currentBlockHash = loadBlockHashFromEEPROM();
+  {
+    bool validHex = currentBlockHash.length() >= 8;
+    for (unsigned int i = 0; i < currentBlockHash.length() && validHex; i++) {
+      char c = currentBlockHash[i];
+      if (!((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F')))
+        validHex = false;
+    }
+    if (!validHex) currentBlockHash = "";
+  }
   if (currentBlockHash.length() > 0)
     Serial.println("[CHAIN] BlockHash restauré: " + currentBlockHash);
 

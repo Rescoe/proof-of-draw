@@ -20,6 +20,7 @@
 // app/api/validation-result/route.ts
 
 import { NextRequest, NextResponse } from "next/server";
+import { revalidatePath } from "next/cache";
 import { redis } from "@/lib/redis";
 import { getDevice } from "@/lib/deviceStore";
 import { getCurrentCandidate, getVotes, castVote, finalizeBlock, clearCandidate, ValidationVote } from "@/lib/chain";
@@ -117,6 +118,8 @@ export async function POST(req: NextRequest) {
 
       await broadcastValidatedFrame(candidate.poolScreen, candidate.payload, frameId, block.displayTime, block.blockIndex, candidate.artistName);
       await clearCandidate();
+      // Invalider le cache Next.js → la BlockGallery se rechargera immédiatement
+      revalidatePath("/", "page");
       // Invalider le cache des seuils adaptatifs pour cet écran (nouveau bloc = nouvelle moyenne)
       invalidateThresholdsCache(candidate.poolScreen).catch(() => {});
       // La galerie de blocs se revalidera automatiquement dans ≤60s (TTL unstable_cache)

@@ -33,6 +33,13 @@ export function NetworkStage({ snapshot, onDeviceSelect, selectedDeviceId }: Pro
   const dragging   = useRef(false);
   const lastPos    = useRef({ x: 0, y: 0 });
 
+  // ── Verrou d'interaction ────────────────────────────────────────────────────
+  // Par défaut la carte est verrouillée : scroll/pan désactivés pour ne pas
+  // bloquer le scroll de page. L'utilisateur clique "Naviguer" pour activer.
+  const [navEnabled, setNavEnabled] = useState(false);
+  const navEnabledRef = useRef(false);
+  navEnabledRef.current = navEnabled;
+
   // Responsive + init viewBox
   useEffect(() => {
     const el = stageRef.current;
@@ -106,12 +113,27 @@ export function NetworkStage({ snapshot, onDeviceSelect, selectedDeviceId }: Pro
   const vbRef = useRef(vb);
   useEffect(() => { vbRef.current = vb; }, [vb]);
 
-  // Wheel zoom — addEventListener avec { passive: false } pour pouvoir preventDefault
-  // (React enregistre onWheel en mode passif depuis React 17, ce qui empêche preventDefault)
+  // Désactiver navigation si clic en dehors ou ESC
+  useEffect(() => {
+    if (!navEnabled) return;
+    const handleOutside = (e: MouseEvent) => {
+      if (!stageRef.current?.contains(e.target as Node)) setNavEnabled(false);
+    };
+    const handleEsc = (e: KeyboardEvent) => { if (e.key === "Escape") setNavEnabled(false); };
+    document.addEventListener("mousedown", handleOutside);
+    document.addEventListener("keydown",   handleEsc);
+    return () => {
+      document.removeEventListener("mousedown", handleOutside);
+      document.removeEventListener("keydown",   handleEsc);
+    };
+  }, [navEnabled]);
+
+  // Wheel zoom — seulement quand navEnabled (sinon le scroll de page passe normalement)
   useEffect(() => {
     const svg = svgRef.current;
     if (!svg) return;
     const handleWheel = (e: WheelEvent) => {
+      if (!navEnabledRef.current) return; // laisser le scroll de page passer
       e.preventDefault();
       const rect = svg.getBoundingClientRect();
       const cur  = vbRef.current;
@@ -122,9 +144,10 @@ export function NetworkStage({ snapshot, onDeviceSelect, selectedDeviceId }: Pro
     };
     svg.addEventListener("wheel", handleWheel, { passive: false });
     return () => svg.removeEventListener("wheel", handleWheel);
-  }, [zoomAt]); // zoomAt est stable (useCallback avec [dims.width])
+  }, [zoomAt]);
 
   const onPointerDown = useCallback((e: React.PointerEvent<SVGSVGElement>) => {
+    if (!navEnabledRef.current) return; // pas de pan quand verrouillé
     if (e.button !== 0) return;
     dragging.current = true;
     lastPos.current = { x: e.clientX, y: e.clientY };
@@ -173,13 +196,21 @@ export function NetworkStage({ snapshot, onDeviceSelect, selectedDeviceId }: Pro
             <strong>{snapshot.totals.screens}</strong>
             <span>écrans</span>
           </div>
-          <button
+            <button
             className="nv2-overview-btn"
             onClick={resetZoom}
             title="Vue d'ensemble"
             aria-label="Réinitialiser le zoom"
           >
-            ⊞ Vue d&apos;ensemble
+            ⊞
+          </button>
+          <button
+            className={`nv2-nav-btn${navEnabled ? " nv2-nav-btn--active" : ""}`}
+            onClick={() => setNavEnabled((v) => !v)}
+            title={navEnabled ? "Verrouiller la navigation (ESC)" : "Activer le déplacement / zoom"}
+            aria-pressed={navEnabled}
+          >
+            {navEnabled ? "✕ quitter navigation" : "🖱 naviguer"}
           </button>
         </div>
       </div>
@@ -192,7 +223,12 @@ export function NetworkStage({ snapshot, onDeviceSelect, selectedDeviceId }: Pro
           viewBox={viewBoxStr}
           preserveAspectRatio="xMidYMid meet"
           aria-hidden="true"
-          style={{ cursor: "grab", userSelect: "none" }}
+          style={{
+            cursor: navEnabled ? "grab" : "default",
+            userSelect: "none",
+            // Sur mobile : ne bloquer le scroll tactile que quand la navigation est active
+            touchAction: navEnabled ? "none" : "pan-y",
+          }}
           onPointerDown={onPointerDown}
           onPointerMove={onPointerMove}
           onPointerUp={onPointerUp}
@@ -416,16 +452,23 @@ export function NetworkStage({ snapshot, onDeviceSelect, selectedDeviceId }: Pro
           })}
         </svg>
 
-        {/* Contrôles zoom */}
-        <div className="nv2-zoom-controls">
-          <button className="nv2-zoom-btn" aria-label="Zoom avant" title="Zoom avant"
-            onClick={() => zoomAt(1 + ZOOM_STEP, vb.x + vb.w / 2, vb.y + vb.h / 2)}>+</button>
-          <span className="nv2-zoom-pct">{zoomPct}%</span>
-          <button className="nv2-zoom-btn" aria-label="Zoom arrière" title="Zoom arrière"
-            onClick={() => zoomAt(1 / (1 + ZOOM_STEP), vb.x + vb.w / 2, vb.y + vb.h / 2)}>−</button>
-          <button className="nv2-zoom-btn nv2-zoom-btn--reset" aria-label="Réinitialiser" title="Réinitialiser"
-            onClick={resetZoom}>↺</button>
-        </div>
+        {/* Contrôles zoom — visibles seulement en mode navigation */}
+        {navEnabled && (
+          <div className="nv2-zoom-controls">
+            <button className="nv2-zoom-btn" aria-label="Zoom avant"
+              onClick={() => zoomAt(1 + ZOOM_STEP, vb.x + vb.w / 2, vb.y + vb.h / 2)}>+</button>
+            <span className="nv2-zoom-pct">{zoomPct}%</span>
+            <button className="nv2-zoom-btn" aria-label="Zoom arrière"
+              onClick={() => zoomAt(1 / (1 + ZOOM_STEP), vb.x + vb.w / 2, vb.y + vb.h / 2)}>−</button>
+          </div>
+        )}
+
+        {/* Hint quand navigation verrouillée */}
+        {!navEnabled && (
+          <div className="nv2-lock-hint" aria-hidden="true">
+            Cliquez sur un ESP pour le sélectionner
+          </div>
+        )}
       </div>
     </div>
   );
