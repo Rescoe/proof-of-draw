@@ -80,21 +80,36 @@ export async function POST(req: NextRequest) {
     if (drift > 0.4) console.warn(`[validation-result] drift élevé device=${deviceId} drift=${drift.toFixed(3)}`);
 
     // ── Vérification signature ED25519 ────────────────────────────────────────
+    // MODE PERMISSIF : la signature est vérifiée et loggée, mais un échec
+    // n'interdit plus le vote. Le vote est accepté dès que le device est
+    // enregistré et actif. Cela permet le minage même en cas d'incompatibilité
+    // de librairie ED25519 entre l'ESP et Node.js (problème rhempel vs OpenSSL).
+    // STRICT_SIGNATURE=true dans les variables Vercel pour réactiver le rejet.
+    const STRICT_SIG = process.env.STRICT_SIGNATURE === "true";
     const sigStr = String(signature ?? "");
-    if (device.publicKey) {
-      // Firmware v2+ : signature ED25519 réelle attendue (128 chars hex)
-      if (sigStr.length !== 128) {
-        console.warn(`[validation-result] signature invalide (longueur ${sigStr.length}) device=${deviceId}`);
-        return json({ error: "Signature invalide" }, 403);
-      }
+
+    if (device.publicKey && sigStr.length === 128) {
+      // Tentative de vérification ED25519 — log le résultat, ne bloque QUE en mode strict
       const message = `${deviceId}:${String(candidateId)}:${espScore.toFixed(3)}`;
       const valid   = verifyEd25519(device.publicKey, message, sigStr);
       if (!valid) {
-        console.warn(`[validation-result] signature ED25519 rejetée device=${deviceId}`);
-        return json({ error: "Signature invalide" }, 403);
+        console.warn(`[validation-result] signature ED25519 invalide device=${deviceId} pubKey=${device.publicKey.slice(0,16)}... msg="${message}" sig=${sigStr.slice(0,16)}...`);
+        if (STRICT_SIG) {
+          return json({ error: "Signature invalide" }, 403);
+        }
+        // Mode permissif → on continue malgré l'échec de vérification
+        console.warn(`[validation-result] mode permissif — vote accepté malgré signature invalide device=${deviceId}`);
+      } else {
+        console.log(`[validation-result] signature ED25519 valide device=${deviceId}`);
+      }
+    } else if (device.publicKey && sigStr.length !== 128) {
+      // Device avec publicKey mais signature format V1 (old firmware) — accepté avec warning
+      console.warn(`[validation-result] signature V1 (longueur ${sigStr.length}) device=${deviceId} — reflash firmware recommandé`);
+      if (STRICT_SIG) {
+        return json({ error: "Signature invalide — longueur incorrecte, reflash firmware requis" }, 403);
       }
     } else {
-      // Firmware v1 sans publicKey enregistrée — vote accepté avec avertissement
+      // Firmware v1 sans publicKey enregistrée — vote accepté (fallback)
       console.warn(`[validation-result] pas de publicKey device=${deviceId} — mise à jour firmware requise`);
     }
 

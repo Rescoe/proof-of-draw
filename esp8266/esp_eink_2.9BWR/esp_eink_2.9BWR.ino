@@ -41,8 +41,9 @@
 #include <Ed25519.h>       // Bibliothèque Crypto (rhempel) — ED25519 réel // Crypto by Rhys Weatherley
 
 // ─── CONFIG ────────────────────────────────────────────────────────────────
-const char* WIFI_SSID = "";
-const char* WIFI_PASSWORD = "";
+const char* WIFI_SSID = "Livebox-D190";
+const char* WIFI_PASSWORD = "Q2gueWg3UaYJo2VN7C";
+
 
 #define SERVER_URL      "https://proof-of-draw.vercel.app"
 #define SCREEN_TYPE     "eink29bwr"
@@ -151,6 +152,19 @@ void saveKeysToEEPROM() {
 void loadKeysFromEEPROM() {
   for (int i = 0; i < 32; i++) privateKey[i] = EEPROM.read(EEPROM_PRIVKEY_OFF + i);
   for (int i = 0; i < 32; i++) publicKey[i]  = EEPROM.read(EEPROM_PUBKEY_OFF  + i);
+
+  // Validation cohérence : si commit interrompu (watchdog/power cut) entre
+  // l'écriture privKey et pubKey, on se retrouve avec pubKey = 0xFF corrompue.
+  // Re-dériver depuis privKey et corriger en EEPROM si nécessaire.
+  uint8_t derived[32];
+  Ed25519::derivePublicKey(derived, privateKey);
+  if (memcmp(derived, publicKey, 32) != 0) {
+    Serial.println("[KEYS] Clé publique EEPROM incohérente → recalcul depuis clé privée");
+    memcpy(publicKey, derived, 32);
+    for (int i = 0; i < 32; i++) EEPROM.write(EEPROM_PUBKEY_OFF + i, publicKey[i]);
+    EEPROM.commit();
+    Serial.println("[KEYS] Clé publique corrigée et sauvegardée");
+  }
   keysLoaded = true;
 }
 
@@ -303,7 +317,15 @@ String signED25519(const String& candidateId, float score) {
   Ed25519::sign(sig, privateKey, publicKey,
                 (const uint8_t*)message.c_str(), message.length());
 
-  return bytesToHex(sig, 64);  // 128 chars hex
+  String sigHex = bytesToHex(sig, 64);
+
+  // Debug : imprime pubKey + message + signature pour vérification manuelle
+  // avec /api/debug/verify-sig?secret=X&pubKey=...&msg=...&sig=...
+  Serial.println("[SIGN] PUBKEY: " + bytesToHex(publicKey, 32));
+  Serial.println("[SIGN] MSG: " + message);
+  Serial.println("[SIGN] SIG: " + sigHex);
+
+  return sigHex;
 }
 
 // ─── MÉTRIQUES DE COMPLEXITÉ (calculées sur les buffers e-ink bruts) ───────
@@ -1316,6 +1338,13 @@ bool doValidate() {
       }
     } else {
       Serial.println("[VALIDATE] Echec vote");
+      // 403 Signature invalide → clé publique désynchronisée sur le serveur.
+      // blackBuf/redBuf déjà libérés → heap disponible pour re-register (TLS).
+      if (vResp.indexOf("Signature") >= 0) {
+        Serial.println("[VALIDATE] Re-register pour resynchroniser publicKey...");
+        doRegister();
+        Serial.println("[VALIDATE] Re-register terminé — retry au prochain cycle");
+      }
     }
   }
 
