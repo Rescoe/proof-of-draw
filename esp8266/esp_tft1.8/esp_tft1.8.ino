@@ -192,6 +192,19 @@ void saveKeysToEEPROM() {
 void loadKeysFromEEPROM() {
   for (int i = 0; i < 32; i++) privateKey[i] = EEPROM.read(EEPROM_PRIVKEY_OFF + i);
   for (int i = 0; i < 32; i++) publicKey[i]  = EEPROM.read(EEPROM_PUBKEY_OFF  + i);
+
+  // Validation cohérence : si commit interrompu (watchdog/power cut) entre
+  // l'écriture privKey et pubKey, on se retrouve avec pubKey = 0xFF corrompue.
+  // Re-dériver depuis privKey et corriger en EEPROM si nécessaire.
+  uint8_t derived[32];
+  Ed25519::derivePublicKey(derived, privateKey);
+  if (memcmp(derived, publicKey, 32) != 0) {
+    Serial.println("[KEYS] Clé publique EEPROM incohérente → recalcul depuis clé privée");
+    memcpy(publicKey, derived, 32);
+    for (int i = 0; i < 32; i++) EEPROM.write(EEPROM_PUBKEY_OFF + i, publicKey[i]);
+    EEPROM.commit();
+    Serial.println("[KEYS] Clé publique corrigée et sauvegardée");
+  }
   keysLoaded = true;
 }
 
@@ -1171,6 +1184,13 @@ bool doValidate() {
     }
   } else {
     Serial.println("[VALIDATE] Echec vote");
+    // 403 Signature invalide → clé publique désynchronisée sur le serveur.
+    // Pas de buffer pixel persistant sur TFT → heap OK pour re-register (TLS).
+    if (vResp.indexOf("Signature") >= 0) {
+      Serial.println("[VALIDATE] Re-register pour resynchroniser publicKey...");
+      doRegister();
+      Serial.println("[VALIDATE] Re-register terminé — retry au prochain cycle");
+    }
   }
 
   logHeapState("VALIDATE-AFTER");

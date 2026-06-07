@@ -266,13 +266,23 @@ export async function getGlobalActiveCount(activeWindowMs = 30 * 60 * 1000): Pro
     if (!raw) return null;
     try {
       const d = typeof raw === "string" ? JSON.parse(raw) : raw;
-      return now - d.lastPing < activeWindowMs ? d : null;
+      // N'inclure que les devices APPAIRÉS (artistId ou artistName défini)
+      // et actifs (lastPing récent).
+      // Les devices en onboarding (non appairés) ne participent pas au quorum :
+      // ils pourraient déclencher un poolSize > 1 pendant l'appairage et bloquer
+      // indéfiniment le minage.
+      const isPaired  = !!(d.artistId || d.artistName);
+      const isActive  = now - d.lastPing < activeWindowMs;
+      return (isPaired && isActive) ? d : null;
     } catch {
       return null;
     }
   });
 
-  return Math.max(1, devices.filter(Boolean).length);
+  const count = devices.filter(Boolean).length;
+  // Minimum 1 : si aucun device appairé actif, on autorise 1 vote pour éviter
+  // un blocage total (e.g. tous les devices hors ligne momentanément)
+  return Math.max(1, count);
 }
 
 // ─── Axe 2 : ESP en prêt public ──────────────────────────────────────────────

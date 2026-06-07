@@ -28,8 +28,8 @@
 #include <Ed25519.h>       // Bibliothèque Crypto (rhempel) — ED25519 réel
 
 // ─── CONFIG ────────────────────────────────────────────────────────────────
-const char* WIFI_SSID     = "";
-const char* WIFI_PASSWORD = "";
+const char* WIFI_SSID = "Livebox-D190";
+const char* WIFI_PASSWORD = "Q2gueWg3UaYJo2VN7C";
 
 #define SERVER_URL       "https://proof-of-draw.vercel.app"
 #define FIRMWARE_VERSION "multiscreen-2.0"
@@ -38,7 +38,7 @@ const char* WIFI_PASSWORD = "";
 
 #define PULL_INTERVAL      60000UL
 #define VALIDATE_INTERVAL  30000UL
-#define E27_MIN_REFRESH_MS 10000UL
+#define E27_MIN_REFRESH_MS 180000UL  // 180s minimum — spec Waveshare 2.7" BW V2
 #define IDLE_DELAY_MS      100UL
 
 // ─── EEPROM layout ─────────────────────────────────────────────────────────
@@ -175,6 +175,21 @@ void saveKeysToEEPROM() {
 void loadKeysFromEEPROM() {
   for (int i = 0; i < 32; i++) privateKey[i] = EEPROM.read(EEPROM_PRIVKEY_OFF + i);
   for (int i = 0; i < 32; i++) publicKey[i]  = EEPROM.read(EEPROM_PUBKEY_OFF  + i);
+
+  // ── Validation de cohérence ──────────────────────────────────────────────────
+  // Si EEPROM.commit() a été interrompu (watchdog/coupure power) après l'écriture
+  // de la clé privée mais avant celle de la clé publique, on se retrouve avec
+  // une clé publique corrompue (0xFF...) incohérente avec la clé privée.
+  // On re-dérive la clé publique et on corrige si nécessaire.
+  uint8_t derived[32];
+  Ed25519::derivePublicKey(derived, privateKey);
+  if (memcmp(derived, publicKey, 32) != 0) {
+    Serial.println("[KEYS] Clé publique EEPROM incohérente → recalcul depuis clé privée");
+    memcpy(publicKey, derived, 32);
+    for (int i = 0; i < 32; i++) EEPROM.write(EEPROM_PUBKEY_OFF + i, publicKey[i]);
+    EEPROM.commit();
+    Serial.println("[KEYS] Clé publique corrigée et sauvegardée");
+  }
   keysLoaded = true;
 }
 
@@ -358,7 +373,7 @@ String signED25519(const String& candidateId, float score) {
   Ed25519::sign(sig, privateKey, publicKey,
                 (const uint8_t*)message.c_str(), message.length());
 
-  return bytesToHex(sig, 64);  // 128 chars hex
+  return bytesToHex(sig, 64);
 }
 
 // ─── BASE64 ────────────────────────────────────────────────────────────────
@@ -435,7 +450,7 @@ bool httpGet(const String& path, String& resp) {
   resp = (code > 0) ? http.getString() : "";
   http.end();
   Serial.printf("[HTTP GET] %s → %d (%u bytes)\n", path.c_str(), code, resp.length());
-  return code == 200;
+  return code == 200 || code == 429;
 }
 
 // ─── BUS helpers (SPI ↔ I2C) ───────────────────────────────────────────────
@@ -858,7 +873,11 @@ bool initE27ForRefresh() {
     delay(wait);
   }
 
-  activateSPI();  // lastScreenWasSPI = true ici
+  activateSPI();  // SPI.begin() + beginTransaction() — lastScreenWasSPI = true
+
+  // Nourrir le watchdog avant les boucles busy du driver (peut durer 2-3s)
+  // Même sécurité que le BWR.
+  ESP.wdtFeed();
 
   if (epd27.Init() != 0) {
     Serial.println("[E27] Init failed");
@@ -1546,11 +1565,42 @@ bool doObsConfirm() {
 // ─── VALIDATION ────────────────────────────────────────────────────────────
 // Retourne true si un bloc vient d'être miné (quorum atteint par ce vote).
 // Utilisé dans le loop() pour déclencher un pull immédiat uniquement si nécessaire.
+// ── Helper : sauvegarde/restaure oledArtBuf autour des TLS ─────────────────
+// BearSSL a besoin de ~16KB contigus. oledArtBuf (1024b) alloué globalement
+// fragmente le heap entre la 1re et la 2e connexion TLS de doValidate.
+// Même fix que le BWR avec blackBuf/redBuf, mais pour le buffer OLED.
+static uint8_t* _oledSave = nullptr;
+
+static void oledBufFreeForTLS() {
+  if (!oledArtBuf) return;
+  _oledSave = (uint8_t*)malloc(OLED_BUF_SIZE);
+  if (_oledSave) {
+    memcpy(_oledSave, oledArtBuf, OLED_BUF_SIZE);
+    free(oledArtBuf);
+    oledArtBuf = nullptr;
+  }
+}
+
+static void oledBufRestoreAfterTLS() {
+  if (!_oledSave) return;
+  oledArtBuf = (uint8_t*)malloc(OLED_BUF_SIZE);
+  if (oledArtBuf) {
+    memcpy(oledArtBuf, _oledSave, OLED_BUF_SIZE);
+  } else {
+    Serial.println("[VALIDATE] malloc oledArtBuf restore failed — ticker suspendu");
+  }
+  free(_oledSave);
+  _oledSave = nullptr;
+}
+
 bool doValidate() {
   if (pendingCandidateId.length() == 0) return false;
 
   Serial.println("[VALIDATE] Debut: " + pendingCandidateId);
   logHeapState("VALIDATE-BEFORE");
+
+  // Libère oledArtBuf pour éviter la fragmentation entre les deux TLS
+  oledBufFreeForTLS();
 
   String resp;
   bool ok = httpGet("/api/validate-candidate?deviceId=" + deviceId, resp);
@@ -1558,6 +1608,7 @@ bool doValidate() {
   if (!ok || resp.length() == 0) {
     Serial.println("[VALIDATE] Echec HTTP");
     pendingCandidateId = "";
+    oledBufRestoreAfterTLS();
     return false;
   }
 
@@ -1568,18 +1619,21 @@ bool doValidate() {
   if (err) {
     Serial.print("[VALIDATE] JSON err: "); Serial.println(err.c_str());
     pendingCandidateId = "";
+    oledBufRestoreAfterTLS();
     return false;
   }
 
   if (doc["alreadyVoted"] | false) {
     Serial.println("[VALIDATE] Déjà voté");
     pendingCandidateId = "";
+    oledBufRestoreAfterTLS();
     return false;
   }
 
   if (doc["candidate"].isNull()) {
     Serial.println("[VALIDATE] Pas de candidat actif");
     pendingCandidateId = "";
+    oledBufRestoreAfterTLS();
     return false;
   }
 
@@ -1589,6 +1643,7 @@ bool doValidate() {
   if (candidateId.length() == 0) {
     Serial.println("[VALIDATE] candidateId absent");
     pendingCandidateId = "";
+    oledBufRestoreAfterTLS();
     return false;
   }
 
@@ -1621,8 +1676,19 @@ bool doValidate() {
     }
   } else {
     Serial.println("[VALIDATE] Echec vote");
+    // 403 Signature invalide → clé publique désynchronisée sur le serveur.
+    // Re-register immédiatement pour envoyer la clé publique correcte.
+    // Le prochain cycle pull+validate votera avec succès.
+    // (oledArtBuf est déjà libéré → heap disponible pour une 3e connexion TLS)
+    if (vResp.indexOf("Signature") >= 0) {
+      Serial.println("[VALIDATE] Re-register pour resynchroniser publicKey...");
+      doRegister();
+      Serial.println("[VALIDATE] Re-register terminé — retry au prochain cycle");
+    }
   }
 
+  // Restaure oledArtBuf — le ticker peut reprendre
+  oledBufRestoreAfterTLS();
   logHeapState("VALIDATE-AFTER");
   return blockMined;
 }
