@@ -373,7 +373,15 @@ String signED25519(const String& candidateId, float score) {
   Ed25519::sign(sig, privateKey, publicKey,
                 (const uint8_t*)message.c_str(), message.length());
 
-  return bytesToHex(sig, 64);
+  String sigHex = bytesToHex(sig, 64);
+
+  // Debug : imprime pubKey + message + signature pour vérification manuelle
+  // avec /api/debug/verify-sig?secret=X&pubKey=...&msg=...&sig=...
+  Serial.println("[SIGN] PUBKEY: " + bytesToHex(publicKey, 32));
+  Serial.println("[SIGN] MSG: " + message);
+  Serial.println("[SIGN] SIG: " + sigHex);
+
+  return sigHex;
 }
 
 // ─── BASE64 ────────────────────────────────────────────────────────────────
