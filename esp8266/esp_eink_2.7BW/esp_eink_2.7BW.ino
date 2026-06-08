@@ -10,11 +10,22 @@
 //   3. Validation distribuée : vote indépendant du type d'écran
 //   4. Cartel paysage (câble à gauche) : timestamp + artiste + titre
 //   5. Onboarding : QR code + code d'appairage sur l'écran
+//   6. Boutons KEY1-4 : rappellent à l'écran l'un des 4 derniers dessins
+//      affichés (stockés en LittleFS, cartel inclus). Le nouveau dessin
+//      envoyé par le serveur reste toujours prioritaire, et le rythme de
+//      rafraîchissement minimal (E27_MIN_REFRESH_MS, 3 min) est respecté
+//      aussi bien pour les rappels que pour les nouveaux dessins —
+//      préservation de la durée de vie de l'e-ink.
+//      Rotation : chaque nouveau dessin va dans le slot le plus ancien
+//      (slot_head), qui avance ensuite de 1 — "le nouveau prend la place
+//      du dernier slot, et ainsi de suite".
 //
 // CONTRAINTES MÉMOIRE :
 //   → SPI reste actif toute la session (pas de bascule I2C/SPI)
 //   → Le buffer pixel (5808 bytes) est alloué uniquement pendant doFetchFrame()
+//     et lors de l'affichage/sauvegarde d'un slot
 //   → heap disponible avant pull : ~47KB
+//   → LittleFS : 4 slots × ~5888 bytes (~23.5KB de flash, hors partition FS)
 
 #include <Arduino.h>
 #include <ESP8266WiFi.h>
@@ -24,6 +35,7 @@
 #include <SPI.h>
 #include <qrcode.h>
 #include <EEPROM.h>
+#include <LittleFS.h>      // Stockage local des dessins (slots KEY1-4)
 #include "epd2in7_V2.h"
 #include "epdif.h"
 #include <Ed25519.h>       // Bibliothèque Crypto (rhempel) — ED25519 réel
@@ -40,6 +52,20 @@ const char* WIFI_PASSWORD = "Q2gueWg3UaYJo2VN7C";
 #define VALIDATE_INTERVAL  30000UL   // 30s — check si candidat en attente
 #define E27_MIN_REFRESH_MS 180000UL  // 3 min minimum — spec Waveshare 2.7" BW V2
 
+// ─── BOUTONS KEY1-4 ────────────────────────────────────────────────────────
+// Le module driver e-ink utilise déjà D0/D1/D2/D8 (cf epdif.h). Les broches
+// ci-dessous sont les GPIO restantes d'un NodeMCU/Wemos D1 mini — à adapter
+// selon le câblage réel des 4 boutons KEY1-4 du kit Waveshare.
+// Câblage attendu : bouton entre la broche et GND, pull-up interne (actif LOW).
+// ⚠️ KEY4_PIN = D3 (GPIO0) est une broche de mode boot : ne pas la maintenir
+//    appuyée pendant la mise sous tension (sinon mode flashing).
+#define KEY1_PIN D5   // GPIO14
+#define KEY2_PIN D6   // GPIO12
+#define KEY3_PIN D7   // GPIO13
+#define KEY4_PIN D3   // GPIO0
+#define SLOT_COUNT       4
+#define KEY_DEBOUNCE_MS  250UL
+
 // ─── EEPROM layout ─────────────────────────────────────────────────────────
 // [0..31]   : clé privée ED25519 (32 bytes)
 // [32..63]  : blockHash courant (32 bytes ASCII)
@@ -49,7 +75,8 @@ const char* WIFI_PASSWORD = "Q2gueWg3UaYJo2VN7C";
 // [98]      : owned_head   — index de tête du ring buffer (0-9)
 // [99]      : owned_count  — nombre de slots valides (0-10)
 // [100..419]: owned slots  — 10 × 32 bytes = 320 bytes (hashes de blocs possédés)
-// [420..511]: réservé
+// [420]      : slot_head — index (0-3) du PROCHAIN slot KEY1-4 à écrire (rotation)
+// [421..511]: réservé
 #define EEPROM_SIZE           512
 #define EEPROM_PRIVKEY_OFF    0
 #define EEPROM_BLOCKHASH_OFF  32
@@ -63,6 +90,7 @@ const char* WIFI_PASSWORD = "Q2gueWg3UaYJo2VN7C";
 #define EEPROM_OWNED_SLOTS_OFF 100
 #define OWNED_SLOTS_MAX        10
 #define OWNED_HASH_LEN         32
+#define EEPROM_SLOT_HEAD_OFF   420
 
 // ─── ÉCRAN 2.7" BW ─────────────────────────────────────────────────────────
 // Résolution driver : portrait 176×264
@@ -492,6 +520,152 @@ bool displayE27Buffer(const uint8_t* buf) {
   return true;
 }
 
+// ─── SLOTS LOCAUX KEY1-4 (LittleFS) ────────────────────────────────────────
+// Donne une utilité aux 4 boutons KEY1-4 du module : rappeler à l'écran l'un
+// des 4 derniers dessins affichés, sans jamais dépasser le rythme d'usure de
+// l'e-ink (E27_MIN_REFRESH_MS). Le NOUVEAU dessin envoyé par le serveur reste
+// TOUJOURS prioritaire ; un rappel de slot ne fait qu'attendre son tour.
+//
+// Rotation : chaque dessin nouvellement affiché est sauvegardé dans le slot
+// "le plus ancien" (slot_head), qui avance ensuite de 1 (mod 4) — exactement
+// comme demandé : "le nouveau dessin prend la place du dernier slot, et ainsi
+// de suite". Le buffer sauvegardé contient déjà le cartel incrusté, donc le
+// rappel réaffiche une image strictement identique à ce qui avait été montré.
+struct SlotMeta {
+  char    title[32];
+  char    artist[24];
+  char    displayTs[20];
+  int32_t blockIndex;
+};
+#define SLOT_META_SIZE sizeof(SlotMeta)
+#define SLOT_FILE_SIZE (SLOT_META_SIZE + E27_BUF_SIZE)
+
+const uint8_t KEY_PINS[SLOT_COUNT] = { KEY1_PIN, KEY2_PIN, KEY3_PIN, KEY4_PIN };
+unsigned long lastKeyMs[SLOT_COUNT] = { 0, 0, 0, 0 };
+int           requestedSlot         = 0;   // 0 = aucune demande ; 1..4 = slot demandé
+
+String slotPath(int idx) { return "/slot" + String(idx) + ".bin"; }
+
+int loadSlotHead() {
+  int h = EEPROM.read(EEPROM_SLOT_HEAD_OFF);
+  if (h < 0 || h >= SLOT_COUNT) h = 0;
+  return h;
+}
+
+void saveSlotHead(int h) {
+  EEPROM.write(EEPROM_SLOT_HEAD_OFF, (uint8_t)h);
+  EEPROM.commit();
+}
+
+bool slotExists(int idx) {
+  return LittleFS.exists(slotPath(idx));
+}
+
+// Sauvegarde le buffer (cartel déjà incrusté) + métadonnées dans le slot de
+// rotation courant, puis avance la tête. Appelée juste après un affichage
+// réussi d'un nouveau dessin (consensus ou personnel).
+void saveCurrentFrameToSlot(const uint8_t* buf) {
+  int head = loadSlotHead();
+
+  SlotMeta meta;
+  memset(&meta, 0, sizeof(meta));
+  pendingWorkTitle.toCharArray(meta.title,      sizeof(meta.title));
+  pendingArtistName.toCharArray(meta.artist,    sizeof(meta.artist));
+  pendingDisplayTs.toCharArray(meta.displayTs,  sizeof(meta.displayTs));
+  meta.blockIndex = currentBlockIndex;
+
+  File f = LittleFS.open(slotPath(head), "w");
+  if (!f) {
+    Serial.println("[SLOTS] échec écriture — slot non sauvegardé");
+    return;
+  }
+  f.write((uint8_t*)&meta, sizeof(meta));
+  f.write(buf, E27_BUF_SIZE);
+  f.close();
+
+  Serial.printf("[SLOTS] dessin sauvegardé → slot %d (%s — %s)\n",
+                head + 1, meta.title, meta.artist);
+
+  saveSlotHead((head + 1) % SLOT_COUNT);
+}
+
+// Charge et affiche le slot demandé (1..4). Le cartel est déjà incrusté dans
+// le buffer sauvegardé : pas besoin de le redessiner.
+bool displaySlot(int slotNum) {
+  int idx = slotNum - 1;
+  if (idx < 0 || idx >= SLOT_COUNT) return false;
+
+  if (!slotExists(idx)) {
+    Serial.printf("[SLOTS] KEY%d → slot %d vide\n", slotNum, slotNum);
+    return false;
+  }
+
+  File f = LittleFS.open(slotPath(idx), "r");
+  if (!f || f.size() != (size_t)SLOT_FILE_SIZE) {
+    Serial.printf("[SLOTS] slot %d corrompu — ignoré\n", slotNum);
+    if (f) f.close();
+    return false;
+  }
+
+  SlotMeta meta;
+  f.read((uint8_t*)&meta, sizeof(meta));
+
+  uint8_t* buf = (uint8_t*)malloc(E27_BUF_SIZE);
+  if (!buf) {
+    Serial.println("[SLOTS] malloc failed");
+    f.close();
+    return false;
+  }
+  f.read(buf, E27_BUF_SIZE);
+  f.close();
+
+  Serial.printf("[SLOTS] KEY%d → affichage slot %d : %s — %s (%s)\n",
+                slotNum, slotNum, meta.title, meta.artist, meta.displayTs);
+
+  bool ok = displayE27Buffer(buf);
+  free(buf);
+
+  if (ok) {
+    lastFrameId       = "slot:" + String(slotNum);
+    hasDisplayedFrame = true;
+  }
+  return ok;
+}
+
+void setupButtons() {
+  for (int i = 0; i < SLOT_COUNT; i++) pinMode(KEY_PINS[i], INPUT_PULLUP);
+  Serial.println("[KEYS] KEY1-4 initialisés (rappel de slots e-ink)");
+}
+
+// Lecture non bloquante avec anti-rebond. Une seule demande en attente à la
+// fois — appuyer sur une autre touche remplace simplement la précédente.
+void pollButtons() {
+  unsigned long now = millis();
+  for (int i = 0; i < SLOT_COUNT; i++) {
+    if (digitalRead(KEY_PINS[i]) == LOW && (now - lastKeyMs[i] > KEY_DEBOUNCE_MS)) {
+      lastKeyMs[i]  = now;
+      requestedSlot = i + 1;
+      Serial.printf("[KEY%d] appui détecté → rappel slot %d demandé\n", i + 1, i + 1);
+    }
+  }
+}
+
+// Honore une demande de rappel de slot SI le délai mini de rafraîchissement
+// e-ink est respecté. Sinon la demande patiente — elle sera retentée au tour
+// de loop() suivant. Un nouveau dessin serveur, lui, met systématiquement à
+// jour lastE27RefreshMs en premier : il garde donc toujours la priorité.
+void processSlotRequest() {
+  if (requestedSlot == 0) return;
+
+  if (millis() - lastE27RefreshMs < E27_MIN_REFRESH_MS) {
+    return; // pas encore le moment — on retentera plus tard, sans perdre la demande
+  }
+
+  int slot = requestedSlot;
+  requestedSlot = 0;
+  displaySlot(slot);
+}
+
 // ─── AFFICHAGE CLÉS (unique au premier boot) ────────────────────────────────
 void displayKeyMaterialOnce() {
   String pubHex  = bytesToHex(publicKey,  32);
@@ -760,6 +934,10 @@ bool doFetchFrame(const String& frameId, const String& frameSource) {
     free(e27Buf);
     return false;
   }
+
+  // Conserve ce dessin (cartel inclus) dans la rotation locale des slots
+  // KEY1-4, pour rappel ultérieur sans re-télécharger ni re-solliciter le réseau.
+  saveCurrentFrameToSlot(e27Buf);
 
   free(e27Buf);
 
@@ -1053,6 +1231,14 @@ void setup() {
 
   eepromInit();
 
+  // LittleFS : stockage local des 4 slots de rappel (KEY1-4)
+  if (!LittleFS.begin()) {
+    Serial.println("[FS] mount échoué — formatage...");
+    LittleFS.format();
+    LittleFS.begin();
+  }
+  setupButtons();
+
   // SPI init unique — pas de bascule I2C (écran unique)
   SPI.begin();
 
@@ -1115,6 +1301,10 @@ void setup() {
 void loop() {
   unsigned long now = millis();
 
+  // Boutons KEY1-4 : rappel de dessins stockés localement (toujours scruté,
+  // mais honoré seulement quand le protocole et le rythme e-ink le permettent)
+  pollButtons();
+
   if (!registered) {
     if (!doRegister()) { delay(5000); return; }
   }
@@ -1166,6 +1356,10 @@ void loop() {
       lastPullMs = millis();
     }
   }
+
+  // Rappel de slot KEY1-4 : traité en dernier, donc seulement si aucun
+  // nouveau dessin n'a sollicité l'écran ce tour-ci (priorité au protocole).
+  processSlotRequest();
 
   delay(100);
 }
