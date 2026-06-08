@@ -503,7 +503,7 @@ static const uint8_t FONT_5x7[][5] PROGMEM = {
   {0x3F,0x40,0x40,0x40,0x3F},{0x1F,0x20,0x40,0x20,0x1F},{0x3F,0x40,0x38,0x40,0x3F},
   {0x63,0x14,0x08,0x14,0x63},{0x07,0x08,0x70,0x08,0x07},{0x61,0x51,0x49,0x45,0x43},
   {0x00,0x36,0x36,0x00,0x00},{0x00,0x60,0x60,0x00,0x00},{0x08,0x08,0x08,0x08,0x08},
-  {0x02,0x01,0x02,0x04,0x02},{0x00,0x00,0x00,0x00,0x00},
+  {0x03,0x0C,0x18,0x20,0x40},{0x00,0x00,0x00,0x00,0x00},
 };
 
 int charIndex(char c) {
@@ -606,8 +606,10 @@ void drawCharE27_landscape(uint8_t* buf, int lx, int ly, char c, int scale = 1) 
           for (int s2 = 0; s2 < scale; s2++) {
             int lx_px = lx + col * scale + s1;  // cols  → lx (direction de lecture) ✓
             int ly_px = ly + row * scale + s2;  // rows  → ly (hauteur du glyphe)    ✓
-            int bufCol = ly_px;
-            int bufRow = E27_HEIGHT - 1 - lx_px;
+            int bufCol = ly_px;   // bandes haut/bas : confirmées correctes (ne pas toucher)
+            int bufRow = lx_px;   // ex (H-1)-lx_px : inversait le sens de lecture → texte
+                                  // en miroir gauche/droite ("Tulipe" affiché "EPILUT").
+                                  // Sans inversion : sens de lecture correct (cf. BW seul).
             if (bufCol < 0 || bufCol >= E27_WIDTH || bufRow < 0 || bufRow >= E27_HEIGHT) continue;
             buf[(bufCol / 8) + bufRow * (E27_WIDTH / 8)] &= ~(0x80 >> (bufCol & 7));
           }

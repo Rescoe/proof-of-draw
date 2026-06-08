@@ -12,17 +12,19 @@ export const runtime = "nodejs";
 
 // Mapping variant → dossier(s) ESP
 const FIRMWARE_MAP: Record<string, string[]> = {
-  eink29bwr: ["esp_eink_2.9BWR"],
-  eink27bw:  ["esp_eink_2.7BW_OLED"],
-  tft18:     ["esp_tft1.8"],
-  all:       ["esp_eink_2.9BWR", "esp_eink_2.7BW_OLED", "esp_tft1.8"],
+  eink29bwr:     ["esp_eink_2.9BWR"],
+  eink27bw:      ["esp_eink_2.7BW_OLED"],
+  eink27bwSolo:  ["esp_eink_2.7BW"],
+  tft18:         ["esp_tft1.8"],
+  all:           ["esp_eink_2.9BWR", "esp_eink_2.7BW_OLED", "esp_eink_2.7BW", "esp_tft1.8"],
 };
 
 const LABEL_MAP: Record<string, string> = {
-  eink29bwr: "pod-firmware-eink29bwr",
-  eink27bw:  "pod-firmware-eink27bw",
-  tft18:     "pod-firmware-tft18",
-  all:       "pod-firmware-all",
+  eink29bwr:    "pod-firmware-eink29bwr",
+  eink27bw:     "pod-firmware-eink27bw-oled",
+  eink27bwSolo: "pod-firmware-eink27bw-solo",
+  tft18:        "pod-firmware-tft18",
+  all:          "pod-firmware-all",
 };
 
 async function addDirToZip(zip: JSZip, dirPath: string, zipPrefix: string) {

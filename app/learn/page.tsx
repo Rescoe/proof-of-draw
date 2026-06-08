@@ -541,10 +541,17 @@ export default function LearnPage() {
           />
           <FirmwareCard
             variant="eink27bw"
-            label='E-Ink 2.7" Noir / Blanc'
+            label='E-Ink 2.7" Noir / Blanc + OLED 0.96"'
             screens={`Waveshare 2.7inch e-Paper V2 + OLED 0.96" · 264×176px`}
-            filename="pod-firmware-eink27bw.zip"
-            desc="2 couleurs, plus grand format. Inclut un OLED secondaire pour le statut."
+            filename="pod-firmware-eink27bw-oled.zip"
+            desc="Double écran : e-ink 2.7 BW + OLED secondaire pour le statut."
+          />
+          <FirmwareCard
+            variant="eink27bwSolo"
+            label='E-Ink 2.7" Noir / Blanc (écran seul)'
+            screens="Waveshare 2.7inch e-Paper V2 · 264×176px"
+            filename="pod-firmware-eink27bw-solo.zip"
+            desc="Version mono-écran : seulement l'e-ink 2.7 BW, sans OLED. Plus simple à câbler."
           />
           <FirmwareCard
             variant="tft18"
@@ -556,9 +563,9 @@ export default function LearnPage() {
           <FirmwareCard
             variant="all"
             label="Tous les firmwares"
-            screens="Archive complète : eink29bwr + eink27bw + tft18"
+            screens="Archive complète : eink29bwr + eink27bw+oled + eink27bw (solo) + tft18"
             filename="pod-firmware-all.zip"
-            desc="Contient les trois dossiers. Idéal pour contribuer au code ou porter sur un nouvel écran."
+            desc="Contient les quatre dossiers. Idéal pour contribuer au code ou porter sur un nouvel écran."
           />
         </div>
 
