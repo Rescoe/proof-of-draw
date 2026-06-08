@@ -379,10 +379,14 @@ void drawCharE27_landscape(uint8_t* buf, int lx, int ly, char c, int scale = 1) 
     for (int row = 0; row < 7; row++) {
       if (bits & (0x40 >> row)) {
         for (int s1 = 0; s1 < scale; s1++)
-          for (int s2 = 0; s2 < scale; s2++)
-            setPixelE27(buf,
-                        ly + row * scale + s2,           // portrait x = ly (hauteur)
-                        E27_HEIGHT - 1 - (lx + col * scale + s1)); // portrait y
+          for (int s2 = 0; s2 < scale; s2++) {
+            int lx_px = lx + col * scale + s1;
+            int ly_px = ly + row * scale + s2;
+            int bufCol = ly_px;                    // pas de mirroir : voir CLAUDE.md (bufCol = y_canvas)
+            int bufRow = E27_HEIGHT - 1 - lx_px;    // bufRow = (H-1) - x_canvas
+            if (bufCol < 0 || bufCol >= E27_WIDTH || bufRow < 0 || bufRow >= E27_HEIGHT) continue;
+            buf[(bufCol / 8) + bufRow * (E27_WIDTH / 8)] &= ~(0x80 >> (bufCol & 7));
+          }
       }
     }
   }
@@ -404,17 +408,19 @@ int textWidthE27_landscape(const String& text, int scale = 1) {
 // Efface des colonnes portrait (= bandes horizontales en paysage) → blanc
 void clearPortraitCols(uint8_t* buf, int pxStart, int pxEnd) {
   for (int px = pxStart; px <= pxEnd && px < E27_WIDTH; px++) {
-    for (int py = 0; py < E27_HEIGHT; py++) {
-      int xr = E27_WIDTH - 1 - px;
-      buf[(xr / 8) + py * (E27_WIDTH / 8)] |= (0x80 >> (xr & 7));
+    int bufCol = px; // pas de mirroir : voir CLAUDE.md (bufCol = y_canvas)
+    for (int bufRow = 0; bufRow < E27_HEIGHT; bufRow++) {
+      buf[(bufCol / 8) + bufRow * (E27_WIDTH / 8)] |= (0x80 >> (bufCol & 7));
     }
   }
 }
 
 // Ligne séparatrice horizontale en paysage (= colonne portrait noire)
 void drawLandscapeSepLine(uint8_t* buf, int portraitX) {
-  for (int py = 0; py < E27_HEIGHT; py++)
-    setPixelE27(buf, portraitX, py);
+  int bufCol = portraitX; // pas de mirroir
+  for (int bufRow = 0; bufRow < E27_HEIGHT; bufRow++) {
+    buf[(bufCol / 8) + bufRow * (E27_WIDTH / 8)] &= ~(0x80 >> (bufCol & 7));
+  }
 }
 
 // ─── CARTEL PAYSAGE ─────────────────────────────────────────────────────────

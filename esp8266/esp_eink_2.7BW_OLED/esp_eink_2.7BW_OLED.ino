@@ -579,23 +579,23 @@ void clearBandE27(uint8_t* buf, int yStart, int yEnd) {
 // Efface des colonnes portrait (= bandes horizontales en paysage)
 void clearPortraitCols(uint8_t* buf, int pxStart, int pxEnd) {
   for (int px = pxStart; px <= pxEnd && px < E27_WIDTH; px++) {
-    for (int py = 0; py < E27_HEIGHT; py++) {
-      int xr = E27_WIDTH - 1 - px;
-      int byteIdx = (xr / 8) + py * (E27_WIDTH / 8);
-      buf[byteIdx] |= (0x80 >> (xr & 7));  // bit=1 = blanc
+    int bufCol = px; // pas de mirroir : voir CLAUDE.md (bufCol = y_canvas)
+    for (int bufRow = 0; bufRow < E27_HEIGHT; bufRow++) {
+      buf[(bufCol / 8) + bufRow * (E27_WIDTH / 8)] |= (0x80 >> (bufCol & 7));  // bit=1 = blanc
     }
   }
 }
 
 // Ligne séparatrice : colonne portrait noire = ligne horizontale en paysage
 void drawLandscapeSepLine(uint8_t* buf, int portraitX) {
-  for (int py = 0; py < E27_HEIGHT; py++)
-    setPixelE27(buf, portraitX, py);
+  int bufCol = portraitX; // pas de mirroir
+  for (int bufRow = 0; bufRow < E27_HEIGHT; bufRow++) {
+    buf[(bufCol / 8) + bufRow * (E27_WIDTH / 8)] &= ~(0x80 >> (bufCol & 7));
+  }
 }
 
-// Dessine un caractère lisible en paysage (rotation 90° CW appliquée au buffer portrait).
-// Mapping : col du glyphe → direction lecture (lx), row du glyphe → hauteur (ly).
-// paysage(lx+col, ly+row) → portrait : px = ly+row, py = (PH-1) - (lx+col)
+// Dessine un caractère lisible en paysage (rotation 90° CCW, voir CLAUDE.md).
+// Mapping direct (sans mirroir) : bufCol = ly_px, bufRow = (E27_HEIGHT-1) - lx_px
 void drawCharE27_landscape(uint8_t* buf, int lx, int ly, char c, int scale = 1) {
   int idx = charIndex(c);
   for (int col = 0; col < 5; col++) {
@@ -606,8 +606,10 @@ void drawCharE27_landscape(uint8_t* buf, int lx, int ly, char c, int scale = 1) 
           for (int s2 = 0; s2 < scale; s2++) {
             int lx_px = lx + col * scale + s1;  // cols  → lx (direction de lecture) ✓
             int ly_px = ly + row * scale + s2;  // rows  → ly (hauteur du glyphe)    ✓
-            // Paysage → portrait : px = ly_px, py = (PH-1) - lx_px
-            setPixelE27(buf, ly_px, E27_HEIGHT - 1 - lx_px);
+            int bufCol = ly_px;
+            int bufRow = E27_HEIGHT - 1 - lx_px;
+            if (bufCol < 0 || bufCol >= E27_WIDTH || bufRow < 0 || bufRow >= E27_HEIGHT) continue;
+            buf[(bufCol / 8) + bufRow * (E27_WIDTH / 8)] &= ~(0x80 >> (bufCol & 7));
           }
       }
     }
