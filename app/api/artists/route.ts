@@ -39,6 +39,7 @@ export async function GET() {
         displayName: p.displayName,
         bio:         p.bio,
         profileImageBlockHash: p.profileImageBlockHash,
+        profileImageCrop: p.profileImageCrop,
         createdAt:   p.createdAt,
         deviceCount: devicesByArtist[p.artistId] ?? 0,
       }))

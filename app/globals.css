@@ -160,52 +160,6 @@ code { font-family: "JetBrains Mono", monospace; }
   border-color: rgba(59,130,246,0.55);
 }
 
-/* ── Bouton navigation (NetworkStage) ───────────────────────── */
-.nv2-nav-btn {
-  padding: 0.3rem 0.75rem;
-  border-radius: 0.5rem;
-  border: 1px solid rgba(255,255,255,0.1);
-  background: rgba(255,255,255,0.04);
-  color: var(--text3);
-  font-size: 0.78rem;
-  font-family: "JetBrains Mono", monospace;
-  cursor: pointer;
-  transition: 150ms ease;
-  white-space: nowrap;
-}
-.nv2-nav-btn:hover {
-  background: rgba(255,255,255,0.08);
-  color: var(--text2);
-  border-color: rgba(255,255,255,0.18);
-}
-.nv2-nav-btn--active {
-  border-color: rgba(74,222,128,0.35);
-  background: rgba(74,222,128,0.08);
-  color: #4ade80;
-}
-.nv2-nav-btn--active:hover {
-  background: rgba(74,222,128,0.12);
-  border-color: rgba(74,222,128,0.55);
-}
-
-/* Hint de verrouillage (bas de la carte réseau) */
-.nv2-lock-hint {
-  position: absolute;
-  bottom: 0.75rem;
-  left: 50%;
-  transform: translateX(-50%);
-  font-size: 0.72rem;
-  color: rgba(148,163,184,0.4);
-  font-family: "JetBrains Mono", monospace;
-  pointer-events: none;
-  white-space: nowrap;
-  background: rgba(8,12,20,0.7);
-  padding: 0.25rem 0.65rem;
-  border-radius: 999px;
-  border: 1px solid rgba(255,255,255,0.06);
-  z-index: 5;
-}
-
 /* ── Terminal global (GlobalTerminal) — style Linux ─────────── */
 .gterm {
   position: relative;
@@ -234,7 +188,11 @@ code { font-family: "JetBrains Mono", monospace; }
   max-width: none;
   background: transparent;
 }
-.gterm--panel .gterm__body { max-height: 480px; }
+/* Hauteur FIXE (et non max-height) : le nombre de lignes affichées
+   ("Afficher plus/moins", filtres…) ne doit jamais faire varier la taille
+   du terminal — sinon il se décale par rapport à la topologie réseau
+   voisine (cf. align-items:stretch). Le contenu défile à l'intérieur. */
+.gterm--panel .gterm__body { height: 480px; max-height: 480px; }
 
 /* Barre de titre — style shell Linux */
 .gterm__bar {
@@ -279,6 +237,24 @@ code { font-family: "JetBrains Mono", monospace; }
 }
 .gterm__btn:hover { background: rgba(255,255,255,0.07); color: var(--text2); }
 .gterm__btn--close:hover { background: rgba(248,113,113,0.1); color: #f87171; }
+.gterm__btn--more {
+  font-variant-numeric: tabular-nums;
+  color: var(--accent2, #ff6b9d);
+  border-color: rgba(255,107,157,0.25);
+}
+.gterm__btn--more:hover { background: rgba(255,107,157,0.1); color: var(--accent2, #ff6b9d); }
+
+/* Légende sous la topologie réseau — courte, grise, discrète (réduite par
+   rapport à l'ancienne version, et placée uniquement sous ce composant —
+   pas sous le panel latéral — pour aligner les deux colonnes). */
+.nv2-stage-hint {
+  margin: 0.5rem 0 0;
+  text-align: center;
+  font-size: 0.68rem;
+  line-height: 1.4;
+  color: var(--text3);
+  font-family: "JetBrains Mono", monospace;
+}
 
 /* Corps */
 .gterm__body {
@@ -286,6 +262,7 @@ code { font-family: "JetBrains Mono", monospace; }
   display: flex;
   flex-direction: column;
   gap: 0;
+  height: 220px;
   max-height: 220px;
   overflow-y: hidden;   /* verrouillé par défaut — scroll activé inline quand .active */
   scrollbar-width: thin;
@@ -296,9 +273,12 @@ code { font-family: "JetBrains Mono", monospace; }
   display: flex;
   align-items: baseline;
   gap: 0.5rem;
-  padding: 0.06rem 0;
-  flex-wrap: wrap;
-  row-gap: 0;
+  /* Une ligne = une ligne : le wrap multipliait les retours et superposait
+     visuellement les segments (illisible sur grand écran). On tronque plutôt
+     avec une ellipse — moins d'infos affichées d'un coup, mais lisible. */
+  padding: 0.18rem 0;
+  flex-wrap: nowrap;
+  overflow: hidden;
 }
 .gterm__line--muted   { opacity: 0.45; }
 .gterm__line--prompt  { gap: 0.45rem; margin-top: 0.25rem; }
@@ -314,10 +294,11 @@ code { font-family: "JetBrains Mono", monospace; }
 /* Corps de la ligne */
 .gterm__line-body {
   display: flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   align-items: baseline;
   gap: 0.4rem;
   min-width: 0;
+  overflow: hidden;
 }
 
 /* Tag coloré (type d'event, type d'écran) */
@@ -332,7 +313,7 @@ code { font-family: "JetBrains Mono", monospace; }
 }
 
 /* Segments texte */
-.gterm__seg         { color: #9ca3af; word-break: break-word; }
+.gterm__seg         { color: #9ca3af; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
 .gterm__seg--accent { color: var(--accent); font-weight: 700; }
 .gterm__seg--muted  { color: #6b7280; font-style: italic; }
 .gterm__seg--dim    { color: #374151; }
@@ -362,7 +343,7 @@ code { font-family: "JetBrains Mono", monospace; }
 
 @media (max-width: 768px) {
   .gterm { font-size: 0.72rem; }
-  .gterm__body { max-height: 180px; padding: 0.5rem 0.7rem 0.65rem; }
+  .gterm__body { height: 180px; max-height: 180px; padding: 0.5rem 0.7rem 0.65rem; }
   .gterm__bar  { padding: 0.4rem 0.7rem; }
 }
 
@@ -1135,7 +1116,7 @@ code { font-family: "JetBrains Mono", monospace; }
   margin: 0; font-size: 1.25rem; font-weight: 800;
   letter-spacing: -0.04em; color: #ececf6;
 }
-.nv2-stage-chips { display: flex; gap: 0.6rem; }
+.nv2-stage-chips { display: flex; gap: 0.6rem; flex-wrap: wrap; row-gap: 0.5rem; }
 .nv2-chip {
   display: flex; align-items: center; gap: 0.4rem;
   padding: 0.4rem 0.7rem; border-radius: 999px;
@@ -1149,12 +1130,17 @@ code { font-family: "JetBrains Mono", monospace; }
 .nv2-chip__dot--on { background: var(--success); box-shadow: 0 0 0 3px rgba(74,222,128,0.2); }
 .nv2-chip strong { font-weight: 700; color: #ececf6; font-size: 0.88rem; }
 
-.nv2-stage { 
-  position: relative; width: 100%; height: 420px; 
+.nv2-stage {
+  /* La hauteur réelle est pilotée en JS (dims.height, cf. NetworkStage) et
+     posée en style inline — c'est la seule source de vérité. Une hauteur CSS
+     fixe ici créerait un écart avec le viewBox du SVG (preserveAspectRatio
+     "meet" écraserait/décalerait alors le contenu). */
+  position: relative; width: 100%;
   border-radius: 1.15rem; overflow: hidden; border: 1px solid rgba(255,255,255,0.05);
   background: linear-gradient(135deg, rgba(255,255,255,0.02), rgba(255,255,255,0.01));
 }
 .nv2-svg { display: block; width: 100%; height: 100%; }
+.nv2-svg:active { cursor: grabbing; }
 .nv2-core-ring {
   animation: nv2Pulse 3s ease-in-out infinite alternate;
 }
@@ -1165,12 +1151,30 @@ code { font-family: "JetBrains Mono", monospace; }
   100% { opacity: 0.8; }
 }
 
-/* Side Panel */
+/* Side Panel — hauteur asservie à la rangée (= hauteur de la stage réseau),
+   défilement interne propre : aucun changement de contenu (onglets, activité
+   on-chain qui se charge, etc.) ne fait bouger/déborder la carte réseau. */
 .nv2-panel {
   position: relative; padding: 1.5rem; border-radius: 1.5rem;
   background: linear-gradient(180deg, rgba(255,255,255,0.03) 0%, rgba(255,255,255,0.02) 100%);
-  border: 1px solid rgba(255,255,255,0.05); min-height: 560px;
+  border: 1px solid rgba(255,255,255,0.05);
+  height: 100%;
+  min-height: 0;
+  overflow-y: auto;
+  /* "contain" bloquait le chaînage de scroll : en bout de course (haut/bas) le
+     parent (page) restait figé tant qu'on ne relâchait/recommençait pas le
+     geste — sensation de blocage signalée sur mobile. "auto" laisse le scroll
+     se propager naturellement à la page une fois la limite du panel atteinte. */
+  overscroll-behavior: auto;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(124,107,255,0.35) transparent;
 }
+.nv2-panel::-webkit-scrollbar { width: 8px; }
+.nv2-panel::-webkit-scrollbar-track { background: transparent; }
+.nv2-panel::-webkit-scrollbar-thumb {
+  background: rgba(124,107,255,0.3); border-radius: 999px;
+}
+.nv2-panel::-webkit-scrollbar-thumb:hover { background: rgba(124,107,255,0.5); }
 .nv2-panel--empty {
   display: grid; place-items: center; text-align: center;
   color: var(--text3); font-size: 0.9rem; line-height: 1.6;
@@ -1250,7 +1254,6 @@ code { font-family: "JetBrains Mono", monospace; }
   .onboard-card { padding: 1.5rem 1.25rem; border-radius: 1.15rem; }
   .nv2-stage-header { flex-direction: column; align-items: stretch; gap: 1rem; text-align: center; }
   .nv2-stage-chips { justify-content: center; }
-  .nv2-stage { height: 360px; }
   .nv2-metrics-grid { grid-template-columns: 1fr; }
 }
 

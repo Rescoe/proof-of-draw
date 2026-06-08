@@ -243,7 +243,7 @@ export function GlobalTerminal() {
             </span>
           </div>
         )}
-        {events.map((ev) => <EventLine key={ev.id} ev={ev} />)}
+        {events.slice(-40).map((ev) => <EventLine key={ev.id} ev={ev} />)}
 
         {/* Curseur clignotant */}
         <div className="gterm__line gterm__line--prompt">
@@ -265,13 +265,15 @@ export function GlobalTerminal() {
 }
 
 // ─── Terminal compact (intégré dans le side panel) ──────────────────────────
-
 export function GlobalTerminalPanel() {
   const [paused, setPaused]   = useState(false);
   const [active, setActive]   = useState(false);
+  const [showAll, setShowAll] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
   const bodyRef      = useRef<HTMLDivElement>(null);
-  const { events, connected, seenIds, fetchEvents } = useTerminalEvents();
+  const { events, connected, fetchEvents } = useTerminalEvents();
+
+  const visibleEvents = showAll ? events.slice(-200) : events.slice(-10);
 
   useEffect(() => {
     fetchEvents(false);
@@ -283,7 +285,7 @@ export function GlobalTerminalPanel() {
     if (!active || paused) return;
     const body = bodyRef.current;
     if (body) body.scrollTop = body.scrollHeight;
-  }, [events, active, paused]);
+  }, [visibleEvents, active, paused]);
 
   useEffect(() => {
     if (!active) return;
@@ -292,10 +294,10 @@ export function GlobalTerminalPanel() {
     };
     const handleEsc = (e: KeyboardEvent) => { if (e.key === "Escape") setActive(false); };
     document.addEventListener("mousedown", handleOutside);
-    document.addEventListener("keydown",   handleEsc);
+    document.addEventListener("keydown", handleEsc);
     return () => {
       document.removeEventListener("mousedown", handleOutside);
-      document.removeEventListener("keydown",   handleEsc);
+      document.removeEventListener("keydown", handleEsc);
     };
   }, [active]);
 
@@ -319,8 +321,31 @@ export function GlobalTerminalPanel() {
           <span className={`gterm__live${connected ? " gterm__live--on" : ""}`}>
             {connected ? "●" : "○"}
           </span>
+          {/* Bascule "10 derniers / tout" — dans la barre de titre plutôt qu'en
+              pied de composant : un bouton sous le corps faisait grandir le
+              terminal et le décalait par rapport à la topologie réseau (même
+              hauteur visée, cf. align-items:stretch côté NetworkMap). Ici, la
+              hauteur du composant ne change jamais. */}
+          {events.length > 10 && (
+            <button
+              className="gterm__btn gterm__btn--more"
+              onClick={(e) => {
+                e.stopPropagation();
+                setShowAll((v) => !v);
+              }}
+              title={showAll ? "Afficher seulement les 10 derniers" : `Afficher tout (${events.length})`}
+            >
+              {showAll ? "▴ 10" : `▾ ${events.length}`}
+            </button>
+          )}
           {active && (
-            <button className="gterm__btn" onClick={(e) => { e.stopPropagation(); setPaused((v) => !v); }}>
+            <button
+              className="gterm__btn"
+              onClick={(e) => {
+                e.stopPropagation();
+                setPaused((v) => !v);
+              }}
+            >
               {paused ? "▶" : "⏸"}
             </button>
           )}
@@ -340,7 +365,9 @@ export function GlobalTerminalPanel() {
             </span>
           </div>
         )}
-        {events.map((ev) => <EventLine key={ev.id} ev={ev} />)}
+
+        {visibleEvents.map((ev) => <EventLine key={ev.id} ev={ev} />)}
+
         <div className="gterm__line gterm__line--prompt">
           <span className="gterm__cursor">█</span>
         </div>
@@ -351,4 +378,5 @@ export function GlobalTerminalPanel() {
       )}
     </div>
   );
+
 }

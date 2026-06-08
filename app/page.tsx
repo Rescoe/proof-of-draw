@@ -1,7 +1,8 @@
 import { getNetworkSnapshot } from "@/lib/networkSnapshot";
 import { NetworkMap } from "./network/NetworkMap";
-import { GlobalTerminal } from "./network/GlobalTerminal";
+import { EspActivityFeed } from "./network/EspActivityFeed";
 import { BlockGallery } from "./BlockGallery";
+import { RecentArtists } from "./RecentArtists";
 
 export default async function HomePage() {
   const snapshot = await getNetworkSnapshot();
@@ -19,14 +20,34 @@ export default async function HomePage() {
         </h1>
       </section>
 
-      {/* NETWORK MAP */}
-      <NetworkMap snapshot={snapshot} />
+      {/* CARTE RÉSEAU (topologie + side panel) */}
+      <div className="home-network-stack">
+        <NetworkMap snapshot={snapshot} />
 
-      {/* TERMINAL GLOBAL — échanges passant par le serveur central */}
-      <GlobalTerminal />
+        {/* JOURNAL RÉSEAU — pleine largeur sous la carte : une colonne étroite
+            (ancienne disposition en rangée) tronquait chaque ligne et rendait
+            le journal illisible sur PC. Pleine largeur = lignes lisibles. */}
+        <div className="home-network-stack__feed">
+          <EspActivityFeed />
+        </div>
+      </div>
 
       {/* GALERIE DES BLOCS MINÉS */}
       <BlockGallery />
+
+      {/* DERNIERS ARTISTES INSCRITS — visibilité + accès à l'annuaire complet */}
+      <RecentArtists />
+
+      <style>{`
+        .home-network-stack {
+          display: flex;
+          flex-direction: column;
+          gap: 1rem;
+        }
+        .home-network-stack__feed {
+          min-width: 0;
+        }
+      `}</style>
     </div>
   );
 }

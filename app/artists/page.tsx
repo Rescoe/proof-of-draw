@@ -12,8 +12,35 @@ interface ArtistSummary {
   displayName: string;
   bio?:        string;
   profileImageBlockHash?: string;
+  profileImageCrop?: { cx: number; cy: number; zoom: number };
   createdAt:   number;
   deviceCount: number;
+}
+
+// Dimensions CSS d'affichage par type d'écran — identiques à BlockFrameCanvas.tsx
+// et à la page profil/fiche artiste : la cohérence ici est ce qui garantit que
+// le recadrage choisi par l'artiste corresponde à ce qui est affiché ensuite.
+const DISPLAY_SIZES: Record<string, { w: number; h: number }> = {
+  eink29bwr: { w: 222, h: 96  },
+  eink27bw:  { w: 132, h: 88  },
+  oled096:   { w: 128, h: 64  },
+  tft18:     { w: 128, h: 160 },
+};
+
+const AVATAR_SIZE = 56;
+
+function coverTransform(screen: string, crop?: { cx: number; cy: number; zoom: number }) {
+  const ds = DISPLAY_SIZES[screen] ?? { w: 128, h: 128 };
+  const coverScale = Math.max(AVATAR_SIZE / ds.w, AVATAR_SIZE / ds.h);
+  const zoom  = crop?.zoom ?? 1;
+  const scale = coverScale * zoom;
+  const cx = crop?.cx ?? 0.5;
+  const cy = crop?.cy ?? 0.5;
+  return {
+    tx: AVATAR_SIZE / 2 - cx * ds.w * scale,
+    ty: AVATAR_SIZE / 2 - cy * ds.h * scale,
+    scale,
+  };
 }
 
 function timeSince(ts: number): string {
@@ -50,13 +77,22 @@ function ArtistAvatar({ artist }: { artist: ArtistSummary }) {
   }
 
   if (imagePayload) {
+    // Même transformation "cover + recadrage" que sur la page profil et la
+    // fiche artiste — sans cela le cadrage choisi par l'artiste ne correspond
+    // pas à la vignette affichée ici (l'image apparaissait toujours brute,
+    // juste réduite à l'échelle, sans tenir compte de cx/cy/zoom).
+    const { tx, ty, scale } = coverTransform(imagePayload.screen, artist.profileImageCrop);
     return (
       <div style={{
         width: 56, height: 56, borderRadius: "50%", flexShrink: 0,
         border: "2px solid var(--accent)", background: "var(--bg3)",
-        overflow: "hidden", display: "flex", alignItems: "center", justifyContent: "center",
+        overflow: "hidden", position: "relative",
       }}>
-        <div style={{ transform: "scale(0.28)", transformOrigin: "center" }}>
+        <div style={{
+          position: "absolute", transformOrigin: "top left",
+          transform: `translate(${tx}px, ${ty}px) scale(${scale})`,
+          pointerEvents: "none",
+        }}>
           <BlockFrameCanvas payload={imagePayload} />
         </div>
       </div>

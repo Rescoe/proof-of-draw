@@ -52,6 +52,13 @@ function blockImageToPreview(img: BlockImagePayload): NetworkPreview {
 
 // ─── Canvas miniature (frame active ou bloc validé) ──────────────────────────
 
+// Boîte d'affichage cible — la miniature est mise à l'échelle (en conservant
+// son ratio natif) pour remplir au mieux cette boîte, plutôt que d'utiliser
+// une taille CSS fixe par type d'écran (qui plaquait les images en haut à
+// gauche, déformées ou minuscules selon le buffer réellement reçu).
+const PREVIEW_BOX_W = 220;
+const PREVIEW_BOX_H = 150;
+
 function FramePreviewMini({
   preview,
   screenType,
@@ -60,6 +67,8 @@ function FramePreviewMini({
   screenType: string;
 }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  // Dimensions natives du buffer décodé — déterminent le ratio d'affichage.
+  const [native, setNative] = useState<{ w: number; h: number } | null>(null);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -80,22 +89,28 @@ function FramePreviewMini({
         }
       }
 
-      if (!imageData) return;
+      if (!imageData) { setNative(null); return; }
 
       canvas.width  = imageData.width;
       canvas.height = imageData.height;
       ctx.putImageData(imageData, 0, 0);
+      setNative({ w: imageData.width, h: imageData.height });
     } catch {
       // Données corrompues — on laisse le canvas vide
+      setNative(null);
     }
   }, [preview, screenType]);
 
-  const cssW = screenType === "oled096"  ? 128
-             : screenType === "eink27bw" ? 132
-             : 148;
-  const cssH = screenType === "oled096"  ? 64
-             : screenType === "eink27bw" ? 88
-             : 64;
+  // Mise à l'échelle "contain" dans la boîte cible, en conservant le ratio —
+  // l'image occupe l'espace disponible sans être étirée ni tronquée, quel que
+  // soit le type d'écran source (e-ink 2.9", 2.7", OLED…).
+  let cssW = PREVIEW_BOX_W;
+  let cssH = PREVIEW_BOX_H;
+  if (native && native.w > 0 && native.h > 0) {
+    const scale = Math.min(PREVIEW_BOX_W / native.w, PREVIEW_BOX_H / native.h);
+    cssW = Math.round(native.w * scale);
+    cssH = Math.round(native.h * scale);
+  }
 
   return (
     <div style={{
@@ -103,8 +118,11 @@ function FramePreviewMini({
       borderRadius: 6,
       overflow: "hidden",
       border: "1px solid rgba(255,255,255,0.08)",
-      display: "inline-block",
-      lineHeight: 0,
+      display: "flex",
+      alignItems: "center",
+      justifyContent: "center",
+      width: "100%",
+      height: PREVIEW_BOX_H + 16,
       background: "#fff",
     }}>
       <canvas
@@ -143,9 +161,31 @@ const SCREEN_COLOR: Record<string, string> = {
 };
 function screenColor(s: string) { return SCREEN_COLOR[s] ?? "#a2a3bb"; }
 
+// ─── Sous-onglets du panel ────────────────────────────────────────────────────
+// Découpage en 4 sections compactes (au lieu de 2 longues) : chacune tient
+// sans scroll dans la hauteur du panel (= hauteur de la carte réseau).
+type SidePanelTab = "apercu" | "activite" | "frame" | "logs";
+const TAB_LABEL: Record<SidePanelTab, string> = {
+  apercu:   "Aperçu",
+  activite: "Activité",
+  frame:    "Frame / Bloc",
+  logs:     "Logs ESP",
+};
+
 // ─── SidePanel ────────────────────────────────────────────────────────────────
 
-export function SidePanel({ device, onClose }: { device: NetworkDevice | null; onClose: () => void }) {
+export function SidePanel({
+  device,
+  focusScreen,
+  onClose,
+}: {
+  device: NetworkDevice | null;
+  // Renseigné quand l'utilisateur a cliqué sur un nœud-écran (et non sur l'ESP
+  // lui-même) — on met alors en avant le bloc/la frame affichée sur CET écran
+  // (hash, contenu, timestamp, statut de rendu) plutôt que les infos générales.
+  focusScreen?: string;
+  onClose: () => void;
+}) {
 
   // ── Chargement lazy du dernier bloc validé ──────────────────────────────
   const [lastBlock,    setLastBlock]    = useState<MinedBlock | null>(null);
@@ -155,6 +195,14 @@ export function SidePanel({ device, onClose }: { device: NetworkDevice | null; o
   // ── Activité on-chain ────────────────────────────────────────────────────
   const [activity,        setActivity]        = useState<DeviceActivity | null>(null);
   const [loadingActivity, setLoadingActivity] = useState(false);
+
+  // ── Onglet actif — 4 sous-onglets compacts pour limiter la hauteur du
+  // panel à celle de la carte réseau (cf. .nv2-panel { height: 100% }) :
+  // un seul bloc de contenu visible à la fois plutôt qu'un long scroll.
+  const [tab, setTab] = useState<SidePanelTab>("apercu");
+  // Reset sur changement de device — et saut direct sur "Frame" quand on a
+  // cliqué un nœud-écran (le focusBanner concerne justement cette section).
+  useEffect(() => { setTab(focusScreen ? "frame" : "apercu"); }, [device?.deviceId, focusScreen]);
 
   useEffect(() => {
     if (!device) {
@@ -213,94 +261,128 @@ export function SidePanel({ device, onClose }: { device: NetworkDevice | null; o
         </span>
       </div>
 
-      {/* ── Écrans connectés ── */}
-      <div className="nv2-panel__section">
-        <div className="nv2-panel__section-label">Écrans connectés</div>
-        <div className="nv2-screen-grid">
-          {device.screens.length === 0 && <p className="nv2-muted">Aucun écran</p>}
-          {device.screens.map((s) => (
-            <div key={`${device.deviceId}-${s.screen}`} className="nv2-screen-item">
-              <div className="nv2-screen-icon">
-                <svg viewBox="0 0 24 18" fill="none" width={28}>
-                  <rect x="0.5" y="0.5" width="23" height="17" rx="2.5" stroke="currentColor" strokeOpacity={0.5} />
-                  <rect x="3" y="3" width="18" height="12" rx="1" fill="currentColor" fillOpacity={0.1} />
-                  <line x1="9" y1="17.5" x2="15" y2="17.5" stroke="currentColor" strokeOpacity={0.4} strokeWidth={1.5} />
-                </svg>
-              </div>
-              <div>
-                <strong>{s.label}</strong>
-                <small>{s.description}</small>
-              </div>
+      {/* ── Bandeau "écran sélectionné" — clic sur un nœud-écran ── */}
+      {focusScreen && (() => {
+        const sInfo = device.screens.find((s) => s.screen === focusScreen);
+        const color = SCREEN_COLOR[focusScreen] ?? "#a2a3bb";
+        return (
+          <div className="nv2-focus-banner" style={{ borderColor: `${color}55`, background: `${color}0f` }}>
+            <span className="nv2-focus-banner__dot" style={{ background: color }} />
+            <div>
+              <strong style={{ color }}>{sInfo?.label ?? focusScreen}</strong>
+              <span className="nv2-focus-banner__hint">voir l&apos;onglet « Frame / Bloc » ci-dessous</span>
             </div>
-          ))}
-        </div>
+          </div>
+        );
+      })()}
+
+      {/* ── Onglets — 4 sections compactes (Aperçu/Activité/Frame/Logs) :
+          chacune tient seule dans la hauteur du panel, sans long scroll ── */}
+      <div className="nv2-tabs" role="tablist">
+        {(Object.keys(TAB_LABEL) as SidePanelTab[]).map((t) => (
+          <button
+            key={t}
+            role="tab"
+            aria-selected={tab === t}
+            className={`nv2-tab${tab === t ? " nv2-tab--active" : ""}`}
+            onClick={() => setTab(t)}
+          >
+            {TAB_LABEL[t]}
+          </button>
+        ))}
       </div>
+
+      {/* ── Aperçu : écrans connectés + métriques ── */}
+      {tab === "apercu" && (
+        <>
+          <div className="nv2-panel__section">
+            <div className="nv2-panel__section-label">Écrans connectés</div>
+            <div className="nv2-screen-grid">
+              {device.screens.length === 0 && <p className="nv2-muted">Aucun écran</p>}
+              {device.screens.map((s) => (
+                <div key={`${device.deviceId}-${s.screen}`} className="nv2-screen-item">
+                  <div className="nv2-screen-icon">
+                    <svg viewBox="0 0 24 18" fill="none" width={28}>
+                      <rect x="0.5" y="0.5" width="23" height="17" rx="2.5" stroke="currentColor" strokeOpacity={0.5} />
+                      <rect x="3" y="3" width="18" height="12" rx="1" fill="currentColor" fillOpacity={0.1} />
+                      <line x1="9" y1="17.5" x2="15" y2="17.5" stroke="currentColor" strokeOpacity={0.4} strokeWidth={1.5} />
+                    </svg>
+                  </div>
+                  <div>
+                    <strong>{s.label}</strong>
+                    <small>{s.description}</small>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div className="nv2-panel__section">
+            <div className="nv2-panel__section-label">Métriques</div>
+            <div className="nv2-metrics-grid">
+              <div className="nv2-metric"><span>Firmware</span><strong>{device.firmware || "?"}</strong></div>
+              <div className="nv2-metric"><span>Frames envoyées</span><strong>{device.framesSent.toLocaleString()}</strong></div>
+              <div className="nv2-metric"><span>Dernière vue</span><strong>{formatRelativeTime(device.lastSeen)}</strong></div>
+              <div className="nv2-metric"><span>Dernier ping</span><strong>{formatRelativeTime(device.lastPing)}</strong></div>
+            </div>
+          </div>
+        </>
+      )}
 
       {/* ── Activité on-chain ── */}
-      <div className="nv2-panel__section">
-        <div className="nv2-panel__section-label">Activité on-chain</div>
-        {loadingActivity && <p className="nv2-muted nv2-small nv2-loading">Chargement…</p>}
-        {!loadingActivity && activity && (
-          <>
-            <div className="nv2-metrics-grid" style={{ marginBottom: "0.85rem" }}>
-              <div className="nv2-metric">
-                <span>Blocs minés</span>
-                <strong style={{ color: "var(--accent)" }}>{activity.minedCount}</strong>
+      {tab === "activite" && (
+        <div className="nv2-panel__section">
+          <div className="nv2-panel__section-label">Activité on-chain</div>
+          {loadingActivity && <p className="nv2-muted nv2-small nv2-loading">Chargement…</p>}
+          {!loadingActivity && activity && (
+            <>
+              <div className="nv2-metrics-grid" style={{ marginBottom: "0.85rem" }}>
+                <div className="nv2-metric">
+                  <span>Blocs minés</span>
+                  <strong style={{ color: "var(--accent)" }}>{activity.minedCount}</strong>
+                </div>
+                <div className="nv2-metric">
+                  <span>Validations</span>
+                  <strong style={{ color: "#a78bfa" }}>{activity.validatedCount}</strong>
+                </div>
               </div>
-              <div className="nv2-metric">
-                <span>Validations</span>
-                <strong style={{ color: "#a78bfa" }}>{activity.validatedCount}</strong>
-              </div>
-            </div>
-            {activity.recentActivity.length > 0 && (
-              <div className="nv2-activity-list">
-                {activity.recentActivity.slice(0, 5).map((b) => (
-                  <div key={b.blockHash} className="nv2-activity-item">
-                    <span className="nv2-activity-dot"
-                          style={{ background: b.role === "author" ? "var(--accent)" : "#a78bfa" }} />
-                    <div className="nv2-activity-body">
-                      <span className="nv2-activity-role">
-                        {b.role === "author" ? "Miné" : "Validé"}
-                        {" · "}
-                        <span style={{ color: screenColor(b.poolScreen) }}>{b.poolScreen}</span>
-                      </span>
-                      <span className="nv2-activity-meta">
-                        #{b.blockIndex} · {(b.score * 100).toFixed(0)}% · {formatRelativeTime(b.minedAt)}
-                      </span>
+              {activity.recentActivity.length > 0 && (
+                <div className="nv2-activity-list">
+                  {activity.recentActivity.slice(0, 5).map((b) => (
+                    <div key={b.blockHash} className="nv2-activity-item">
+                      <span className="nv2-activity-dot"
+                            style={{ background: b.role === "author" ? "var(--accent)" : "#a78bfa" }} />
+                      <div className="nv2-activity-body">
+                        <span className="nv2-activity-role">
+                          {b.role === "author" ? "Miné" : "Validé"}
+                          {" · "}
+                          <span style={{ color: screenColor(b.poolScreen) }}>{b.poolScreen}</span>
+                        </span>
+                        <span className="nv2-activity-meta">
+                          #{b.blockIndex} · {(b.score * 100).toFixed(0)}% · {formatRelativeTime(b.minedAt)}
+                        </span>
+                      </div>
                     </div>
-                  </div>
-                ))}
-              </div>
-            )}
-            {activity.recentActivity.length === 0 && (
-              <p className="nv2-muted nv2-small">Aucune activité récente</p>
-            )}
-          </>
-        )}
-        {!loadingActivity && !activity && (
-          <p className="nv2-muted nv2-small">Non disponible</p>
-        )}
-      </div>
-
-      {/* ── Métriques ── */}
-      <div className="nv2-panel__section">
-        <div className="nv2-panel__section-label">Métriques</div>
-        <div className="nv2-metrics-grid">
-          <div className="nv2-metric"><span>Firmware</span><strong>{device.firmware || "?"}</strong></div>
-          <div className="nv2-metric"><span>Frames envoyées</span><strong>{device.framesSent.toLocaleString()}</strong></div>
-          <div className="nv2-metric"><span>Dernière vue</span><strong>{formatRelativeTime(device.lastSeen)}</strong></div>
-          <div className="nv2-metric"><span>Dernier ping</span><strong>{formatRelativeTime(device.lastPing)}</strong></div>
+                  ))}
+                </div>
+              )}
+              {activity.recentActivity.length === 0 && (
+                <p className="nv2-muted nv2-small">Aucune activité récente</p>
+              )}
+            </>
+          )}
+          {!loadingActivity && !activity && (
+            <p className="nv2-muted nv2-small">Non disponible</p>
+          )}
         </div>
-      </div>
+      )}
 
-      {/* ── Frame active (queue courante) — fusionnée avec le bloc si même frameId ── */}
-      {(() => {
-        // Axe 5 : si la frame active correspond au dernier bloc validé → affichage fusionné
+      {/* ── Frame en cours / dernier bloc — fusionnés si même frameId ── */}
+      {tab === "frame" && (() => {
         const frameIsBlock = !loadingBlock && lastBlock && device.recentFrame &&
           device.recentFrame.frameId === lastBlock.frameId;
 
         if (frameIsBlock) {
-          // Mode fusionné
           return (
             <div className="nv2-panel__section">
               <div className="nv2-panel__section-label" style={{ color: "var(--accent)" }}>
@@ -342,12 +424,10 @@ export function SidePanel({ device, onClose }: { device: NetworkDevice | null; o
           );
         }
 
-        // Mode séparé (frame active ≠ dernier bloc)
         return (
           <>
-            {/* Frame active */}
             <div className="nv2-panel__section">
-              <div className="nv2-panel__section-label">Frame en cours d'affichage</div>
+              <div className="nv2-panel__section-label">Frame en cours d&apos;affichage</div>
               {device.recentFrame && device.recentFrame.preview.mode !== "none" ? (
                 <>
                   <FramePreviewMini
@@ -366,7 +446,6 @@ export function SidePanel({ device, onClose }: { device: NetworkDevice | null; o
               )}
             </div>
 
-            {/* Dernier bloc validé */}
             <div className="nv2-panel__section">
               <div className="nv2-panel__section-label">Dernier bloc validé</div>
               {loadingBlock && <p className="nv2-muted nv2-small nv2-loading">Chargement…</p>}
@@ -426,6 +505,10 @@ export function SidePanel({ device, onClose }: { device: NetworkDevice | null; o
         );
       })()}
 
+      {tab === "logs" && (
+        <EspDeviceLog device={device} activity={activity} lastBlock={lastBlock} />
+      )}
+
       {/* ── Styles ── */}
       <style>{`
         .nv2-loading {
@@ -477,7 +560,191 @@ export function SidePanel({ device, onClose }: { device: NetworkDevice | null; o
         .nv2-activity-body { display:flex; flex-direction:column; gap:1px; }
         .nv2-activity-role { font-size:0.8rem; color:var(--text2); font-weight:600; }
         .nv2-activity-meta { font-size:0.72rem; color:var(--text3); font-family:monospace; }
+
+        /* Bandeau "écran sélectionné" (clic sur un nœud-écran de la carte) */
+        .nv2-focus-banner {
+          display: flex; align-items: center; gap: 0.6rem;
+          margin: 0 0 0.9rem; padding: 0.55rem 0.8rem;
+          border: 1px solid; border-radius: 0.7rem;
+        }
+        .nv2-focus-banner__dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+        .nv2-focus-banner strong { display: block; font-size: 0.85rem; }
+        .nv2-focus-banner__hint { display: block; font-size: 0.7rem; color: var(--text3, #64748b); }
+
+        /* Onglets — 4 sections compactes (Aperçu/Activité/Frame/Logs).
+           flex-wrap : sur panel étroit (mobile, ~340px), 2 lignes plutôt que
+           des libellés tronqués/qui débordent. */
+        .nv2-tabs {
+          display: flex;
+          flex-wrap: wrap;
+          gap: 0.3rem 0.7rem;
+          padding: 0 1.25rem;
+          margin: 0.6rem 0 0.4rem;
+          border-bottom: 1px solid rgba(255,255,255,0.06);
+        }
+        .nv2-tab {
+          appearance: none;
+          background: none;
+          border: none;
+          color: var(--text3, #64748b);
+          font-size: 0.74rem;
+          font-weight: 600;
+          white-space: nowrap;
+          padding: 0.45rem 0.1rem 0.6rem;
+          margin-bottom: -1px;
+          border-bottom: 2px solid transparent;
+          cursor: pointer;
+        }
+        .nv2-tab:hover { color: var(--text2, #94a3b8); }
+        .nv2-tab--active {
+          color: var(--accent, #7c6bff);
+          border-bottom-color: var(--accent, #7c6bff);
+        }
+
+        /* Terminal "Logs ESP" — rendu Serial.print() façon firmware */
+        .esp-log {
+          margin: 0.75rem 1.25rem 1rem;
+          background: #0b0f1a;
+          border: 1px solid rgba(255,255,255,0.06);
+          border-radius: 10px;
+          overflow: hidden;
+          font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        }
+        .esp-log__head {
+          padding: 0.5rem 0.7rem;
+          font-size: 10px;
+          color: #475569;
+          border-bottom: 1px solid rgba(255,255,255,0.06);
+          background: rgba(255,255,255,0.02);
+          font-style: italic;
+        }
+        .esp-log__body {
+          max-height: 360px;
+          overflow-y: auto;
+          padding: 0.5rem 0.7rem;
+          display: flex;
+          flex-direction: column;
+          gap: 2px;
+        }
+        .esp-log__line {
+          font-size: 11px;
+          line-height: 1.55;
+          color: #cbd5e1;
+          white-space: pre-wrap;
+          word-break: break-word;
+        }
+        .esp-log__line--muted { color: #475569; font-style: italic; }
+        .esp-log__tag { font-weight: 700; }
       `}</style>
     </aside>
+  );
+}
+
+// ─── Logs ESP — vue "moniteur série" pour un device précis ──────────────────
+//
+// Reformate les données déjà chargées par ce panneau (device, activité
+// on-chain, dernier bloc validé / frame active — cf. fetchs ci-dessus) au
+// format Serial.print() exact du firmware (cf. esp_eink_*.ino : doPull,
+// doFetchFrame, doValidate). Aucune requête supplémentaire n'est ajoutée et
+// aucune donnée sensible (mac, pairCode…) n'est affichée — uniquement ce qui
+// transite déjà publiquement entre l'ESP et le serveur.
+
+const TAG_COLOR2: Record<string, string> = {
+  PULL:        "#60a5fa",
+  FETCHFRAME:  "#4ade80",
+  VALIDATE:    "#fbbf24",
+  HTTP:        "#a2a3bb",
+  OWNED:       "#a78bfa",
+};
+
+function tagSpan(tag: string): React.ReactNode {
+  return <span className="esp-log__tag" style={{ color: TAG_COLOR2[tag] ?? "#a2a3bb" }}>[{tag}]</span>;
+}
+
+function buildEspDeviceLog(
+  device: NetworkDevice,
+  activity: DeviceActivity | null,
+  lastBlock: MinedBlock | null,
+): { id: string; ts: number; node: React.ReactNode }[] {
+  const lines: { id: string; ts: number; node: React.ReactNode }[] = [];
+  let n = 0;
+  const push = (ts: number, tag: string, text: string) => {
+    lines.push({ id: `el-${n++}`, ts, node: <>{tagSpan(tag)} {text}</> });
+  };
+
+  // Boot / register — toujours en première ligne
+  push(device.lastSeen || device.lastPing || Date.now(), "HTTP",
+    `register OK · firmware=${device.firmware || "?"} · écrans=${device.screens.length}`);
+
+  // Frame active — équivalent doFetchFrame()
+  if (device.recentFrame) {
+    const f = device.recentFrame;
+    push(f.createdAt, "PULL",
+      `Nouvelle frame frameId=${f.frameId.slice(0, 12)}… source=${f.sourceDeviceId ?? "consensus"} → fetch`);
+    push(f.createdAt + 1, "FETCHFRAME",
+      `✅ affichée frameId=${f.frameId.slice(0, 12)}… source=${f.sourceDeviceId ?? "consensus"}`);
+  } else {
+    push(device.lastPing || Date.now(), "PULL", "Aucune frame");
+  }
+
+  // Dernier bloc validé / miné par ce device — équivalent doValidate()
+  if (lastBlock) {
+    if (lastBlock.validatorIds?.includes(device.deviceId)) {
+      push(lastBlock.minedAt, "VALIDATE",
+        `candidateId=${lastBlock.blockHash.slice(0, 10)}… score=${lastBlock.drawScore.toFixed(3)}`);
+      push(lastBlock.minedAt + 1, "VALIDATE", "Vote OK");
+    }
+    push(lastBlock.minedAt + 2, "PULL",
+      `Nouveau bloc #${lastBlock.blockIndex} hash=${lastBlock.blockHash.slice(0, 12)}…`);
+  }
+
+  // Historique d'activité on-chain — agrégat des derniers blocs minés/validés
+  if (activity?.recentActivity?.length) {
+    for (const b of activity.recentActivity.slice(0, 6)) {
+      if (b.role === "author") {
+        push(b.minedAt, "PULL",
+          `Nouveau bloc #${b.blockIndex} hash=${b.blockHash.slice(0, 12)}… (${b.poolScreen})`);
+        push(b.minedAt + 1, "VALIDATE", `BLOC MINE — ${b.validatorCount} validateur(s)`);
+      } else {
+        push(b.minedAt, "VALIDATE",
+          `candidateId=${b.blockHash.slice(0, 10)}… score=${b.score.toFixed(3)} → Vote OK (${b.poolScreen})`);
+      }
+    }
+  }
+
+  // Cycle de pull — état réseau courant
+  push(device.lastPing || Date.now(), "PULL",
+    `nextInterval=${device.isOnline ? "30" : "300"}s (retryAfter=${device.isOnline ? 0 : 300})`);
+
+  return lines.sort((a, b) => a.ts - b.ts).slice(-40);
+}
+
+function EspDeviceLog({
+  device,
+  activity,
+  lastBlock,
+}: {
+  device: NetworkDevice;
+  activity: DeviceActivity | null;
+  lastBlock: MinedBlock | null;
+}) {
+  const lines = buildEspDeviceLog(device, activity, lastBlock);
+
+  return (
+    <div className="esp-log">
+      <div className="esp-log__head">
+        échanges réels {device.deviceId.slice(0, 10)}… ↔ serveur — format Serial.print() (cf. firmware .ino)
+      </div>
+      <div className="esp-log__body">
+        {lines.length === 0 && (
+          <div className="esp-log__line esp-log__line--muted">aucun échange enregistré pour ce device</div>
+        )}
+        {lines.map((l) => (
+          <div key={l.id} className="esp-log__line">
+            <span style={{ color: "#475569" }}>[{formatRelativeTime(l.ts)}]</span> {l.node}
+          </div>
+        ))}
+      </div>
+    </div>
   );
 }

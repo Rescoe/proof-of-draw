@@ -345,7 +345,13 @@ function TabReplay({ block }: { block: BlockWithImage }) {
 
   if (loading) return <p className="bd-muted">Chargement…</p>;
 
-  const SCALE = W <= 128 ? 2 : 1;
+  // Mise à l'échelle adaptée à la taille réelle du dessin (W×H, qui dépend du
+  // type d'écran source) plutôt qu'un facteur fixe par seuil — qui faisait
+  // paraître certains écrans minuscules et d'autres démesurés selon le cas.
+  // "contain" dans une boîte cible, ratio conservé.
+  const REPLAY_BOX_W = 320;
+  const REPLAY_BOX_H = 220;
+  const SCALE = Math.min(REPLAY_BOX_W / W, REPLAY_BOX_H / H);
 
   return (
     <div className="bd-replay">

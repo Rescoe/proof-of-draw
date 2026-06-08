@@ -5,8 +5,14 @@ import type { NetworkSnapshot, NetworkDevice } from "@/lib/networkSnapshot";
 
 type Props = {
   snapshot: NetworkSnapshot;
-  onDeviceSelect: (device: NetworkDevice) => void;
+  // `screen` renseigné uniquement lors d'un clic sur un nœud-écran satellite —
+  // permet au Side Panel de distinguer "infos ESP" vs "infos du bloc affiché
+  // sur cet écran précis" sans dupliquer le panel.
+  onDeviceSelect: (device: NetworkDevice, screen?: string) => void;
   selectedDeviceId?: string;
+  // Clic sur le nœud central "RESCOE" — ouvre les infos serveur dans le panel
+  onServerSelect: () => void;
+  isServerSelected?: boolean;
 };
 
 // Couleur par type d'écran — même palette que SidePanel
@@ -25,20 +31,16 @@ const ZOOM_MIN  = 0.4;
 const ZOOM_MAX  = 4.0;
 const ZOOM_STEP = 0.25;
 
-export function NetworkStage({ snapshot, onDeviceSelect, selectedDeviceId }: Props) {
+export function NetworkStage({ snapshot, onDeviceSelect, selectedDeviceId, onServerSelect, isServerSelected }: Props) {
   const stageRef = useRef<HTMLDivElement | null>(null);
   const svgRef   = useRef<SVGSVGElement | null>(null);
   const [dims, setDims] = useState({ width: 900, height: 600 });
   const [vb, setVb]     = useState<ViewBox>({ x: 0, y: 0, w: 900, h: 600 });
   const dragging   = useRef(false);
   const lastPos    = useRef({ x: 0, y: 0 });
-
-  // ── Verrou d'interaction ────────────────────────────────────────────────────
-  // Par défaut la carte est verrouillée : scroll/pan désactivés pour ne pas
-  // bloquer le scroll de page. L'utilisateur clique "Naviguer" pour activer.
-  const [navEnabled, setNavEnabled] = useState(false);
-  const navEnabledRef = useRef(false);
-  navEnabledRef.current = navEnabled;
+  // Pointeurs tactiles actifs — pour le pinch à deux doigts (pan + zoom natif)
+  const activePointers = useRef<Map<number, { x: number; y: number }>>(new Map());
+  const pinchStart = useRef<{ dist: number; midX: number; midY: number; vb: ViewBox } | null>(null);
 
   // Responsive + init viewBox
   useEffect(() => {
@@ -46,7 +48,12 @@ export function NetworkStage({ snapshot, onDeviceSelect, selectedDeviceId }: Pro
     if (!el || typeof ResizeObserver === "undefined") return;
     const ro = new ResizeObserver(([e]) => {
       const w = e.contentRect.width;
-      const h = Math.max(420, Math.min(680, w * 0.62));
+      // Sur petit écran (mobile) la hauteur minimale de 420px était imposée
+      // quelle que soit la largeur — la carte occupait alors tout l'écran.
+      // On laisse la hauteur suivre la largeur (ratio ~0.85 sous 520px,
+      // ~0.62 au-dessus), bornée à [280, 680].
+      const ratio = w < 520 ? 0.85 : 0.62;
+      const h = Math.max(280, Math.min(680, w * ratio));
       setDims({ width: w, height: h });
       setVb((prev) => ({ ...prev, w, h }));
     });
@@ -58,14 +65,57 @@ export function NetworkStage({ snapshot, onDeviceSelect, selectedDeviceId }: Pro
   const cx = dims.width / 2;
   const cy = dims.height / 2;
 
-  const espLayout = useMemo((): { device: NetworkDevice; x: number; y: number }[] => {
+  // Anneaux concentriques auto-adaptatifs : répartit les devices sur plusieurs
+  // cercles à mesure que leur nombre croît, plutôt qu'un seul cercle qui se
+  // surcharge. Lisible de quelques unités à plusieurs centaines de nœuds sans
+  // moteur de graphe force-directed (cf. non-goal "réarchitecture totale").
+  const espLayout = useMemo((): { device: NetworkDevice; x: number; y: number; ring: number }[] => {
     if (devices.length === 0) return [];
-    const radius = Math.min(dims.width * 0.32, dims.height * 0.32);
-    return devices.map((device, i) => {
-      const angle = (Math.PI * 2 * i) / devices.length - Math.PI / 2;
-      return { device, x: cx + Math.cos(angle) * radius, y: cy + Math.sin(angle) * radius };
+    const maxRadius = Math.min(dims.width, dims.height) * 0.42;
+    const minRadius = Math.min(dims.width, dims.height) * 0.24;
+
+    const ringCounts: number[] = [];
+    let remaining = devices.length;
+    let capacity = Math.min(devices.length, 8);
+    while (remaining > 0) {
+      const n = Math.min(remaining, capacity);
+      ringCounts.push(n);
+      remaining -= n;
+      capacity = Math.round(capacity * 1.7);
+    }
+
+    const out: { device: NetworkDevice; x: number; y: number; ring: number }[] = [];
+    let idx = 0;
+    ringCounts.forEach((count, ring) => {
+      const radius = ringCounts.length === 1
+        ? maxRadius * 0.78
+        : minRadius + ((maxRadius - minRadius) * ring) / (ringCounts.length - 1);
+      // Décale chaque anneau pour éviter l'alignement radial des nœuds
+      const ringOffset = ring * 0.35;
+      for (let i = 0; i < count; i++) {
+        const angle = (Math.PI * 2 * i) / count - Math.PI / 2 + ringOffset;
+        out.push({
+          device: devices[idx],
+          x: cx + Math.cos(angle) * radius,
+          y: cy + Math.sin(angle) * radius,
+          ring,
+        });
+        idx++;
+      }
     });
+    return out;
   }, [dims.width, dims.height, devices, cx, cy]);
+
+  // Échelle des nœuds/texte — se réduit quand le réseau grandit pour que
+  // tout reste lisible sans déborder (4, 10, 50, 100+ ESP).
+  const nodeScale = Math.max(0.5, Math.min(1, 9 / Math.max(devices.length, 1)));
+
+  // Rayons distincts des anneaux — pour le tracé décoratif (un cercle par anneau)
+  const ringRadii = useMemo(() => {
+    const set = new Set<number>();
+    espLayout.forEach((n) => set.add(Math.round(Math.hypot(n.x - cx, n.y - cy))));
+    return Array.from(set);
+  }, [espLayout, cx, cy]);
 
   const screenNodes = useMemo(() => {
     return espLayout.flatMap((node) =>
@@ -74,7 +124,7 @@ export function NetworkStage({ snapshot, onDeviceSelect, selectedDeviceId }: Pro
         const spreadAngle = total > 1 ? (Math.PI * 0.7) / (total - 1) : 0;
         const baseAngle = Math.atan2(node.y - cy, node.x - cx);
         const angle = baseAngle + (si - (total - 1) / 2) * spreadAngle;
-        const dist = 80;
+        const dist = 80 * nodeScale;
         return {
           screen,
           deviceId: node.device.deviceId,
@@ -87,11 +137,14 @@ export function NetworkStage({ snapshot, onDeviceSelect, selectedDeviceId }: Pro
         };
       })
     );
-  }, [espLayout, cx, cy]);
+  }, [espLayout, cx, cy, nodeScale]);
 
   // ── Zoom/pan ────────────────────────────────────────────────────────────────
 
   const zoom = dims.width / vb.w;
+
+  // Niveau de détail (LOD) des libellés : zoom élevé → nom complet, faible → court
+  const labelMaxLen = zoom > 1.6 ? 16 : zoom > 0.9 ? 10 : 6;
 
   const zoomAt = useCallback((factor: number, pivotSvgX: number, pivotSvgY: number) => {
     setVb((prev) => {
@@ -113,27 +166,16 @@ export function NetworkStage({ snapshot, onDeviceSelect, selectedDeviceId }: Pro
   const vbRef = useRef(vb);
   useEffect(() => { vbRef.current = vb; }, [vb]);
 
-  // Désactiver navigation si clic en dehors ou ESC
-  useEffect(() => {
-    if (!navEnabled) return;
-    const handleOutside = (e: MouseEvent) => {
-      if (!stageRef.current?.contains(e.target as Node)) setNavEnabled(false);
-    };
-    const handleEsc = (e: KeyboardEvent) => { if (e.key === "Escape") setNavEnabled(false); };
-    document.addEventListener("mousedown", handleOutside);
-    document.addEventListener("keydown",   handleEsc);
-    return () => {
-      document.removeEventListener("mousedown", handleOutside);
-      document.removeEventListener("keydown",   handleEsc);
-    };
-  }, [navEnabled]);
-
-  // Wheel zoom — seulement quand navEnabled (sinon le scroll de page passe normalement)
+  // ── Souris (PC) : drag pour déplacer, molette pour zoomer ──────────────────
+  // Le déplacement à la souris est toujours actif (clic dans le canvas, ne
+  // gêne jamais le scroll de la page). Le zoom à la molette ne capture
+  // l'évènement que si Ctrl/⌘ est enfoncé (= pincement trackpad / convention
+  // standard) — sinon la molette fait défiler la page normalement.
   useEffect(() => {
     const svg = svgRef.current;
     if (!svg) return;
     const handleWheel = (e: WheelEvent) => {
-      if (!navEnabledRef.current) return; // laisser le scroll de page passer
+      if (!e.ctrlKey && !e.metaKey) return; // laisser le scroll de page passer
       e.preventDefault();
       const rect = svg.getBoundingClientRect();
       const cur  = vbRef.current;
@@ -146,29 +188,95 @@ export function NetworkStage({ snapshot, onDeviceSelect, selectedDeviceId }: Pro
     return () => svg.removeEventListener("wheel", handleWheel);
   }, [zoomAt]);
 
-  const onPointerDown = useCallback((e: React.PointerEvent<SVGSVGElement>) => {
-    if (!navEnabledRef.current) return; // pas de pan quand verrouillé
-    if (e.button !== 0) return;
-    dragging.current = true;
-    lastPos.current = { x: e.clientX, y: e.clientY };
-    (e.currentTarget as SVGSVGElement).setPointerCapture(e.pointerId);
-  }, []);
-
-  const onPointerMove = useCallback((e: React.PointerEvent<SVGSVGElement>) => {
-    if (!dragging.current) return;
+  const panBy = useCallback((dxPx: number, dyPx: number) => {
     const svg = svgRef.current;
     if (!svg) return;
     const rect = svg.getBoundingClientRect();
-    const dx = ((e.clientX - lastPos.current.x) / rect.width)  * vb.w;
-    const dy = ((e.clientY - lastPos.current.y) / rect.height) * vb.h;
-    lastPos.current = { x: e.clientX, y: e.clientY };
+    const cur = vbRef.current;
+    const dx = (dxPx / rect.width)  * cur.w;
+    const dy = (dyPx / rect.height) * cur.h;
     setVb((prev) => ({ ...prev, x: prev.x - dx, y: prev.y - dy }));
-  }, [vb]);
+  }, []);
 
-  const onPointerUp = useCallback(() => { dragging.current = false; }, []);
+  const onPointerDown = useCallback((e: React.PointerEvent<SVGSVGElement>) => {
+    // Un clic sur un nœud (ESP/écran, role="button") ne doit jamais démarrer
+    // un drag/pincement : capturer le pointeur sur le <svg> redirige ensuite
+    // mouseup/click vers le <svg> et le onClick du nœud ne se déclenche jamais.
+    // On laisse donc le clic natif du nœud se produire normalement.
+    if ((e.target as Element).closest('[role="button"]')) return;
 
-  const handleSelect = useCallback((device: NetworkDevice) => {
+    (e.currentTarget as SVGSVGElement).setPointerCapture(e.pointerId);
+    activePointers.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
+
+    if (e.pointerType === "touch") {
+      // Démarrage d'un pincement à deux doigts
+      if (activePointers.current.size === 2) {
+        const pts = Array.from(activePointers.current.values());
+        const dist = Math.hypot(pts[1].x - pts[0].x, pts[1].y - pts[0].y);
+        pinchStart.current = {
+          dist,
+          midX: (pts[0].x + pts[1].x) / 2,
+          midY: (pts[0].y + pts[1].y) / 2,
+          vb: vbRef.current,
+        };
+      }
+      return; // un seul doigt = laisser le scroll vertical de la page
+    }
+
+    if (e.button !== 0) return;
+    dragging.current = true;
+    lastPos.current = { x: e.clientX, y: e.clientY };
+  }, []);
+
+  const onPointerMove = useCallback((e: React.PointerEvent<SVGSVGElement>) => {
+    if (e.pointerType === "touch") {
+      if (!activePointers.current.has(e.pointerId)) return;
+      activePointers.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
+
+      if (activePointers.current.size === 2 && pinchStart.current) {
+        const svg = svgRef.current;
+        if (!svg) return;
+        const rect = svg.getBoundingClientRect();
+        const pts = Array.from(activePointers.current.values());
+        const dist = Math.hypot(pts[1].x - pts[0].x, pts[1].y - pts[0].y);
+        const midX = (pts[0].x + pts[1].x) / 2;
+        const midY = (pts[0].y + pts[1].y) / 2;
+        const start = pinchStart.current;
+
+        const scale = dist / start.dist;
+        const newW = start.vb.w / scale;
+        const newH = start.vb.h / scale;
+        const newZ = dims.width / newW;
+        if (newZ < ZOOM_MIN || newZ > ZOOM_MAX) return;
+
+        // Point du monde sous le centre initial du pincement
+        const wx = start.vb.x + ((start.midX - rect.left) / rect.width)  * start.vb.w;
+        const wy = start.vb.y + ((start.midY - rect.top)  / rect.height) * start.vb.h;
+        // Repositionne pour que ce même point reste sous le centre courant (pan + zoom combinés)
+        const nx = wx - ((midX - rect.left) / rect.width)  * newW;
+        const ny = wy - ((midY - rect.top)  / rect.height) * newH;
+        setVb({ x: nx, y: ny, w: newW, h: newH });
+      }
+      return;
+    }
+
+    if (!dragging.current) return;
+    panBy(e.clientX - lastPos.current.x, e.clientY - lastPos.current.y);
+    lastPos.current = { x: e.clientX, y: e.clientY };
+  }, [panBy, dims.width]);
+
+  const onPointerUp = useCallback((e: React.PointerEvent<SVGSVGElement>) => {
+    dragging.current = false;
+    activePointers.current.delete(e.pointerId);
+    if (activePointers.current.size < 2) pinchStart.current = null;
+  }, []);
+
+  const handleSelectEsp = useCallback((device: NetworkDevice) => {
     onDeviceSelect(device);
+  }, [onDeviceSelect]);
+
+  const handleSelectScreen = useCallback((device: NetworkDevice, screen: string) => {
+    onDeviceSelect(device, screen);
   }, [onDeviceSelect]);
 
   const viewBoxStr = `${vb.x} ${vb.y} ${vb.w} ${vb.h}`;
@@ -196,27 +304,23 @@ export function NetworkStage({ snapshot, onDeviceSelect, selectedDeviceId }: Pro
             <strong>{snapshot.totals.screens}</strong>
             <span>écrans</span>
           </div>
-            <button
+          <button
             className="nv2-overview-btn"
             onClick={resetZoom}
             title="Vue d'ensemble"
             aria-label="Réinitialiser le zoom"
           >
-            ⊞
-          </button>
-          <button
-            className={`nv2-nav-btn${navEnabled ? " nv2-nav-btn--active" : ""}`}
-            onClick={() => setNavEnabled((v) => !v)}
-            title={navEnabled ? "Verrouiller la navigation (ESC)" : "Activer le déplacement / zoom"}
-            aria-pressed={navEnabled}
-          >
-            {navEnabled ? "✕ quitter navigation" : "🖱 naviguer"}
+            ⊞ vue d&apos;ensemble
           </button>
         </div>
       </div>
 
-      {/* Canvas */}
-      <div className="nv2-stage" ref={stageRef} style={{ position: "relative" }}>
+      {/* Canvas — déplacement & zoom toujours actifs (pas de mode "navigation"
+          à activer manuellement) :
+            • PC    : glisser-déposer souris pour déplacer, Ctrl/⌘+molette pour zoomer
+            • Mobile: un doigt = défilement de la page, deux doigts = pincer pour
+                      déplacer/zoomer la carte (geste tactile natif) */}
+      <div className="nv2-stage" ref={stageRef} style={{ position: "relative", height: dims.height }}>
         <svg
           ref={svgRef}
           className="nv2-svg"
@@ -224,10 +328,11 @@ export function NetworkStage({ snapshot, onDeviceSelect, selectedDeviceId }: Pro
           preserveAspectRatio="xMidYMid meet"
           aria-hidden="true"
           style={{
-            cursor: navEnabled ? "grab" : "default",
+            cursor: "grab",
             userSelect: "none",
-            // Sur mobile : ne bloquer le scroll tactile que quand la navigation est active
-            touchAction: navEnabled ? "none" : "pan-y",
+            // Un doigt fait défiler la page verticalement ; le pincement à deux
+            // doigts est intercepté par nos handlers pointer (pan + zoom).
+            touchAction: "pan-y",
           }}
           onPointerDown={onPointerDown}
           onPointerMove={onPointerMove}
@@ -254,27 +359,42 @@ export function NetworkStage({ snapshot, onDeviceSelect, selectedDeviceId }: Pro
 
           <rect width={dims.width} height={dims.height} fill="url(#nv2-grid)" />
 
-          {/* Core */}
-          <g transform={`translate(${cx},${cy})`}>
+          {/* Core — cliquable : ouvre les infos serveur dans le side panel */}
+          <g
+            transform={`translate(${cx},${cy})`}
+            style={{ cursor: "pointer" }}
+            onClick={onServerSelect}
+            role="button"
+            tabIndex={0}
+            aria-label="Serveur RESCOE — voir les informations du réseau"
+            onKeyDown={(e) => e.key === "Enter" && onServerSelect()}
+          >
+            {isServerSelected && (
+              <circle r="62" fill="none" stroke="var(--accent)" strokeWidth="2"
+                      strokeOpacity="0.6" strokeDasharray="6, 6" className="nv2-sel-ring" />
+            )}
             <circle r="54" fill="none" stroke="rgba(59,130,246,0.15)" strokeWidth="1.5" className="nv2-core-pulse" />
             <circle r="42" fill="none" stroke="rgba(59,130,246,0.25)" strokeWidth="1" />
             <circle r="32" fill="rgba(59,130,246,0.12)" />
-            <circle r="26" fill="rgba(10,10,15,0.95)" stroke="var(--accent)" strokeWidth="2.5" />
+            <circle r="26" fill={isServerSelected ? "rgba(59,130,246,0.18)" : "rgba(10,10,15,0.95)"}
+                    stroke="var(--accent)" strokeWidth={isServerSelected ? 3 : 2.5} />
             <text x="0" y="-6" textAnchor="middle" fontSize="9" fill="var(--accent)"
-                  fontFamily="monospace" fontWeight="bold" letterSpacing="0.5">REDIS</text>
+                  fontFamily="monospace" fontWeight="bold" letterSpacing="0.5">RESCOE</text>
             <text x="0" y="8" textAnchor="middle" fontSize="8" fill="var(--text2)"
-                  fontFamily="monospace">Core</text>
+                  fontFamily="monospace">Serveur</text>
           </g>
 
-          {/* Orbite ESP */}
-          <circle
-            cx={cx} cy={cy}
-            r={Math.min(dims.width * 0.32, dims.height * 0.32)}
-            fill="none"
-            stroke="rgba(59,130,246,0.1)"
-            strokeWidth="1.5"
-            strokeDasharray="5, 10"
-          />
+          {/* Anneaux ESP — un cercle par anneau (auto-adapté au nombre de devices) */}
+          {ringRadii.map((r) => (
+            <circle
+              key={`ring-${r}`}
+              cx={cx} cy={cy} r={r}
+              fill="none"
+              stroke="rgba(59,130,246,0.1)"
+              strokeWidth="1.5"
+              strokeDasharray="5, 10"
+            />
+          ))}
 
           {/* Liens ESP ↔ Core */}
           {espLayout.map((node, i) => {
@@ -364,14 +484,14 @@ export function NetworkStage({ snapshot, onDeviceSelect, selectedDeviceId }: Pro
             return (
               <g
                 key={`screen-node-${sn.deviceId}-${sn.screen.screen}`}
-                transform={`translate(${sn.x},${sn.y})`}
+                transform={`translate(${sn.x},${sn.y}) scale(${nodeScale})`}
                 opacity={active ? 1 : 0.3}
                 style={{ cursor: "pointer" }}
-                onClick={() => handleSelect(sn.device)}
+                onClick={() => handleSelectScreen(sn.device, sn.screen.screen)}
                 role="button"
                 tabIndex={0}
                 aria-label={`Écran ${sn.screen.label} — ${sn.device.artistName || sn.deviceId}`}
-                onKeyDown={(e) => e.key === "Enter" && handleSelect(sn.device)}
+                onKeyDown={(e) => e.key === "Enter" && handleSelectScreen(sn.device, sn.screen.screen)}
               >
                 {isParentSelected && (
                   <circle r="26" fill="none" stroke={color} strokeWidth="1.5"
@@ -399,7 +519,10 @@ export function NetworkStage({ snapshot, onDeviceSelect, selectedDeviceId }: Pro
                   fontFamily="monospace"
                   fontWeight="500"
                 >
-                  {sn.screen.label.length > 8 ? sn.screen.label.slice(0, 8) + "…" : sn.screen.label}
+                  {(() => {
+                    const max = Math.min(8, labelMaxLen);
+                    return sn.screen.label.length > max ? sn.screen.label.slice(0, max) + "…" : sn.screen.label;
+                  })()}
                 </text>
               </g>
             );
@@ -412,13 +535,13 @@ export function NetworkStage({ snapshot, onDeviceSelect, selectedDeviceId }: Pro
             return (
               <g
                 key={`esp-${node.device.deviceId}`}
-                transform={`translate(${node.x},${node.y})`}
+                transform={`translate(${node.x},${node.y}) scale(${nodeScale})`}
                 style={{ cursor: "pointer" }}
-                onClick={() => handleSelect(node.device)}
+                onClick={() => handleSelectEsp(node.device)}
                 role="button"
                 tabIndex={0}
                 aria-label={`ESP ${node.device.artistName || node.device.deviceId}`}
-                onKeyDown={(e) => e.key === "Enter" && handleSelect(node.device)}
+                onKeyDown={(e) => e.key === "Enter" && handleSelectEsp(node.device)}
               >
                 {isSelected && (
                   <circle r="38" fill="none" stroke="var(--accent)"
@@ -438,12 +561,19 @@ export function NetworkStage({ snapshot, onDeviceSelect, selectedDeviceId }: Pro
                       fontFamily="monospace" fontWeight="700">ESP</text>
                 <text x="0" y="3" textAnchor="middle" fontSize="10"
                       fill="var(--text)" fontFamily="monospace" fontWeight="700">
-                  {(node.device.artistName || node.device.deviceId).slice(0, 10)}
+                  {(() => {
+                    const name = node.device.artistName || node.device.deviceId;
+                    return name.length > labelMaxLen ? name.slice(0, labelMaxLen) + "…" : name;
+                  })()}
                 </text>
-                <text x="0" y="16" textAnchor="middle" fontSize="8"
-                      fill="var(--text2)" fontFamily="monospace">
-                  {node.device.screens.length} écran{node.device.screens.length > 1 ? "s" : ""}
-                </text>
+                {/* Le détail "N écrans" disparaît au dézoom (LOD) — la pastille
+                    de statut + le nom suffisent pour une vue d'ensemble dense */}
+                {labelMaxLen > 6 && (
+                  <text x="0" y="16" textAnchor="middle" fontSize="8"
+                        fill="var(--text2)" fontFamily="monospace">
+                    {node.device.screens.length} écran{node.device.screens.length > 1 ? "s" : ""}
+                  </text>
+                )}
                 <circle cx="22" cy="-22" r="6"
                         fill={online ? "var(--success)" : "var(--text3)"}
                         stroke="rgba(10,10,15,0.9)" strokeWidth="1.5" />
@@ -452,24 +582,23 @@ export function NetworkStage({ snapshot, onDeviceSelect, selectedDeviceId }: Pro
           })}
         </svg>
 
-        {/* Contrôles zoom — visibles seulement en mode navigation */}
-        {navEnabled && (
-          <div className="nv2-zoom-controls">
-            <button className="nv2-zoom-btn" aria-label="Zoom avant"
-              onClick={() => zoomAt(1 + ZOOM_STEP, vb.x + vb.w / 2, vb.y + vb.h / 2)}>+</button>
-            <span className="nv2-zoom-pct">{zoomPct}%</span>
-            <button className="nv2-zoom-btn" aria-label="Zoom arrière"
-              onClick={() => zoomAt(1 / (1 + ZOOM_STEP), vb.x + vb.w / 2, vb.y + vb.h / 2)}>−</button>
-          </div>
-        )}
-
-        {/* Hint quand navigation verrouillée */}
-        {!navEnabled && (
-          <div className="nv2-lock-hint" aria-hidden="true">
-            Cliquez sur un ESP pour le sélectionner
-          </div>
-        )}
+        {/* Contrôles zoom — toujours visibles (déplacement/zoom actifs en permanence) */}
+        <div className="nv2-zoom-controls">
+          <button className="nv2-zoom-btn" aria-label="Zoom avant"
+            onClick={() => zoomAt(1 + ZOOM_STEP, vb.x + vb.w / 2, vb.y + vb.h / 2)}>+</button>
+          <span className="nv2-zoom-pct">{zoomPct}%</span>
+          <button className="nv2-zoom-btn" aria-label="Zoom arrière"
+            onClick={() => zoomAt(1 / (1 + ZOOM_STEP), vb.x + vb.w / 2, vb.y + vb.h / 2)}>−</button>
+        </div>
       </div>
+
+      {/* Légende — sous le cadre de la topologie uniquement (pas sous le panel
+          latéral) : courte, grise, discrète. Elle ajoute un peu de hauteur à
+          cette colonne, ce qui aligne au passage le bas de la carte avec celui
+          du panel/terminal voisin (cf. align-items:stretch côté NetworkMap). */}
+      <p className="nv2-stage-hint" aria-hidden="true">
+        Cliquez sur un ESP, un écran ou le serveur RESCOE pour sélectionner · glisser pour déplacer · Ctrl+molette/pincer pour zoomer
+      </p>
     </div>
   );
 }
