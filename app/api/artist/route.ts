@@ -9,6 +9,8 @@ import {
   createOrUpdateArtist,
   linkDeviceToArtist,
   setArtistName,
+  normalizeSlug,
+  isSlugAvailable,
 } from "@/lib/deviceStore";
 import { getSession, setArtistIdInSession } from "@/lib/session";
 import { getIP, isBlacklisted, forbidden } from "@/lib/rateLimit";
@@ -69,6 +71,24 @@ export async function POST(req: NextRequest) {
       return undefined;
     })();
 
+    // Slug optionnel : normalisé + vérifié unique
+    let slug: string | undefined;
+    if (typeof body.slug === "string" && body.slug.trim()) {
+      slug = normalizeSlug(body.slug);
+      if (slug.length < 3) return json({ error: "Slug trop court (3 caractères min)" }, 400);
+
+      // Résoudre l'artistId existant pour la vérification d'unicité
+      let checkArtistId = session.artistId;
+      if (!checkArtistId) {
+        for (const did of session.deviceIds) {
+          const a = await getArtistByDevice(did);
+          if (a) { checkArtistId = a.artistId; break; }
+        }
+      }
+      const available = await isSlugAvailable(slug, checkArtistId);
+      if (!available) return json({ error: "Ce nom est déjà utilisé par un autre artiste" }, 409);
+    }
+
     if (!displayName)
       return json({ error: "displayName requis" }, 400);
 
@@ -87,6 +107,7 @@ export async function POST(req: NextRequest) {
       existingArtistId,
       profileImageBlockHash,
       profileImageCrop,
+      slug,
     );
 
     // Lier tous les devices de la session à ce profil + mettre à jour artistName (rétrocompat)

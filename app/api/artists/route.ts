@@ -36,6 +36,7 @@ export async function GET() {
       .filter((p): p is ArtistProfile => p !== null)
       .map((p) => ({
         artistId:    p.artistId,
+        slug:        p.slug,
         displayName: p.displayName,
         bio:         p.bio,
         profileImageBlockHash: p.profileImageBlockHash,

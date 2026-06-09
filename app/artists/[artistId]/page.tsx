@@ -13,6 +13,7 @@ import { SCREEN_PROFILES } from "@/lib/screenProfiles";
 
 interface ArtistProfile {
   artistId:    string;
+  slug?:       string;
   displayName: string;
   bio?:        string;
   profileImageBlockHash?: string;
@@ -298,7 +299,14 @@ export default function ArtistDetailPage() {
         if (!r.ok) throw new Error("Artiste introuvable");
         return r.json();
       })
-      .then((d) => setData(d))
+      .then((d) => {
+        setData(d);
+        // Réécrire l'URL avec le slug si on est arrivé par UUID
+        const slug = (d as ArtistPageData).profile.slug;
+        if (slug && artistId !== slug && typeof window !== "undefined") {
+          window.history.replaceState(null, "", `/artists/${slug}`);
+        }
+      })
       .catch((e) => setError(e.message))
       .finally(() => setLoading(false));
   }, [artistId]);

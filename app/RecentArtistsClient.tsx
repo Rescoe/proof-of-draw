@@ -79,7 +79,7 @@ export function RecentArtistsClient({ artists }: { artists: RecentArtistSummary[
 
       <div className="recent-artists__row">
         {artists.map((a) => (
-          <Link key={a.artistId} href={`/artists/${a.artistId}`} className="recent-artists__card">
+          <Link key={a.artistId} href={`/artists/${a.slug ?? a.artistId}`} className="recent-artists__card">
             <ArtistMiniAvatar artist={a} />
             <span className="recent-artists__name">{a.displayName}</span>
           </Link>

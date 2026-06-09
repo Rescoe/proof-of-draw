@@ -10,6 +10,7 @@ import { RecentArtistsClient } from "./RecentArtistsClient";
 
 export interface RecentArtistSummary {
   artistId:    string;
+  slug?:       string;
   displayName: string;
   profileImageBlockHash?: string;
   profileImageCrop?: { cx: number; cy: number; zoom: number };
@@ -31,6 +32,7 @@ export async function RecentArtists() {
 
     artists = await Promise.all(top.map(async (p) => ({
       artistId:              p.artistId,
+      slug:                  p.slug,
       displayName:           p.displayName,
       profileImageBlockHash: p.profileImageBlockHash,
       profileImageCrop:      p.profileImageCrop,

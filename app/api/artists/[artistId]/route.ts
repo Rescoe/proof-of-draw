@@ -5,7 +5,7 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { redis } from "@/lib/redis";
-import { getArtist, getAllDevices } from "@/lib/deviceStore";
+import { getArtist, getArtistBySlug, getAllDevices } from "@/lib/deviceStore";
 import { getBlockByHash, getBlockImage } from "@/lib/chain";
 
 export const dynamic = "force-dynamic";
@@ -18,15 +18,19 @@ export async function GET(
   { params }: { params: Promise<{ artistId: string }> },
 ) {
   try {
-    const { artistId } = await params;
-    if (!artistId) {
+    const { artistId: rawParam } = await params;
+    if (!rawParam) {
       return NextResponse.json({ error: "artistId requis" }, { status: 400 });
     }
 
-    const profile = await getArtist(artistId);
+    // Résoudre slug OU UUID : essaie le slug d'abord, puis l'UUID
+    let profile = await getArtistBySlug(rawParam);
+    if (!profile) profile = await getArtist(rawParam);
     if (!profile) {
       return NextResponse.json({ error: "Artiste introuvable" }, { status: 404 });
     }
+
+    const artistId = profile.artistId;
 
     // Devices liés à cet artiste (vue publique sans MAC ni pairCode)
     const allDevices = await getAllDevices();
@@ -94,6 +98,7 @@ export async function GET(
       {
         profile: {
           artistId:    profile.artistId,
+          slug:        profile.slug,
           displayName: profile.displayName,
           bio:         profile.bio,
           profileImageBlockHash: profile.profileImageBlockHash,

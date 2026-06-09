@@ -9,6 +9,7 @@ import type { BlockImagePayload } from "@/lib/chain";
 
 interface ArtistSummary {
   artistId:    string;
+  slug?:       string;
   displayName: string;
   bio?:        string;
   profileImageBlockHash?: string;
@@ -118,7 +119,7 @@ function ArtistAvatar({ artist }: { artist: ArtistSummary }) {
 
 function ArtistCard({ artist }: { artist: ArtistSummary }) {
   return (
-    <Link href={`/artists/${artist.artistId}`} style={{ textDecoration: "none" }}>
+    <Link href={`/artists/${artist.slug ?? artist.artistId}`} style={{ textDecoration: "none" }}>
       <div
         style={{
           padding: "1.1rem 1.25rem",

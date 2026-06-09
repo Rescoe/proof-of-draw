@@ -31,11 +31,28 @@ export interface Device {
 export interface ArtistProfile {
   artistId:    string;
   displayName: string;
+  /** Identifiant URL unique : /artists/{slug} — normalisé depuis displayName ou saisi manuellement */
+  slug?:       string;
   bio?:        string;
-  profileImageBlockHash?: string; // hash du bloc choisi comme avatar
-  profileImageCrop?: { cx: number; cy: number; zoom: number }; // recadrage avatar
+  profileImageBlockHash?: string;
+  profileImageCrop?: { cx: number; cy: number; zoom: number };
   createdAt:   number;
   updatedAt:   number;
+}
+
+/**
+ * Normalise une chaîne en slug URL-safe :
+ * minuscules, sans accents, espaces → tirets, caractères non-alphanum supprimés,
+ * 3–30 caractères.
+ */
+export function normalizeSlug(input: string): string {
+  return input
+    .trim()
+    .toLowerCase()
+    .normalize("NFD").replace(/[̀-ͯ]/g, "")   // supprime les accents
+    .replace(/[^a-z0-9]+/g, "-")                          // non-alphanum → tiret
+    .replace(/^-+|-+$/g, "")                              // trim tirets
+    .slice(0, 30);
 }
 
 export interface PublicDevice {
@@ -70,6 +87,8 @@ function macKey(mac: string)            { return `mac:${mac}`; }
 function pairKey(code: string)          { return `pair:${code.toUpperCase()}`; }
 function artistKey(artistId: string)    { return `artist:${artistId}`; }
 function artistDevKey(deviceId: string) { return `artist:device:${deviceId}`; }
+function slugKey(slug: string)          { return `artist:slug:${slug}`; }
+function linkCodeKey(code: string)      { return `artist:link:${code.toUpperCase()}`; }
 
 function isOnline(d: Device): boolean {
   return Date.now() - d.lastPing < ONLINE_MS;
@@ -340,9 +359,53 @@ export async function getArtistByDevice(deviceId: string): Promise<ArtistProfile
 }
 
 /**
+ * Cherche un profil artiste par son slug URL.
+ * Retourne null si slug inconnu.
+ */
+export async function getArtistBySlug(slug: string): Promise<ArtistProfile | null> {
+  const artistId = await redis.get<string>(slugKey(slug));
+  if (!artistId) return null;
+  return getArtist(typeof artistId === "string" ? artistId : String(artistId));
+}
+
+/**
+ * Vérifie si un slug est disponible.
+ * Retourne true si libre ou si le slug appartient déjà à currentArtistId.
+ */
+export async function isSlugAvailable(slug: string, currentArtistId?: string): Promise<boolean> {
+  const existing = await redis.get<string>(slugKey(slug));
+  if (!existing) return true;
+  const id = typeof existing === "string" ? existing : String(existing);
+  return id === currentArtistId;
+}
+
+/**
+ * Retourne tous les deviceIds liés à un artistId (via scan des devices).
+ * Utilisé lors de la fusion de sessions cross-device.
+ */
+export async function getDeviceIdsByArtist(artistId: string): Promise<string[]> {
+  // On scanne les clés artist:device:* — plus rapide qu'un getAllDevices()
+  let cursor = 0;
+  const ids: string[] = [];
+  do {
+    const [next, batch] = await redis.scan(cursor, { match: "artist:device:*", count: 100 });
+    cursor = Number(next);
+    for (const key of batch as string[]) {
+      const val = await redis.get<string>(key);
+      const aid = val ? (typeof val === "string" ? val : String(val)) : null;
+      if (aid === artistId) {
+        // Extrait le deviceId depuis la clé "artist:device:{deviceId}"
+        ids.push((key as string).replace("artist:device:", ""));
+      }
+    }
+  } while (cursor !== 0);
+  return ids;
+}
+
+/**
  * Crée ou met à jour un profil artiste.
- * Si existingArtistId est fourni, met à jour le profil existant.
- * Retourne le profil persisté.
+ * Si slug fourni : valide unicité + gère l'index artist:slug:{slug}.
+ * Si pas de slug sur un nouveau profil : auto-génère depuis displayName.
  */
 export async function createOrUpdateArtist(
   displayName: string,
@@ -350,21 +413,95 @@ export async function createOrUpdateArtist(
   existingArtistId?: string,
   profileImageBlockHash?: string,
   profileImageCrop?: { cx: number; cy: number; zoom: number },
+  slug?: string,
 ): Promise<ArtistProfile> {
   const artistId = existingArtistId ?? crypto.randomUUID();
   const existing = existingArtistId ? await getArtist(existingArtistId) : null;
+
+  // Résolution du slug :
+  // 1. Si fourni explicitement → valider + utiliser
+  // 2. Si profil existant avait déjà un slug → conserver
+  // 3. Nouveau profil sans slug → auto-générer depuis displayName
+  let resolvedSlug = slug ?? existing?.slug;
+  if (!resolvedSlug) {
+    resolvedSlug = normalizeSlug(displayName);
+    // En cas de collision sur un nouveau profil, ajouter un suffixe numérique
+    if (resolvedSlug.length < 3) resolvedSlug = `artist-${artistId.slice(0, 6)}`;
+    let candidate = resolvedSlug;
+    let suffix = 2;
+    while (!(await isSlugAvailable(candidate, artistId))) {
+      candidate = `${resolvedSlug}-${suffix++}`;
+    }
+    resolvedSlug = candidate;
+  }
+
   const profile: ArtistProfile = {
     artistId,
     displayName: displayName.trim().slice(0, 60),
+    slug:        resolvedSlug,
     bio:         bio?.trim().slice(0, 300),
     profileImageBlockHash: profileImageBlockHash ?? existing?.profileImageBlockHash,
     profileImageCrop:      profileImageCrop ?? existing?.profileImageCrop,
     createdAt:   existing?.createdAt ?? Date.now(),
     updatedAt:   Date.now(),
   };
-  await redis.set(artistKey(artistId), JSON.stringify(profile), { ex: ARTIST_TTL });
-  await redis.sadd("artists:all", artistId);
+
+  // Si le slug a changé, supprimer l'ancien index
+  if (existing?.slug && existing.slug !== resolvedSlug) {
+    await redis.del(slugKey(existing.slug));
+  }
+
+  await Promise.all([
+    redis.set(artistKey(artistId), JSON.stringify(profile), { ex: ARTIST_TTL }),
+    redis.set(slugKey(resolvedSlug), artistId, { ex: ARTIST_TTL }),
+    redis.sadd("artists:all", artistId),
+  ]);
   return profile;
+}
+
+// ─── Codes de liaison cross-device ───────────────────────────────────────────
+
+const LINK_CODE_TTL = 600; // 10 minutes
+const LINK_CODE_CHARS = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+
+function generateLinkCode(): string {
+  const part = (n: number) =>
+    Array.from({ length: n }, () =>
+      LINK_CODE_CHARS[Math.floor(Math.random() * LINK_CODE_CHARS.length)]
+    ).join("");
+  return `${part(4)}-${part(4)}`;
+}
+
+interface LinkCodePayload {
+  artistId:  string;
+  createdAt: number;
+}
+
+/**
+ * Génère un code de liaison (10 min) permettant à un autre navigateur
+ * de rejoindre le même profil artiste.
+ */
+export async function createLinkCode(artistId: string): Promise<{ code: string; expiresAt: number }> {
+  const code = generateLinkCode();
+  const payload: LinkCodePayload = { artistId, createdAt: Date.now() };
+  await redis.set(linkCodeKey(code), JSON.stringify(payload), { ex: LINK_CODE_TTL });
+  return { code, expiresAt: Date.now() + LINK_CODE_TTL * 1000 };
+}
+
+/**
+ * Valide un code de liaison et retourne l'artistId associé.
+ * Invalide (DEL) le code après usage.
+ */
+export async function consumeLinkCode(code: string): Promise<string | null> {
+  const raw = await redis.get<string>(linkCodeKey(code));
+  if (!raw) return null;
+  try {
+    const payload: LinkCodePayload = typeof raw === "string" ? JSON.parse(raw) : raw;
+    await redis.del(linkCodeKey(code));
+    return payload.artistId;
+  } catch {
+    return null;
+  }
 }
 
 /**

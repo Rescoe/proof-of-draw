@@ -10,6 +10,7 @@ import type { BlockImagePayload } from "@/lib/chain";
 
 interface ArtistProfile {
   artistId:              string;
+  slug?:                 string;
   displayName:           string;
   bio?:                  string;
   profileImageBlockHash?: string;
@@ -93,6 +94,303 @@ function statusColor(isOnline: boolean, lastPing?: number): string {
   if (isOnline) return "#4ade80";
   if (!lastPing) return "var(--text3)";
   return Math.floor((Date.now() - lastPing) / 1000) < 3600 ? "#fb923c" : "var(--text3)";
+}
+
+// ── Composant édition de slug ─────────────────────────────────────────────────
+
+function SlugEditor({
+  artistId,
+  currentSlug,
+  onSave,
+}: {
+  artistId: string;
+  currentSlug?: string;
+  onSave: (slug: string) => Promise<void>;
+}) {
+  const [editing,  setEditing]  = useState(false);
+  const [draft,    setDraft]    = useState(currentSlug ?? "");
+  const [status,   setStatus]   = useState<"idle" | "checking" | "ok" | "taken" | "short">("idle");
+  const [saving,   setSaving]   = useState(false);
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Resync si le slug change depuis l'extérieur (après save)
+  useEffect(() => { if (!editing) setDraft(currentSlug ?? ""); }, [currentSlug, editing]);
+
+  function handleChange(v: string) {
+    setDraft(v);
+    setStatus("checking");
+    if (timerRef.current) clearTimeout(timerRef.current);
+    timerRef.current = setTimeout(async () => {
+      const n = v.trim().toLowerCase()
+        .normalize("NFD").replace(/[̀-ͯ]/g, "")
+        .replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 30);
+      if (n.length < 3) { setStatus("short"); return; }
+      const res = await fetch(
+        `/api/artist/check-slug?slug=${encodeURIComponent(n)}&artistId=${artistId}`,
+      ).then(r => r.json()).catch(() => null);
+      setStatus(!res ? "idle" : res.available ? "ok" : "taken");
+    }, 400);
+  }
+
+  async function save() {
+    if (status !== "ok" && draft.trim() !== currentSlug) return;
+    setSaving(true);
+    try { await onSave(draft.trim()); setEditing(false); }
+    finally { setSaving(false); }
+  }
+
+  const statusColor = status === "ok" ? "#4ade80" : status === "taken" ? "#f87171" : "var(--text3)";
+  const statusLabel = {
+    idle: "", checking: "vérification…",
+    ok: "✓ disponible", taken: "✗ déjà utilisé", short: "trop court (3 car. min)",
+  }[status];
+
+  if (!editing) {
+    return (
+      <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", fontSize: "0.78rem", color: "var(--text3)" }}>
+        <span style={{ fontFamily: "JetBrains Mono, monospace" }}>
+          /artists/<strong style={{ color: currentSlug ? "var(--accent)" : "var(--text3)" }}>
+            {currentSlug ?? "—"}
+          </strong>
+        </span>
+        <button
+          onClick={() => { setDraft(currentSlug ?? ""); setStatus("idle"); setEditing(true); }}
+          style={{
+            background: "none", border: "1px solid var(--border)", borderRadius: 4,
+            padding: "0.15rem 0.5rem", fontSize: "0.68rem", cursor: "pointer",
+            color: "var(--text3)",
+          }}
+        >
+          ✏️ modifier
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: "0.35rem" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
+        <span style={{ fontSize: "0.78rem", color: "var(--text3)", whiteSpace: "nowrap", fontFamily: "JetBrains Mono, monospace" }}>
+          /artists/
+        </span>
+        <input
+          value={draft}
+          onChange={e => handleChange(e.target.value)}
+          maxLength={30}
+          placeholder="mon-nom-artiste"
+          style={{
+            border: "1px solid var(--accent)", borderRadius: 6,
+            padding: "0.25rem 0.5rem", background: "var(--bg)",
+            color: "var(--text)", fontSize: "0.82rem",
+            fontFamily: "JetBrains Mono, monospace",
+            outline: "none", width: 180,
+          }}
+        />
+        <button
+          onClick={save}
+          disabled={saving || (status !== "ok" && draft.trim() !== currentSlug)}
+          style={{
+            padding: "0.25rem 0.7rem", borderRadius: 5, border: "none",
+            background: "var(--accent)", color: "#fff", fontSize: "0.75rem",
+            cursor: "pointer", opacity: (saving || (status !== "ok" && draft.trim() !== currentSlug)) ? 0.4 : 1,
+          }}
+        >
+          {saving ? "…" : "✓"}
+        </button>
+        <button
+          onClick={() => setEditing(false)}
+          style={{
+            background: "none", border: "1px solid var(--border)", borderRadius: 5,
+            padding: "0.25rem 0.5rem", fontSize: "0.75rem", cursor: "pointer", color: "var(--text3)",
+          }}
+        >
+          ✕
+        </button>
+      </div>
+      {statusLabel && (
+        <span style={{ fontSize: "0.7rem", color: statusColor, marginLeft: 68 }}>
+          {statusLabel}
+        </span>
+      )}
+    </div>
+  );
+}
+
+// ── Composant liaison multi-appareils ─────────────────────────────────────────
+
+function LiaisonSection({ artistId }: { artistId: string }) {
+  const [genCode,    setGenCode]    = useState<string | null>(null);
+  const [expiresAt,  setExpiresAt]  = useState<number>(0);
+  const [countdown,  setCountdown]  = useState(0);
+  const [generating, setGenerating] = useState(false);
+  const [joinCode,   setJoinCode]   = useState("");
+  const [joining,    setJoining]    = useState(false);
+  const [joinMsg,    setJoinMsg]    = useState<{ ok: boolean; text: string } | null>(null);
+  const [copied,     setCopied]     = useState(false);
+  const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  useEffect(() => {
+    return () => { if (intervalRef.current) clearInterval(intervalRef.current); };
+  }, []);
+
+  async function generateCode() {
+    setGenerating(true);
+    try {
+      const res  = await fetch("/api/artist/link-code", { method: "POST" });
+      const data = await res.json();
+      if (!res.ok) { alert(data.error ?? "Erreur"); return; }
+      setGenCode(data.code);
+      setExpiresAt(data.expiresAt);
+      setCountdown(data.expiresIn);
+      if (intervalRef.current) clearInterval(intervalRef.current);
+      intervalRef.current = setInterval(() => {
+        setCountdown(prev => {
+          if (prev <= 1) { clearInterval(intervalRef.current!); setGenCode(null); return 0; }
+          return prev - 1;
+        });
+      }, 1000);
+    } catch { alert("Erreur réseau"); }
+    finally { setGenerating(false); }
+  }
+
+  async function copyCode() {
+    if (!genCode) return;
+    await navigator.clipboard.writeText(genCode);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  }
+
+  async function joinByCode() {
+    const code = joinCode.trim().toUpperCase();
+    if (!code) return;
+    setJoining(true);
+    setJoinMsg(null);
+    try {
+      const res  = await fetch("/api/artist/join", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ code }),
+      });
+      const data = await res.json();
+      if (!res.ok) { setJoinMsg({ ok: false, text: data.error ?? "Erreur" }); return; }
+      setJoinMsg({ ok: true, text: `Connecté au profil "${data.profile.displayName}" !` });
+      setJoinCode("");
+      // Recharger la page pour refléter le nouveau profil
+      setTimeout(() => window.location.reload(), 1200);
+    } catch { setJoinMsg({ ok: false, text: "Erreur réseau" }); }
+    finally { setJoining(false); }
+  }
+
+  void artistId; // utilisé pour la requête generate (via session côté serveur)
+
+  return (
+    <div style={{ marginTop: "2rem" }}>
+      <div style={{
+        padding: "1.5rem",
+        borderRadius: 12,
+        border: "1px solid var(--border)",
+        background: "var(--bg2)",
+      }}>
+        <h2 style={{ fontSize: "0.9rem", fontWeight: 800, letterSpacing: "-0.01em", margin: "0 0 0.35rem" }}>
+          🔗 Connexion multi-appareils
+        </h2>
+        <p style={{ fontSize: "0.78rem", color: "var(--text3)", margin: "0 0 1.25rem", lineHeight: 1.5 }}>
+          Partagez votre session entre plusieurs navigateurs ou appareils.
+          Générez un code sur cet appareil, puis entrez-le sur l&apos;autre.
+        </p>
+
+        <div style={{ display: "flex", gap: "1.5rem", flexWrap: "wrap" }}>
+
+          {/* Génération */}
+          <div style={{ flex: 1, minWidth: 200 }}>
+            <div style={{ fontSize: "0.72rem", color: "var(--text3)", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: "0.6rem" }}>
+              Générer un code
+            </div>
+            {genCode ? (
+              <div style={{ display: "flex", flexDirection: "column", gap: "0.5rem" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
+                  <span style={{
+                    fontFamily: "JetBrains Mono, monospace",
+                    fontSize: "1.3rem", fontWeight: 800, letterSpacing: "0.12em",
+                    color: countdown > 60 ? "#4ade80" : countdown > 20 ? "#fb923c" : "#f87171",
+                  }}>
+                    {genCode}
+                  </span>
+                  <button onClick={copyCode} style={{
+                    fontSize: "0.72rem", padding: "0.3rem 0.7rem",
+                    borderRadius: 4, border: "1px solid var(--border)",
+                    background: "var(--bg)", cursor: "pointer", color: "var(--text2)",
+                  }}>
+                    {copied ? "✓ Copié" : "Copier"}
+                  </button>
+                </div>
+                <div style={{ fontSize: "0.7rem", color: "var(--text3)" }}>
+                  Expire dans {countdown}s · valable 1 fois
+                </div>
+              </div>
+            ) : (
+              <button
+                onClick={generateCode}
+                disabled={generating}
+                style={{
+                  padding: "0.5rem 1.1rem", borderRadius: 7,
+                  border: "1px solid var(--border)", background: "var(--bg)",
+                  color: "var(--text2)", fontSize: "0.82rem", cursor: "pointer",
+                  opacity: generating ? 0.5 : 1,
+                }}
+              >
+                {generating ? "Génération…" : "Générer un code"}
+              </button>
+            )}
+          </div>
+
+          {/* Rejoindre */}
+          <div style={{ flex: 1, minWidth: 200 }}>
+            <div style={{ fontSize: "0.72rem", color: "var(--text3)", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: "0.6rem" }}>
+              Rejoindre avec un code
+            </div>
+            <div style={{ display: "flex", gap: "0.5rem" }}>
+              <input
+                value={joinCode}
+                onChange={e => setJoinCode(e.target.value.toUpperCase())}
+                placeholder="XXXX-XXXX"
+                maxLength={9}
+                onKeyDown={e => { if (e.key === "Enter") joinByCode(); }}
+                style={{
+                  fontFamily: "JetBrains Mono, monospace",
+                  fontSize: "0.9rem", letterSpacing: "0.08em",
+                  padding: "0.4rem 0.7rem", borderRadius: 6,
+                  border: "1px solid var(--border)", background: "var(--bg)",
+                  color: "var(--text)", width: 130, outline: "none",
+                }}
+              />
+              <button
+                onClick={joinByCode}
+                disabled={joining || !joinCode.trim()}
+                style={{
+                  padding: "0.4rem 0.9rem", borderRadius: 6,
+                  border: "none", background: "var(--accent)",
+                  color: "#fff", fontSize: "0.82rem", cursor: "pointer",
+                  opacity: (joining || !joinCode.trim()) ? 0.5 : 1,
+                }}
+              >
+                {joining ? "…" : "Rejoindre"}
+              </button>
+            </div>
+            {joinMsg && (
+              <div style={{
+                marginTop: "0.5rem", fontSize: "0.75rem",
+                color: joinMsg.ok ? "#4ade80" : "#f87171",
+              }}>
+                {joinMsg.text}
+              </div>
+            )}
+          </div>
+
+        </div>
+      </div>
+    </div>
+  );
 }
 
 // ── Composant édition inline ──────────────────────────────────────────────────
@@ -596,6 +894,7 @@ export default function ProfilePage() {
     bio?: string;
     profileImageBlockHash?: string;
     profileImageCrop?: { cx: number; cy: number; zoom: number };
+    slug?: string;
   }) {
     setProfError(null);
     const current = profile;
@@ -610,6 +909,7 @@ export default function ProfilePage() {
         bio:                   updates.bio ?? current?.bio,
         profileImageBlockHash: updates.profileImageBlockHash ?? current?.profileImageBlockHash,
         profileImageCrop:      updates.profileImageCrop ?? current?.profileImageCrop,
+        ...(updates.slug !== undefined ? { slug: updates.slug } : {}),
       }),
     });
     const data = await res.json();
@@ -629,6 +929,10 @@ export default function ProfilePage() {
 
   async function saveProfileImage(hash: string, crop: { cx: number; cy: number; zoom: number }) {
     await postProfile({ profileImageBlockHash: hash, profileImageCrop: crop });
+  }
+
+  async function saveSlug(slug: string) {
+    await postProfile({ slug });
   }
 
   // ── Actions devices ────────────────────────────────────────────────────────
@@ -747,6 +1051,17 @@ export default function ProfilePage() {
                   />
                 </div>
 
+                {/* Slug URL */}
+                {profile && (
+                  <div style={{ marginTop: "0.4rem", marginBottom: "0.3rem" }}>
+                    <SlugEditor
+                      artistId={profile.artistId}
+                      currentSlug={profile.slug}
+                      onSave={saveSlug}
+                    />
+                  </div>
+                )}
+
                 {profError && (
                   <div style={{ fontSize: "0.78rem", color: "#f87171", marginTop: "0.25rem" }}>
                     {profError}
@@ -810,10 +1125,14 @@ export default function ProfilePage() {
         </div>
       </div>
 
+      {/* ── Connexion multi-appareils ── */}
+      {profile && <LiaisonSection artistId={profile.artistId} />}
+
       {/* ── Onglets ── */}
       <div style={{
         display: "flex", gap: 0, marginBottom: "1.5rem",
         borderBottom: "1px solid var(--border)",
+        marginTop: "2rem",
       }}>
         {([
           { key: "mine",   label: "Mes ESP" },
