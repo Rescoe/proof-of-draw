@@ -7,12 +7,13 @@ import {
   getArtist,
   getArtistByDevice,
   createOrUpdateArtist,
+  deleteArtist,
   linkDeviceToArtist,
   setArtistName,
   normalizeSlug,
   isSlugAvailable,
 } from "@/lib/deviceStore";
-import { getSession, setArtistIdInSession } from "@/lib/session";
+import { getSession, setSession, setArtistIdInSession } from "@/lib/session";
 import { getIP, isBlacklisted, forbidden } from "@/lib/rateLimit";
 
 export const dynamic = "force-dynamic";
@@ -129,5 +130,35 @@ export async function POST(req: NextRequest) {
   } catch (err) {
     console.error("[/api/artist POST]", err);
     return json({ error: "Erreur serveur" }, 500);
+  }
+}
+
+export async function DELETE() {
+  try {
+    const session = await getSession();
+
+    // Résoudre l'artistId : cookie > device lookup
+    let artistId = session.artistId;
+    if (!artistId) {
+      for (const deviceId of session.deviceIds) {
+        const p = await getArtistByDevice(deviceId);
+        if (p) { artistId = p.artistId; break; }
+      }
+    }
+
+    if (!artistId) {
+      return NextResponse.json({ error: "Aucun profil artiste associé à cette session" }, { status: 404 });
+    }
+
+    await deleteArtist(artistId);
+    console.log(`[/api/artist DELETE] profil supprimé artistId=${artistId}`);
+
+    // Effacer artistId du cookie de session
+    const res = NextResponse.json({ ok: true }, { headers: { "Cache-Control": "no-store" } });
+    await setSession(res, { deviceIds: session.deviceIds, artistId: undefined });
+    return res;
+  } catch (err) {
+    console.error("[/api/artist DELETE]", err);
+    return NextResponse.json({ error: "Erreur serveur" }, { status: 500 });
   }
 }

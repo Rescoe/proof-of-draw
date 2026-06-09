@@ -34,7 +34,7 @@ function coverTransform(
   crop?: { cx: number; cy: number; zoom: number },
 ): { tx: number; ty: number; scale: number } {
   const ds = DISPLAY_SIZES[screen] ?? { w: 128, h: 128 };
-  const coverScale = Math.max(AVATAR_SIZE / ds.w, AVATAR_SIZE / ds.h);
+  const coverScale = Math.max(AVATAR_SIZE / ds.w, AVATAR_SIZE / ds.h) * 1.01;
   const zoom  = crop?.zoom ?? 1;
   const scale = coverScale * zoom;
   const cx    = crop?.cx ?? 0.5;
@@ -834,6 +834,7 @@ export default function ProfilePage() {
   const [copyMsg,        setCopyMsg]        = useState<Record<string, string>>({});
   const [toggling,       setToggling]       = useState<string | null>(null);
   const [profError,      setProfError]      = useState<string | null>(null);
+  const [deleting,       setDeleting]       = useState(false);
 
   // Bloc sélectionné comme avatar
   const selectedBlock = profile?.profileImageBlockHash
@@ -933,6 +934,24 @@ export default function ProfilePage() {
 
   async function saveSlug(slug: string) {
     await postProfile({ slug });
+  }
+
+  async function handleDeleteProfile() {
+    if (!confirm("Supprimer définitivement votre profil artiste ? Vos blocs minés restent dans la blockchain, mais votre nom, bio et photo de profil seront effacés.")) return;
+    if (!confirm("Dernière confirmation — cette action est irréversible.")) return;
+    setDeleting(true);
+    try {
+      const res = await fetch("/api/artist", { method: "DELETE" });
+      if (res.ok) {
+        setProfile(null);
+        setMinedBlocks([]);
+        window.location.reload();
+      } else {
+        const d = await res.json();
+        alert(d.error ?? "Erreur lors de la suppression");
+      }
+    } catch { alert("Erreur réseau"); }
+    finally { setDeleting(false); }
   }
 
   // ── Actions devices ────────────────────────────────────────────────────────
@@ -1105,23 +1124,46 @@ export default function ProfilePage() {
             )}
           </div>
 
-          {/* Lien rapide onboard */}
-          <a
-            href="/onboard"
-            style={{
-              padding: "0.5rem 1rem",
-              borderRadius: 8,
-              background: "var(--accent)",
-              color: "#fff",
-              textDecoration: "none",
-              fontWeight: 600,
-              fontSize: "0.8rem",
-              whiteSpace: "nowrap",
-              flexShrink: 0,
-            }}
-          >
-            + Ajouter un ESP
-          </a>
+          {/* Actions rapides */}
+          <div style={{ display: "flex", flexDirection: "column", gap: "0.5rem", flexShrink: 0 }}>
+            <a
+              href="/onboard"
+              style={{
+                padding: "0.5rem 1rem",
+                borderRadius: 8,
+                background: "var(--accent)",
+                color: "#fff",
+                textDecoration: "none",
+                fontWeight: 600,
+                fontSize: "0.8rem",
+                whiteSpace: "nowrap",
+                textAlign: "center",
+              }}
+            >
+              + Ajouter un ESP
+            </a>
+            {profile && (
+              <button
+                onClick={handleDeleteProfile}
+                disabled={deleting}
+                title="Supprimer définitivement votre profil artiste"
+                style={{
+                  padding: "0.5rem 1rem",
+                  borderRadius: 8,
+                  border: "1px solid rgba(248,113,113,0.35)",
+                  background: "rgba(248,113,113,0.06)",
+                  color: "#f87171",
+                  fontWeight: 600,
+                  fontSize: "0.8rem",
+                  cursor: "pointer",
+                  whiteSpace: "nowrap",
+                  opacity: deleting ? 0.5 : 1,
+                }}
+              >
+                {deleting ? "Suppression…" : "🗑 Supprimer le profil"}
+              </button>
+            )}
+          </div>
         </div>
       </div>
 

@@ -4,7 +4,7 @@
 
 import { NextRequest, NextResponse } from "next/server";
 
-import { getAllDevices, getDevice, toPublicDevice, toOwnedDevice } from "@/lib/deviceStore";
+import { getAllDevices, getDevice, getDeviceIdsByArtist, toPublicDevice, toOwnedDevice } from "@/lib/deviceStore";
 import { getSession } from "@/lib/session";
 
 export const dynamic = "force-dynamic";
@@ -16,30 +16,32 @@ export async function GET(req: NextRequest) {
     if (mine === "1") {
       const session = await getSession();
 
-      if (session.deviceIds.length === 0) {
+      // Union : devices du cookie de session + tous les devices liés à l'artistId.
+      // Cela permet à l'appareil A de voir les devices de B après une liaison,
+      // même si le cookie de A n'a pas été mis à jour (seul le cookie de B l'est
+      // au moment du join). Les deux appareils partagent le même artistId → même vue.
+      const idSet = new Set<string>(session.deviceIds);
+      if (session.artistId) {
+        const byArtist = await getDeviceIdsByArtist(session.artistId);
+        for (const id of byArtist) idSet.add(id);
+      }
+
+      if (idSet.size === 0) {
         return NextResponse.json(
           { devices: [] },
-          {
-            headers: {
-              "Cache-Control": "private, no-store, max-age=0",
-            },
-          }
+          { headers: { "Cache-Control": "private, no-store, max-age=0" } },
         );
       }
 
       const owned = (
-        await Promise.all(session.deviceIds.map((id) => getDevice(id)))
+        await Promise.all([...idSet].map((id) => getDevice(id)))
       )
         .filter(Boolean)
         .map((d) => toOwnedDevice(d!));
 
       return NextResponse.json(
         { devices: owned },
-        {
-          headers: {
-            "Cache-Control": "private, no-store, max-age=0",
-          },
-        }
+        { headers: { "Cache-Control": "private, no-store, max-age=0" } },
       );
     }
 

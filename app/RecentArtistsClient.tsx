@@ -20,7 +20,7 @@ const AVATAR_SIZE = 52;
 
 function coverTransform(screen: string, crop?: { cx: number; cy: number; zoom: number }) {
   const ds = DISPLAY_SIZES[screen] ?? { w: 128, h: 128 };
-  const coverScale = Math.max(AVATAR_SIZE / ds.w, AVATAR_SIZE / ds.h);
+  const coverScale = Math.max(AVATAR_SIZE / ds.w, AVATAR_SIZE / ds.h) * 1.01;
   const zoom  = crop?.zoom ?? 1;
   const scale = coverScale * zoom;
   const cx = crop?.cx ?? 0.5;

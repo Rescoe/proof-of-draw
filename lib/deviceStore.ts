@@ -459,6 +459,37 @@ export async function createOrUpdateArtist(
   return profile;
 }
 
+/**
+ * Supprime complètement un profil artiste de la base.
+ * - Retire le profil, le slug, la membership dans artists:all.
+ * - Déliaison de tous les devices (supprime artist:device:{id}, efface device.artistId).
+ * - Les blocs de la blockchain restent intacts (attributions au moment du minage).
+ */
+export async function deleteArtist(artistId: string): Promise<void> {
+  const profile = await getArtist(artistId);
+  if (!profile) return;
+
+  // Trouver tous les devices liés à cet artiste
+  const deviceIds = await getDeviceIdsByArtist(artistId);
+
+  await Promise.all([
+    redis.del(artistKey(artistId)),
+    redis.srem("artists:all", artistId),
+    ...(profile.slug ? [redis.del(slugKey(profile.slug))] : []),
+    ...deviceIds.map(async (deviceId) => {
+      // Supprimer la clé inverse
+      await redis.del(artistDevKey(deviceId));
+      // Effacer artistId sur le device lui-même
+      const device = await getDevice(deviceId);
+      if (device) {
+        device.artistId = undefined;
+        device.artistName = undefined;
+        await saveDevice(device);
+      }
+    }),
+  ]);
+}
+
 // ─── Codes de liaison cross-device ───────────────────────────────────────────
 
 const LINK_CODE_TTL = 600; // 10 minutes

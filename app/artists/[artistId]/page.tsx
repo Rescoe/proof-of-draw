@@ -30,7 +30,7 @@ const DISPLAY_SIZES_PUB: Record<string, { w: number; h: number }> = {
 
 function pubCoverTransform(screen: string, size: number, crop?: { cx: number; cy: number; zoom: number }) {
   const ds = DISPLAY_SIZES_PUB[screen] ?? { w: 128, h: 128 };
-  const coverScale = Math.max(size / ds.w, size / ds.h);
+  const coverScale = Math.max(size / ds.w, size / ds.h) * 1.01;
   const zoom  = crop?.zoom ?? 1;
   const scale = coverScale * zoom;
   const cx = crop?.cx ?? 0.5;
