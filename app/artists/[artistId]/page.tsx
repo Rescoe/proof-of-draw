@@ -135,7 +135,7 @@ function ProfileAvatar({
           transform: `translate(${tx}px, ${ty}px) scale(${scale})`,
           pointerEvents: "none",
         }}>
-          <BlockFrameCanvas payload={selectedBlock.imagePayload} />
+          <BlockFrameCanvas payload={selectedBlock.imagePayload} unconstrained />
         </div>
       </div>
     );

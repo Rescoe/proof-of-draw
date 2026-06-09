@@ -46,7 +46,7 @@ function ArtistMiniAvatar({ artist }: { artist: RecentArtistSummary }) {
           transform: `translate(${tx}px, ${ty}px) scale(${scale})`,
           pointerEvents: "none",
         }}>
-          <BlockFrameCanvas payload={artist.imagePayload} />
+          <BlockFrameCanvas payload={artist.imagePayload} unconstrained />
         </div>
       </div>
     );

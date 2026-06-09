@@ -192,7 +192,7 @@ code { font-family: "JetBrains Mono", monospace; }
    ("Afficher plus/moins", filtres…) ne doit jamais faire varier la taille
    du terminal — sinon il se décale par rapport à la topologie réseau
    voisine (cf. align-items:stretch). Le contenu défile à l'intérieur. */
-.gterm--panel .gterm__body { height: 480px; max-height: 480px; }
+.gterm--panel .gterm__body { height: 480px; max-height: 480px; overflow-y: hidden; }
 
 /* Barre de titre — style shell Linux */
 .gterm__bar {
@@ -256,12 +256,14 @@ code { font-family: "JetBrains Mono", monospace; }
   font-family: "JetBrains Mono", monospace;
 }
 
-/* Corps */
+/* Corps — display:block (et non flex-direction:column) : un flex-column avec
+   une hauteur fixe et flex-shrink:1 (défaut) écrase toutes les lignes à ~0px
+   pour les faire tenir dans la box → rien de visible. En display:block les
+   lignes s'empilent naturellement, dépassent la hauteur fixe et le scroll
+   interne prend le relais. */
 .gterm__body {
   padding: 0.6rem 0.9rem 0.75rem;
-  display: flex;
-  flex-direction: column;
-  gap: 0;
+  display: block;
   height: 220px;
   max-height: 220px;
   overflow-y: hidden;   /* verrouillé par défaut — scroll activé inline quand .active */
@@ -272,13 +274,9 @@ code { font-family: "JetBrains Mono", monospace; }
 .gterm__line {
   display: flex;
   align-items: baseline;
-  gap: 0.5rem;
-  /* Une ligne = une ligne : le wrap multipliait les retours et superposait
-     visuellement les segments (illisible sur grand écran). On tronque plutôt
-     avec une ellipse — moins d'infos affichées d'un coup, mais lisible. */
+  flex-wrap: wrap;          /* retour à la ligne autorisé */
+  gap: 0.35rem 0.5rem;
   padding: 0.18rem 0;
-  flex-wrap: nowrap;
-  overflow: hidden;
 }
 .gterm__line--muted   { opacity: 0.45; }
 .gterm__line--prompt  { gap: 0.45rem; margin-top: 0.25rem; }
@@ -291,14 +289,14 @@ code { font-family: "JetBrains Mono", monospace; }
   padding-top: 0.1em;
 }
 
-/* Corps de la ligne */
+/* Corps de la ligne — flex wrap pour que le contenu coule sur plusieurs lignes
+   si nécessaire plutôt que d'être coupé/invisible. */
 .gterm__line-body {
   display: flex;
-  flex-wrap: nowrap;
+  flex-wrap: wrap;
   align-items: baseline;
-  gap: 0.4rem;
+  gap: 0.35rem 0.4rem;
   min-width: 0;
-  overflow: hidden;
 }
 
 /* Tag coloré (type d'event, type d'écran) */
@@ -343,7 +341,7 @@ code { font-family: "JetBrains Mono", monospace; }
 
 @media (max-width: 768px) {
   .gterm { font-size: 0.72rem; }
-  .gterm__body { height: 180px; max-height: 180px; padding: 0.5rem 0.7rem 0.65rem; }
+  .gterm__body { height: 180px; max-height: 180px; overflow-y: hidden; padding: 0.5rem 0.7rem 0.65rem; }
   .gterm__bar  { padding: 0.4rem 0.7rem; }
 }
 

@@ -23,11 +23,17 @@ export function BlockFrameCanvas({
   blockHash,
   blockIndex,
   showDownload = false,
+  unconstrained = false,
 }: {
   payload: BlockImagePayload;
   blockHash?: string;
   blockIndex?: number;
   showDownload?: boolean;
+  /** Désactive maxWidth:"100%" — obligatoire dans les contextes avatar/crop où
+   *  le conteneur parent est plus petit que DISPLAY_SIZES (ex: bulle 56px).
+   *  Sans cette prop, le canvas se rend à la largeur du conteneur (56px) au
+   *  lieu de sa taille réelle (222px), ce qui rend le calcul de recadrage faux. */
+  unconstrained?: boolean;
 }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
@@ -79,7 +85,7 @@ export function BlockFrameCanvas({
           height: size.h,
           imageRendering: "pixelated",
           display: "block",
-          maxWidth: "100%",
+          maxWidth: unconstrained ? "none" : "100%",
         }}
       />
       {showDownload && blockHash && (

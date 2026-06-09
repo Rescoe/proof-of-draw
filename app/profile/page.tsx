@@ -184,12 +184,24 @@ function CropEditor({
   const [cy,   setCy]   = useState(initialCrop?.cy   ?? 0.5);
   const [zoom, setZoom] = useState(initialCrop?.zoom ?? 1);
 
+  // Refs pour les handlers d'événement — évite les closures stales sur cx/cy/zoom
+  // (sans ref, onMouseMove lirait la valeur initiale figée au moment du rendu
+  // qui a attaché l'event listener, et le drag partirait dans le mauvais sens).
+  const cxRef   = useRef(cx);
+  const cyRef   = useRef(cy);
+  const zoomRef = useRef(zoom);
+  useEffect(() => { cxRef.current = cx; },   [cx]);
+  useEffect(() => { cyRef.current = cy; },   [cy]);
+  useEffect(() => { zoomRef.current = zoom; }, [zoom]);
+
   const dragging = useRef(false);
   const lastPos  = useRef({ x: 0, y: 0 });
 
-  // The crop editor operates in the PREVIEW circle — all drag math uses previewScale.
-  // The small "aperçu réel" uses avatarScale; both scales yield the same visible region.
-  const PREVIEW = 160;
+  // Cercle de prévisualisation plus grand (240px) pour plus de précision
+  const PREVIEW = 240;
+
+  // Toutes les transformations sont calculées côté rendu (pas dans les handlers)
+  // pour rester synchrones avec l'état React.
   const previewScale = Math.max(PREVIEW / ds.w, PREVIEW / ds.h) * zoom;
   const ptx = PREVIEW / 2 - cx * ds.w * previewScale;
   const pty = PREVIEW / 2 - cy * ds.h * previewScale;
@@ -210,16 +222,24 @@ function CropEditor({
     const dx = pt.clientX - lastPos.current.x;
     const dy = pt.clientY - lastPos.current.y;
     lastPos.current = { x: pt.clientX, y: pt.clientY };
-    // Drag happens inside the 160px circle → sensitivity must match previewScale
-    setCx(prev => clampCrop(prev - dx / (ds.w * previewScale), cy,   zoom, ds).cx);
-    setCy(prev => clampCrop(cx,   prev - dy / (ds.h * previewScale), zoom, ds).cy);
+    // On lit les refs (valeurs courantes) plutôt que les fermetures stales,
+    // et on met à jour cx/cy en un seul set fonctionnel indépendant.
+    const ps = Math.max(PREVIEW / ds.w, PREVIEW / ds.h) * zoomRef.current;
+    const newCx = clampCrop(cxRef.current - dx / (ds.w * ps), cyRef.current, zoomRef.current, ds).cx;
+    const newCy = clampCrop(newCx, cyRef.current - dy / (ds.h * ps), zoomRef.current, ds).cy;
+    setCx(newCx);
+    setCy(newCy);
   }
 
   function onMouseUp() { dragging.current = false; }
 
   function onWheel(e: React.WheelEvent) {
     e.preventDefault();
-    setZoom(prev => clampCrop(cx, cy, Math.max(1, Math.min(4, prev - e.deltaY * 0.002)), ds).zoom);
+    const z = Math.max(1, Math.min(4, zoomRef.current - e.deltaY * 0.002));
+    const clamped = clampCrop(cxRef.current, cyRef.current, z, ds);
+    setZoom(clamped.zoom);
+    setCx(clamped.cx);
+    setCy(clamped.cy);
   }
 
   return (
@@ -234,14 +254,17 @@ function CropEditor({
         </div>
       </div>
 
-      {/* Large crop circle */}
+      {/* Cercle de recadrage — unconstrained:true est OBLIGATOIRE ici : sans cette
+          prop, maxWidth:"100%" dans BlockFrameCanvas se résout par rapport au
+          conteneur parent (240px du cercle) au lieu de DISPLAY_SIZES (ex 222px),
+          et le canvas se rend à 240px → tout le calcul de translate/scale est faux. */}
       <div style={{ display: "flex", justifyContent: "center", marginBottom: "1rem" }}>
         <div
           style={{
             width: PREVIEW, height: PREVIEW, borderRadius: "50%",
             overflow: "hidden", cursor: "grab", position: "relative",
             border: "3px solid var(--accent)",
-            boxShadow: "0 0 0 4px rgba(124,107,255,0.15)",
+            boxShadow: "0 0 0 6px rgba(124,107,255,0.12)",
             userSelect: "none", flexShrink: 0,
           }}
           onMouseDown={onMouseDown}
@@ -260,7 +283,7 @@ function CropEditor({
               transform: `translate(${ptx}px, ${pty}px) scale(${previewScale})`,
               pointerEvents: "none",
             }}>
-              <BlockFrameCanvas payload={block.imagePayload} />
+              <BlockFrameCanvas payload={block.imagePayload} unconstrained />
             </div>
           )}
         </div>
@@ -280,7 +303,7 @@ function CropEditor({
               transform: `translate(${tx}px, ${ty}px) scale(${avatarScale})`,
               pointerEvents: "none",
             }}>
-              <BlockFrameCanvas payload={block.imagePayload} />
+              <BlockFrameCanvas payload={block.imagePayload} unconstrained />
             </div>
           )}
         </div>
@@ -474,7 +497,7 @@ function ProfileAvatar({
           transform: `translate(${tx}px, ${ty}px) scale(${scale})`,
           pointerEvents: "none",
         }}>
-          <BlockFrameCanvas payload={selectedBlock!.imagePayload!} />
+          <BlockFrameCanvas payload={selectedBlock!.imagePayload!} unconstrained />
         </div>
       ) : (
         <span style={{

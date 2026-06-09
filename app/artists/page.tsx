@@ -93,7 +93,7 @@ function ArtistAvatar({ artist }: { artist: ArtistSummary }) {
           transform: `translate(${tx}px, ${ty}px) scale(${scale})`,
           pointerEvents: "none",
         }}>
-          <BlockFrameCanvas payload={imagePayload} />
+          <BlockFrameCanvas payload={imagePayload} unconstrained />
         </div>
       </div>
     );
