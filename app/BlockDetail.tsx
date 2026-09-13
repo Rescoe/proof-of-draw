@@ -264,16 +264,6 @@ function TabReplay({ block }: { block: BlockWithImage }) {
       .finally(() => setLoading(false));
   }, [block.blockHash]);
 
-  useEffect(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    canvas.width = W;
-    canvas.height = H;
-    const ctx = canvas.getContext("2d")!;
-    ctx.fillStyle = "#ffffff";
-    ctx.fillRect(0, 0, W, H);
-  }, [W, H]);
-
   const startReplay = useCallback(() => {
     if (!replay || replay.length === 0) return;
     if (animRef.current) clearTimeout(animRef.current);
@@ -386,6 +376,8 @@ function TabReplay({ block }: { block: BlockWithImage }) {
           <div className="bd-replay-canvas-wrap">
             <canvas
               ref={canvasRef}
+              width={W}
+              height={H}
               style={{
                 width: W * SCALE,
                 height: H * SCALE,
