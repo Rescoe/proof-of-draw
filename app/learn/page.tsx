@@ -791,22 +791,34 @@ export default function LearnPage() {
                   all: true,
                 },
                 {
-                  name: "GxEPD2",
-                  version: "dernière version",
-                  desc: "Driver e-ink Waveshare (e-Paper 2.9\" et 2.7\")",
-                  eink: true,
+                  name: "QRCode",
+                  version: "dernière version (Richard Moore)",
+                  desc: "Génère le QR code d'appairage affiché au premier boot — requis par les 4 variantes",
+                  all: true,
+                },
+                {
+                  name: "Crypto",
+                  version: "dernière version (Rhys Weatherley)",
+                  desc: "Fournit Ed25519.h — génération de clés et signature des votes — requis par les 4 variantes",
+                  all: true,
                 },
                 {
                   name: "Adafruit GFX Library",
                   version: "dernière version",
-                  desc: "Base graphique requise par GxEPD2 et Adafruit ST7735",
-                  all: true,
+                  desc: "Base graphique requise par le TFT (ST7735) et l'OLED (SSD1306) — pas nécessaire pour les variantes e-ink seules (driver Waveshare fourni dans le ZIP, sans dépendance externe)",
+                  tft: true,
                 },
                 {
                   name: "Adafruit ST7735 and ST7789 Library",
                   version: "dernière version",
                   desc: "Driver TFT 1.8\" (uniquement pour la variante TFT)",
                   tft: true,
+                },
+                {
+                  name: "Adafruit SSD1306",
+                  version: "dernière version",
+                  desc: "Driver OLED 0.96\" (uniquement pour la variante e-ink 2.7\" BW + OLED)",
+                  eink: true,
                 },
               ].map((lib, i) => (
                 <div key={i} style={{
