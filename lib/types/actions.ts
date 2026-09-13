@@ -26,7 +26,7 @@ export interface ActionEvent {
  * Enregistre les coordonnées complètes pour reconstruire le dessin en temps réel.
  */
 export interface ReplayEvent {
-  kind: "down" | "move" | "up";
+  kind: "down" | "move" | "up" | "clear" | "fill" | "shape";
   t: number;       // ms depuis début session
   x: number;       // coordonnée canvas (px)
   y: number;       // coordonnée canvas (px)
@@ -34,6 +34,12 @@ export interface ReplayEvent {
   color?: string;
   size?: number;
   pressure?: number; // pression stylet si disponible [0..1]
+  id?: number;        // pointerId — isole les traits simultanés (multi-touch).
+                       // Absent sur les replays enregistrés avant ce champ ;
+                       // ces anciens événements sont alors traités comme un flux unique.
+  x2?: number;         // point d'arrivée, uniquement pour kind "shape"
+  y2?: number;
+  shapeType?: "line" | "rect" | "ellipse"; // uniquement pour kind "shape"
 }
 
 /**

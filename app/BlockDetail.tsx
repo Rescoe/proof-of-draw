@@ -8,6 +8,7 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import type { BlockWithImage } from "@/lib/chain";
 import { BlockFrameCanvas } from "./BlockFrameCanvas";
 import type { ActionEvent, ReplayEvent } from "@/lib/types/actions";
+import { floodFill, drawLine, drawRect, drawEllipse } from "@/lib/canvasPrimitives";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -295,7 +296,11 @@ function TabReplay({ block }: { block: BlockWithImage }) {
     const speedFactor = Math.max(1, duration / 10000);
 
     let i = 0;
-    let prevEvent: ReplayEvent | null = null;
+    // Dernier événement down/move vu, par flux (id de pointeur). Les replays
+    // enregistrés avant l'ajout de ce champ n'ont pas d'id : ils retombent
+    // tous sur la même clé (-1) et se comportent exactement comme avant —
+    // un seul flux, comme quand un seul doigt dessinait à la fois.
+    const lastByStream = new Map<number, ReplayEvent>();
 
     function step() {
       if (i >= total) {
@@ -308,27 +313,44 @@ function TabReplay({ block }: { block: BlockWithImage }) {
       i++;
       setProgress(Math.round((i / total) * 100));
 
+      const streamId = ev.id ?? -1;
       const color = ev.color ?? "#000000";
       const size  = ev.size  ?? 2;
 
-      ctx.lineWidth = size;
-      ctx.lineCap   = "round";
-      ctx.lineJoin  = "round";
-      ctx.strokeStyle = color;
-      ctx.fillStyle   = color;
-
-      if (ev.kind === "down") {
+      if (ev.kind === "clear") {
+        // Sans ce cas, un clear en cours de session était invisible au replay :
+        // les traits d'avant et d'après s'empilaient en un seul gribouillis
+        // qui ne correspondait plus au dessin réellement envoyé.
+        ctx.fillStyle = "#ffffff";
+        ctx.fillRect(0, 0, W, H);
+        lastByStream.clear();
+      } else if (ev.kind === "fill") {
+        floodFill(ctx, ev.x, ev.y, color, W, H);
+      } else if (ev.kind === "shape" && ev.x2 !== undefined && ev.y2 !== undefined) {
+        const a = { x: ev.x, y: ev.y };
+        const b = { x: ev.x2, y: ev.y2 };
+        if (ev.shapeType === "line")    drawLine(ctx, a, b, size, color);
+        if (ev.shapeType === "rect")    drawRect(ctx, a, b, color);
+        if (ev.shapeType === "ellipse") drawEllipse(ctx, a, b, color);
+      } else if (ev.kind === "down") {
+        ctx.fillStyle = color;
         ctx.beginPath();
         ctx.arc(ev.x, ev.y, size / 2, 0, Math.PI * 2);
         ctx.fill();
-      } else if (ev.kind === "move" && prevEvent && prevEvent.kind !== "up") {
-        ctx.beginPath();
-        ctx.moveTo(prevEvent.x, prevEvent.y);
-        ctx.lineTo(ev.x, ev.y);
-        ctx.stroke();
+      } else if (ev.kind === "move") {
+        // Ne relie qu'au dernier point DU MÊME flux — sinon deux doigts qui
+        // dessinent en même temps se connectent l'un à l'autre au replay
+        // (l'affichage live utilisait déjà des refs séparées par pointeur ;
+        // c'est cette étape de reconstruction qui ne l'était pas).
+        const prev = lastByStream.get(streamId);
+        if (prev && prev.kind !== "up") {
+          drawLine(ctx, { x: prev.x, y: prev.y }, { x: ev.x, y: ev.y }, size, color);
+        }
       }
 
-      prevEvent = ev;
+      if (ev.kind === "down" || ev.kind === "move" || ev.kind === "up") {
+        lastByStream.set(streamId, ev);
+      }
 
       // Délai jusqu'au prochain event (en temps réel / speedFactor)
       const nextDelay = i < total

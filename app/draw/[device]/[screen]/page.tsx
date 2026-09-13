@@ -5,6 +5,7 @@ import { SCREEN_PROFILES, ScreenId } from "@/lib/screenProfiles";
 import { OwnedDevice } from "@/lib/deviceStore";
 import { canvasToScreenPayload } from "@/lib/canvasToScreen";
 import type { ActionEvent, ReplayEvent } from "@/lib/types/actions";
+import { floodFill, hexToRgb, drawLine, drawRect, drawEllipse } from "@/lib/canvasPrimitives";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -14,6 +15,7 @@ type Tool =
   | "eyedropper" | "move";
 
 interface Point { x: number; y: number }
+interface StrokeState { lastPoint: Point; shapeStart: Point }
 
 interface ImageImport {
   data: ImageData | null;
@@ -51,47 +53,6 @@ const TOOL_SHORTCUTS: Record<string, Tool> = {
 function formatTime(s: number) {
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
 }
-function hexToRgb(hex: string) {
-  return {
-    r: parseInt(hex.slice(1, 3), 16),
-    g: parseInt(hex.slice(3, 5), 16),
-    b: parseInt(hex.slice(5, 7), 16),
-  };
-}
-function colorsClose(
-  a: { r: number; g: number; b: number },
-  b: { r: number; g: number; b: number },
-  tol = 30,
-) {
-  return Math.abs(a.r - b.r) + Math.abs(a.g - b.g) + Math.abs(a.b - b.b) < tol;
-}
-
-function floodFill(
-  ctx: CanvasRenderingContext2D,
-  startX: number, startY: number,
-  fillColor: string,
-  w: number, h: number,
-) {
-  const imageData = ctx.getImageData(0, 0, w, h);
-  const data = imageData.data;
-  const idx = (x: number, y: number) => (y * w + x) * 4;
-  const si = idx(startX, startY);
-  const target = { r: data[si], g: data[si + 1], b: data[si + 2] };
-  const fill = hexToRgb(fillColor);
-  if (colorsClose(target, fill, 5)) return;
-  const stack = [[startX, startY]];
-  while (stack.length) {
-    const [x, y] = stack.pop()!;
-    if (x < 0 || x >= w || y < 0 || y >= h) continue;
-    const i = idx(x, y);
-    const c = { r: data[i], g: data[i + 1], b: data[i + 2] };
-    if (!colorsClose(c, target)) continue;
-    data[i] = fill.r; data[i + 1] = fill.g; data[i + 2] = fill.b; data[i + 3] = 255;
-    stack.push([x + 1, y], [x - 1, y], [x, y + 1], [x, y - 1]);
-  }
-  ctx.putImageData(imageData, 0, 0);
-}
-
 function ditherFloyd(imageData: ImageData, palette: string[]): ImageData {
   const d = new ImageData(new Uint8ClampedArray(imageData.data), imageData.width, imageData.height);
   const data = d.data;
@@ -437,9 +398,11 @@ export default function DrawCanvasPage() {
   const overlayRef   = useRef<HTMLCanvasElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const drawing      = useRef(false);
-  const lastPoint    = useRef<Point | null>(null);
-  const shapeStart   = useRef<Point | null>(null);
+  // Traits en cours, par pointerId — indispensable dès que deux doigts
+  // dessinent en même temps : deux refs partagées (comme avant) mélangeaient
+  // le point de départ/dernier point des deux traits et créaient des lignes
+  // fantômes entre les deux doigts, à l'écran comme dans le replay.
+  const strokes      = useRef<Map<number, StrokeState>>(new Map());
   const history      = useRef<ImageData[]>([]);
   const historyIndex = useRef(-1);
   const [canUndo, setCanUndo] = useState(false);
@@ -682,28 +645,6 @@ export default function DrawCanvasPage() {
     };
   }, [W, H, scale]);
 
-  // ── Drawing primitives ────────────────────────────────────────────────────
-  const drawLine = useCallback((ctx: CanvasRenderingContext2D, a: Point, b: Point, size: number, color: string, alpha = 1) => {
-    ctx.globalAlpha = alpha; ctx.strokeStyle = color;
-    ctx.lineWidth = size; ctx.lineCap = "round"; ctx.lineJoin = "round";
-    ctx.beginPath(); ctx.moveTo(a.x + 0.5, a.y + 0.5); ctx.lineTo(b.x + 0.5, b.y + 0.5);
-    ctx.stroke(); ctx.globalAlpha = 1;
-  }, []);
-
-  const drawRect = useCallback((ctx: CanvasRenderingContext2D, a: Point, b: Point, color: string, alpha = 1) => {
-    ctx.globalAlpha = alpha; ctx.strokeStyle = color; ctx.lineWidth = 1;
-    ctx.strokeRect(Math.min(a.x, b.x) + 0.5, Math.min(a.y, b.y) + 0.5, Math.abs(b.x - a.x), Math.abs(b.y - a.y));
-    ctx.globalAlpha = 1;
-  }, []);
-
-  const drawEllipse = useCallback((ctx: CanvasRenderingContext2D, a: Point, b: Point, color: string, alpha = 1) => {
-    ctx.globalAlpha = alpha; ctx.strokeStyle = color; ctx.lineWidth = 1;
-    const cx = (a.x + b.x) / 2, cy = (a.y + b.y) / 2;
-    const rx = Math.abs(b.x - a.x) / 2, ry = Math.abs(b.y - a.y) / 2;
-    ctx.beginPath(); ctx.ellipse(cx, cy, rx, ry, 0, 0, Math.PI * 2);
-    ctx.stroke(); ctx.globalAlpha = 1;
-  }, []);
-
   // ── Pointer events ────────────────────────────────────────────────────────
   const handlePointerDown = useCallback((e: React.PointerEvent<HTMLCanvasElement>) => {
     e.preventDefault();
@@ -712,24 +653,28 @@ export default function DrawCanvasPage() {
     const pt  = toCanvasPoint(e, e.currentTarget);
     const ctx = canvasRef.current.getContext("2d")!;
 
-    drawing.current = true;
-    lastPoint.current = pt;
-    shapeStart.current = pt;
+    // Un trait par pointerId — pas de dépendance à un tool/eraser précédent
+    // d'un autre doigt encore actif.
+    strokes.current.set(e.pointerId, { lastPoint: pt, shapeStart: pt });
 
     if (tool === "eyedropper") {
       const px = ctx.getImageData(pt.x, pt.y, 1, 1).data;
       const hex = "#" + [px[0], px[1], px[2]].map(v => v.toString(16).padStart(2, "0")).join("");
       setActiveColor(hex);
-      drawing.current = false;
+      strokes.current.delete(e.pointerId);
       return;
     }
     if (tool === "fill") {
       saveHistory();
       floodFill(ctx, pt.x, pt.y, activeColor, W, H);
-      actionsRef.current.push({ kind: "fill", t: Date.now() - sessionStartRef.current, tool: "fill", color: activeColor });
+      const t = Date.now() - sessionStartRef.current;
+      actionsRef.current.push({ kind: "fill", t, tool: "fill", color: activeColor });
+      // Axe 4 : sans ceci, un remplissage est invisible au replay — l'image
+      // reconstruite divergeait silencieusement du dessin réellement soumis.
+      replayRef.current.push({ kind: "fill", t, x: pt.x, y: pt.y, tool: "fill", color: activeColor });
       scoreRef.current += 1;
       lastActionWasClearRef.current = false;
-      drawing.current = false;
+      strokes.current.delete(e.pointerId);
       return;
     }
     if (tool === "brush" || tool === "eraser") {
@@ -740,7 +685,7 @@ export default function DrawCanvasPage() {
       // Axe 4 : enregistrer l'événement de replay "down"
       const t = Date.now() - sessionStartRef.current;
       replayRef.current.push({
-        kind: "down", t, x: pt.x, y: pt.y,
+        kind: "down", t, x: pt.x, y: pt.y, id: e.pointerId,
         tool, color: tool === "eraser" ? "#FFFFFF" : activeColor, size: brushSize,
       });
       lastReplayT.current = t;
@@ -748,7 +693,8 @@ export default function DrawCanvasPage() {
   }, [tool, activeColor, brushSize, opacity, W, H, toCanvasPoint, saveHistory]);
 
   const handlePointerMove = useCallback((e: React.PointerEvent<HTMLCanvasElement>) => {
-    if (!drawing.current || !canvasRef.current || !overlayRef.current) return;
+    const stroke = strokes.current.get(e.pointerId);
+    if (!stroke || !canvasRef.current || !overlayRef.current) return;
     e.preventDefault();
     const pt      = toCanvasPoint(e, e.currentTarget);
     const ctx     = canvasRef.current.getContext("2d")!;
@@ -756,45 +702,39 @@ export default function DrawCanvasPage() {
 
     if (tool === "brush" || tool === "eraser") {
       const color = tool === "eraser" ? "#FFFFFF" : activeColor;
-      if (lastPoint.current) drawLine(ctx, lastPoint.current, pt, brushSize, color, opacity / 100);
-      lastPoint.current = pt;
+      drawLine(ctx, stroke.lastPoint, pt, brushSize, color, opacity / 100);
+      stroke.lastPoint = pt;
       // Axe 4 : enregistrer le mouvement (throttlé à 16ms)
       const t = Date.now() - sessionStartRef.current;
       if (t - lastReplayT.current >= REPLAY_THROTTLE_MS) {
         replayRef.current.push({
-          kind: "move", t, x: pt.x, y: pt.y,
+          kind: "move", t, x: pt.x, y: pt.y, id: e.pointerId,
           tool, color, size: brushSize,
         });
         lastReplayT.current = t;
       }
     } else if (tool === "line" || tool === "rect" || tool === "ellipse") {
       overlay.clearRect(0, 0, W, H);
-      if (shapeStart.current) {
-        if (tool === "line")    drawLine(overlay, shapeStart.current, pt, brushSize, activeColor);
-        if (tool === "rect")    drawRect(overlay, shapeStart.current, pt, activeColor);
-        if (tool === "ellipse") drawEllipse(overlay, shapeStart.current, pt, activeColor);
-      }
+      if (tool === "line")    drawLine(overlay, stroke.shapeStart, pt, brushSize, activeColor);
+      if (tool === "rect")    drawRect(overlay, stroke.shapeStart, pt, activeColor);
+      if (tool === "ellipse") drawEllipse(overlay, stroke.shapeStart, pt, activeColor);
     }
-  }, [tool, activeColor, brushSize, opacity, W, H, toCanvasPoint, drawLine, drawRect, drawEllipse]);
+  }, [tool, activeColor, brushSize, opacity, W, H, toCanvasPoint]);
 
   const handlePointerUp = useCallback((e: React.PointerEvent<HTMLCanvasElement>) => {
-    if (!drawing.current || !canvasRef.current || !overlayRef.current) return;
+    const stroke = strokes.current.get(e.pointerId);
+    if (!stroke || !canvasRef.current || !overlayRef.current) return;
     e.preventDefault();
     const pt      = toCanvasPoint(e, e.currentTarget);
     const ctx     = canvasRef.current.getContext("2d")!;
     const overlay = overlayRef.current.getContext("2d")!;
 
     if (tool === "line" || tool === "rect" || tool === "ellipse") {
-      if (shapeStart.current) {
-        if (tool === "line")    drawLine(ctx, shapeStart.current, pt, brushSize, activeColor);
-        if (tool === "rect")    drawRect(ctx, shapeStart.current, pt, activeColor);
-        if (tool === "ellipse") drawEllipse(ctx, shapeStart.current, pt, activeColor);
-      }
+      if (tool === "line")    drawLine(ctx, stroke.shapeStart, pt, brushSize, activeColor);
+      if (tool === "rect")    drawRect(ctx, stroke.shapeStart, pt, activeColor);
+      if (tool === "ellipse") drawEllipse(ctx, stroke.shapeStart, pt, activeColor);
       overlay.clearRect(0, 0, W, H);
     }
-    drawing.current = false;
-    lastPoint.current = null;
-    shapeStart.current = null;
     const t = Date.now() - sessionStartRef.current;
     // Enregistrer l'action selon l'outil
     if (tool === "brush") {
@@ -802,19 +742,26 @@ export default function DrawCanvasPage() {
       scoreRef.current += 1;
       lastActionWasClearRef.current = false;
       // Axe 4 : enregistrer "up"
-      replayRef.current.push({ kind: "up", t, x: pt.x, y: pt.y, tool });
+      replayRef.current.push({ kind: "up", t, x: pt.x, y: pt.y, id: e.pointerId, tool });
     } else if (tool === "eraser") {
       actionsRef.current.push({ kind: "erase", t, tool: "eraser" });
       // erase = 0 : ne contribue pas au score Proof-of-Draw
       lastActionWasClearRef.current = false;
-      replayRef.current.push({ kind: "up", t, x: pt.x, y: pt.y, tool });
+      replayRef.current.push({ kind: "up", t, x: pt.x, y: pt.y, id: e.pointerId, tool });
     } else if (tool === "line" || tool === "rect" || tool === "ellipse") {
       actionsRef.current.push({ kind: "shape", t, tool, color: activeColor });
       scoreRef.current += 1;
       lastActionWasClearRef.current = false;
+      // Axe 4 : sans ceci, une forme est invisible au replay (comme le
+      // remplissage — même défaut, même correctif).
+      replayRef.current.push({
+        kind: "shape", t, x: stroke.shapeStart.x, y: stroke.shapeStart.y,
+        x2: pt.x, y2: pt.y, tool, color: activeColor, shapeType: tool,
+      });
     }
+    strokes.current.delete(e.pointerId);
     saveHistory();
-  }, [tool, activeColor, brushSize, W, H, toCanvasPoint, drawLine, drawRect, drawEllipse, saveHistory]);
+  }, [tool, activeColor, brushSize, W, H, toCanvasPoint, saveHistory]);
 
   // ── Clear ──────────────────────────────────────────────────────────────────
   const clearCanvas = useCallback(() => {
@@ -825,7 +772,12 @@ export default function DrawCanvasPage() {
     scoreCheckpointsRef.current.push(scoreRef.current);
     scoreRef.current = 0;
     lastActionWasClearRef.current = true;
-    actionsRef.current.push({ kind: "clear", t: Date.now() - sessionStartRef.current, tool: "clear", color: "#FFFFFF" });
+    const t = Date.now() - sessionStartRef.current;
+    actionsRef.current.push({ kind: "clear", t, tool: "clear", color: "#FFFFFF" });
+    // Axe 4 : sans ceci, le replay ne sait jamais qu'un clear a eu lieu et
+    // superpose les traits d'avant et d'après — le "gribouilli" qui ne
+    // ressemble à rien de réel vient en bonne partie de là.
+    replayRef.current.push({ kind: "clear", t, x: 0, y: 0, tool: "clear" });
     saveHistory();
   }, [W, H, saveHistory]);
 
@@ -1160,6 +1112,18 @@ export default function DrawCanvasPage() {
   // rootRef est posé sur le div racine — c'est lui qu'on passe à requestFullscreen
   return (
     <>
+    {/*
+      Supprime le flash de surbrillance tactile par défaut du navigateur sur
+      tous les boutons de la page (outil, taille, couleurs...). Sans ça, un
+      tap ressemble visuellement à un appui prolongé — c'est exactement le
+      clignotement signalé au changement d'outil (pinceau → gomme).
+    */}
+    <style>{`
+      .pod-draw-page button {
+        -webkit-tap-highlight-color: transparent;
+        touch-action: manipulation;
+      }
+    `}</style>
     {/* Animation CSS du ticker TFT — injectée une seule fois dans la page */}
     {isFullColor && (
       <style>{`
@@ -1174,6 +1138,7 @@ export default function DrawCanvasPage() {
     )}
     <div
       ref={rootRef}
+      className="pod-draw-page"
       style={{
         display: "flex", flexDirection: "column",
         // En mode fullscreen natif, le navigateur gère les dimensions —
@@ -1491,7 +1456,7 @@ export default function DrawCanvasPage() {
               onPointerDown={handlePointerDown}
               onPointerMove={handlePointerMove}
               onPointerUp={handlePointerUp}
-              onPointerLeave={e => { if (drawing.current) handlePointerUp(e); }}
+              onPointerLeave={e => { if (strokes.current.has(e.pointerId)) handlePointerUp(e); }}
             />
 
             <canvas
