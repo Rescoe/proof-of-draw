@@ -8,6 +8,7 @@ const links = [
   { href: "/",         label: "Accueil" },
   { href: "/draw",     label: "Dessiner" },
   { href: "/gallery",  label: "Explorer" },
+  { href: "/gallery-ana", label: "Agents IA" },
   { href: "/artists",  label: "Artistes" },
   { href: "/learn",    label: "Apprendre" },
   { href: "/profile",  label: "Mon profil" },

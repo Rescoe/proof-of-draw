@@ -71,6 +71,12 @@ export interface Block {
     confirmedAt: number;
   }[];
   obsConfirmed?: boolean;      // true si l'actionsHash a été confirmé par des observers
+
+  // Pont ANA — présent uniquement sur les blocs créés par lib/anaChain.ts
+  // (jamais par finalizeBlock/le flux humain). Ces blocs vivent dans un index
+  // Redis totalement séparé (chain:ana:*) ; ce champ est une étiquette pour
+  // l'UI, pas un filtre nécessaire à leur isolement.
+  source?: "human" | "ana-agent";
 }
 
 export interface BlockImagePayload {

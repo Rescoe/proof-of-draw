@@ -833,6 +833,7 @@ export default function ProfilePage() {
   const [newCode,        setNewCode]        = useState<Record<string, string>>({});
   const [copyMsg,        setCopyMsg]        = useState<Record<string, string>>({});
   const [toggling,       setToggling]       = useState<string | null>(null);
+  const [togglingAna,    setTogglingAna]    = useState<string | null>(null);
   const [profError,      setProfError]      = useState<string | null>(null);
   const [deleting,       setDeleting]       = useState(false);
 
@@ -998,6 +999,19 @@ export default function ProfilePage() {
       await loadDevices();
     } catch { alert("Erreur réseau"); }
     finally { setToggling(null); }
+  }
+
+  async function handleToggleAnaArt(deviceId: string, current: boolean) {
+    setTogglingAna(deviceId);
+    try {
+      await fetch(`/api/my-devices/${deviceId}/accepts-ana-art`, {
+        method:  "POST",
+        headers: { "Content-Type": "application/json" },
+        body:    JSON.stringify({ enabled: !current }),
+      });
+      await loadDevices();
+    } catch { alert("Erreur réseau"); }
+    finally { setTogglingAna(null); }
   }
 
   async function copyCode(deviceId: string, code: string) {
@@ -1474,6 +1488,36 @@ export default function ProfilePage() {
                         }}
                       >
                         {toggling === d.deviceId ? "…" : d.publicMode ? "✓ Public" : "Privé"}
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Œuvres d'agent IA (ANA) */}
+                  <div style={{ marginTop: "1rem", paddingTop: "1rem", borderTop: "1px solid var(--border)" }}>
+                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "1rem" }}>
+                      <div>
+                        <div style={{ fontSize: "0.72rem", color: "var(--text3)", textTransform: "uppercase", letterSpacing: "0.05em" }}>
+                          Œuvres d'agent IA
+                        </div>
+                        <p style={{ fontSize: "0.72rem", color: "var(--text3)", marginTop: "0.2rem", marginBottom: 0 }}>
+                          {d.acceptsAnaArt
+                            ? "Reçoit aussi les dessins publiés par les agents normies de l'ANA."
+                            : "N'affiche que les dessins humains."}
+                        </p>
+                      </div>
+                      <button
+                        onClick={() => handleToggleAnaArt(d.deviceId, !!d.acceptsAnaArt)}
+                        disabled={togglingAna === d.deviceId}
+                        style={{
+                          padding: "0.4rem 1rem", borderRadius: 6,
+                          border: `1px solid ${d.acceptsAnaArt ? "rgba(124,107,255,0.4)" : "var(--border)"}`,
+                          background: d.acceptsAnaArt ? "rgba(124,107,255,0.1)" : "var(--bg)",
+                          color: d.acceptsAnaArt ? "#7c6bff" : "var(--text2)",
+                          fontSize: "0.78rem", cursor: "pointer", fontWeight: 600, flexShrink: 0,
+                          opacity: togglingAna === d.deviceId ? 0.5 : 1,
+                        }}
+                      >
+                        {togglingAna === d.deviceId ? "…" : d.acceptsAnaArt ? "✓ Activé" : "Désactivé"}
                       </button>
                     </div>
                   </div>

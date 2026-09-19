@@ -11,6 +11,7 @@ import { redis } from "@/lib/redis";
 import { getCurrentCandidate } from "@/lib/chain";
 import { enqueueDraw, getQueueLength, DRAW_QUEUE_MAX } from "@/lib/drawQueue";
 import { SCREEN_IDS, isDualBuffer } from "@/lib/screenProfiles";
+import { broadcastDirect } from "@/lib/broadcast";
 
 const DRAW_WINDOW_SEC = parseInt(process.env.DRAW_WINDOW_SEC ?? "900");
 const ABUSE_STRIKES   = parseInt(process.env.DRAW_LIMIT_PER_ROUND ?? "3");
@@ -53,26 +54,6 @@ function getBaseUrl(req: NextRequest): string {
   const proto = req.headers.get("x-forwarded-proto") ?? "https";
   const host  = req.headers.get("x-forwarded-host") ?? req.headers.get("host");
   return host ? `${proto}://${host}` : "https://proof-of-draw.vercel.app";
-}
-
-async function broadcastDirect(
-  screen: string,
-  payload: Record<string, string>,
-  deviceId: string,
-  meta?: { workTitle?: string; drawArtistName?: string; displayTs?: string },
-): Promise<void> {
-  const frameId = crypto.randomUUID();
-  const stored  = JSON.stringify({
-    payload: { ...payload, screen, ...meta },
-    frameId,
-    createdAt: Date.now(),
-    sourceDeviceId: deviceId,
-  });
-  const members = (await redis.smembers(`pool:screen:${screen}`)) as string[];
-  const targets = members.length > 0 ? members : [deviceId];
-  await Promise.all(
-    targets.map((dId) => redis.set(`frame:${dId}`, stored, { ex: DRAW_WINDOW_SEC })),
-  );
 }
 
 export async function POST(req: NextRequest) {

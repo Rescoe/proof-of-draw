@@ -24,6 +24,10 @@ export interface Device {
   publicMode?: boolean;             // toggle manuel : l'ESP est disponible pour d'autres artistes
   lastFrameReceivedAt?: number;     // mis à jour sur /api/ack-frame
   publicKey?: string;               // clé publique ED25519 hex 64 chars (firmware v2+)
+
+  // ── Pont ANA : réception d'œuvres modérées côté ANA (célébrations de burn,
+  // dessins normies spontanés) — toggle manuel, indépendant de publicMode.
+  acceptsAnaArt?: boolean;
 }
 
 // ─── ArtistProfile ────────────────────────────────────────────────────────────
@@ -76,6 +80,7 @@ export interface OwnedDevice {
   isOnline:   boolean;
   hasPairCode: boolean;
   publicMode?: boolean;
+  acceptsAnaArt?: boolean;
   lastFrameReceivedAt?: number;
 }
 
@@ -129,6 +134,7 @@ export function toOwnedDevice(d: Device): OwnedDevice {
     isOnline:           isOnline(d),
     hasPairCode:        !!d.pairCode,
     publicMode:         d.publicMode ?? false,
+    acceptsAnaArt:      d.acceptsAnaArt ?? false,
     lastFrameReceivedAt: d.lastFrameReceivedAt,
   };
 }
@@ -324,6 +330,29 @@ export async function setPublicMode(deviceId: string, enabled: boolean): Promise
 export async function getPublicDevices(): Promise<Device[]> {
   const all = await getAllDevices();
   return all.filter((d) => d.publicMode === true);
+}
+
+// ─── Pont ANA : réception d'œuvres modérées ──────────────────────────────────
+
+/**
+ * Active ou désactive la réception d'œuvres ANA (toggle manuel, indépendant
+ * de publicMode).
+ */
+export async function setAcceptsAnaArt(deviceId: string, enabled: boolean): Promise<Device | null> {
+  const device = await getDevice(deviceId);
+  if (!device) return null;
+  device.acceptsAnaArt = enabled;
+  await saveDevice(device);
+  return device;
+}
+
+/**
+ * Retourne tous les devices ayant activé la réception d'œuvres ANA, filtrés
+ * par écran s'il est fourni.
+ */
+export async function getAnaArtDevices(screen?: string): Promise<Device[]> {
+  const all = await getAllDevices();
+  return all.filter((d) => d.acceptsAnaArt === true && (!screen || d.screens.includes(screen)));
 }
 
 /**

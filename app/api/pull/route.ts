@@ -6,6 +6,7 @@ import { getFrameForDevice, FramePayload } from "@/lib/queue";
 import { isBlacklisted, getIP, forbidden } from "@/lib/rateLimit";
 import { getChainHead, getCurrentCandidate, popObsTask } from "@/lib/chain";
 import type { ChainSummary } from "@/lib/chain";
+import { maybeCheckAnaFeed } from "@/lib/anaFeed";
 
 const DEVICE_ID_REGEX = /^dev_[A-Z0-9]{8}$/;
 // 5 pulls/min — compatible avec PULL_INTERVAL=60s + VALIDATE_INTERVAL=30s du firmware
@@ -114,6 +115,14 @@ export async function GET(req: NextRequest) {
         frameId: null, screen: null,
         chain: null, pendingValidation: null,
       }, 404);
+
+    // ── Pont ANA : vérification opportuniste (pas de cron) ──────────────────
+    // Débattue à l'échelle du système (voir maybeCheckAnaFeed) — la plupart
+    // des pulls ne déclenchent qu'une lecture Redis quasi gratuite, un vrai
+    // fetch vers ANA n'a lieu qu'au plus une fois par ANA_FEED_CHECK_DEBOUNCE_SEC.
+    if (device.acceptsAnaArt) {
+      await maybeCheckAnaFeed();
+    }
 
     // ── Ping device (skip si mis à jour il y a moins de 4 min — réduit le quota Redis) ──
     const recentlyUpdated =
