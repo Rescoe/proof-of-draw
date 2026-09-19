@@ -23,10 +23,9 @@
 // V2 : ajouter signature ED25519 du fromDevice sur le message de transfert.
 
 import { NextRequest, NextResponse } from "next/server";
-import { redis } from "@/lib/redis";
 import { isBlacklisted, getIP, forbidden } from "@/lib/rateLimit";
 import { sessionOwnsDevice } from "@/lib/session";
-import type { Block } from "@/lib/chain";
+import { transferBlockOwnership } from "@/lib/chain";
 
 const DEVICE_ID_REGEX = /^dev_[A-Z0-9]{8}$/;
 const BLOCK_HASH_REGEX = /^[a-f0-9]{64}$/;
@@ -59,55 +58,8 @@ export async function POST(req: NextRequest) {
       return json({ error: "Non autorisé — ce device n'appartient pas à votre session" }, 403);
     }
 
-    // 1. Charger le bloc
-    const rawBlock = await redis.get(`chain:block:${blockHash}`);
-    if (!rawBlock) return json({ error: "Bloc introuvable" }, 404);
-
-    const block: Block = typeof rawBlock === "string" ? JSON.parse(rawBlock) : rawBlock;
-
-    // 2. Vérifier la propriété
-    const currentOwner = block.ownerDeviceId ?? block.minerDeviceId ?? block.deviceId;
-    if (currentOwner !== fromDeviceId) {
-      return json({
-        error:         "fromDeviceId n'est pas le propriétaire actuel",
-        currentOwner,
-      }, 403);
-    }
-
-    // 3. Transfert atomique de la propriété Redis
-    // SMOVE : retire du Set source et ajoute au Set destination atomiquement
-    const moved = await redis.smove(
-      `chain:device:${fromDeviceId}:owned`,
-      `chain:device:${toDeviceId}:owned`,
-      blockHash,
-    );
-
-    if (!moved) {
-      // Le hash n'était pas dans :owned du fromDevice (désynchronisation possible)
-      // On force l'ajout côté destination quand même
-      await redis.sadd(`chain:device:${toDeviceId}:owned`, blockHash);
-      console.warn(`[transfer-block] smove miss — forcé sadd to=${toDeviceId} hash=${blockHash.slice(0, 12)}`);
-    }
-
-    // 4. Mettre à jour ownerDeviceId dans le bloc stocké
-    const transferredAt = Date.now();
-    const updatedBlock: Block = { ...block, ownerDeviceId: toDeviceId };
-    const writes: Promise<unknown>[] = [
-      redis.set(`chain:block:${blockHash}`, JSON.stringify(updatedBlock)),
-      // Notification au nouveau propriétaire (TTL 24h — couvrira son prochain pull)
-      redis.set(`chain:notify:${toDeviceId}`, blockHash, { ex: 86400 }),
-    ];
-
-    // Mettre à jour chain:head si c'est le bloc de tête
-    const headRaw = await redis.get("chain:head");
-    if (headRaw) {
-      const head: Block = typeof headRaw === "string" ? JSON.parse(headRaw) : headRaw;
-      if (head.blockHash === blockHash) {
-        writes.push(redis.set("chain:head", JSON.stringify(updatedBlock)));
-      }
-    }
-
-    await Promise.all(writes);
+    const result = await transferBlockOwnership(blockHash, fromDeviceId, toDeviceId);
+    if (!result.ok) return json({ error: result.error }, result.error === "Bloc introuvable" ? 404 : 403);
 
     console.log(
       `[transfer-block] hash=${blockHash.slice(0, 12)} from=${fromDeviceId} to=${toDeviceId}`
@@ -116,10 +68,10 @@ export async function POST(req: NextRequest) {
     return json({
       ok:           true,
       blockHash,
-      blockIndex:   block.blockIndex,
+      blockIndex:   result.blockIndex,
       fromDeviceId,
       toDeviceId,
-      transferredAt,
+      transferredAt: Date.now(),
     });
 
   } catch (err) {

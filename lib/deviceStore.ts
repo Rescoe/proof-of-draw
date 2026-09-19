@@ -84,8 +84,22 @@ export interface OwnedDevice {
   lastFrameReceivedAt?: number;
 }
 
+// Unclaimed device (never paired to an artist) — short TTL, this is the
+// "opportunistic cleanup" CLAUDE.md refers to: a stray onboarding/test ping
+// that nobody ever claimed should fade out on its own.
 const TTL_SECONDS = 48 * 60 * 60;
+// Paired device (has an artistId/artistName) — a real artist's physical ESP
+// that might legitimately sit unplugged for days (power outage, travel,
+// moved apartments) shouldn't silently lose its deviceId, mining history and
+// pairCode over a weekend. 48h was too aggressive here: it's what turned an
+// overnight WiFi hiccup into an orphaned duplicate device with unreachable
+// mined blocks — see the incident this constant was raised in response to.
+const PAIRED_TTL_SECONDS = 90 * 24 * 60 * 60;
 const ONLINE_MS   = 10 * 60 * 1000;
+
+function deviceTtl(device: Device): number {
+  return (device.artistId || device.artistName) ? PAIRED_TTL_SECONDS : TTL_SECONDS;
+}
 
 function deviceKey(deviceId: string)    { return `device:${deviceId}`; }
 function macKey(mac: string)            { return `mac:${mac}`; }
@@ -142,11 +156,13 @@ export function toOwnedDevice(d: Device): OwnedDevice {
 // ─── Lecture / écriture ───────────────────────────────────────────────────────
 
 async function saveDevice(device: Device): Promise<void> {
-  // 3 clés : device:id, mac:xxx, pair:CODE — toutes avec TTL 48h
+  // 3 clés : device:id, mac:xxx, pair:CODE — TTL selon deviceTtl() (48h tant
+  // que le device n'est associé à personne, 90j une fois appairé)
+  const ttl = deviceTtl(device);
   await Promise.all([
-    redis.set(deviceKey(device.deviceId), JSON.stringify(device), { ex: TTL_SECONDS }),
-    redis.set(macKey(device.mac), device.deviceId, { ex: TTL_SECONDS }),
-    redis.set(pairKey(device.pairCode), device.deviceId, { ex: TTL_SECONDS }),
+    redis.set(deviceKey(device.deviceId), JSON.stringify(device), { ex: ttl }),
+    redis.set(macKey(device.mac), device.deviceId, { ex: ttl }),
+    redis.set(pairKey(device.pairCode), device.deviceId, { ex: ttl }),
   ]);
 }
 

@@ -465,6 +465,63 @@ export async function finalizeBlock(
   return block;
 }
 
+// ─── Transfert de propriété ───────────────────────────────────────────────────
+
+/** All block hashes currently owned by a device (chain:device:{id}:owned Set). */
+export async function getOwnedBlockHashes(deviceId: string): Promise<string[]> {
+  return (await redis.smembers(`chain:device:${deviceId}:owned`)) as string[];
+}
+
+export interface TransferResult {
+  ok: boolean;
+  error?: string;
+  blockIndex?: number;
+}
+
+/**
+ * Moves ownership of one block from one device to another: SMOVE the
+ * `:owned` sets, update the stored block's ownerDeviceId, and refresh
+ * chain:head if it's the head block. Shared by /api/transfer-block (one
+ * block) and /api/transfer-blocks (a device's whole history) so both stay in
+ * sync — this used to be duplicated route-local logic in the former.
+ */
+export async function transferBlockOwnership(
+  blockHash: string, fromDeviceId: string, toDeviceId: string,
+): Promise<TransferResult> {
+  const block = await getBlockByHash(blockHash);
+  if (!block) return { ok: false, error: "Bloc introuvable" };
+
+  const currentOwner = block.ownerDeviceId ?? block.minerDeviceId ?? block.deviceId;
+  if (currentOwner !== fromDeviceId) {
+    return { ok: false, error: `fromDeviceId n'est pas le propriétaire actuel (${currentOwner})` };
+  }
+
+  const moved = await redis.smove(
+    `chain:device:${fromDeviceId}:owned`,
+    `chain:device:${toDeviceId}:owned`,
+    blockHash,
+  );
+  if (!moved) {
+    // Not in :owned for fromDevice (possible desync) — force-add to destination anyway.
+    await redis.sadd(`chain:device:${toDeviceId}:owned`, blockHash);
+    console.warn(`[chain] transfer smove miss — forced sadd to=${toDeviceId} hash=${blockHash.slice(0, 12)}`);
+  }
+
+  const updatedBlock: Block = { ...block, ownerDeviceId: toDeviceId };
+  const writes: Promise<unknown>[] = [
+    redis.set(blockKey(blockHash), JSON.stringify(updatedBlock)),
+    redis.set(`chain:notify:${toDeviceId}`, blockHash, { ex: 86400 }),
+  ];
+
+  const head = await getChainHead();
+  if (head?.blockHash === blockHash) {
+    writes.push(redis.set(KEY_HEAD, JSON.stringify(updatedBlock)));
+  }
+
+  await Promise.all(writes);
+  return { ok: true, blockIndex: block.blockIndex };
+}
+
 // ─── Résumé de la chaîne (pour /api/pull) ────────────────────────────────────
 
 export interface ChainSummary {

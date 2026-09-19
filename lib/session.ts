@@ -129,6 +129,16 @@ export async function sessionOwnsDevice(deviceId: string): Promise<boolean> {
   return session.deviceIds.includes(deviceId);
 }
 
+/** Retire un deviceId de la session (device supprimé) — l'inverse d'addDeviceToSession. */
+export async function removeDeviceFromSession(
+  res: NextResponse,
+  deviceId: string
+): Promise<void> {
+  const current = await getSession();
+  const ids = current.deviceIds.filter(id => id !== deviceId);
+  await setSession(res, { ...current, deviceIds: ids });
+}
+
 /** Met à jour l'artistId dans le cookie de session. */
 export async function setArtistIdInSession(
   res: NextResponse,

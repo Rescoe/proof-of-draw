@@ -834,6 +834,10 @@ export default function ProfilePage() {
   const [copyMsg,        setCopyMsg]        = useState<Record<string, string>>({});
   const [toggling,       setToggling]       = useState<string | null>(null);
   const [togglingAna,    setTogglingAna]    = useState<string | null>(null);
+  const [transferTarget, setTransferTarget] = useState<Record<string, string>>({});
+  const [transferring,   setTransferring]   = useState<string | null>(null);
+  const [transferMsg,    setTransferMsg]    = useState<Record<string, string>>({});
+  const [deletingDevice, setDeletingDevice] = useState<string | null>(null);
   const [profError,      setProfError]      = useState<string | null>(null);
   const [deleting,       setDeleting]       = useState(false);
 
@@ -1012,6 +1016,42 @@ export default function ProfilePage() {
       await loadDevices();
     } catch { alert("Erreur réseau"); }
     finally { setTogglingAna(null); }
+  }
+
+  async function handleTransferBlocks(fromDeviceId: string) {
+    const toDeviceId = transferTarget[fromDeviceId];
+    if (!toDeviceId) return;
+    setTransferring(fromDeviceId);
+    setTransferMsg(m => ({ ...m, [fromDeviceId]: "" }));
+    try {
+      const res = await fetch("/api/transfer-blocks", {
+        method:  "POST",
+        headers: { "Content-Type": "application/json" },
+        body:    JSON.stringify({ fromDeviceId, toDeviceId }),
+      });
+      const data = await res.json();
+      setTransferMsg(m => ({
+        ...m,
+        [fromDeviceId]: res.ok
+          ? `${data.transferred}/${data.total} bloc(s) transféré(s).`
+          : (data.error ?? "Échec du transfert."),
+      }));
+    } catch {
+      setTransferMsg(m => ({ ...m, [fromDeviceId]: "Erreur réseau." }));
+    } finally {
+      setTransferring(null);
+    }
+  }
+
+  async function handleDeleteDevice(deviceId: string, label: string) {
+    if (!confirm(`Supprimer définitivement « ${label} » ? Cette action est irréversible — pense à transférer ses blocs vers un autre appareil avant si besoin.`)) return;
+    setDeletingDevice(deviceId);
+    try {
+      const res = await fetch(`/api/my-devices/${deviceId}/delete`, { method: "POST" });
+      if (!res.ok) { const data = await res.json().catch(() => ({})); alert(data.error ?? "Échec de la suppression."); return; }
+      await loadDevices();
+    } catch { alert("Erreur réseau"); }
+    finally { setDeletingDevice(null); }
   }
 
   async function copyCode(deviceId: string, code: string) {
@@ -1520,6 +1560,62 @@ export default function ProfilePage() {
                         {togglingAna === d.deviceId ? "…" : d.acceptsAnaArt ? "✓ Activé" : "Désactivé"}
                       </button>
                     </div>
+                  </div>
+
+                  {/* Transférer les blocs minés vers un autre de mes appareils */}
+                  {devices.length > 1 && (
+                    <div style={{ marginTop: "1rem", paddingTop: "1rem", borderTop: "1px solid var(--border)" }}>
+                      <div style={{ fontSize: "0.72rem", color: "var(--text3)", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: "0.4rem" }}>
+                        Transférer les blocs minés
+                      </div>
+                      <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap", alignItems: "center" }}>
+                        <select
+                          value={transferTarget[d.deviceId] ?? ""}
+                          onChange={e => setTransferTarget(t => ({ ...t, [d.deviceId]: e.target.value }))}
+                          style={{
+                            padding: "0.4rem 0.6rem", borderRadius: 6, border: "1px solid var(--border)",
+                            background: "var(--bg)", color: "var(--text2)", fontSize: "0.78rem",
+                          }}
+                        >
+                          <option value="">vers…</option>
+                          {devices.filter(o => o.deviceId !== d.deviceId).map(o => (
+                            <option key={o.deviceId} value={o.deviceId}>
+                              {o.deviceName || o.artistName || o.deviceId}
+                            </option>
+                          ))}
+                        </select>
+                        <button
+                          onClick={() => handleTransferBlocks(d.deviceId)}
+                          disabled={!transferTarget[d.deviceId] || transferring === d.deviceId}
+                          style={{
+                            padding: "0.4rem 0.9rem", borderRadius: 6, border: "1px solid var(--border)",
+                            background: "var(--bg)", color: "var(--text2)", fontSize: "0.78rem", cursor: "pointer",
+                            opacity: (!transferTarget[d.deviceId] || transferring === d.deviceId) ? 0.5 : 1,
+                          }}
+                        >
+                          {transferring === d.deviceId ? "Transfert…" : "↪ Transférer tous les blocs"}
+                        </button>
+                      </div>
+                      {transferMsg[d.deviceId] && (
+                        <p style={{ fontSize: "0.72rem", color: "var(--text3)", marginTop: "0.3rem" }}>{transferMsg[d.deviceId]}</p>
+                      )}
+                    </div>
+                  )}
+
+                  {/* Supprimer */}
+                  <div style={{ marginTop: "1rem", paddingTop: "1rem", borderTop: "1px solid var(--border)", display: "flex", justifyContent: "flex-end" }}>
+                    <button
+                      onClick={() => handleDeleteDevice(d.deviceId, d.deviceName || d.artistName || d.deviceId)}
+                      disabled={deletingDevice === d.deviceId}
+                      style={{
+                        padding: "0.35rem 0.8rem", borderRadius: 6,
+                        border: "1px solid rgba(248,113,113,0.3)", background: "var(--bg)",
+                        color: "#f87171", fontSize: "0.72rem", cursor: "pointer",
+                        opacity: deletingDevice === d.deviceId ? 0.5 : 1,
+                      }}
+                    >
+                      {deletingDevice === d.deviceId ? "Suppression…" : "🗑 Supprimer cet appareil"}
+                    </button>
                   </div>
                 </div>
               );
