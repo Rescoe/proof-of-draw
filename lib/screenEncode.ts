@@ -19,16 +19,28 @@ function toBase64(buf: Uint8Array): string {
   return Buffer.from(buf).toString("base64");
 }
 
-// Nearest-neighbor, aspect-ratio-preserving ("letterboxed") resize: scales
-// the source to the largest size that fits inside dstW x dstH without
+// Darkest-pixel-in-block, aspect-ratio-preserving ("letterboxed") resize:
+// scales the source to the largest size that fits inside dstW x dstH without
 // distortion, centers it, and pads the rest white. An ANA drawing's own
-// canvas (currently 3:2, see memorialArt.ts's MEMORIAL_CANVAS_W/H) rarely
-// matches a given screen's own ratio — eink27bw happens to share it (a plain
-// stretch there is already undistorted), but eink29bwr, oled096, and
-// especially the portrait tft18 don't, and a plain stretch would visibly
-// squash/stretch the piece differently per screen. Letterboxing keeps every
-// screen showing the same proportions, just with a different amount of
-// white margin.
+// canvas (currently 528x352, 3:2, see memorialArt.ts's MEMORIAL_CANVAS_W/H)
+// rarely matches a given screen's own ratio — eink27bw happens to share it
+// (only a 2x downscale, no distortion), but eink29bwr, oled096, and
+// especially the portrait tft18 don't and need a much steeper downscale
+// (~4x on tft18's narrower dimension).
+//
+// A pure nearest-neighbor point-sample (one source pixel picked per
+// destination pixel) is wrong for this content specifically: memorialArt.ts's
+// pieces are thin line art (1-6px lines/circle edges) on an otherwise blank
+// canvas, and at ~4x downscale a 1-3px line very often falls entirely
+// between the sampled points and vanishes — confirmed by simulating a real
+// piece (3 horizontal lines) through the tft18 downscale: point-sampling
+// dropped ALL THREE, reproducing exactly the "lines missing on physical TFT"
+// report. Sampling the DARKEST pixel in each source block instead (a min-
+// value box filter) guarantees any block a thin line passes through stays
+// dark — verified against the same simulation, all 3 lines survive. Slightly
+// biases thicker/bolder ink at a steep downscale, which is the correct
+// trade-off for line art: losing a stroke entirely is a fidelity failure,
+// rendering it a pixel bolder than the source isn't.
 function resizeLetterboxGrayscale(
   src: Uint8Array, srcW: number, srcH: number, dstW: number, dstH: number,
 ): Uint8Array {
@@ -44,12 +56,22 @@ function resizeLetterboxGrayscale(
   for (let y = 0; y < fitH; y++) {
     const dy = offY + y;
     if (dy < 0 || dy >= dstH) continue;
-    const sy = Math.min(srcH - 1, Math.floor((y * srcH) / fitH));
+    const sy0 = Math.floor((y * srcH) / fitH);
+    const sy1 = Math.max(sy0 + 1, Math.floor(((y + 1) * srcH) / fitH));
     for (let x = 0; x < fitW; x++) {
       const dx = offX + x;
       if (dx < 0 || dx >= dstW) continue;
-      const sx = Math.min(srcW - 1, Math.floor((x * srcW) / fitW));
-      dst[dy * dstW + dx] = src[sy * srcW + sx];
+      const sx0 = Math.floor((x * srcW) / fitW);
+      const sx1 = Math.max(sx0 + 1, Math.floor(((x + 1) * srcW) / fitW));
+
+      let darkest = 255;
+      for (let syy = sy0; syy < Math.min(sy1, srcH); syy++) {
+        for (let sxx = sx0; sxx < Math.min(sx1, srcW); sxx++) {
+          const v = src[syy * srcW + sxx];
+          if (v < darkest) darkest = v;
+        }
+      }
+      dst[dy * dstW + dx] = darkest;
     }
   }
   return dst;

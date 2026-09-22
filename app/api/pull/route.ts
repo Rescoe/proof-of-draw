@@ -80,10 +80,14 @@ export async function GET(req: NextRequest) {
     // ── Fetch parallèle ─────────────────────────────────────────────────────
     // getChainHead() remplace getChainSummary() pour éviter un double read Redis
     // et accéder aux champs workTitle / drawArtistName du bloc (métadonnées cartel).
-    const [device, consensusFrame, personalFrame, chainHead, candidate, ownedNotif] =
+    // getFrameForDevice needs device.screens to know which per-screen keys to
+    // check (a multi-screen device, e.g. eink27bw + oled096, can have a
+    // pending frame on either — the older of the two wins, see lib/queue.ts),
+    // so device has to resolve first rather than joining the Promise.all below.
+    const device = await getDevice(deviceId);
+    const [consensusFrame, personalFrame, chainHead, candidate, ownedNotif] =
       await Promise.all([
-        getDevice(deviceId),
-        getFrameForDevice(deviceId, []),
+        getFrameForDevice(deviceId, device?.screens ?? []),
         getPersonalFrame(deviceId),
         getChainHead(),
         getCurrentCandidate(),

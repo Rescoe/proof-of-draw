@@ -22,6 +22,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { revalidatePath } from "next/cache";
 import { redis } from "@/lib/redis";
+import { frameKey } from "@/lib/queue";
 import { getDevice } from "@/lib/deviceStore";
 import { getCurrentCandidate, getVotes, castVote, finalizeBlock, clearCandidate, ValidationVote } from "@/lib/chain";
 import { isBlacklisted, getIP, forbidden } from "@/lib/rateLimit";
@@ -48,7 +49,7 @@ async function broadcastValidatedFrame(poolScreen: string, payload: Record<strin
   const stored = JSON.stringify({ payload: enrichedPayload, frameId, createdAt: Date.now(), sourceDeviceId: "consensus" });
   const ttl = Math.max(900, Math.min(displayTime, 7200));
 
-  await Promise.all(eligible.map((dId) => redis.set(`frame:${dId}`, stored, { ex: ttl })));
+  await Promise.all(eligible.map((dId) => redis.set(frameKey(dId, poolScreen), stored, { ex: ttl })));
   console.log(`[validation-result] broadcast pool=${poolScreen} devices=${eligible.length} ttl=${ttl}s`);
 }
 

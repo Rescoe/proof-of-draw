@@ -204,17 +204,7 @@ function sanitizeFrame(
 async function fetchDevice(
   deviceId: string
 ): Promise<NetworkDevice | null> {
-  const [device, frame] =
-    await Promise.all([
-      redis.get<DeviceRecord>(
-        `device:${deviceId}`
-      ),
-
-      redis.get<RawFrame>(
-        `frame:${deviceId}`
-      ),
-    ]);
-
+  const device = await redis.get<DeviceRecord>(`device:${deviceId}`);
   if (!device) {
     return null;
   }
@@ -224,6 +214,19 @@ async function fetchDevice(
   )
     ? device.screens
     : [];
+
+  // One frame per screen now (frame:{deviceId}:{screen} — see lib/queue.ts) —
+  // fetch each of this device's screens and keep the newest for this single
+  // "recentFrame" display slot.
+  const frameRaws = screens.length > 0
+    ? await redis.mget<(RawFrame | null)[]>(...screens.map((s) => `frame:${deviceId}:${s}`))
+    : [];
+  let frame: RawFrame | null = null;
+  for (const raw of frameRaws) {
+    if (!raw) continue;
+    const parsed: RawFrame = typeof raw === "string" ? JSON.parse(raw) : raw;
+    if (!frame || (parsed.createdAt ?? 0) > (frame.createdAt ?? 0)) frame = parsed;
+  }
 
   return {
     deviceId: device.deviceId,
@@ -313,23 +316,44 @@ async function buildNetworkSnapshot(): Promise<NetworkSnapshot> {
 
   if (allDeviceIds.length > 0) {
     const deviceKeys = allDeviceIds.map((id) => `device:${id}`);
-    const frameKeys  = allDeviceIds.map((id) => `frame:${id}`);
 
-    // 2 mget en parallèle au lieu de N*2 get individuels
-    const [deviceRaws, frameRaws] = await Promise.all([
-      redis.mget<(DeviceRecord | null)[]>(...deviceKeys),
-      redis.mget<(RawFrame | null)[]>(...frameKeys),
-    ]);
+    const deviceRaws = await redis.mget<(DeviceRecord | null)[]>(...deviceKeys);
+    const parsedDevices: (DeviceRecord | null)[] = deviceRaws.map((raw) =>
+      raw ? (typeof raw === "string" ? JSON.parse(raw) : raw) : null
+    );
+
+    // A device now has one frame PER SCREEN (frame:{deviceId}:{screen} — see
+    // lib/queue.ts), not one shared frame — a multi-screen device (eink27bw +
+    // oled096) can have both populated. Fetch every (device, screen) pair in
+    // one batched mget, same "2 mget instead of N*2 gets" optimization as
+    // before, then keep the newest per device for this dashboard's single
+    // "recentFrame" slot.
+    const framePairs: { deviceId: string; screen: string }[] = [];
+    parsedDevices.forEach((device, i) => {
+      if (!device) return;
+      const screens = Array.isArray(device.screens) ? device.screens : [];
+      for (const screen of screens) framePairs.push({ deviceId: allDeviceIds[i], screen });
+    });
+
+    const frameKeys = framePairs.map(({ deviceId, screen }) => `frame:${deviceId}:${screen}`);
+    const frameRaws = frameKeys.length > 0
+      ? await redis.mget<(RawFrame | null)[]>(...frameKeys)
+      : [];
+
+    const newestFrameByDevice = new Map<string, RawFrame>();
+    framePairs.forEach(({ deviceId }, idx) => {
+      const raw = frameRaws[idx];
+      if (!raw) return;
+      const frame: RawFrame = typeof raw === "string" ? JSON.parse(raw) : raw;
+      const existing = newestFrameByDevice.get(deviceId);
+      if (!existing || (frame.createdAt ?? 0) > (existing.createdAt ?? 0)) {
+        newestFrameByDevice.set(deviceId, frame);
+      }
+    });
 
     for (let i = 0; i < allDeviceIds.length; i++) {
-      const raw = deviceRaws[i];
-      if (!raw) continue;
-
-      const device: DeviceRecord = typeof raw === "string" ? JSON.parse(raw) : raw;
-      const frameRaw = frameRaws[i];
-      const frame: RawFrame | null = frameRaw
-        ? (typeof frameRaw === "string" ? JSON.parse(frameRaw) : frameRaw)
-        : null;
+      const device = parsedDevices[i];
+      if (!device) continue;
 
       const screens = Array.isArray(device.screens) ? device.screens : [];
 
@@ -346,7 +370,7 @@ async function buildNetworkSnapshot(): Promise<NetworkSnapshot> {
         framesSent: device.framesSent ?? 0,
         createdAt:  device.createdAt ?? 0,
         isOnline:   isOnline(device),
-        recentFrame: sanitizeFrame(frame),
+        recentFrame: sanitizeFrame(newestFrameByDevice.get(device.deviceId) ?? null),
       });
     }
   }

@@ -25,7 +25,11 @@ export async function GET(req: NextRequest) {
     let payload: Record<string, unknown> | null = null;
     let frameId: string | undefined;
 
-    const consensusFrame = await getFrameForDevice(deviceId, []);
+    // Un device multi-écran (eink27bw + oled096) a une frame distincte par
+    // écran (voir lib/queue.ts) — quand le firmware précise &screen=, on ne
+    // cherche QUE cette clé-là, jamais les autres écrans du device.
+    const lookupScreens = screen ? [screen] : (device.screens ?? []);
+    const consensusFrame = await getFrameForDevice(deviceId, lookupScreens);
     if (consensusFrame?.payload) {
       payload = consensusFrame.payload;
       frameId = consensusFrame.frameId;

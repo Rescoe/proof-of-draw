@@ -8,6 +8,7 @@
 // rejoindre le pool de vote humain, seulement les devices ayant opté in.
 
 import { redis } from "@/lib/redis";
+import { frameKey } from "@/lib/queue";
 
 const DRAW_WINDOW_SEC = parseInt(process.env.DRAW_WINDOW_SEC ?? "900");
 
@@ -34,7 +35,7 @@ export async function broadcastDirect(
   const members = (await redis.smembers(`pool:screen:${screen}`)) as string[];
   const targets = members.length > 0 ? members : [deviceId];
   await Promise.all(
-    targets.map((dId) => redis.set(`frame:${dId}`, stored, { ex: DRAW_WINDOW_SEC })),
+    targets.map((dId) => redis.set(frameKey(dId, screen), stored, { ex: DRAW_WINDOW_SEC })),
   );
 }
 
@@ -47,6 +48,6 @@ export async function broadcastToDevices(
   if (deviceIds.length === 0) return;
   const stored = buildFrame(screen, payload, "ana-bridge", meta);
   await Promise.all(
-    deviceIds.map((dId) => redis.set(`frame:${dId}`, stored, { ex: DRAW_WINDOW_SEC })),
+    deviceIds.map((dId) => redis.set(frameKey(dId, screen), stored, { ex: DRAW_WINDOW_SEC })),
   );
 }
