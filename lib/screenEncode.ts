@@ -19,21 +19,37 @@ function toBase64(buf: Uint8Array): string {
   return Buffer.from(buf).toString("base64");
 }
 
-// Nearest-neighbor stretch to the target canvas size — does not preserve
-// aspect ratio (an ANA drawing's own canvas may differ from a given screen's).
-// Good enough for small 1bpp line art; a letterboxed/aspect-preserving resize
-// is a documented follow-up (see the plan's open points), not a correctness
-// requirement for this pipeline to work end-to-end.
-function resizeNearestGrayscale(
+// Nearest-neighbor, aspect-ratio-preserving ("letterboxed") resize: scales
+// the source to the largest size that fits inside dstW x dstH without
+// distortion, centers it, and pads the rest white. An ANA drawing's own
+// canvas (currently 3:2, see memorialArt.ts's MEMORIAL_CANVAS_W/H) rarely
+// matches a given screen's own ratio — eink27bw happens to share it (a plain
+// stretch there is already undistorted), but eink29bwr, oled096, and
+// especially the portrait tft18 don't, and a plain stretch would visibly
+// squash/stretch the piece differently per screen. Letterboxing keeps every
+// screen showing the same proportions, just with a different amount of
+// white margin.
+function resizeLetterboxGrayscale(
   src: Uint8Array, srcW: number, srcH: number, dstW: number, dstH: number,
 ): Uint8Array {
   if (srcW === dstW && srcH === dstH) return src;
-  const dst = new Uint8Array(dstW * dstH);
-  for (let y = 0; y < dstH; y++) {
-    const sy = Math.min(srcH - 1, Math.floor((y * srcH) / dstH));
-    for (let x = 0; x < dstW; x++) {
-      const sx = Math.min(srcW - 1, Math.floor((x * srcW) / dstW));
-      dst[y * dstW + x] = src[sy * srcW + sx];
+
+  const dst = new Uint8Array(dstW * dstH).fill(255); // white padding
+  const scale = Math.min(dstW / srcW, dstH / srcH);
+  const fitW  = Math.max(1, Math.round(srcW * scale));
+  const fitH  = Math.max(1, Math.round(srcH * scale));
+  const offX  = Math.floor((dstW - fitW) / 2);
+  const offY  = Math.floor((dstH - fitH) / 2);
+
+  for (let y = 0; y < fitH; y++) {
+    const dy = offY + y;
+    if (dy < 0 || dy >= dstH) continue;
+    const sy = Math.min(srcH - 1, Math.floor((y * srcH) / fitH));
+    for (let x = 0; x < fitW; x++) {
+      const dx = offX + x;
+      if (dx < 0 || dx >= dstW) continue;
+      const sx = Math.min(srcW - 1, Math.floor((x * srcW) / fitW));
+      dst[dy * dstW + dx] = src[sy * srcW + sx];
     }
   }
   return dst;
@@ -136,7 +152,7 @@ export function encodeForScreen(
   const profile = SCREEN_PROFILES[screenId];
   if (!profile) throw new Error(`Unknown screen profile: ${screenId}`);
 
-  const resized = resizeNearestGrayscale(pixels, canvasW, canvasH, profile.width, profile.height);
+  const resized = resizeLetterboxGrayscale(pixels, canvasW, canvasH, profile.width, profile.height);
 
   switch (screenId) {
     case "oled096":   return encodeOled096(resized, profile.width, profile.height);
