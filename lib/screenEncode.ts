@@ -107,19 +107,34 @@ function encodeEink29bwr(pixels: Uint8Array, w: number, h: number): EncodedFrame
 }
 
 /**
+ * TFT 1.8" ST7735 (RGB565, full color) — ANA line art carries no color
+ * channel, so this renders the same pure black-ink-on-white every other
+ * screen here produces, just packed as RGB565 instead of 1bpp. Row-major,
+ * little-endian (0xFFFF white, 0x0000 black), matches canvasToScreen.ts's
+ * tft18 branch's byte layout exactly — only the source is grayscale bytes
+ * instead of an RGBA canvas.
+ */
+function encodeTft18(pixels: Uint8Array, w: number, h: number): EncodedFrame {
+  const buffer = new Uint8Array(w * h * 2).fill(0xff); // white (0xFFFF) by default
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      if (pixels[y * w + x] >= DARK_THRESHOLD) continue; // light — leave white
+      const off = (y * w + x) * 2;
+      buffer[off] = 0x00; buffer[off + 1] = 0x00; // RGB565 black = 0x0000
+    }
+  }
+  return { buffer: toBase64(buffer) };
+}
+
+/**
  * Encodes a raw grayscale bitmap (canvasW×canvasH, one byte per pixel, 0-255)
  * into the buffer format `screenId` expects, resizing first if needed.
- * Throws for screens this ANA bridge doesn't support (tft18 — full-color,
- * not applicable to plain B&W line art).
  */
 export function encodeForScreen(
   pixels: Uint8Array, canvasW: number, canvasH: number, screenId: ScreenId,
 ): EncodedFrame {
   const profile = SCREEN_PROFILES[screenId];
   if (!profile) throw new Error(`Unknown screen profile: ${screenId}`);
-  if (profile.pixelFormat !== "1bpp") {
-    throw new Error(`encodeForScreen: ${screenId} is not a 1bpp screen — unsupported for ANA art ingestion`);
-  }
 
   const resized = resizeNearestGrayscale(pixels, canvasW, canvasH, profile.width, profile.height);
 
@@ -127,6 +142,7 @@ export function encodeForScreen(
     case "oled096":   return encodeOled096(resized, profile.width, profile.height);
     case "eink27bw":  return encodeEink27bw(resized, profile.width, profile.height);
     case "eink29bwr": return encodeEink29bwr(resized, profile.width, profile.height);
+    case "tft18":     return encodeTft18(resized, profile.width, profile.height);
     default:
       throw new Error(`encodeForScreen: unsupported screen ${screenId}`);
   }

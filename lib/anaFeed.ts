@@ -18,7 +18,7 @@ import { getAnaArtDevices } from "@/lib/deviceStore";
 import { broadcastToDevices } from "@/lib/broadcast";
 import { encodeForScreen } from "@/lib/screenEncode";
 import { createAnaBlock } from "@/lib/anaChain";
-import { SCREEN_IDS, type ScreenId } from "@/lib/screenProfiles";
+import { SCREEN_IDS } from "@/lib/screenProfiles";
 
 const ANA_API_URL      = process.env.ANA_API_URL;
 const ANA_FEED_SECRET  = process.env.ANA_ART_FEED_SECRET;
@@ -28,8 +28,10 @@ const FETCH_TIMEOUT_MS = 5000;
 const KEY_INGESTED   = "chain:ana:ingested";     // Set<itemId> — permanent, dedup only
 const KEY_CHECK_LOCK = "chain:ana:last-checked"; // TTL gate
 
-// tft18 is full-color RGB565 — not applicable to plain B&W ANA line art.
-const ANA_ENCODABLE_SCREENS = SCREEN_IDS.filter((s) => s !== "tft18") as ScreenId[];
+// Every registered screen type is encodable for ANA art (screenEncode.ts's
+// encodeForScreen handles all of them, including tft18 — rendered as plain
+// black-ink-on-white RGB565 since ANA line art carries no color channel).
+const ANA_ENCODABLE_SCREENS = SCREEN_IDS;
 
 interface AnaArtFeedItem {
   id:           string;
