@@ -11,6 +11,19 @@ import { redis } from "@/lib/redis";
 import { frameKey } from "@/lib/queue";
 
 const DRAW_WINDOW_SEC = parseInt(process.env.DRAW_WINDOW_SEC ?? "900");
+// broadcastToDevices() (the ANA bridge) was reusing DRAW_WINDOW_SEC (15 min) —
+// a constant meant for the human draw/validate candidate window, not for
+// already-moderated, permanent gallery content. A device only pulls at most
+// every ~7.5 min (2 pulls/15min rate limit — see CLAUDE.md), so a 15-minute
+// frame TTL left almost no margin: any delay in the pipeline, or a device
+// slightly out of phase with its poll cycle, and the frame expired from Redis
+// before ever being displayed — confirmed live (23/09): "Monument — 200
+// Normies" showed correctly in the app (a real, permanent Block record — see
+// anaChain.ts) but never reached any of the 3 physical screens, which stayed
+// on a much older, unrelated human-drawn block instead. validation-result.ts
+// gives validated human content up to 7200s (2h) for exactly this reason —
+// ANA content, meant to be a lasting piece, deserves at least the same.
+const ANA_FRAME_TTL_SEC = parseInt(process.env.ANA_FRAME_TTL_SEC ?? "7200");
 
 type FrameMeta = { workTitle?: string; drawArtistName?: string; displayTs?: string };
 
@@ -48,6 +61,6 @@ export async function broadcastToDevices(
   if (deviceIds.length === 0) return;
   const stored = buildFrame(screen, payload, "ana-bridge", meta);
   await Promise.all(
-    deviceIds.map((dId) => redis.set(frameKey(dId, screen), stored, { ex: DRAW_WINDOW_SEC })),
+    deviceIds.map((dId) => redis.set(frameKey(dId, screen), stored, { ex: ANA_FRAME_TTL_SEC })),
   );
 }
