@@ -92,6 +92,7 @@ export interface SessionSnapshot {
 type ActiveOp =
   | { kind: "stroke"; id: number; txn: Txn; runner: StrokeRunner; events: ReplayEvent[]; lastT: number; last: Pt; s: StrokeSettings }
   | { kind: "shape"; txn: Txn; s: ShapeSettings; t0: number; a: Pt; b: Pt; pts?: number[] }
+  | { kind: "text"; txn: Txn; s: TextSettings; str: string; p: Pt }
   | { kind: "float"; txn: Txn; sel: Sel; desc: SelectionDesc; state: { m: Mat; dx: number; dy: number; copy: boolean } };
 
 const MAX_HISTORY_BYTES = 24 * 1024 * 1024;
@@ -393,21 +394,45 @@ export class DrawSession {
     return true;
   }
 
-  text(p0: Pt, str: string, t: number, s: TextSettings): boolean {
-    this.cancelOp();
+  get hasText(): boolean { return this.op?.kind === "text"; }
+
+  /** Aperçu du texte à la position donnée (écrit dans l'image, annulable). */
+  previewText(p0: Pt, str: string, s: TextSettings) {
     const p = this.clamp(p0);
-    const ev: ReplayEvent = { kind: "text", t, x: p.x, y: p.y, tool: "text", color: s.color, s: str.slice(0, 120), sc: s.scale };
-    if (s.texture !== "solid") ev.tx = s.texture;
-    if (this.cfg.mode === "rgb565" && s.opacity < 100) ev.op = Math.round(s.opacity);
-    const txn = new Txn(this.bitmap);
-    drawText(this.surface(txn), makeInk(s.color, this.cfg.mode, s.opacity, s.texture), p, ev.s!, s.scale);
-    const delta = txn.commit(0);
+    let op = this.op;
+    if (op && op.kind !== "text") { this.cancelOp(); op = null; }
+    if (!op) { op = { kind: "text", txn: new Txn(this.bitmap), s, str, p }; this.op = op; }
+    else op.txn.rollback();
+    op.s = s; op.str = str.slice(0, 120); op.p = p;
+    drawText(this.surface(op.txn), makeInk(s.color, this.cfg.mode, s.opacity, s.texture), p, op.str, s.scale);
+    this.revision++;
+  }
+
+  commitText(t: number): boolean {
+    const op = this.op;
+    if (!op || op.kind !== "text") return false;
+    this.op = null;
+    const delta = op.txn.commit(0);
     this.revision++;
     if (!delta) { this.notify(); return false; }
+    const s = op.s;
+    const ev: ReplayEvent = { kind: "text", t, x: op.p.x, y: op.p.y, tool: "text", color: s.color, s: op.str, sc: s.scale };
+    if (s.texture !== "solid") ev.tx = s.texture;
+    if (this.cfg.mode === "rgb565" && s.opacity < 100) ev.op = Math.round(s.opacity);
     const action: ActionEvent = { kind: "text", t, tool: "text", color: s.color, sz: s.scale, n: delta.idx.length };
     if (s.texture !== "solid") action.tx = s.texture;
     this.pushEntry(action, [ev], delta);
     return true;
+  }
+
+  cancelText() {
+    if (this.op?.kind === "text") this.cancelOp();
+  }
+
+  /** Écrit un texte en un seul geste (aperçu + validation). */
+  text(p0: Pt, str: string, t: number, s: TextSettings): boolean {
+    this.previewText(p0, str, s);
+    return this.commitText(t);
   }
 
   // ── Sélection & déplacement ────────────────────────────────────────────────

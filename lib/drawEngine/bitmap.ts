@@ -39,8 +39,8 @@ export class Bitmap {
   }
 
   /** Octets RGBA prêts pour `ImageData` (little-endian : zéro copie). */
-  toRGBA(): Uint8ClampedArray {
-    if (IS_LE) return new Uint8ClampedArray(this.data.buffer, this.data.byteOffset, this.data.byteLength);
+  toRGBA(): Uint8ClampedArray<ArrayBuffer> {
+    if (IS_LE) return new Uint8ClampedArray(this.data.buffer as ArrayBuffer, this.data.byteOffset, this.data.byteLength);
     const out = new Uint8ClampedArray(this.data.length * 4);
     for (let i = 0; i < this.data.length; i++) {
       const c = this.data[i];

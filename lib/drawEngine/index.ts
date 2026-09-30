@@ -10,3 +10,4 @@ export * from "./text";
 export * from "./session";
 export * from "./replay";
 export * from "./scoring";
+export * from "./podHints";

@@ -39,7 +39,9 @@ export function rectRing(x0: number, y0: number, x1: number, y1: number, t: numb
  * symétrique.
  */
 export function ellipseThin(x0: number, y0: number, x1: number, y1: number, plot: Plot) {
-  let a = Math.abs(x1 - x0), b = Math.abs(y1 - y0), b1 = b & 1;
+  let a = Math.abs(x1 - x0);
+  const b = Math.abs(y1 - y0);
+  let b1 = b & 1;
   let dx = 4 * (1 - a) * b * b, dy = 4 * (b1 + 1) * a * a;
   let err = dx + dy + b1 * a * a, e2: number;
   if (x0 > x1) { x0 = x1; x1 += a; }

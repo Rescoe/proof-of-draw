@@ -232,7 +232,8 @@ export function drawShape(s: Surface, sh: ShapeCfg) {
     if (sh.shape === "line") {
       drawLineBrush(s, sh.ink, sh.brush, sh.size, a, b);
     } else if (sh.shape === "rect" || sh.shape === "ellipse") {
-      let x0 = a.x, y0 = a.y, x1 = b.x, y1 = b.y;
+      let x0 = a.x, y0 = a.y;
+      const x1 = b.x, y1 = b.y;
       if (sh.fromCenter) { x0 = a.x - (b.x - a.x); y0 = a.y - (b.y - a.y); }
       if (sh.shape === "rect") {
         if (sh.fill) rectFill(x0, y0, x1, y1, plotInk); else rectRing(x0, y0, x1, y1, Math.max(1, sh.size), plotInk);

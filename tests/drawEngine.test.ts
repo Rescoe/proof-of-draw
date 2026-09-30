@@ -7,6 +7,8 @@ import {
   measureText, encodeCustomBrush, decodeCustomBrush, customTextureId, parseCustomTexture,
 } from "@/lib/drawEngine";
 import { scoreFromActions, ActionEvent } from "@/lib/types/actions";
+import { podHints } from "@/lib/drawEngine";
+import { analyzeReplay } from "@/lib/crypto";
 import { stroke, shape, fillS, gradS, textS, drawStroke, randomSequence, replayOf } from "./helpers";
 
 // ─── Primitives ──────────────────────────────────────────────────────────────
@@ -428,5 +430,21 @@ test("profil de savoir-faire : succès débloqués depuis le journal", () => {
   const p = craftProfile(seq);
   for (const id of ["first", "shapes", "fill", "texture", "symmetry", "gradient", "select", "text", "custom", "variety"]) {
     assert.ok(p.achievements.includes(id), id);
+  }
+});
+
+test("podHints (client) == analyzeReplay (serveur) sur des replays réels du moteur", () => {
+  for (const mode of ["bw", "bwr", "rgb565"] as const) {
+    for (let seed = 1; seed <= 6; seed++) {
+      const s = randomSequence(seed * 271, mode, 40, 64, 48, () => {});
+      const replay = s.getReplay();
+      const a = analyzeReplay(replay, 64, 48, s.getActions());
+      const h = podHints(replay, 64, 48);
+      assert.equal(h.sessionMs, a.sessionDurationMs);
+      assert.equal(h.strokes, a.strokeCount);
+      assert.equal(h.coverage, a.gridCoverage);
+      assert.equal(h.automationRatio, a.automationRatio);
+      assert.equal(h.colors, a.colorCount);
+    }
   }
 });
