@@ -6,10 +6,11 @@ import {
   Minus, PaintBucket, Pentagon, Pipette, Redo2, RotateCw, Send, Shapes, Slash, Sparkles, Square,
   SquareDashed, Star, Trash2, Type, Undo2, X, Check, WandSparkles, Clock, FlipHorizontal, Blend, ImageOff,
 } from "lucide-react";
+import { useEffect, useRef } from "react";
 import type { ColorMode } from "@/lib/drawEngine";
 import { textureLabel } from "@/lib/drawEngine";
 import {
-  PanelId, SelectKind, ShapeKind, TOOLS_BY_BOX, TOOL_KEY, TOOL_LABEL, ToolId, ToolSettings, Toolbox,
+  PanelId, SelectKind, ShapeKind, TOOLBOXES, TOOLS_BY_BOX, TOOL_KEY, TOOL_LABEL, ToolId, ToolSettings, Toolbox,
 } from "./types";
 import { BrushPreview, TexturePreview } from "./previews";
 import { Slider, formatTime } from "./ui";
@@ -296,12 +297,81 @@ export function ToolOptions(props: {
   }
 }
 
+// ─── Boîte à outils : changement en un geste ────────────────────────────────
+
+const LEVEL: Record<Toolbox, number> = { essential: 1, studio: 2, pro: 3 };
+
+/** Trois barres croissantes : le niveau de la boîte à outils d'un coup d'œil. */
+export function ToolboxLevel({ toolbox, size = 20 }: { toolbox: Toolbox; size?: number }) {
+  const n = LEVEL[toolbox];
+  return (
+    <svg width={size} height={size} viewBox="0 0 20 20" aria-hidden>
+      {[0, 1, 2].map(i => (
+        <rect key={i} x={2 + i * 6} y={12 - i * 4} width={4} height={6 + i * 4} rx={1.2} fill="currentColor" opacity={i < n ? 1 : 0.28} />
+      ))}
+    </svg>
+  );
+}
+
+const TOOLBOX_LABEL: Record<Toolbox, string> = { essential: "Essentiel", studio: "Studio", pro: "Pro" };
+
+/** Bouton du dock : montre la boîte à outils courante et ouvre le choix rapide. */
+export function ToolboxButton({ toolbox, onClick, active }: { toolbox: Toolbox; onClick: () => void; active: boolean }) {
+  return (
+    <button
+      type="button" className={"st-boxbtn" + (active ? " st-boxbtn--on" : "")} onClick={onClick}
+      aria-label={`Boîte à outils : ${TOOLBOX_LABEL[toolbox]} — changer`} aria-haspopup="dialog" aria-expanded={active}
+    >
+      <ToolboxLevel toolbox={toolbox} />
+      <span>{TOOLBOX_LABEL[toolbox]}</span>
+    </button>
+  );
+}
+
+/** Choix rapide (téléphone) : 2 touches au total, sans passer par le menu. */
+export function ToolboxPopover({ toolbox, onPick, onClose }: { toolbox: Toolbox; onPick: (t: Toolbox) => void; onClose: () => void }) {
+  const openedAt = useRef(0);
+  useEffect(() => {
+    openedAt.current = performance.now();
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
+  return (
+    <>
+      <div className="st-pop-scrim" onClick={() => { if (performance.now() - openedAt.current > 220) onClose(); }} />
+      <div className="st-quickbox" role="dialog" aria-label="Choisir la boîte à outils">
+        {TOOLBOXES.map(t => (
+          <button key={t.id} type="button" className={toolbox === t.id ? "on" : ""} onClick={() => onPick(t.id)} aria-pressed={toolbox === t.id}>
+            <ToolboxLevel toolbox={t.id} size={26} />
+            <span><b>{t.label}</b><small>{t.tagline}</small></span>
+          </button>
+        ))}
+      </div>
+    </>
+  );
+}
+
+/** Sélecteur permanent (panneau latéral) : les trois niveaux toujours visibles. */
+export function ToolboxSegmented({ toolbox, onPick }: { toolbox: Toolbox; onPick: (t: Toolbox) => void }) {
+  return (
+    <div className="st-seg st-seg--full" role="group" aria-label="Boîte à outils">
+      {TOOLBOXES.map(t => (
+        <button key={t.id} type="button" className={toolbox === t.id ? "on" : ""} onClick={() => onPick(t.id)} aria-pressed={toolbox === t.id} title={t.tagline}>
+          <ToolboxLevel toolbox={t.id} size={16} /> {t.label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
 // ─── Dock (téléphone) ────────────────────────────────────────────────────────
 
 export function Dock(props: {
   mode: ColorMode; palette: string[]; recents: string[]; color: string; color2: string;
   onColor: (hex: string) => void; onOpenColors: () => void;
   canUndo: boolean; canRedo: boolean; onUndo: () => void; onRedo: () => void;
+  toolbox: Toolbox; boxOpen: boolean; onToolbox: () => void;
 }) {
   const tft = props.mode === "rgb565";
   const quick = tft ? props.recents.slice(0, 5) : props.palette;
@@ -321,6 +391,7 @@ export function Dock(props: {
         ))}
         {tft && <button type="button" className="st-chip st-chip--icon" onClick={props.onOpenColors} aria-label="Toutes les couleurs"><Blend size={18} /></button>}
       </div>
+      <ToolboxButton toolbox={props.toolbox} onClick={props.onToolbox} active={props.boxOpen} />
       <button type="button" className="st-btn st-btn--icon st-btn--solid" onClick={props.onUndo} disabled={!props.canUndo} aria-label="Annuler"><Undo2 size={22} /></button>
       <button type="button" className="st-btn st-btn--icon st-btn--solid" onClick={props.onRedo} disabled={!props.canRedo} aria-label="Rétablir"><Redo2 size={22} /></button>
     </footer>

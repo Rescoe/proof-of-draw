@@ -581,3 +581,40 @@
 @media (pointer: coarse) {
   .studio input[type="text"], .studio input:not([type]), .studio .st-title, .studio .st-hex, .studio .st-input { font-size: 16px; }
 }
+
+/* ── Orientation de la vue : repère « HAUT » et retour à l'endroit ─────────── */
+.st-hud__chip--warn {
+  pointer-events: auto; cursor: pointer; display: inline-flex; align-items: center; gap: 5px;
+  background: #fbbf24; color: #1a1204; border-color: transparent; font-weight: 800;
+  height: 26px; padding: 0 10px; font-family: inherit;
+}
+.st-hud { flex-wrap: wrap; right: 64px; }
+.st-btn--warn { background: #fbbf24 !important; color: #1a1204 !important; border-color: transparent !important; }
+
+/* ── Changement de boîte à outils en un geste ──────────────────────────────── */
+.st-boxbtn {
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 1px;
+  width: 54px; height: 44px; flex: none; padding: 0; border-radius: var(--st-r-sm);
+  border: 1px solid var(--st-accent-line); background: var(--st-accent-soft); color: var(--st-accent-hi);
+  cursor: pointer; font-size: 9.5px; font-weight: 800; letter-spacing: 0; line-height: 1;
+}
+.st-boxbtn--on { background: var(--st-accent); color: #fff; border-color: var(--st-accent); }
+.st-boxbtn:active { transform: scale(0.95); }
+.st-pop-scrim { position: absolute; inset: 0; z-index: 29; }
+.st-quickbox {
+  position: absolute; right: 10px; bottom: calc(70px + var(--st-safe-b)); z-index: 30;
+  width: min(330px, calc(100% - 20px)); padding: 6px;
+  background: var(--st-surface); border: 1px solid var(--st-line-2); border-radius: 18px;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.6); animation: st-sheet-in 0.2s var(--st-ease);
+}
+.st-quickbox button {
+  display: flex; align-items: center; gap: 12px; width: 100%; min-height: 56px; padding: 8px 12px;
+  border: 0; border-radius: 13px; background: transparent; color: var(--st-text-2); text-align: left; cursor: pointer;
+}
+.st-quickbox button:hover { background: var(--st-surface-2); }
+.st-quickbox button.on { background: var(--st-accent-soft); color: var(--st-accent-hi); }
+.st-quickbox b { display: block; font-size: 14.5px; color: var(--st-text); }
+.st-quickbox small { display: block; font-size: 11.5px; line-height: 1.35; color: var(--st-text-3); font-weight: 500; }
+.st-seg--full { display: flex; width: 100%; }
+.st-seg--full button { flex: 1; display: inline-flex; align-items: center; justify-content: center; gap: 5px; padding: 0 6px; font-size: 12.5px; }
+.st-sect--box { padding-top: 12px; padding-bottom: 10px; }

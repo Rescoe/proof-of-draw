@@ -109,6 +109,8 @@ les points enregistrés → aucun intervalle < 15 ms parasite pour `automationRa
 - **Gestes** : 1 doigt dessine (hors du cadre : déplace la vue), 2 doigts zoom + déplacement (annule un début de trait),
   stylet détecté → les doigts ne dessinent plus, `pointercancel`/`lostpointercapture` annulent proprement, molette,
   Espace/clic milieu pour déplacer, Maj pour contraindre, Alt+clic = pipette.
+- **Orientation** : un repère « ▲ HAUT » est toujours collé au bord haut du dessin et tourne avec la vue ; dès que la vue est pivotée il devient ambre (« HAUT DE L'ÉCRAN · vue pivotée 180° »), avec une puce et un bouton « remettre à l'endroit » (aussi dans le menu).
+- **Changement de boîte à outils** : bouton du dock (3 barres = niveau) → choix rapide en 2 touches ; sélecteur permanent en tête du panneau latéral sur grand écran.
 - **Précision** : curseur déporté au-dessus du doigt + loupe, grille de pixels au zoom, vue pivotable d'un quart de tour,
   indication « tourne ton téléphone » pour les écrans paysage (jamais bloquant).
 - **Envoi** : titre → aperçu **décodé du buffer réellement envoyé** (habillé e-ink/OLED/TFT) → confirmer ; verrou par `ref` ;

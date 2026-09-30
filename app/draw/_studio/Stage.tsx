@@ -26,6 +26,8 @@ export interface StageApi {
   fit(): void;
   zoomBy(factor: number): void;
   rotate(): void;
+  /** Remet la vue à l'endroit (rotation 0°). */
+  resetRotation(): void;
   invalidate(): void;
   polyCommit(): boolean;
   polyCancel(): void;
@@ -162,6 +164,11 @@ export const Stage = forwardRef<StageApi, StageProps>(function Stage(props, ref)
       const { w, h } = sizeRef.current;
       fittedRef.current = true;
       applyView(rotateViewCw(viewRef.current, w, h, W, H));
+    },
+    resetRotation() {
+      const { w, h } = sizeRef.current;
+      fittedRef.current = true;
+      applyView(fitView(w, h, W, H, 0));
     },
     invalidate: () => invalidate(true, true),
     polyCommit() {
@@ -741,6 +748,28 @@ export const Stage = forwardRef<StageApi, StageProps>(function Stage(props, ref)
     ctx.lineWidth = 1;
     rectPath(0, 0, W, H);
     ctx.stroke();
+
+    // 1 bis) repère du HAUT de l'écran : il tourne avec la vue, pour ne jamais se tromper de sens
+    {
+      const top = toScreen(v, W / 2, 0);
+      const flipped = v.rot !== 0;
+      const label = flipped ? `▲ HAUT DE L'ÉCRAN · vue pivotée ${v.rot * 90}°` : "▲ HAUT";
+      ctx.save();
+      ctx.translate(top.x, top.y);
+      ctx.rotate((v.rot * Math.PI) / 2);            // le repère suit l'axe x du dessin
+      ctx.font = "700 10.5px 'DM Sans', system-ui, sans-serif";
+      const tw = ctx.measureText(label).width;
+      const pw = tw + 16, ph = 17, py = -ph - 6;    // posé juste au-dessus du bord haut, à l'extérieur
+      ctx.beginPath();
+      if (typeof ctx.roundRect === "function") ctx.roundRect(-pw / 2, py, pw, ph, 8.5); else ctx.rect(-pw / 2, py, pw, ph);
+      ctx.fillStyle = flipped ? "#fbbf24" : "rgba(30,30,46,0.92)";
+      ctx.fill();
+      if (!flipped) { ctx.strokeStyle = "rgba(255,255,255,0.22)"; ctx.lineWidth = 1; ctx.stroke(); }
+      ctx.fillStyle = flipped ? "#1a1204" : "rgba(255,255,255,0.78)";
+      ctx.textAlign = "center"; ctx.textBaseline = "middle";
+      ctx.fillText(label, 0, py + ph / 2 + 0.5);
+      ctx.restore();
+    }
 
     // 2) grille
     const px = v.s;

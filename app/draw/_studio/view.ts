@@ -31,7 +31,7 @@ export function cssTransform(v: View): string {
 }
 
 /** Ajuste la vue pour montrer tout le canvas dans la scène, avec une marge. */
-export function fitView(stageW: number, stageH: number, W: number, H: number, rot: View["rot"], pad = 14): View {
+export function fitView(stageW: number, stageH: number, W: number, H: number, rot: View["rot"], pad = 26): View {
   const rw = rot % 2 ? H : W, rh = rot % 2 ? W : H;
   let s = Math.min((stageW - pad * 2) / rw, (stageH - pad * 2) / rh);
   if (!Number.isFinite(s) || s <= 0) s = 1;

@@ -7,7 +7,7 @@
 import { useEffect, useRef, useState } from "react";
 import {
   Check, Eye, EyeOff, Grid3x3, HelpCircle, ImagePlus, Keyboard, Lock, Maximize, Move, Plus,
-  Rotate3d, ScanLine, Smartphone, Star, Trash2, Sparkles, ImageOff, ArrowLeftRight, Pipette, Trophy,
+  Rotate3d, RotateCcw, ScanLine, Smartphone, Star, Trash2, Sparkles, ImageOff, ArrowLeftRight, Pipette, Trophy,
   FilePlus2, Eraser, Fingerprint,
 } from "lucide-react";
 import {
@@ -427,7 +427,7 @@ export function MenuSection(props: {
   precision: boolean; onPrecision: (v: boolean) => void;
   penOnly: boolean; onPenOnly: (v: boolean) => void;
   canFullscreen: boolean; isFullscreen: boolean; onFullscreen: () => void;
-  onFit: () => void; onRotate: () => void;
+  onFit: () => void; onRotate: () => void; onResetRotation: () => void; viewRot: number;
   onClear: () => void; onNew: () => void; onModel: () => void; onHelp: () => void; onScore: () => void;
   onExit: () => void; hasContent: boolean; draftSaved: "idle" | "saved" | "error";
   showTexture: boolean; onTexture: () => void; showSym: boolean; onSym: () => void;
@@ -444,7 +444,8 @@ export function MenuSection(props: {
       <div className="st-h">Affichage</div>
       <div className="st-menu">
         <MenuItem icon={<ScanLine size={20} />} label="Ajuster la vue" hint="Tout le dessin dans l'écran (0)" onClick={props.onFit} />
-        <MenuItem icon={<Rotate3d size={20} />} label="Pivoter la vue" hint="Tourner le papier d'un quart de tour" onClick={props.onRotate} />
+        <MenuItem icon={<Rotate3d size={20} />} label="Pivoter la vue" hint={props.viewRot === 0 ? "Tourner le papier d'un quart de tour" : `Actuellement pivotée de ${props.viewRot * 90}°`} onClick={props.onRotate} />
+        {props.viewRot !== 0 && <MenuItem icon={<RotateCcw size={20} />} label="Remettre à l'endroit" hint="Le repère « HAUT » revient en haut de l'écran" onClick={props.onResetRotation} />}
         <MenuItem icon={<Grid3x3 size={20} />} label="Grille" hint={`Repères tous les ${props.grid.step} px (H)`} toggle={props.grid.show} onClick={() => props.onGrid({ ...props.grid, show: !props.grid.show })} />
         {props.grid.show && (
           <div className="st-row" style={{ padding: "0 12px 8px 44px" }}>

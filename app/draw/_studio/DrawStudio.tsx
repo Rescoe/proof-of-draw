@@ -8,7 +8,7 @@
 // ligne (le dessin n'est jamais perdu) et se teste sans serveur.
 
 import { useCallback, useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState } from "react";
-import { RotateCw, ScanLine, X, ZoomIn, ZoomOut, Rotate3d, PanelRightClose, PanelRightOpen, Move } from "lucide-react";
+import { RotateCw, RotateCcw, ScanLine, X, ZoomIn, ZoomOut, Rotate3d, PanelRightClose, PanelRightOpen, Move } from "lucide-react";
 import "./studio.css";
 import { SCREEN_PROFILES, ScreenId } from "@/lib/screenProfiles";
 import {
@@ -23,7 +23,7 @@ import {
   DraftData, SessionClock, StudioPrefs, deleteDraft, loadDraft, loadPrefs, saveDraft, savePrefs,
 } from "./storage";
 import { Stage, StageApi } from "./Stage";
-import { Dock, TopBar, ToolOptions, ToolStrip, SelectionUi } from "./Toolbars";
+import { Dock, TopBar, ToolOptions, ToolStrip, SelectionUi, ToolboxPopover, ToolboxSegmented } from "./Toolbars";
 import {
   BrushAtelier, BrushSection, ColorSection, HelpSection, MenuSection, ModelSection, ScoreSection,
   SymmetrySection, TextureEditor, TextureSection,
@@ -114,6 +114,7 @@ export default function DrawStudio(props: DrawStudioProps) {
   const [noticeHiddenFor, setNoticeHiddenFor] = useState<string | null>(null);
   const noticeHidden = !!props.notice && noticeHiddenFor === props.notice.text;
   const [sideHidden, setSideHidden] = useState(false);
+  const [boxPop, setBoxPop] = useState(false);
   const { toasts, push, dismiss } = useToasts();
 
   const rootRef = useRef<HTMLDivElement>(null);
@@ -298,6 +299,7 @@ export default function DrawStudio(props: DrawStudioProps) {
   }, [tool, session, endPending]);
 
   const setToolbox = (b: Toolbox) => {
+    setBoxPop(false);
     setToolboxState(b);
     if (!TOOLS_BY_BOX[b].includes(tool)) setTool("brush");
     // les réglages avancés inutilisables dans une boîte plus simple sont neutralisés
@@ -609,11 +611,17 @@ export default function DrawStudio(props: DrawStudioProps) {
           <span className="st-hud__chip">{W}×{H} · ×{viewInfo.scale.toFixed(viewInfo.scale < 10 ? 1 : 0)}</span>
           {hoverPt && lay.side && <span className="st-hud__chip">x {hoverPt.x} · y {hoverPt.y}</span>}
           {modelEdit && <span className="st-hud__chip" style={{ color: "var(--st-accent-hi)" }}>Placement du modèle</span>}
+          {viewInfo.rot !== 0 && (
+            <button type="button" className="st-hud__chip st-hud__chip--warn" onClick={() => stageApi.current?.resetRotation()} aria-label={`Vue pivotée de ${viewInfo.rot * 90} degrés — remettre à l'endroit`}>
+              <RotateCcw size={12} /> Vue pivotée {viewInfo.rot * 90}° · remettre à l&apos;endroit
+            </button>
+          )}
         </div>
         <div className="st-viewctl">
           <button type="button" className="st-btn st-zoom" onClick={() => stageApi.current?.zoomBy(1.4)} aria-label="Zoom avant"><ZoomIn size={19} /></button>
           <button type="button" className="st-btn st-zoom" onClick={() => stageApi.current?.zoomBy(1 / 1.4)} aria-label="Zoom arrière"><ZoomOut size={19} /></button>
           {!viewInfo.fitted && <button type="button" className="st-btn" onClick={() => stageApi.current?.fit()} aria-label="Ajuster la vue"><ScanLine size={19} /></button>}
+          {viewInfo.rot !== 0 && <button type="button" className="st-btn st-btn--warn" onClick={() => stageApi.current?.resetRotation()} aria-label="Remettre la vue à l'endroit" title="Remettre la vue à l'endroit"><RotateCcw size={19} /></button>}
           {lay.side && <button type="button" className="st-btn" onClick={() => stageApi.current?.rotate()} aria-label="Pivoter la vue"><Rotate3d size={19} /></button>}
           {lay.side && (
             <button type="button" className="st-btn" onClick={() => setSideHidden(v => !v)} aria-label={sideHidden ? "Afficher les réglages" : "Masquer les réglages"} aria-pressed={sideHidden} title={sideHidden ? "Afficher les réglages" : "Masquer les réglages (plus de place pour dessiner)"}>
@@ -652,12 +660,14 @@ export default function DrawStudio(props: DrawStudioProps) {
             mode={mode} palette={palette} recents={prefs.recents} color={cfg.color} color2={cfg.color2}
             onColor={setColor} onOpenColors={() => open("color")}
             canUndo={session.canUndo} canRedo={session.canRedo} onUndo={undo} onRedo={redo}
+            toolbox={toolbox} boxOpen={boxPop} onToolbox={() => setBoxPop(v => !v)}
           />
         </>
       ) : (
         <>
           <ToolStrip toolbox={toolbox} tool={tool} onTool={setTool} />
           <aside className="st-side" aria-label="Réglages">
+            <div className="st-sect st-sect--box"><ToolboxSegmented toolbox={toolbox} onPick={setToolbox} /></div>
             <div className="st-sect st-sect--opts">{optionsEl}</div>
             <div id="st-sec-color" className="st-sect"><div className="st-secthead">Couleurs</div>{colorSection}</div>
             {toolbox !== "essential" && tool === "brush" && <div id="st-sec-brush" className="st-sect"><div className="st-secthead">Brosse</div>{brushSection}</div>}
@@ -667,6 +677,8 @@ export default function DrawStudio(props: DrawStudioProps) {
           </aside>
         </>
       )}
+
+      {boxPop && !lay.side && <ToolboxPopover toolbox={toolbox} onPick={setToolbox} onClose={() => setBoxPop(false)} />}
 
       {/* ── Feuilles ─────────────────────────────────────────────────────── */}
       {panel && (lay.side ? ["menu", "score", "help"].includes(panel) : true) && (
@@ -687,6 +699,7 @@ export default function DrawStudio(props: DrawStudioProps) {
               canFullscreen={typeof document !== "undefined" && !!document.fullscreenEnabled} isFullscreen={isFs}
               onFullscreen={() => { if (document.fullscreenElement) void document.exitFullscreen(); else void document.documentElement.requestFullscreen().catch(() => {}); }}
               onFit={() => { stageApi.current?.fit(); setPanel(null); }} onRotate={() => { stageApi.current?.rotate(); setPanel(null); }}
+              onResetRotation={() => { stageApi.current?.resetRotation(); setPanel(null); }} viewRot={viewInfo.rot}
               onClear={() => setConfirm("clear")} onNew={() => setConfirm("new")}
               onModel={() => setPanel("model")} onHelp={() => setPanel("help")} onScore={() => setPanel("score")}
               onExit={props.onExit} hasContent={score > 0} draftSaved={draftSaved}
