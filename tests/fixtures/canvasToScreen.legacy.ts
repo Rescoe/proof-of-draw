@@ -28,25 +28,10 @@ export function canvasToScreenPayload(
   const ctx = canvas.getContext("2d");
   if (!ctx) throw new Error("2D context unavailable");
 
-  const image = ctx.getImageData(0, 0, profile.width, profile.height);
-  return rgbaToScreenPayload(image.data, screenId);
-}
-
-/**
- * Encodage pur (sans DOM) : octets RGBA d'un canvas aux dimensions du profil →
- * buffer(s) de l'écran. C'est l'implémentation validée en production, à
- * l'identique ; `canvasToScreenPayload` n'est qu'un adaptateur autour d'elle.
- * Testable en Node (voir tests/canvasToScreen.test.ts).
- */
-export function rgbaToScreenPayload(
-  px: ArrayLike<number>,
-  screenId: ScreenId
-): ScreenPayload {
-  const profile = SCREEN_PROFILES[screenId];
-  if (!profile) throw new Error(`Unknown screen profile: ${screenId}`);
-
   const w = profile.width;
   const h = profile.height;
+  const image = ctx.getImageData(0, 0, w, h);
+  const px = image.data;
 
   // ════════════════════════════════════════════════════════════════
   // OLED 0.96" — SSD1306, 128×64
@@ -65,6 +50,7 @@ if (screenId === "oled096") {
   }
 
   const buffer = new Uint8Array(BUF_SIZE).fill(0x00);
+  let litPixels = 0;
 
   for (let y = 0; y < OLED_H; y++) {
     for (let x = 0; x < OLED_W; x++) {
@@ -87,8 +73,17 @@ if (screenId === "oled096") {
       const byteIndex = page * OLED_W + x;
 
       buffer[byteIndex] |= (1 << bit);
+      litPixels++;
     }
   }
+
+  console.log(`[canvasToScreen oled096] ${litPixels} pixels allumés`);
+  console.log(
+    "[OLED BUFFER PREVIEW]",
+    Array.from(buffer.slice(0, 16))
+      .map((b) => `0x${b.toString(16).padStart(2, "0")}`)
+      .join(" ")
+  );
 
   return {
     screen: "oled096",
@@ -123,6 +118,8 @@ if (screenId === "eink27bw") {
 
   const buffer = new Uint8Array(BUF_SIZE).fill(0xff);
 
+  let blackPixels = 0;
+
   // Ton canvas profil est 264×176
   // On le mappe vers le buffer driver 176×264 avec rotation 90° CCW
   for (let y = 0; y < h; y++) {
@@ -146,8 +143,17 @@ if (screenId === "eink27bw") {
       if (byteIndex >= BUF_SIZE) continue;
 
       buffer[byteIndex] &= (~(1 << bit)) & 0xff;
+      blackPixels++;
     }
   }
+
+  console.log(`[canvasToScreen eink27bw] ${blackPixels} black pixels`);
+  console.log(
+    "[EINK27 BUFFER PREVIEW]",
+    Array.from(buffer.slice(0, 16))
+      .map((b) => `0x${b.toString(16).padStart(2, "0")}`)
+      .join(" ")
+  );
 
   return {
     screen: "eink27bw",
@@ -173,6 +179,9 @@ if (screenId === "eink27bw") {
     const blackBuf = new Uint8Array(BUF_SIZE).fill(0xff);
     const redBuf = new Uint8Array(BUF_SIZE).fill(0xff);
 
+    let blackPixels = 0;
+    let redPixels = 0;
+
     for (let y = 0; y < h; y++) {
       for (let x = 0; x < w; x++) {
         const i = (y * w + x) * 4;
@@ -194,11 +203,23 @@ if (screenId === "eink27bw") {
 
         if (color === "black") {
           blackBuf[byteIndex] &= mask;
+          blackPixels++;
         } else if (color === "red") {
           redBuf[byteIndex] &= mask;
+          redPixels++;
         }
       }
     }
+
+    console.log(
+      `[canvasToScreen eink29bwr] ${blackPixels} black, ${redPixels} red`
+    );
+    console.log(
+      "[EINK29 BLACK PREVIEW]",
+      Array.from(blackBuf.slice(0, 16))
+        .map((b) => `0x${b.toString(16).padStart(2, "0")}`)
+        .join(" ")
+    );
 
     return {
       screen: "eink29bwr",
@@ -261,6 +282,7 @@ if (screenId === "eink27bw") {
       }
     }
 
+    console.log(`[canvasToScreen tft18] RGB565 ${BUF_SIZE} bytes`);
     return { screen: "tft18", buffer: uint8ArrayToBase64(buffer) };
   }
 
