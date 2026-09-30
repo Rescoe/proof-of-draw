@@ -3,9 +3,8 @@
 // galerie des blocs minés sur la page d'accueil. Donne de la visibilité aux
 // artistes récemment enregistrés (10 plus récents) + lien vers l'annuaire complet.
 
-import { redis } from "@/lib/redis";
-import { getArtist, ArtistProfile } from "@/lib/deviceStore";
-import { getBlockImage, BlockImagePayload } from "@/lib/chain";
+import { listArtists, getProfileImagePayload } from "@/lib/artistDirectory";
+import type { BlockImagePayload } from "@/lib/chain";
 import { RecentArtistsClient } from "./RecentArtistsClient";
 
 export interface RecentArtistSummary {
@@ -21,14 +20,10 @@ export interface RecentArtistSummary {
 export async function RecentArtists() {
   let artists: RecentArtistSummary[] = [];
   try {
-    const artistIds = (await redis.smembers("artists:all")) as string[];
-    if (!artistIds || artistIds.length === 0) return null;
-
-    const profiles = await Promise.all(artistIds.map((id) => getArtist(id)));
-    const top = profiles
-      .filter((p): p is ArtistProfile => p !== null)
-      .sort((a, b) => b.createdAt - a.createdAt)
-      .slice(0, 10);
+    // Source unique (lib/artistDirectory) : profils + ESP appairés sans profil,
+    // triés du plus récent au plus ancien — même liste que l'annuaire /artists.
+    const top = (await listArtists()).map((e) => e.profile).slice(0, 10);
+    if (top.length === 0) return null;
 
     artists = await Promise.all(top.map(async (p) => ({
       artistId:              p.artistId,
@@ -36,9 +31,7 @@ export async function RecentArtists() {
       displayName:           p.displayName,
       profileImageBlockHash: p.profileImageBlockHash,
       profileImageCrop:      p.profileImageCrop,
-      imagePayload:          p.profileImageBlockHash
-        ? (await getBlockImage(p.profileImageBlockHash)) ?? null
-        : null,
+      imagePayload:          await getProfileImagePayload(p),
       createdAt:             p.createdAt,
     })));
   } catch {

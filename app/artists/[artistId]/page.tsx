@@ -68,11 +68,13 @@ interface ArtistBlock {
   validatorIds:   string[];
   isArtist:       boolean;
   isMiner:        boolean;
+  isOwner:        boolean;
   imagePayload:   BlockImagePayload | null;
 }
 
 interface ArtistPageData {
   profile: ArtistProfile;
+  profileImage: BlockImagePayload | null; // résolu par hash côté serveur
   devices: ArtistDevice[];
   blocks:  ArtistBlock[];
 }
@@ -108,20 +110,16 @@ function isKnownScreen(sid: string): sid is keyof typeof SCREEN_PROFILES {
 
 function ProfileAvatar({
   profile,
-  blocks,
+  imagePayload,
   size = 80,
 }: {
   profile: ArtistProfile;
-  blocks: ArtistBlock[];
+  imagePayload: BlockImagePayload | null;
   size?: number;
 }) {
-  const selectedBlock = profile.profileImageBlockHash
-    ? blocks.find((b) => b.blockHash === profile.profileImageBlockHash) ?? null
-    : null;
-
-  if (selectedBlock?.imagePayload) {
+  if (imagePayload) {
     const { tx, ty, scale } = pubCoverTransform(
-      selectedBlock.imagePayload.screen,
+      imagePayload.screen,
       size,
       profile.profileImageCrop,
     );
@@ -136,7 +134,7 @@ function ProfileAvatar({
           transform: `translate(${tx}px, ${ty}px) scale(${scale})`,
           pointerEvents: "none",
         }}>
-          <BlockFrameCanvas payload={selectedBlock.imagePayload} unconstrained />
+          <BlockFrameCanvas payload={imagePayload} unconstrained />
         </div>
       </div>
     );
@@ -161,7 +159,7 @@ function ProfileAvatar({
 function BlockCard({ block }: { block: ArtistBlock }) {
   const roleLabel = block.isArtist && block.isMiner
     ? "artiste + mineur"
-    : block.isArtist ? "artiste" : "mineur";
+    : block.isArtist ? "artiste" : block.isMiner ? "mineur" : "possédé";
 
   const title = block.workTitle && block.workTitle !== "Sans titre"
     ? block.workTitle : null;
@@ -333,9 +331,9 @@ export default function ArtistDetailPage() {
     );
   }
 
-  const { profile, devices, blocks } = data;
+  const { profile, devices, blocks, profileImage } = data;
   const artistBlocks = blocks.filter((b) => b.isArtist);
-  const minedBlocks  = blocks.filter((b) => b.isMiner && !b.isArtist);
+  const minedBlocks  = blocks.filter((b) => !b.isArtist); // mineur ou propriétaire
   const onlineDevices = devices.filter((d) => d.isOnline).length;
 
   return (
@@ -358,7 +356,7 @@ export default function ArtistDetailPage() {
 
           <ProfileAvatar
             profile={profile}
-            blocks={blocks}
+            imagePayload={profileImage ?? null}
             size={80}
           />
 

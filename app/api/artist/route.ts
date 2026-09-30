@@ -10,10 +10,12 @@ import {
   deleteArtist,
   linkDeviceToArtist,
   setArtistName,
+  getDevice,
   normalizeSlug,
   isSlugAvailable,
 } from "@/lib/deviceStore";
 import { getSession, setSession, setArtistIdInSession } from "@/lib/session";
+import { getArtistDeviceIds } from "@/lib/artistDirectory";
 import { getIP, isBlacklisted, forbidden } from "@/lib/rateLimit";
 
 export const dynamic = "force-dynamic";
@@ -111,13 +113,26 @@ export async function POST(req: NextRequest) {
       slug,
     );
 
-    // Lier tous les devices de la session à ce profil + mettre à jour artistName (rétrocompat)
-    await Promise.all(
-      session.deviceIds.map(async (deviceId) => {
-        await linkDeviceToArtist(deviceId, profile.artistId);
-        await setArtistName(deviceId, displayName);
-      })
-    );
+    // Rattachement des appareils :
+    //  • CRÉATION du profil : on rattache les appareils de la session encore libres
+    //    (jamais ceux déjà rattachés à un autre profil) — le regroupement se corrige
+    //    ensuite appareil par appareil via POST /api/artist/devices.
+    //  • MISE À JOUR : aucun (re)rattachement — sinon chaque modification du profil
+    //    réabsorberait des appareils que l'utilisateur a volontairement séparés
+    //    (ex. l'ESP d'un autre artiste). On ne propage que le nom aux appareils du profil.
+    if (!existingArtistId) {
+      await Promise.all(
+        session.deviceIds.map(async (deviceId) => {
+          const d = await getDevice(deviceId);
+          if (!d || d.artistId) return;
+          await linkDeviceToArtist(deviceId, profile.artistId);
+          await setArtistName(deviceId, displayName);
+        })
+      );
+    } else {
+      const linked = await getArtistDeviceIds(profile.artistId);
+      await Promise.all([...linked].map((deviceId) => setArtistName(deviceId, displayName)));
+    }
 
     console.log(`[/api/artist] profil upsert artistId=${profile.artistId} devices=${session.deviceIds.length}`);
 

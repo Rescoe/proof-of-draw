@@ -1,55 +1,41 @@
 // app/api/artist/blocks/route.ts
-// GET /api/artist/blocks
-// Retourne les blocs liés aux devices de la session (artiste OU mineur).
-// Max 12 blocs les plus récents, triés par minedAt DESC.
+// GET /api/artist/blocks — blocs de "mon profil".
+// MÊME définition que la fiche publique (/api/artists/[id]) : appareils du profil
+// (vivants ∪ ids historiques) via lib/artistDirectory.ts. Sans profil, on retombe
+// sur les appareils de la session.
 
 import { NextResponse } from "next/server";
-import { redis } from "@/lib/redis";
-import { getBlockByHash, getBlockImage } from "@/lib/chain";
 import { getSession } from "@/lib/session";
+import { getAllDevices } from "@/lib/deviceStore";
+import {
+  getArtistDeviceIds, getArtistBlocks, resolveArtistIdForDevices, getProfileImagePayload,
+} from "@/lib/artistDirectory";
+import { getArtist } from "@/lib/deviceStore";
 
 export const dynamic = "force-dynamic";
 
 export async function GET() {
   try {
     const session = await getSession();
-    if (session.deviceIds.length === 0) {
-      return NextResponse.json({ blocks: [] }, { headers: { "Cache-Control": "private, no-store" } });
-    }
+    const headers = { "Cache-Control": "private, no-store, max-age=0" };
+    const devices = await getAllDevices();
 
-    const deviceSet = new Set(session.deviceIds);
+    // Profil : cookie d'abord, sinon celui d'un des appareils de la session
+    let artistId: string | null = null;
+    if (session.artistId && (await getArtist(session.artistId))) artistId = session.artistId;
+    if (!artistId) artistId = await resolveArtistIdForDevices(session.deviceIds, devices);
 
-    // Lire les 100 derniers hashes de la chaîne
-    const hashes = await redis.lrange<string>("chain:recent", 0, 99);
-    if (!hashes || hashes.length === 0) {
-      return NextResponse.json({ blocks: [] }, { headers: { "Cache-Control": "private, no-store" } });
-    }
+    const deviceIds = artistId
+      ? await getArtistDeviceIds(artistId, devices)
+      : new Set(session.deviceIds);
 
-    // Charger les blocs, filtrer par deviceId (artiste) OU minerDeviceId (validateur décisif)
-    const results = await Promise.all(hashes.map(async (hash: string) => {
-      try {
-        const b = await getBlockByHash(hash);
-        if (!b) return null;
+    const [blocks, profile] = await Promise.all([
+      getArtistBlocks(deviceIds),
+      artistId ? getArtist(artistId) : Promise.resolve(null),
+    ]);
+    const profileImage = profile ? await getProfileImagePayload(profile) : null;
 
-        const isArtist = deviceSet.has(b.deviceId);
-        const isMiner  = !!b.minerDeviceId && deviceSet.has(b.minerDeviceId);
-        if (!isArtist && !isMiner) return null;
-
-        const img = await getBlockImage(b.blockHash);
-        // On inclut le bloc même si l'image est manquante (rare) pour ne pas fausser les stats
-        return { ...b, imagePayload: img ?? null };
-      } catch { return null; }
-    }));
-
-    const blocks = results
-      .filter(Boolean)
-      .sort((a, b) => (b!.minedAt ?? 0) - (a!.minedAt ?? 0))
-      .slice(0, 12);
-
-    return NextResponse.json(
-      { blocks },
-      { headers: { "Cache-Control": "private, no-store, max-age=0" } }
-    );
+    return NextResponse.json({ blocks, profileImage }, { headers });
   } catch (err) {
     console.error("[/api/artist/blocks]", err);
     return NextResponse.json({ blocks: [] }, { status: 500 });

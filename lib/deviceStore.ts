@@ -658,6 +658,18 @@ export async function linkDeviceToArtist(deviceId: string, artistId: string): Pr
 }
 
 /**
+ * Détache un device de son profil artiste (il redevient un artiste "implicite"
+ * sous son nom actuel). Supprime la clé inverse ET device.artistId ensemble.
+ * Les blocs déjà minés sous cet id restent attribués à l'appareil, pas au profil.
+ */
+export async function unlinkDeviceFromArtist(deviceId: string): Promise<void> {
+  const device = await getDevice(deviceId);
+  if (!device) return;
+  device.artistId = undefined;
+  await Promise.all([saveDevice(device), redis.del(artistDevKey(deviceId))]);
+}
+
+/**
  * Met à jour la clé publique ED25519 d'un device (envoyée à chaque register).
  * No-op si la clé est identique à celle déjà stockée.
  */

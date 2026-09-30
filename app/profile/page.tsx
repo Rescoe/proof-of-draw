@@ -764,16 +764,16 @@ function ProfileImagePicker({
 
 function ProfileAvatar({
   profile,
-  selectedBlock,
+  imagePayload,
   onClick,
 }: {
   profile: ArtistProfile | null;
-  selectedBlock: MinedBlock | null;
+  imagePayload: BlockImagePayload | null;
   onClick: () => void;
 }) {
-  const hasImage = !!(selectedBlock?.imagePayload);
+  const hasImage = !!imagePayload;
   const crop = profile?.profileImageCrop;
-  const screen = selectedBlock?.imagePayload?.screen ?? "eink29bwr";
+  const screen = imagePayload?.screen ?? "eink29bwr";
   const { tx, ty, scale } = coverTransform(screen, crop);
 
   return (
@@ -795,7 +795,7 @@ function ProfileAvatar({
           transform: `translate(${tx}px, ${ty}px) scale(${scale})`,
           pointerEvents: "none",
         }}>
-          <BlockFrameCanvas payload={selectedBlock!.imagePayload!} unconstrained />
+          <BlockFrameCanvas payload={imagePayload!} unconstrained />
         </div>
       ) : (
         <span style={{
@@ -824,6 +824,9 @@ export default function ProfilePage() {
   const [profile,        setProfile]        = useState<ArtistProfile | null>(null);
   const [loadingProf,    setLoadingProf]    = useState(true);
   const [minedBlocks,    setMinedBlocks]    = useState<MinedBlock[]>([]);
+  // Image de profil résolue par hash côté serveur (même valeur que la fiche publique)
+  const [profileImage,   setProfileImage]   = useState<BlockImagePayload | null>(null);
+  const [attachingDev,   setAttachingDev]   = useState<string | null>(null);
   const [showPicker,     setShowPicker]     = useState(false);
   const [devices,        setDevices]        = useState<OwnedDevice[]>([]);
   const [publicDevices,  setPublicDevices]  = useState<PublicDevice[]>([]);
@@ -864,7 +867,8 @@ export default function ProfilePage() {
       const res  = await fetch("/api/artist/blocks", { cache: "no-store" });
       const data = await res.json();
       setMinedBlocks(data.blocks ?? []);
-    } catch { setMinedBlocks([]); }
+      setProfileImage(data.profileImage ?? null);
+    } catch { setMinedBlocks([]); setProfileImage(null); }
   }
 
   async function loadDevices() {
@@ -1011,6 +1015,21 @@ export default function ProfilePage() {
     finally { setToggling(null); }
   }
 
+  // Rattacher / détacher un de mes appareils à mon profil artiste (regroupement explicite)
+  async function handleAttachDevice(deviceId: string, action: "attach" | "detach") {
+    setAttachingDev(deviceId);
+    try {
+      const res = await fetch("/api/artist/devices", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ deviceId, action }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) alert(data.error ?? "Erreur");
+      await Promise.all([loadDevices(), loadMinedBlocks()]);
+    } catch { alert("Erreur réseau"); }
+    finally { setAttachingDev(null); }
+  }
+
   async function handleToggleAnaArt(deviceId: string, current: boolean) {
     setTogglingAna(deviceId);
     try {
@@ -1114,7 +1133,7 @@ export default function ProfilePage() {
           {/* Avatar cliquable */}
           <ProfileAvatar
             profile={profile}
-            selectedBlock={selectedBlock}
+            imagePayload={selectedBlock?.imagePayload ?? profileImage}
             onClick={() => setShowPicker(true)}
           />
 
@@ -1420,6 +1439,30 @@ export default function ProfilePage() {
                         </div>
                       </div>
                     ))}
+                  </div>
+
+                  {/* Profil artiste : regroupement explicite des ESP d'un même artiste */}
+                  <div style={{ marginTop: "1rem", display: "flex", alignItems: "center", justifyContent: "space-between", gap: "1rem", flexWrap: "wrap" }}>
+                    <div style={{ fontSize: "0.78rem", color: "var(--text2)" }}>
+                      {!profile
+                        ? "Créez votre profil artiste pour regrouper vos ESP sous un même artiste."
+                        : d.artistId === profile.artistId
+                          ? <>Rattaché à votre profil <strong>{profile.displayName}</strong></>
+                          : <>Artiste à part : <strong>{d.artistName ?? d.deviceId}</strong></>}
+                    </div>
+                    {profile && (
+                      <button
+                        onClick={() => handleAttachDevice(d.deviceId, d.artistId === profile.artistId ? "detach" : "attach")}
+                        disabled={attachingDev === d.deviceId}
+                        style={{
+                          padding: "0.35rem 0.9rem", borderRadius: 6, fontSize: "0.75rem", fontWeight: 600,
+                          border: "1px solid var(--border)", background: "var(--bg)", color: "var(--text2)",
+                          cursor: "pointer", opacity: attachingDev === d.deviceId ? 0.5 : 1,
+                        }}
+                      >
+                        {attachingDev === d.deviceId ? "…" : d.artistId === profile.artistId ? "Détacher" : "Rattacher à mon profil"}
+                      </button>
+                    )}
                   </div>
 
                   {/* Écrans */}

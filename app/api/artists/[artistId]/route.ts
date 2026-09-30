@@ -1,20 +1,22 @@
 // app/api/artists/[artistId]/route.ts
 // GET /api/artists/:artistId
-// Retourne le profil public d'un artiste, ses devices (sans données sensibles),
-// et ses blocs minés (artiste OU mineur) avec images.
+// Profil public d'un artiste, ses appareils (sans données sensibles), ses blocs
+// (dessinés / minés / possédés) et son image de profil. Résolution slug | UUID |
+// "esp_{deviceId}" (artiste implicite). Sources : lib/artistDirectory.ts — les mêmes
+// que "mon profil" (/api/artist/blocks) et l'annuaire.
 
 import { NextRequest, NextResponse } from "next/server";
-import { redis } from "@/lib/redis";
 import {
-  getArtist, getArtistBySlug, getAllDevices, ArtistProfile,
-  IMPLICIT_ARTIST_PREFIX, implicitArtistId, isImplicitArtistDevice, implicitArtistProfile,
+  getArtist, getArtistBySlug, getAllDevices, implicitArtistId,
+  isImplicitArtistDevice, implicitArtistProfile, type ArtistProfile,
 } from "@/lib/deviceStore";
-import { getBlockByHash, getBlockImage } from "@/lib/chain";
+import {
+  IMPLICIT_ARTIST_PREFIX, getArtistDeviceIds, getArtistBlocks, getProfileImagePayload,
+} from "@/lib/artistDirectory";
 
 export const dynamic = "force-dynamic";
 
-const BLOCKS_MAX = 24;
-const ONLINE_MS  = 10 * 60 * 1000;
+const ONLINE_MS = 10 * 60 * 1000;
 
 export async function GET(
   _req: NextRequest,
@@ -30,12 +32,12 @@ export async function GET(
 
     // Artiste implicite : `esp_{deviceId}` = ESP appairé sans profil artiste
     let profile: ArtistProfile | null = null;
-    let artistDeviceList = allDevices;
+    let implicit = false;
     if (rawParam.startsWith(IMPLICIT_ARTIST_PREFIX)) {
       const dev = allDevices.find((d) => implicitArtistId(d.deviceId) === rawParam);
       if (dev && isImplicitArtistDevice(dev)) {
         profile = implicitArtistProfile(dev);
-        artistDeviceList = [dev];
+        implicit = true;
       } else if (dev?.artistId) {
         // L'ESP a rejoint un profil entre-temps : rediriger vers celui-ci
         profile = await getArtist(dev.artistId);
@@ -49,11 +51,13 @@ export async function GET(
       return NextResponse.json({ error: "Artiste introuvable" }, { status: 404 });
     }
 
-    const artistId = profile.artistId;
+    // Appartenance : profil → appareils vivants + ids historiques ; implicite → l'ESP seul
+    const deviceIdSet = implicit
+      ? new Set(allDevices.filter((d) => implicitArtistId(d.deviceId) === profile!.artistId).map((d) => d.deviceId))
+      : await getArtistDeviceIds(profile.artistId, allDevices);
 
-    // Devices liés à cet artiste (vue publique sans MAC ni pairCode)
-    const artistDevices = artistDeviceList
-      .filter((d) => d.artistId === artistId || implicitArtistId(d.deviceId) === artistId)
+    const artistDevices = allDevices
+      .filter((d) => deviceIdSet.has(d.deviceId))
       .map((d) => ({
         deviceId:   d.deviceId,
         deviceName: d.deviceName,
@@ -65,52 +69,10 @@ export async function GET(
         lastSeen:   d.lastSeen,
       }));
 
-    const deviceSet = new Set(artistDevices.map((d) => d.deviceId));
-
-    // Blocs liés à cet artiste depuis chain:recent
-    const hashes = await redis.lrange<string>("chain:recent", 0, 99);
-    let blocks: unknown[] = [];
-
-    if (hashes && hashes.length > 0) {
-      const results = await Promise.all(
-        hashes.map(async (hash: string) => {
-          try {
-            const b = await getBlockByHash(hash);
-            if (!b) return null;
-
-            const isArtist = deviceSet.has(b.deviceId);
-            const isMiner  = !!b.minerDeviceId && deviceSet.has(b.minerDeviceId);
-            if (!isArtist && !isMiner) return null;
-
-            const img = await getBlockImage(b.blockHash);
-            return {
-              blockHash:      b.blockHash,
-              blockIndex:     b.blockIndex,
-              imageHash:      b.imageHash,
-              workTitle:      b.workTitle,
-              artistName:     b.artistName,
-              drawArtistName: b.drawArtistName,
-              poolScreen:     b.poolScreen,
-              score:          b.score,
-              drawScore:      b.drawScore,
-              minedAt:        b.minedAt,
-              displayTime:    b.displayTime,
-              validatorIds:   b.validatorIds,
-              isArtist,
-              isMiner,
-              imagePayload:   img ?? null,
-            };
-          } catch {
-            return null;
-          }
-        }),
-      );
-
-      blocks = results
-        .filter(Boolean)
-        .sort((a, b) => ((b as { minedAt?: number }).minedAt ?? 0) - ((a as { minedAt?: number }).minedAt ?? 0))
-        .slice(0, BLOCKS_MAX);
-    }
+    const [blocks, profileImage] = await Promise.all([
+      getArtistBlocks(deviceIdSet),
+      getProfileImagePayload(profile),
+    ]);
 
     return NextResponse.json(
       {
@@ -123,6 +85,7 @@ export async function GET(
           profileImageCrop:      profile.profileImageCrop,
           createdAt:   profile.createdAt,
         },
+        profileImage,   // résolu par hash : ne dépend plus de la fenêtre de blocs
         devices: artistDevices,
         blocks,
       },

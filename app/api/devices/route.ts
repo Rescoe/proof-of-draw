@@ -4,8 +4,9 @@
 
 import { NextRequest, NextResponse } from "next/server";
 
-import { getAllDevices, getDevice, getDeviceIdsByArtist, toPublicDevice, toOwnedDevice } from "@/lib/deviceStore";
+import { getAllDevices, getDevice, toPublicDevice, toOwnedDevice } from "@/lib/deviceStore";
 import { getSession } from "@/lib/session";
+import { getArtistDeviceIds } from "@/lib/artistDirectory";
 
 export const dynamic = "force-dynamic";
 
@@ -22,7 +23,7 @@ export async function GET(req: NextRequest) {
       // au moment du join). Les deux appareils partagent le même artistId → même vue.
       const idSet = new Set<string>(session.deviceIds);
       if (session.artistId) {
-        const byArtist = await getDeviceIdsByArtist(session.artistId);
+        const byArtist = await getArtistDeviceIds(session.artistId);
         for (const id of byArtist) idSet.add(id);
       }
 
