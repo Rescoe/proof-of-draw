@@ -448,3 +448,23 @@ test("podHints (client) == analyzeReplay (serveur) sur des replays réels du mot
     }
   }
 });
+
+test("texte : chaque caractère supporté produit des pixels, les inconnus un carré de repli", () => {
+  for (const ch of "AZaz09!?.,:;-+éèêàùçÉÀÇîïôöûüÿ♥★°€…«»☺") {
+    const s = new DrawSession({ width: 20, height: 20, mode: "bw" });
+    assert.ok(s.text({ x: 4, y: 6 }, ch, 1000, textS()), `caractère « ${ch} » sans pixel`);
+  }
+  const s = new DrawSession({ width: 20, height: 20, mode: "bw" });
+  assert.ok(s.text({ x: 4, y: 4 }, "中", 1000, textS()));   // caractère inconnu → repli
+  const blank = new DrawSession({ width: 20, height: 20, mode: "bw" });
+  assert.equal(blank.text({ x: 4, y: 4 }, "   ", 1000, textS()), false);   // des espaces ne changent rien
+});
+
+test("un replay sans marqueur v:2 n'est jamais pris pour un replay du moteur v2", async () => {
+  const { isReplayV2 } = await import("@/lib/drawEngine");
+  const legacy = [{ kind: "down", t: 0, x: 1, y: 1, tool: "brush", color: "#000000", size: 2, id: 1 }, { kind: "up", t: 90, x: 1, y: 1, id: 1, tool: "brush" }] as never[];
+  assert.equal(isReplayV2(legacy), false);
+  const s = new DrawSession({ width: 30, height: 30, mode: "bw" });
+  drawStroke(s, 1, [[2, 2], [20, 20]], 1000, stroke());
+  assert.equal(isReplayV2(s.getReplay()), true);
+});

@@ -211,7 +211,7 @@ export default function DrawStudio(props: DrawStudioProps) {
   const saveTimer = useRef<number | null>(null);
   const persist = useCallback(async () => {
     const s = session;
-    if (s.busy) return;
+    if (s.busy || sentRef.current) return;   // rien à sauvegarder pendant un geste, ni après un envoi réussi
     if (s.appliedCount === 0 && s.actionCount === 0 && !title.trim()) return;
     const ok = await saveDraft(draftKey, {
       v: 1, savedAt: Date.now(), snapshot: s.snapshot(), title, guestName,

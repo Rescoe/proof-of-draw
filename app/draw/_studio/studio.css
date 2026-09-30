@@ -576,3 +576,8 @@
 .st-notice button { height: 28px; min-width: 28px; padding: 0 10px; border-radius: 8px; border: 0; background: rgba(255, 255, 255, 0.12); color: inherit; font-weight: 700; font-size: 12px; cursor: pointer; }
 
 .st-summary b { display: inline-flex; align-items: center; gap: 5px; text-align: right; }
+
+/* iOS zoome la page au focus d'un champ < 16 px : on garde 16 px minimum sur les écrans tactiles */
+@media (pointer: coarse) {
+  .studio input[type="text"], .studio input:not([type]), .studio .st-title, .studio .st-hex, .studio .st-input { font-size: 16px; }
+}

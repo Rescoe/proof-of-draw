@@ -46,7 +46,7 @@ function HsvPicker({ color, onChange }: { color: string; onChange: (hex: string)
       <div
         ref={box} className="st-sv"
         style={{ background: `linear-gradient(to top,#000,transparent),linear-gradient(to right,#fff,hsl(${h} 100% 50%))` }}
-        onPointerDown={e => { (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId); pick(e); }}
+        onPointerDown={e => { try { (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId); } catch { /* pointeur déjà relâché */ } pick(e); }}
         onPointerMove={e => { if (e.buttons) pick(e); }}
       >
         <span className="st-sv__thumb" style={{ left: `${sv.s * 100}%`, top: `${(1 - sv.v) * 100}%`, background: color }} />
@@ -499,8 +499,9 @@ export function BrushAtelier({ onSave, onClose, capture }: {
     return x >= 0 && y >= 0 && x < n && y < n ? y * n + x : -1;
   };
   const apply = (i: number) => {
-    if (i < 0 || paint.current === null) return;
-    setBits(b => { if (b[i] === paint.current) return b; const c = b.slice(); c[i] = paint.current!; return c; });
+    const v = paint.current;
+    if (i < 0 || v === null) return;
+    setBits(b => { if (b[i] === v) return b; const c = b.slice(); c[i] = v; return c; });
   };
   const count = bits.reduce((a, v) => a + v, 0);
   const id = encodeCustomBrush(n, n, bits);
@@ -516,7 +517,7 @@ export function BrushAtelier({ onSave, onClose, capture }: {
       </div>
       <div
         className="st-editor" style={{ gridTemplateColumns: `repeat(${n}, ${cell}px)` }}
-        onPointerDown={e => { const i = at(e, e.currentTarget); if (i < 0) return; e.currentTarget.setPointerCapture(e.pointerId); paint.current = bits[i] ? 0 : 1; apply(i); }}
+        onPointerDown={e => { const i = at(e, e.currentTarget); if (i < 0) return; try { e.currentTarget.setPointerCapture(e.pointerId); } catch { /* pointeur déjà relâché */ } paint.current = bits[i] ? 0 : 1; apply(i); }}
         onPointerMove={e => { if (paint.current !== null) apply(at(e, e.currentTarget)); }}
         onPointerUp={() => { paint.current = null; }}
         onPointerCancel={() => { paint.current = null; }}
@@ -556,8 +557,9 @@ export function TextureEditor({ initial, onSave, onClose }: { initial: string; o
     return x >= 0 && y >= 0 && x < 8 && y < 8 ? y * 8 + x : -1;
   };
   const apply = (i: number) => {
-    if (i < 0 || paint.current === null) return;
-    setTile(b => { if (b[i] === paint.current) return b; const c = b.slice(); c[i] = paint.current!; return c; });
+    const v = paint.current;
+    if (i < 0 || v === null) return;
+    setTile(b => { if (b[i] === v) return b; const c = b.slice(); c[i] = v; return c; });
   };
   const id = customTextureId(tile);
   return (
@@ -566,7 +568,7 @@ export function TextureEditor({ initial, onSave, onClose }: { initial: string; o
       <p>Un carré de 8×8 pixels répété pour remplir : une trame sur mesure. Les pixels noirs seront peints.</p>
       <div
         className="st-editor" style={{ gridTemplateColumns: `repeat(8, ${cell}px)` }}
-        onPointerDown={e => { const i = at(e, e.currentTarget); if (i < 0) return; e.currentTarget.setPointerCapture(e.pointerId); paint.current = tile[i] ? 0 : 1; apply(i); }}
+        onPointerDown={e => { const i = at(e, e.currentTarget); if (i < 0) return; try { e.currentTarget.setPointerCapture(e.pointerId); } catch { /* pointeur déjà relâché */ } paint.current = tile[i] ? 0 : 1; apply(i); }}
         onPointerMove={e => { if (paint.current !== null) apply(at(e, e.currentTarget)); }}
         onPointerUp={() => { paint.current = null; }}
         onPointerCancel={() => { paint.current = null; }}

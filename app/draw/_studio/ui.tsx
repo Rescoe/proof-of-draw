@@ -93,7 +93,7 @@ export function useToasts() {
   const dismiss = useCallback((id: number) => setToasts(t => t.filter(x => x.id !== id)), []);
   const push = useCallback((msg: string, opts: { kind?: Toast["kind"]; action?: Toast["action"]; ms?: number } = {}) => {
     const id = next.current++;
-    setToasts(t => [...t.slice(-2), { id, msg, kind: opts.kind, action: opts.action }]);
+    setToasts(t => [...t.slice(-1), { id, msg, kind: opts.kind, action: opts.action }]);
     window.setTimeout(() => dismiss(id), opts.ms ?? (opts.action ? 6500 : 3200));
     return id;
   }, [dismiss]);
