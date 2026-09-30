@@ -90,7 +90,8 @@ epd.Display(blackBuf, redBuf) → ✅ affiché sur e-ink
 | `lib/chain.ts` | Logique chaîne : Block, Candidate, VoteMap, castVote(), finalizeBlock(), clearCandidate(), getChainSummary() |
 | `lib/deviceStore.ts` | CRUD devices Redis. TTL 48h. |
 | `lib/queue.ts` | Store/retrieve frames depuis Redis. FramePayload typé par écran. |
-| `lib/canvasToScreen.ts` | Conversion canvas → buffers e-ink selon profil écran. |
+| `lib/canvasToScreen.ts` | Conversion canvas → buffers écran selon profil (encodeur pur `rgbaToScreenPayload`, testé). |
+| `lib/drawEngine/` | Moteur de dessin pur (pixel-exact, historique par deltas, replay v2, score) — voir `docs/ARCHITECTURE_DESSIN.md`. |
 | `lib/rateLimit.ts` | Rate limiting, blacklist, strike system Redis. |
 | `lib/crypto.ts` | SHA-256, computeDisplayTime (score → durée affichage). |
 | `lib/screenProfiles.ts` | Profils d'écrans : dimensions, formats, BUF_SIZE. |

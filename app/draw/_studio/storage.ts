@@ -18,6 +18,7 @@ export interface StudioPrefs {
   grid: GridSettings;
   penOnly: boolean;
   introSeen: boolean;
+  nudges: { studio: boolean; pro: boolean };   // suggestions de boîte à outils déjà montrées
 }
 
 const PREFS_KEY = "pod_studio_prefs_v1";
@@ -32,6 +33,7 @@ export const DEFAULT_PREFS: StudioPrefs = {
   grid: { show: false, step: 8 },
   penOnly: true,
   introSeen: false,
+  nudges: { studio: false, pro: false },
 };
 
 export function loadPrefs(): StudioPrefs {

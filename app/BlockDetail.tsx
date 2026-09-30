@@ -10,6 +10,8 @@ import { BlockFrameCanvas } from "./BlockFrameCanvas";
 import { SendToScreen } from "./SendToScreen";
 import type { ActionEvent, ReplayEvent } from "@/lib/types/actions";
 import { floodFill, drawLine, drawRect, drawEllipse } from "@/lib/canvasPrimitives";
+import { Replayer, isReplayV2, modeForProfile, scoreTimeline, textureLabel } from "@/lib/drawEngine";
+import { SCREEN_PROFILES } from "@/lib/screenProfiles";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -184,6 +186,8 @@ const ACTION_COLORS: Record<string, string> = {
   fill:   "#a78bfa",
   shape:  "#34d399",
   move:   "#fbbf24",
+  transform: "#f59e0b",
+  text:   "#22d3ee",
   clear:  "#f87171",
   undo:   "#fb923c",
   redo:   "#6b7280",
@@ -204,7 +208,8 @@ function TabActions({ blockHash }: { blockHash: string }) {
   if (loading) return <p className="bd-muted">Chargement…</p>;
   if (!actions?.length) return <p className="bd-muted">Aucune action enregistrée pour ce bloc.</p>;
 
-  let runningScore = 0;
+  // Chronologie des points : règles historiques pour les anciens blocs, règles v2 pour ceux du moteur v2
+  const timeline = scoreTimeline(actions);
 
   return (
     <div className="bd-actions">
@@ -213,9 +218,7 @@ function TabActions({ blockHash }: { blockHash: string }) {
       </p>
       <div className="bd-action-list">
         {actions.map((a, i) => {
-          if (a.kind === "undo") runningScore--;
-          else if (a.kind !== "redo" && a.kind !== "clear") runningScore++;
-          else if (a.kind === "clear") runningScore = 0;
+          const runningScore = timeline[i] ?? 0;
           return (
             <div key={i} className="bd-action-row">
               <span className="bd-action-idx">{i + 1}</span>
@@ -223,6 +226,9 @@ function TabActions({ blockHash }: { blockHash: string }) {
                 {a.kind}
               </span>
               {a.tool && <span className="bd-action-tool">{a.tool}</span>}
+              {a.tx && a.tx !== "solid" && <span className="bd-action-tool" title="Texture">{textureLabel(a.tx)}</span>}
+              {a.sy && <span className="bd-action-tool" title="Symétrie">sym {a.sy}</span>}
+              {a.n !== undefined && <span className="bd-action-tool" title="Pixels modifiés">{a.n} px</span>}
               {a.color && (
                 <span
                   className="bd-action-color"
@@ -257,6 +263,7 @@ function TabReplay({ block }: { block: BlockWithImage }) {
           : block.imagePayload?.screen === "eink27bw"  ? 176
           : block.imagePayload?.screen === "tft18"     ? 160
           : 64; // oled096=64
+  const screenProfile = block.imagePayload ? SCREEN_PROFILES[block.imagePayload.screen as keyof typeof SCREEN_PROFILES] : undefined;
 
   useEffect(() => {
     fetch(`/api/block-replay?hash=${block.blockHash}`)
@@ -286,6 +293,25 @@ function TabReplay({ block }: { block: BlockWithImage }) {
     const duration = Math.max(tEnd - t0, 1);
     // Normalise la vitesse pour que le replay dure ~10s max
     const speedFactor = Math.max(1, duration / 10000);
+
+    // ── Replays du moteur v2 : reconstruction pixel-exacte (mêmes opérations que l'éditeur) ──
+    if (isReplayV2(replay) && screenProfile) {
+      const rep = new Replayer({ width: W, height: H, mode: modeForProfile(screenProfile) });
+      const img = new ImageData(rep.bmp.toRGBA(), W, H);
+      let k = 0;
+      const stepV2 = () => {
+        if (k >= total) { rep.flush(); ctx.putImageData(img, 0, 0); setPlaying(false); setProgress(100); return; }
+        const ev = replay![k];
+        k++;
+        setProgress(Math.round((k / total) * 100));
+        rep.apply(ev);
+        ctx.putImageData(img, 0, 0);
+        const delay = k < total ? Math.max(0, (replay![k].t - ev.t) / speedFactor) : 0;
+        animRef.current = setTimeout(stepV2, delay);
+      };
+      stepV2();
+      return;
+    }
 
     let i = 0;
     // Dernier événement down/move vu, par flux (id de pointeur). Les replays
@@ -353,7 +379,7 @@ function TabReplay({ block }: { block: BlockWithImage }) {
     }
 
     step();
-  }, [replay, W, H]);
+  }, [replay, W, H, screenProfile]);
 
   useEffect(() => () => { if (animRef.current) clearTimeout(animRef.current); }, []);
 

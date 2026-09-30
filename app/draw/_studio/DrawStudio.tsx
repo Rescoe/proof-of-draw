@@ -13,7 +13,7 @@ import "./studio.css";
 import { SCREEN_PROFILES, ScreenId } from "@/lib/screenProfiles";
 import {
   DrawSession, MAT_FLIP_H, MAT_FLIP_V, MAT_IDENTITY, MAT_ROT_CW, matMul, modeForProfile, paletteForMode,
-  podHints, craftProfile, scoreBreakdown, Pt, isCustomBrush,
+  podHints, craftProfile, scoreBreakdown, ACHIEVEMENTS, Pt, isCustomBrush,
 } from "@/lib/drawEngine";
 import {
   DEFAULT_SETTINGS, GridSettings, ModelImage, PanelId, StudioSendInput, StudioSendResult, TOOLS_BY_BOX,
@@ -113,6 +113,7 @@ export default function DrawStudio(props: DrawStudioProps) {
   const stageApi = useRef<StageApi>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const lastSent = useRef<ReturnType<DrawSession["snapshot"]> | null>(null);
+  const seenAch = useRef<Set<string> | null>(null);
   const sentRef = useRef(false);
 
   // ── Disposition : pilotée par la taille réelle du conteneur ───────────────
@@ -191,6 +192,7 @@ export default function DrawStudio(props: DrawStudioProps) {
   const restoreDraft = (d: DraftData) => {
     const s = DrawSession.restore(d.snapshot);
     clock.reset(d.elapsedMs + 1000);
+    seenAch.current = null;
     setSession(s);
     setTitle(d.title);
     if (d.guestName) { guestTouched.current = true; setGuestName(d.guestName); }
@@ -300,7 +302,8 @@ export default function DrawStudio(props: DrawStudioProps) {
 
   const pickedColor = useCallback((hex: string) => {
     setColor(hex);
-    setToolState(prevTool.current === "eyedropper" ? "brush" : prevTool.current);
+    // la pipette est un outil "de passage" : on revient à l'outil précédent après avoir pris la couleur
+    setToolState(t => (t === "eyedropper" ? (prevTool.current === "eyedropper" ? "brush" : prevTool.current) : t));
   }, [setColor]);
 
   // ── Historique ─────────────────────────────────────────────────────────────
@@ -330,11 +333,17 @@ export default function DrawStudio(props: DrawStudioProps) {
     if (keepMemo && session.appliedCount > 0) lastSent.current = session.snapshot();
     void deleteDraft(draftKey);
     clock.reset(0);
+    seenAch.current = null;
     setSession(new DrawSession({ width: W, height: H, mode }));
     setTitle("");
     setTextDraft(null); setPolyCount(0); setModelEdit(false);
     setConfirm(null); setPanel(null);
   }, [session, draftKey, W, H, mode]);
+
+  const reopen = (snap: NonNullable<typeof lastSent.current>) => {
+    seenAch.current = null;
+    setSession(DrawSession.restore(snap));
+  };
 
   // ── Sélection ──────────────────────────────────────────────────────────────
   const selUi: SelectionUi = {
@@ -407,6 +416,39 @@ export default function DrawStudio(props: DrawStudioProps) {
   const bd = useMemo(() => scoreBreakdown(actionsNow), [actionsNow]);
   const hints = useMemo(() => podHints(replay, W, H), [replay, W, H]);
   const craft = useMemo(() => craftProfile(actionsNow), [actionsNow]);
+
+  // ── Récompenses : chaque technique découverte est saluée ; suggestion de boîte à outils ──
+  useEffect(() => {
+    const cur = new Set(craft.achievements);
+    if (seenAch.current === null) { seenAch.current = cur; return; }
+    for (const id of cur) {
+      if (!seenAch.current.has(id)) {
+        const a = ACHIEVEMENTS.find(x => x.id === id);
+        if (a) push(`Technique débloquée : ${a.label} ✨`, { ms: 3200 });
+      }
+    }
+    seenAch.current = cur;
+  }, [craft.achievements, push]);
+
+  const nudged = useRef(prefs.nudges);
+  useEffect(() => {
+    if (draftPrompt || sendOpen) return;
+    let nudge: null | { key: "studio" | "pro"; msg: string; label: string; to: Toolbox } = null;
+    if (toolbox === "essential" && score >= 6 && !nudged.current.studio)
+      nudge = { key: "studio", msg: "Tu prends de l'assurance ! Studio ajoute pipette, sélection, texte et textures.", label: "Essayer Studio", to: "studio" };
+    else if (toolbox === "studio" && craft.achievements.length >= 5 && !nudged.current.pro)
+      nudge = { key: "pro", msg: "Tu maîtrises Studio. Pro ajoute dégradés, polygones, lasso et brosses perso.", label: "Essayer Pro", to: "pro" };
+    if (!nudge) return;
+    const n = nudge;
+    nudged.current = { ...nudged.current, [n.key]: true };
+    const id = window.setTimeout(() => {
+      setPrefs(p => ({ ...p, nudges: { ...p.nudges, [n.key]: true } }));
+      push(n.msg, { ms: 9000, action: { label: n.label, run: () => setToolbox(n.to) } });
+    }, 0);
+    return () => window.clearTimeout(id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [score, craft.achievements.length, toolbox, draftPrompt, sendOpen]);
+
   const sendKind = cooldown > 0 ? "wait" : score <= 0 ? "empty" : "ready";
   const openSend = () => {
     endPending("commit");
@@ -660,7 +702,7 @@ export default function DrawStudio(props: DrawStudioProps) {
       {confirm === "new" && (
         <ConfirmDialog
           title="Commencer un nouveau dessin ?" message="Le dessin actuel sera remplacé par une feuille blanche. Tu pourras le récupérer juste après." confirmLabel="Nouveau dessin" danger
-          onConfirm={() => { startNew(true); push("Nouvelle feuille", { action: lastSent.current ? { label: "Récupérer l'ancien", run: () => { const snap = lastSent.current; if (snap) { setSession(DrawSession.restore(snap)); } } } : undefined, ms: 8000 }); }}
+          onConfirm={() => { startNew(true); push("Nouvelle feuille", { action: lastSent.current ? { label: "Récupérer l'ancien", run: () => { const snap = lastSent.current; if (snap) reopen(snap); } } : undefined, ms: 8000 }); }}
           onCancel={() => setConfirm(null)}
         />
       )}
@@ -682,7 +724,7 @@ export default function DrawStudio(props: DrawStudioProps) {
               startNew(false);
               push("Dessin envoyé ✓ — nouvelle feuille prête", {
                 kind: "ok", ms: 8000,
-                action: snap ? { label: "Rouvrir", run: () => { setSession(DrawSession.restore(snap)); } } : undefined,
+                action: snap ? { label: "Rouvrir", run: () => reopen(snap) } : undefined,
               });
             }
           }}

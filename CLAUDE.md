@@ -192,6 +192,28 @@ Définir `SCREEN_TYPE` et `BUF_SIZE` comme constantes.
 
 ---
 
+## Page de dessin — Pod Studio (refonte du 30/09/2026)
+
+La page `app/draw/[device]/[screen]` a été entièrement refondue (le non-goal « refonte UI » est levé **pour cette page
+uniquement**). Architecture complète : `docs/ARCHITECTURE_DESSIN.md`.
+
+```
+lib/drawEngine/     moteur pur pixel-exact (sans React/DOM) : session, historique par deltas, replay v2, score
+app/draw/_studio/   interface tactile (Essentiel / Studio / Pro), brouillon IndexedDB, flux d'envoi 3 étapes
+app/draw-lab/       bac à sable DEV (404 en prod) — vérifier l'interface sans toucher à Redis
+tests/              npm test (moteur, replay == image, parité canvas → buffer → décodage)
+```
+
+Règles à respecter :
+- le canvas ne contient que des couleurs affichables par l'écran ; toute conversion vers un buffer passe par
+  `rgbaToScreenPayload` / `canvasToScreenPayload` (`lib/canvasToScreen.ts`, conventions inchangées, testées) ;
+- les types `ActionEvent`/`ReplayEvent` ne changent que **de façon additive** ; un replay/une séquence v2 porte `v: 2`
+  sur son premier élément ; sans ce marqueur, tout se relit et se score comme avant ;
+- `drawScore` = `scoreActions(actions)` (`lib/drawEngine/scoring.ts`), déterministe et recalculable par les validateurs ;
+- le replay envoyé ne contient jamais l'image modèle ; les points de trait sont espacés de ≥ 16 ms (`automationRatio`) ;
+- aucune navigation automatique sur erreur dans la page de dessin : le dessin ne doit jamais être perdu ;
+- avant tout commit touchant le moteur : `npm test`, `npx tsc --noEmit`.
+
 ## Non-goals
 
 Ne pas faire :

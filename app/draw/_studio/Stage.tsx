@@ -556,6 +556,17 @@ export const Stage = forwardRef<StageApi, StageProps>(function Stage(props, ref)
     }
     if (e.pointerType === "mouse" && e.button !== 0) return;
 
+    // Alt + clic (souris) : pipette temporaire, quel que soit l'outil de dessin
+    if (e.pointerType === "mouse" && e.altKey && (P.current.tool === "brush" || P.current.tool === "eraser" || P.current.tool === "fill" || P.current.tool === "shape" || P.current.tool === "text")) {
+      const c = toCanvasPt(sp.x, sp.y);
+      if (c.inside) {
+        const px = P.current.session.pick(c.p);
+        P.current.onPickColor("#" + [px & 255, (px >>> 8) & 255, (px >>> 16) & 255].map(v => v.toString(16).padStart(2, "0")).join(""));
+      }
+      ptrs.current.delete(e.pointerId);
+      return;
+    }
+
     const touches = [...ptrs.current.values()].filter(p => p.type === "touch");
     if (e.pointerType === "touch") {
       if (touches.length >= 2) {

@@ -64,7 +64,7 @@ Toutes fonctionnelles et à ne pas casser :
 - `lib/chain.ts` — logique chaîne de blocs légère
 - `lib/deviceStore.ts` — CRUD devices Redis, TTL 48h
 - `lib/queue.ts` — store/retrieve frames Redis, FramePayload typé
-- `lib/canvasToScreen.ts` — conversion canvas → buffers e-ink, ne pas toucher
+- `lib/canvasToScreen.ts` — conversion canvas → buffers écran (`rgbaToScreenPayload` = encodeur pur testé bit à bit ; conventions à ne pas changer)
 - `lib/rateLimit.ts` — rate limiting, blacklist, strikes
 - `lib/crypto.ts` — SHA-256, computeDisplayTime
 - `lib/screenProfiles.ts` — profils écrans, BUF_SIZE par type
@@ -146,7 +146,7 @@ Pour porter un nouvel écran, trois points à modifier :
 
 - ne pas ajouter de base de données
 - ne pas refaire les pages
-- ne pas casser `useCanvasDrawing`
+- ne pas dupliquer la logique de dessin hors de `lib/drawEngine` (l'ancien hook `useCanvasDrawing` a été supprimé)
 - ne pas remplacer `canvasToScreen.ts`
 - ne pas transformer le projet en nouvelle app
 - ne pas ajouter blockchain / wallet / seed / token maintenant
