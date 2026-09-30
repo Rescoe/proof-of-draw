@@ -6,12 +6,15 @@
 
 import { useState, useEffect } from "react";
 import Link from "next/link";
+import { WiringDiagram } from "./WiringDiagram";
+import { WIRING, NODEMCU_GPIO } from "./wiring";
 
 // ── TOC ───────────────────────────────────────────────────────────────────────
 
 const TOC_ITEMS = [
   { part: 1, id: "intro",       label: "Introduction" },
   { part: 1, id: "material",    label: "Matériel compatible" },
+  { part: 1, id: "wiring",      label: "Câblage des écrans" },
   { part: 1, id: "arduino-ide", label: "Installer Arduino IDE" },
   { part: 1, id: "esp-boards",  label: "Ajouter les cartes ESP" },
   { part: 1, id: "libraries",   label: "Bibliothèques requises" },
@@ -655,6 +658,76 @@ export default function LearnPage() {
               La carte <strong>NodeMCU v1 (ESP-12E)</strong> est la même pour tous les écrans.
               Seul le câblage et le firmware changent. Vous trouverez ces composants facilement
               sur AliExpress, Amazon ou Mouser pour environ 5–15 € pièce.
+            </Note>
+          </Section>
+
+          {/* ── Câblage ── */}
+          <Section id="wiring">
+            <H2>Câblage des écrans</H2>
+            <Lead>
+              Chaque écran se branche sur le NodeMCU avec quelques fils. Les tableaux ci-dessous
+              sont <strong>relevés dans le code des firmwares</strong> : si vous câblez comme indiqué,
+              le firmware du dossier correspondant fonctionne sans rien modifier.
+            </Lead>
+
+            <Note type="warn">
+              <strong>Tout est en 3,3 V.</strong> Alimentez les écrans depuis la broche <Code>3V3</Code> du NodeMCU,
+              jamais depuis <Code>VIN</Code> ou 5 V. Débranchez l&apos;USB avant de modifier un câblage.
+            </Note>
+
+            <H3>Comment lire les noms de broches</H3>
+            <p style={{ fontSize: "0.87rem", color: "var(--text2)", lineHeight: 1.65 }}>
+              Le NodeMCU porte des étiquettes <Code>D0</Code> … <Code>D8</Code>, alors que le code utilise parfois
+              les numéros <Code>GPIO</Code> de la puce. Ce sont les mêmes broches :
+            </p>
+            <CodeBlock>{Object.entries(NODEMCU_GPIO).map(([d, g]) => `${d.padEnd(3)} = ${g}`).join("\n")}</CodeBlock>
+
+            <H3>E-Ink 2.9&quot; Noir / Blanc / Rouge</H3>
+            <WiringDiagram spec={WIRING.eink29bwr} />
+
+            <H3>E-Ink 2.7&quot; Noir / Blanc</H3>
+            <p style={{ fontSize: "0.87rem", color: "var(--text2)", lineHeight: 1.65 }}>
+              Même câblage que le 2.9&quot; : les deux firmwares utilisent les mêmes broches.
+            </p>
+            <WiringDiagram spec={WIRING.eink27bw} />
+
+            <Note type="info">
+              <strong>Pourquoi <Code>DIN</Code> et <Code>CLK</Code> ne sont pas dans le code ?</strong>{" "}
+              Le fichier <Code>epdif.h</Code> ne définit que <Code>RST</Code>, <Code>DC</Code>, <Code>CS</Code> et{" "}
+              <Code>BUSY</Code>. Les deux autres fils passent par le <em>SPI matériel</em> de l&apos;ESP8266, dont les
+              broches sont imposées par la puce : <Code>CLK → D5</Code> (GPIO14) et <Code>DIN → D7</Code> (GPIO13).
+              Il faut donc les câbler même s&apos;ils n&apos;apparaissent nulle part dans le sketch.
+              La ligne <Code>PWR_PIN</Code> de <Code>epdif.h</Code> (2.9&quot;) n&apos;est utilisée nulle part :
+              ne câblez rien pour elle.
+            </Note>
+
+            <H3>E-Ink 2.7&quot; + OLED 0.96&quot; (firmware multi-écran)</H3>
+            <p style={{ fontSize: "0.87rem", color: "var(--text2)", lineHeight: 1.65 }}>
+              Le firmware <Code>esp_eink_2.7BW_OLED</Code> pilote l&apos;e-ink ci-dessus <strong>et</strong> un petit
+              écran OLED en I²C. Câblez l&apos;e-ink comme au-dessus, puis ajoutez l&apos;OLED (3V3 et GND peuvent
+              être partagés avec l&apos;e-ink) :
+            </p>
+            <WiringDiagram spec={WIRING.oled} />
+            <Note type="tip">
+              La broche <Code>D6</Code> est aussi la broche MISO du SPI, que l&apos;e-ink n&apos;utilise pas : le firmware
+              réinitialise le bus I²C / SPI à chaque accès à l&apos;un ou l&apos;autre écran. Si l&apos;OLED reste noir,
+              vérifiez l&apos;adresse I²C (<Code>0x3C</Code>, parfois <Code>0x3D</Code> selon le module).
+            </Note>
+
+            <H3>TFT 1.8&quot; couleur</H3>
+            <WiringDiagram spec={WIRING.tft18} />
+            <p style={{ fontSize: "0.87rem", color: "var(--text2)", lineHeight: 1.65 }}>
+              Le module TFT embarque aussi un lecteur de carte SD. Il est <strong>optionnel</strong> (le firmware
+              démarre sans carte) ; s&apos;il est câblé, il partage les fils <Code>D5</Code> et <Code>D7</Code> avec
+              l&apos;écran :
+            </p>
+            <WiringDiagram spec={WIRING.tftSd} />
+
+            <Note type="tip">
+              <strong>Dépannage rapide.</strong> Écran qui ne réagit pas : vérifiez d&apos;abord <Code>3V3</Code> et <Code>GND</Code>,
+              puis que <Code>DIN</Code>/<Code>CLK</Code> (ou <Code>SDA</Code>/<Code>SCL</Code> sur le TFT) ne sont pas
+              inversés. E-ink qui ne se rafraîchit jamais : contrôlez le fil <Code>BUSY</Code>. Image décalée ou
+              hachée : fil de données ou d&apos;horloge mal enfoncé.
             </Note>
           </Section>
 
