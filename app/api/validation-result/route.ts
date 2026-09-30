@@ -24,7 +24,7 @@ import { revalidatePath } from "next/cache";
 import { redis } from "@/lib/redis";
 import { frameKey } from "@/lib/queue";
 import { getDevice } from "@/lib/deviceStore";
-import { getCurrentCandidate, getVotes, castVote, finalizeBlock, clearCandidate, ValidationVote } from "@/lib/chain";
+import { getCurrentCandidate, getVotes, castVote, claimFinalization, finalizeBlock, clearCandidate, ValidationVote } from "@/lib/chain";
 import { isBlacklisted, getIP, forbidden } from "@/lib/rateLimit";
 import { verifyEd25519 } from "@/lib/ed25519";
 import { dequeueNextDraw } from "@/lib/drawQueue";
@@ -126,6 +126,11 @@ export async function POST(req: NextRequest) {
     console.log(`[validation-result] vote device=${deviceId} votes=${voteCount}/${needed} quorum=${quorumReached}`);
 
     if (quorumReached) {
+      // Un seul votant mine le bloc ; les votes tardifs (quorum déjà atteint) sortent ici.
+      if (!(await claimFinalization(candidate.candidateId))) {
+        console.log(`[validation-result] quorum déjà finalisé candidate=${candidate.candidateId} device=${deviceId} — vote tardif ignoré`);
+        return json({ ok: true, blockMined: false, alreadyFinalized: true, voteCount, needed }, 200);
+      }
       const voteMap = await getVotes();
       const allVotes = voteMap ? Object.values(voteMap.votes) : [vote];
       const frameId = crypto.randomUUID();

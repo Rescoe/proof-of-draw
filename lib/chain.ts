@@ -235,6 +235,16 @@ export async function setCandidate(candidate: Candidate): Promise<void> {
   ]);
 }
 
+/**
+ * Verrou atomique (SET NX) : un seul appel par candidat obtient le droit de miner.
+ * Sans ça, un vote arrivant entre finalizeBlock et clearCandidate revoit
+ * voteCount >= needed et mine un 2e bloc (même index, même œuvre, plus de validateurs).
+ */
+export async function claimFinalization(candidateId: string): Promise<boolean> {
+  const res = await redis.set(`candidate:finalizing:${candidateId}`, "1", { nx: true, ex: 300 });
+  return res === "OK";
+}
+
 export async function clearCandidate(): Promise<void> {
   await Promise.all([redis.del(KEY_CANDIDATE), redis.del(KEY_VOTES)]);
 }
