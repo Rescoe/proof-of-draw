@@ -396,7 +396,8 @@ export function HelpSection() {
       </div>
       <div className="st-h">Clavier</div>
       <div className="st-helpgrid">
-        <div className="st-helprow"><Kbd>B</Kbd><Kbd>E</Kbd><Kbd>G</Kbd><Kbd>U</Kbd><Kbd>I</Kbd><Kbd>M</Kbd><Kbd>T</Kbd> pinceau · gomme · remplir · formes · pipette · sélection · texte</div>
+        <div className="st-helprow"><Kbd>B</Kbd><Kbd>E</Kbd><Kbd>F</Kbd><Kbd>U</Kbd><Kbd>I</Kbd><Kbd>M</Kbd><Kbd>T</Kbd> pinceau · gomme · remplir · formes · pipette · sélection · texte</div>
+        <div className="st-helprow"><Kbd>L</Kbd><Kbd>R</Kbd><Kbd>O</Kbd> ligne · rectangle · ellipse · <Kbd>Alt</Kbd>+clic pipette</div>
         <div className="st-helprow"><Kbd>Ctrl</Kbd>+<Kbd>Z</Kbd> / <Kbd>Y</Kbd> annuler / rétablir</div>
         <div className="st-helprow"><Kbd>[</Kbd><Kbd>]</Kbd> taille · <Kbd>X</Kbd> échanger les couleurs</div>
         <div className="st-helprow"><Kbd>Maj</Kbd> formes contraintes (carré, cercle, 45°)</div>

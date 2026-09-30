@@ -68,7 +68,7 @@ export const TOOL_LABEL: Record<ToolId, string> = {
 };
 
 export const TOOL_KEY: Record<ToolId, string> = {
-  brush: "B", eraser: "E", fill: "G", shape: "U", eyedropper: "I", select: "M", text: "T",
+  brush: "B", eraser: "E", fill: "F", shape: "U", eyedropper: "I", select: "M", text: "T",
 };
 
 export const DEFAULT_SETTINGS: ToolSettings = {

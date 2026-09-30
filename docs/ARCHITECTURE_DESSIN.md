@@ -132,3 +132,43 @@ Le moteur est déjà organisé pour des animations image par image :
 `npm test` (moteur, historique, replay, score, parité écran) · `npx tsc --noEmit` · `npx eslint app/draw lib/drawEngine`.
 Interface : `npm run dev` puis `/draw-lab?screen=oled096|eink27bw|eink29bwr|tft18` (options : `&guest=1`, `&send=error|reject|full`,
 `&cd=30`, `&notice=1`). **Non vérifié sur appareils réels** : iPhone Safari, Android Chrome, panneaux e-ink physiques.
+
+## 8. Suivi de l'audit (`AUDIT_PAGE_DESSIN.md`)
+
+| # | Constat | Statut | Où |
+|---|---|---|---|
+| A1 | Redirection sur erreur | ✅ | `page.tsx` : jamais de navigation ; bandeau + « Réessayer » |
+| A2 | Aucun brouillon | ✅ | IndexedDB, reprise proposée, horloge de session (`storage.ts`) |
+| A3 | Aucun retour d'erreur sur mobile | ✅ | toasts + écran de résultat, toutes tailles |
+| A4 | Barre du haut qui clippe « Envoyer » | ✅ | barre à colonnes fixes ; testé 320×568 → 1440×900 |
+| A5 | Bouton d'envoi trompeur | ✅ | un seul chemin : titre → aperçu → confirmer |
+| A6 | Cooldown client ≠ serveur | ✅ | `GET /api/draw-status` par appareil + pré-contrôle ; `/api/draw` **inchangé** (strikes préservés) |
+| A7 | Double envoi | ✅ | verrou par `ref` (`SendFlow`) |
+| B1 | Activation `pointerdown` vs `click` | ✅ | `click` partout ; fond des feuilles ignoré 280 ms ; scène qui ferme sans dessiner |
+| B2 | Panneau outils incohérent | ✅ | outils/options persistants, feuilles seulement pour le rare |
+| B3 | Pastilles rapides fausses | ✅ | palette réelle (mono/BWR), récentes (TFT) |
+| B4 | Pas de `pointercancel` | ✅ | annulation propre + test moteur |
+| B5 | 2 doigts = 2 traits | ✅ | pincer/zoom ; rejet de paume si stylet |
+| B6 | Zoom sans déplacement | ✅ | zoom continu + pan + loupe + curseur déporté |
+| B7 | Effacement sans confirmation / non journalisé | ✅ | confirmation, geste `clear` journalisé et annulable |
+| B8 | Raccourcis en conflit | ✅ | modificateurs ignorés ; F = remplir, L/R/O formes, V sélection |
+| B9 | Plein écran inexistant sur iPhone | ✅ | plein cadre CSS ; API Fullscreen en bonus (menu, si supportée) |
+| B10 | Détection mobile fragile | ✅ | disposition selon la taille du conteneur |
+| B11 | Icônes emoji | ✅ | SVG + libellés + `aria-label` |
+| C1 | Anti-aliasing / opacité sur 1 bit | ✅ | moteur pixel-exact ; trames (D3) ; opacité = TFT seulement |
+| C2 | Couleur libre sur mono/BWR | ✅ | palette stricte ; TFT : HSV + couleur RGB565 réellement affichée |
+| C3 | Historique du remplissage | ✅ | deltas + test de régression |
+| C4 | Historique ≠ replay | ✅ | source unique + test-propriété |
+| C5 | Guide effacé par les formes | ✅ | modèle = calque DOM séparé |
+| C6 | Outil « Déplacer » mort | ✅ | Sélection & déplacement (rect, baguette, lasso) |
+| C7 | Formes limitées | ✅ | contour/plein, épaisseur, 1:1 / 45°, depuis le centre, polygone, symétrie |
+| C8 | Remplissage à tolérance | ✅ | comparaison stricte |
+| C9 | Pas de lissage | ✅ partiel | stabilisateur + pixel-parfait. **Pression stylet non enregistrée** (choix : rester simple) |
+| C10 | Import compliqué | ✅ | image modèle (D1a) : déplacer/pincer, opacité, gris ; tramage mort supprimé |
+| D | Aperçu, cadre, hiérarchie, styles inline, `viewport-fit`, verrou de défilement, `console.log` | ✅ | aperçu décodé du buffer ; cadre + libellé ; `studio.css` ; layout dédié ; verrou unique ; logs supprimés |
+| E | Hook mort, tramage mort, monolithe, tests, historique lourd | ✅ | supprimés/scindés ; `npm test` ; deltas |
+
+**Non traité dans cette passe (voulu)** : W6 — envoi d'image à un écran (D1b) et réglage de réception par écran (D2). C'est un
+chantier distinct (nouveau endpoint, réglages `/profile`, modération de l'envoi « universel ») qui mérite ses propres décisions
+(voir `PROMPT_REFONTE_DESSIN.md` §3.1). Le moteur et le flux d'envoi sont prêts à l'accueillir. **Non fait non plus** :
+tests E2E automatisés (Playwright non installé) ; vérification sur iPhone Safari / Android Chrome / e-ink physiques.

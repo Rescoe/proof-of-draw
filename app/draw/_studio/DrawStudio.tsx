@@ -8,7 +8,7 @@
 // ligne (le dessin n'est jamais perdu) et se teste sans serveur.
 
 import { useCallback, useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState } from "react";
-import { RotateCw, ScanLine, X, ZoomIn, ZoomOut, Rotate3d, PanelRightClose, PanelRightOpen } from "lucide-react";
+import { RotateCw, ScanLine, X, ZoomIn, ZoomOut, Rotate3d, PanelRightClose, PanelRightOpen, Move } from "lucide-react";
 import "./studio.css";
 import { SCREEN_PROFILES, ScreenId } from "@/lib/screenProfiles";
 import {
@@ -51,15 +51,22 @@ const sheetTitle: Record<Exclude<PanelId, null>, string> = {
   model: "Image modèle", score: "Points & techniques", menu: "Menu", help: "Gestes et raccourcis",
 };
 
+const snapTo = (v: number, list: number[]) => list.reduce((best, x) => (Math.abs(x - v) < Math.abs(best - v) ? x : best), list[0]);
+/** En boîte Essentiel, les tailles sont 3 pastilles : on aligne les réglages dessus. */
+function essentialSizes(s: ToolSettings): ToolSettings {
+  return { ...s, size: snapTo(s.size, [2, 4, 8]), eraserSize: snapTo(s.eraserSize, [4, 8, 16]), shapeSize: snapTo(s.shapeSize, [1, 3, 6]), textScale: Math.min(3, s.textScale) };
+}
+
 function initialSettings(prefs: StudioPrefs, mode: ReturnType<typeof modeForProfile>, W: number, H: number): ToolSettings {
   const palette = paletteForMode(mode);
-  const s: ToolSettings = { ...DEFAULT_SETTINGS, ...prefs.settings, symCx: W / 2, symCy: H / 2 };
+  // la symétrie est un mode transitoire : on ne la remet jamais d'office à l'ouverture
+  const s: ToolSettings = { ...DEFAULT_SETTINGS, ...prefs.settings, sym: "", symCx: W / 2, symCy: H / 2 };
   if (palette.length) {
     if (!palette.map(c => c.toLowerCase()).includes(s.color.toLowerCase())) s.color = "#000000";
     if (!palette.map(c => c.toLowerCase()).includes(s.color2.toLowerCase())) s.color2 = "#FFFFFF";
   }
   if (mode !== "rgb565") s.opacity = 100;
-  return s;
+  return prefs.toolbox === "essential" ? essentialSizes(s) : s;
 }
 
 export default function DrawStudio(props: DrawStudioProps) {
@@ -294,7 +301,7 @@ export default function DrawStudio(props: DrawStudioProps) {
     setToolboxState(b);
     if (!TOOLS_BY_BOX[b].includes(tool)) setTool("brush");
     // les réglages avancés inutilisables dans une boîte plus simple sont neutralisés
-    if (b === "essential") setCfg(c => ({ ...c, sym: "", fillGradient: false, texture: "solid", opacity: 100, stabilizer: 0, brush: c.brush === "square" ? "square" : "round", shape: c.shape === "poly" ? "line" : c.shape }));
+    if (b === "essential") setCfg(c => essentialSizes({ ...c, sym: "", fillGradient: false, texture: "solid", opacity: 100, stabilizer: 0, brush: c.brush === "square" ? "square" : "round", shape: c.shape === "poly" ? "line" : c.shape }));
     if (b === "studio") setCfg(c => ({ ...c, fillGradient: false, stabilizer: 0, selectKind: c.selectKind === "lasso" ? "rect" : c.selectKind, shape: c.shape === "poly" ? "line" : c.shape, brush: c.brush === "spray" || isCustomBrush(c.brush) ? "round" : c.brush, sym: c.sym.startsWith("r") ? "" : c.sym }));
     setPrefs(p => ({ ...p, toolbox: b }));
     push(`Boîte à outils : ${b === "essential" ? "Essentiel" : b === "studio" ? "Studio" : "Pro"}`);
@@ -475,7 +482,10 @@ export default function DrawStudio(props: DrawStudioProps) {
       }
       if (e.key === "Enter") { if (textDraft) textOk(); else if (polyCount >= 2) { stageApi.current?.polyCommit(); } else if (session.floating) selCommit(); return; }
       if (e.key === "Delete" || e.key === "Backspace") { if (session.selection || session.floating) { e.preventDefault(); selDelete(); } return; }
-      const entry = (Object.keys(TOOL_KEY) as ToolId[]).find(t => TOOL_KEY[t].toLowerCase() === k);
+      // raccourcis historiques : L ligne · R rectangle · O ellipse · V déplacer (= sélection)
+      const shapeKey = ({ l: "line", r: "rect", o: "ellipse" } as const)[k as "l" | "r" | "o"];
+      if (shapeKey) { setTool("shape"); set({ shape: shapeKey }); return; }
+      const entry = k === "v" ? "select" : (Object.keys(TOOL_KEY) as ToolId[]).find(t => TOOL_KEY[t].toLowerCase() === k);
       if (entry && TOOLS_BY_BOX[toolbox].includes(entry)) { setTool(entry); return; }
       if (k === "x") { swapColors(); return; }
       if (k === "h") { patchPrefs({ grid: { ...prefs.grid, show: !prefs.grid.show } }); return; }
@@ -515,7 +525,7 @@ export default function DrawStudio(props: DrawStudioProps) {
 
   const sendLabel = sendKind === "wait" ? formatTime(cooldown) : "Envoyer";
   const isPortraitPhone = !lay.side;
-  const showRotateHint = isPortraitPhone && W / H > 1.5 && viewInfo.fitted && viewInfo.scale < 2.6 && !hintDismissed && !sendOpen && !draftPrompt && viewInfo.rot === 0;
+  const showRotateHint = !modelEdit && isPortraitPhone && W / H > 1.5 && viewInfo.fitted && viewInfo.scale < 2.6 && !hintDismissed && !sendOpen && !draftPrompt && viewInfo.rot === 0;
 
   const frameLabel = `${profile.name} · ${W}×${H}`;
 
@@ -616,6 +626,12 @@ export default function DrawStudio(props: DrawStudioProps) {
             <span>{props.notice.text}</span>
             {props.notice.action && <button type="button" onClick={props.notice.action.run}>{props.notice.action.label}</button>}
             <button type="button" onClick={() => setNoticeHiddenFor(props.notice?.text ?? null)} aria-label="Masquer" style={{ width: 28, padding: 0 }}><X size={14} /></button>
+          </div>
+        )}
+        {modelEdit && model && (
+          <div className="st-rotatehint" role="status">
+            <Move size={16} /> Place le modèle : glisse, pince pour agrandir
+            <button type="button" onClick={() => setModelEdit(false)}>Terminer</button>
           </div>
         )}
         {showRotateHint && (
