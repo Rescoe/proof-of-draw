@@ -7,6 +7,7 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import type { BlockWithImage } from "@/lib/chain";
 import { BlockFrameCanvas } from "./BlockFrameCanvas";
+import { SendToScreen } from "./SendToScreen";
 import type { ActionEvent, ReplayEvent } from "@/lib/types/actions";
 import { floodFill, drawLine, drawRect, drawEllipse } from "@/lib/canvasPrimitives";
 
@@ -98,6 +99,7 @@ function TabDetails({ block }: { block: BlockWithImage }) {
           />
         </div>
       )}
+      {block.imagePayload && <SendToScreen source="human" blockHash={block.blockHash} />}
 
       <div className="bd-meta-grid">
         <MetaRow label="Bloc"       value={`#${block.blockIndex}`} accent />

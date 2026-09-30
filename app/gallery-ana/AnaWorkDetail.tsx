@@ -9,6 +9,7 @@
 
 import { useEffect, useState, useCallback } from "react";
 import { BlockFrameCanvas } from "../BlockFrameCanvas";
+import { SendToScreen } from "../SendToScreen";
 import type { AnaWork } from "@/lib/anaChain";
 
 const SCREEN_LABELS: Record<string, string> = {
@@ -73,6 +74,7 @@ function ScreensTab({ work }: { work: AnaWork }) {
           </div>
         ))}
       </div>
+      {work.screens.length > 0 && <SendToScreen source="ana" blockHash={work.screens[0].blockHash} />}
     </div>
   );
 }
