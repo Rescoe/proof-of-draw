@@ -8,12 +8,13 @@
 
 import { useState, useEffect, useCallback, useRef } from "react";
 import Link from "next/link";
-import type { BlockWithImage } from "@/lib/chain";
+import type { AnaGalleryWork } from "@/app/api/blocks-ana/route";
+import type { AnaWork } from "@/lib/anaChain";
 import { BlockFrameCanvas } from "../BlockFrameCanvas";
-import { BlockDetail } from "../BlockDetail";
+import { AnaWorkDetail } from "./AnaWorkDetail";
 
 interface BlocksResponse {
-  blocks: BlockWithImage[];
+  works: AnaGalleryWork[];
   total: number;
   page: number;
   limit: number;
@@ -32,11 +33,14 @@ const SCREEN_LABELS: Record<string, string> = {
   eink29bwr: 'E-Ink 2.9" BWR',
   eink27bw:  'E-Ink 2.7" BW',
   oled096:   'OLED 0.96"',
+  tft18:     'TFT 1.8" RGB',
 };
 
-function AnaCard({ block, onClick }: { block: BlockWithImage; onClick: () => void }) {
-  const agentLabel = block.drawArtistName || block.artistName || "Agent inconnu";
-  const title = block.workTitle && block.workTitle !== "Sans titre" ? block.workTitle : null;
+// Une carte = une œuvre ; l'aperçu est une conversion (écran d'aperçu préféré),
+// le détail donne toutes les conversions.
+function AnaCard({ work, onClick }: { work: AnaGalleryWork; onClick: () => void }) {
+  const agentLabel = work.agentName || "Agent inconnu";
+  const title = work.title && work.title !== "Sans titre" ? work.title : null;
 
   return (
     <div
@@ -48,11 +52,9 @@ function AnaCard({ block, onClick }: { block: BlockWithImage; onClick: () => voi
       aria-label={`Dessin d'agent — ${agentLabel}`}
     >
       <div className="ag-card__preview">
-        {block.imagePayload ? (
+        {work.previewPayload ? (
           <BlockFrameCanvas
-            payload={block.imagePayload}
-            blockHash={block.blockHash}
-            blockIndex={block.blockIndex}
+            payload={work.previewPayload}
             showDownload={false}
           />
         ) : (
@@ -62,11 +64,11 @@ function AnaCard({ block, onClick }: { block: BlockWithImage; onClick: () => voi
       <div className="ag-card__body">
         <div className="ag-card__top">
           <span className="ag-card__badge">AGENT IA</span>
-          <span className="ag-card__age">{formatAge(block.minedAt)}</span>
+          <span className="ag-card__age">{formatAge(work.publishedAt)}</span>
         </div>
         {title && <div className="ag-card__title">{title}</div>}
         <div className="ag-card__artist">{agentLabel}</div>
-        <span className="ag-chip">{SCREEN_LABELS[block.poolScreen] ?? block.poolScreen}</span>
+        <span className="ag-chip">{work.screens.length} écran{work.screens.length > 1 ? "s" : ""}</span>
       </div>
     </div>
   );
@@ -83,7 +85,7 @@ export function AnaGalleryClient() {
   const [checking, setChecking] = useState(false);
   const [checkResult, setCheckResult] = useState<string | null>(null);
 
-  const [selectedBlock, setSelectedBlock] = useState<BlockWithImage | null>(null);
+  const [selectedWork, setSelectedWork] = useState<AnaGalleryWork | null>(null);
 
   const inputRef = useRef<HTMLInputElement>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -137,7 +139,7 @@ export function AnaGalleryClient() {
     }
   }, [fetchBlocks, query, screen, page]);
 
-  const handleClose = useCallback(() => setSelectedBlock(null), []);
+  const handleClose = useCallback(() => setSelectedWork(null), []);
 
   return (
     <div className="ag-shell">
@@ -163,7 +165,7 @@ export function AnaGalleryClient() {
             ref={inputRef}
             className="ag-search-input"
             type="text"
-            placeholder="Titre, agent, hash…"
+            placeholder="Titre, agent, cartel, hash…"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             spellCheck={false}
@@ -178,12 +180,13 @@ export function AnaGalleryClient() {
           <option value="eink29bwr">E-Ink 2.9" BWR</option>
           <option value="eink27bw">E-Ink 2.7" BW</option>
           <option value="oled096">OLED 0.96"</option>
+          <option value="tft18">TFT 1.8" RGB</option>
         </select>
       </div>
 
       {data && !loading && (
         <div className="ag-stats">
-          {data.total} dessin{data.total !== 1 ? "s" : ""}
+          {data.total} œuvre{data.total !== 1 ? "s" : ""}
           {query && ` correspondant à « ${query} »`}
           {screen && ` · ${SCREEN_LABELS[screen] ?? screen}`}
           {data.pages > 1 && ` · page ${data.page}/${data.pages}`}
@@ -192,12 +195,12 @@ export function AnaGalleryClient() {
 
       {loading ? (
         <div className="ag-loading"><span className="ag-spinner" />Chargement…</div>
-      ) : data && data.blocks.length === 0 ? (
+      ) : data && data.works.length === 0 ? (
         <div className="ag-empty">Aucun dessin d'agent IA pour l'instant.</div>
       ) : (
         <div className="ag-grid">
-          {(data?.blocks ?? []).map((block) => (
-            <AnaCard key={block.blockHash} block={block} onClick={() => setSelectedBlock(block)} />
+          {(data?.works ?? []).map((work) => (
+            <AnaCard key={work.groupKey} work={work} onClick={() => setSelectedWork(work)} />
           ))}
         </div>
       )}
@@ -210,7 +213,9 @@ export function AnaGalleryClient() {
         </div>
       )}
 
-      {selectedBlock && <BlockDetail block={selectedBlock} onClose={handleClose} />}
+      {selectedWork && (
+        <AnaWorkDetail groupKey={selectedWork.groupKey} initial={selectedWork as unknown as AnaWork} onClose={handleClose} />
+      )}
 
       <style>{`
         .ag-shell { max-width: 1200px; margin: 0 auto; padding: 24px 20px 60px; min-height: 100dvh; }

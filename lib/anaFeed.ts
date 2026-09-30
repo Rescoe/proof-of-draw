@@ -17,7 +17,7 @@ import { redis } from "@/lib/redis";
 import { getAnaArtDevices } from "@/lib/deviceStore";
 import { broadcastToDevices } from "@/lib/broadcast";
 import { encodeForScreen } from "@/lib/screenEncode";
-import { createAnaBlock } from "@/lib/anaChain";
+import { createAnaBlock, saveAnaWorkMeta, type AnaWorkMeta } from "@/lib/anaChain";
 import { SCREEN_IDS } from "@/lib/screenProfiles";
 
 const ANA_API_URL      = process.env.ANA_API_URL;
@@ -26,6 +26,7 @@ const CHECK_DEBOUNCE_SEC = parseInt(process.env.ANA_FEED_CHECK_DEBOUNCE_SEC ?? "
 const FETCH_TIMEOUT_MS = 5000;
 
 const KEY_INGESTED   = "chain:ana:ingested";     // Set<itemId> — permanent, dedup only
+const KEY_META_SYNCED = "chain:ana:meta-synced"; // Set<itemId> — contexte de l'œuvre déjà écrit
 const KEY_CHECK_LOCK = "chain:ana:last-checked"; // TTL gate
 
 // Every registered screen type is encodable for ANA art (screenEncode.ts's
@@ -43,6 +44,25 @@ interface AnaArtFeedItem {
   agentTokenId: number;
   agentName?:   string;
   publishedAt:  number;
+  // Contexte de l'œuvre (optionnel, voir ANA /api/ana-art/feed) → AnaWorkMeta
+  cartelText?: string; brief?: string; proposal?: string;
+  memorialKind?: "batch" | "requested" | "milestone";
+  burnedTokenIds?: number[]; totalBurnedHonored?: number;
+  voteResult?: "passed" | "rejected"; yesCount?: number; noCount?: number; absCount?: number;
+  revisionCount?: number; onChainWorkId?: number; txHash?: string; collectionAddress?: string;
+  decisionNote?: string;
+}
+
+function toWorkMeta(item: AnaArtFeedItem): AnaWorkMeta {
+  return {
+    sourceId: item.id, kind: item.kind, agentTokenId: item.agentTokenId, agentName: item.agentName,
+    title: item.title, publishedAt: item.publishedAt,
+    cartelText: item.cartelText, brief: item.brief, proposal: item.proposal,
+    memorialKind: item.memorialKind, burnedTokenIds: item.burnedTokenIds, totalBurnedHonored: item.totalBurnedHonored,
+    voteResult: item.voteResult, yesCount: item.yesCount, noCount: item.noCount, absCount: item.absCount,
+    revisionCount: item.revisionCount, onChainWorkId: item.onChainWorkId, txHash: item.txHash,
+    collectionAddress: item.collectionAddress, decisionNote: item.decisionNote,
+  };
 }
 
 async function fetchAnaFeed(): Promise<AnaArtFeedItem[]> {
@@ -76,9 +96,11 @@ async function ingestItem(item: AnaArtFeedItem): Promise<void> {
 
   const agentName = item.agentName ?? `Normie #${item.agentTokenId}`;
 
+  // Une œuvre = un bloc PAR type d'écran, que des devices l'aient activé ou non
+  // (la galerie montre la conversion de chaque œuvre sur tous les écrans) ; seule
+  // la diffusion live est réservée aux devices opt-in.
   for (const screen of ANA_ENCODABLE_SCREENS) {
     const devices = await getAnaArtDevices(screen);
-    if (devices.length === 0) continue;
 
     let encoded: ReturnType<typeof encodeForScreen>;
     try {
@@ -111,6 +133,11 @@ export async function checkAnaFeedNow(): Promise<{ checked: number; ingested: nu
   const items = await fetchAnaFeed();
   let ingested = 0;
   for (const item of items) {
+    // Contexte de l'œuvre (cartel, vote…) : écrit une fois par œuvre, y compris
+    // pour celles ingérées avant l'existence de ces champs (rattrapage).
+    if (await redis.sadd(KEY_META_SYNCED, item.id)) {
+      await saveAnaWorkMeta(toWorkMeta(item)).catch((e) => console.error("[anaFeed] saveAnaWorkMeta:", e));
+    }
     const isNew = await redis.sadd(KEY_INGESTED, item.id);
     if (!isNew) continue; // already ingested on a previous check
     await ingestItem(item);

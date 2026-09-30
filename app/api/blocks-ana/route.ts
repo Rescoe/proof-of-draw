@@ -1,25 +1,30 @@
 // app/api/blocks-ana/route.ts
-// Même principe que app/api/blocks/route.ts (recherche texte + pagination),
-// mais lit chain:ana:recent au lieu de chain:recent — les dessins d'agent IA
-// (célébrations de burn, dessins normies spontanés) vivent dans un index
-// entièrement séparé, voir lib/anaChain.ts.
+// Galerie des dessins d'agent IA : UNE entrée par œuvre (les blocs de la même
+// œuvre — un par type d'écran — sont regroupés, voir lib/anaChain.ts), avec
+// recherche texte + pagination. Seul l'écran d'aperçu de chaque œuvre de la page
+// est chargé avec son image ; le détail complet (tous les écrans) est servi par
+// /api/blocks-ana/work.
 
 import { NextRequest, NextResponse } from "next/server";
-import { getRecentAnaBlocks, type AnaBlockWithImage } from "@/lib/anaChain";
+import { getRecentAnaWorks, attachAnaPreviews, type AnaWork } from "@/lib/anaChain";
+import type { BlockImagePayload } from "@/lib/chain";
 
-const ANA_RECENT_MAX = 200;
-
-function matchesQuery(block: AnaBlockWithImage, q: string): boolean {
+function matchesQuery(work: AnaWork, q: string): boolean {
   if (!q) return true;
   const ql = q.toLowerCase();
   return (
-    block.blockHash.toLowerCase().startsWith(ql) ||
-    block.artistName?.toLowerCase().includes(ql) ||
-    (block.drawArtistName ?? "").toLowerCase().includes(ql) ||
-    (block.workTitle ?? "").toLowerCase().includes(ql) ||
-    String(block.blockIndex) === q.trim()
+    (work.title ?? "").toLowerCase().includes(ql) ||
+    work.agentName.toLowerCase().includes(ql) ||
+    (work.meta?.cartelText ?? "").toLowerCase().includes(ql) ||
+    String(work.agentTokenId) === q.trim().replace(/^#/, "") ||
+    work.screens.some((s) => s.blockHash.toLowerCase().startsWith(ql) || String(s.blockIndex) === q.trim())
   );
 }
+
+export type AnaGalleryWork = Omit<AnaWork, "screens"> & {
+  screens: { screen: string; blockHash: string; blockIndex: number }[];
+  previewPayload: BlockImagePayload | null;
+};
 
 export async function GET(req: NextRequest) {
   const url    = new URL(req.url);
@@ -28,19 +33,26 @@ export async function GET(req: NextRequest) {
   const page   = Math.max(1, parseInt(url.searchParams.get("page") ?? "1"));
   const limit  = Math.min(100, Math.max(1, parseInt(url.searchParams.get("limit") ?? "20")));
 
-  let blocks = await getRecentAnaBlocks(ANA_RECENT_MAX);
-  if (q)      blocks = blocks.filter((b) => matchesQuery(b, q));
-  if (screen) blocks = blocks.filter((b) => b.poolScreen === screen);
+  let works = await getRecentAnaWorks(); // déjà triées, plus récentes d'abord
+  if (q)      works = works.filter((w) => matchesQuery(w, q));
+  if (screen) works = works.filter((w) => w.screens.some((s) => s.screen === screen));
 
-  blocks.sort((a, b) => b.blockIndex - a.blockIndex);
-
-  const total    = blocks.length;
+  const total    = works.length;
   const pages    = Math.ceil(total / limit) || 1;
   const safePage = Math.min(page, pages);
-  const paged    = blocks.slice((safePage - 1) * limit, safePage * limit);
+  const paged    = await attachAnaPreviews(works.slice((safePage - 1) * limit, safePage * limit));
+
+  const out: AnaGalleryWork[] = paged.map((w) => {
+    const preview = w.screens.find((s) => s.screen === w.previewScreen);
+    return {
+      ...w,
+      screens: w.screens.map(({ screen: sc, blockHash, blockIndex }) => ({ screen: sc, blockHash, blockIndex })),
+      previewPayload: preview?.imagePayload ?? null,
+    };
+  });
 
   return NextResponse.json(
-    { blocks: paged, total, page: safePage, limit, pages },
+    { works: out, total, page: safePage, limit, pages },
     { headers: { "Cache-Control": "public, s-maxage=10, stale-while-revalidate=60" } },
   );
 }
