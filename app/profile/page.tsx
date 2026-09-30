@@ -834,6 +834,7 @@ export default function ProfilePage() {
   const [copyMsg,        setCopyMsg]        = useState<Record<string, string>>({});
   const [toggling,       setToggling]       = useState<string | null>(null);
   const [togglingAna,    setTogglingAna]    = useState<string | null>(null);
+  const [togglingConv,   setTogglingConv]   = useState<string | null>(null);
   const [transferTarget, setTransferTarget] = useState<Record<string, string>>({});
   const [transferring,   setTransferring]   = useState<string | null>(null);
   const [transferMsg,    setTransferMsg]    = useState<Record<string, string>>({});
@@ -1021,6 +1022,20 @@ export default function ProfilePage() {
       await loadDevices();
     } catch { alert("Erreur réseau"); }
     finally { setTogglingAna(null); }
+  }
+
+  async function handleToggleConverted(deviceId: string, screen: string, current: boolean) {
+    const k = `${deviceId}:${screen}`;
+    setTogglingConv(k);
+    try {
+      await fetch(`/api/my-devices/${deviceId}/accepts-converted`, {
+        method:  "POST",
+        headers: { "Content-Type": "application/json" },
+        body:    JSON.stringify({ screen, enabled: !current }),
+      });
+      await loadDevices();
+    } catch { alert("Erreur réseau"); }
+    finally { setTogglingConv(null); }
   }
 
   async function handleTransferBlocks(fromDeviceId: string) {
@@ -1565,6 +1580,41 @@ export default function ProfilePage() {
                         {togglingAna === d.deviceId ? "…" : d.acceptsAnaArt ? "✓ Activé" : "Désactivé"}
                       </button>
                     </div>
+                  </div>
+
+                  {/* Dessins d'autres types d'écran, convertis (réglage par écran) */}
+                  <div style={{ marginTop: "1rem", paddingTop: "1rem", borderTop: "1px solid var(--border)" }}>
+                    <div style={{ fontSize: "0.72rem", color: "var(--text3)", textTransform: "uppercase", letterSpacing: "0.05em" }}>
+                      Dessins d'autres écrans (conversion)
+                    </div>
+                    <p style={{ fontSize: "0.72rem", color: "var(--text3)", marginTop: "0.2rem", marginBottom: "0.6rem" }}>
+                      Active, écran par écran, la réception des dessins conçus pour un autre type d'écran, convertis automatiquement au format de celui-ci.
+                    </p>
+                    {d.screens.map((sc) => {
+                      const on = (d.acceptsConvertedScreens ?? []).includes(sc);
+                      const k  = `${d.deviceId}:${sc}`;
+                      return (
+                        <div key={sc} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "1rem", marginTop: "0.4rem" }}>
+                          <span style={{ fontSize: "0.8rem", color: "var(--text2)" }}>
+                            {(SCREEN_PROFILES as Record<string, { name: string }>)[sc]?.name ?? sc}
+                          </span>
+                          <button
+                            onClick={() => handleToggleConverted(d.deviceId, sc, on)}
+                            disabled={togglingConv === k}
+                            style={{
+                              padding: "0.4rem 1rem", borderRadius: 6,
+                              border: `1px solid ${on ? "rgba(124,107,255,0.4)" : "var(--border)"}`,
+                              background: on ? "rgba(124,107,255,0.1)" : "var(--bg)",
+                              color: on ? "#7c6bff" : "var(--text2)",
+                              fontSize: "0.78rem", cursor: "pointer", fontWeight: 600, flexShrink: 0,
+                              opacity: togglingConv === k ? 0.5 : 1,
+                            }}
+                          >
+                            {togglingConv === k ? "…" : on ? "✓ Activé" : "Désactivé"}
+                          </button>
+                        </div>
+                      );
+                    })}
                   </div>
 
                   {/* Transférer les blocs minés vers un autre de mes appareils */}

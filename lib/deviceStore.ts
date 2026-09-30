@@ -28,6 +28,14 @@ export interface Device {
   // ── Pont ANA : réception d'œuvres modérées côté ANA (célébrations de burn,
   // dessins normies spontanés) — toggle manuel, indépendant de publicMode.
   acceptsAnaArt?: boolean;
+
+  // ── Conversion inter-écrans : écrans de CE device (sous-ensemble de `screens`)
+  // qui acceptent de recevoir des dessins conçus pour un AUTRE type d'écran,
+  // convertis à la volée (lib/screenConvert.ts). Réglage par écran, pas par ESP.
+  // ABSENT (jamais réglé) = TOUS les écrans du device acceptent (activé par défaut,
+  // y compris pour les ESP nouvellement appairés) ; dès le premier basculement
+  // la liste devient explicite. Toujours lire via convertedScreensOf().
+  acceptsConvertedScreens?: string[];
 }
 
 // ─── ArtistProfile ────────────────────────────────────────────────────────────
@@ -107,6 +115,7 @@ export interface OwnedDevice {
   hasPairCode: boolean;
   publicMode?: boolean;
   acceptsAnaArt?: boolean;
+  acceptsConvertedScreens?: string[];
   lastFrameReceivedAt?: number;
 }
 
@@ -134,6 +143,12 @@ function artistKey(artistId: string)    { return `artist:${artistId}`; }
 function artistDevKey(deviceId: string) { return `artist:device:${deviceId}`; }
 function slugKey(slug: string)          { return `artist:slug:${slug}`; }
 function linkCodeKey(code: string)      { return `artist:link:${code.toUpperCase()}`; }
+
+/** Écrans du device qui acceptent les dessins convertis (défaut : tous). */
+export function convertedScreensOf(d: Device): string[] {
+  const list = d.acceptsConvertedScreens ?? d.screens;
+  return list.filter((sc) => d.screens.includes(sc));
+}
 
 function isOnline(d: Device): boolean {
   return Date.now() - d.lastPing < ONLINE_MS;
@@ -175,6 +190,7 @@ export function toOwnedDevice(d: Device): OwnedDevice {
     hasPairCode:        !!d.pairCode,
     publicMode:         d.publicMode ?? false,
     acceptsAnaArt:      d.acceptsAnaArt ?? false,
+    acceptsConvertedScreens: convertedScreensOf(d),
     lastFrameReceivedAt: d.lastFrameReceivedAt,
   };
 }
@@ -395,6 +411,27 @@ export async function setAcceptsAnaArt(deviceId: string, enabled: boolean): Prom
 export async function getAnaArtDevices(screen?: string): Promise<Device[]> {
   const all = await getAllDevices();
   return all.filter((d) => d.acceptsAnaArt === true && (!screen || d.screens.includes(screen)));
+}
+
+// ─── Conversion inter-écrans ─────────────────────────────────────────────────
+
+/** Active/désactive, pour UN écran d'un device, la réception de dessins convertis depuis d'autres types d'écran. */
+export async function setAcceptsConvertedScreen(
+  deviceId: string, screen: string, enabled: boolean,
+): Promise<Device | null> {
+  const device = await getDevice(deviceId);
+  if (!device || !device.screens.includes(screen)) return null;
+  const set = new Set(convertedScreensOf(device));
+  if (enabled) set.add(screen); else set.delete(screen);
+  device.acceptsConvertedScreens = [...set];
+  await saveDevice(device);
+  return device;
+}
+
+/** Devices dont l'écran `screen` a opté pour la réception de dessins convertis. */
+export async function getConvertedReceivers(screen: string): Promise<Device[]> {
+  const all = await getAllDevices();
+  return all.filter((d) => convertedScreensOf(d).includes(screen));
 }
 
 /**

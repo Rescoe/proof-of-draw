@@ -23,6 +23,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { revalidatePath } from "next/cache";
 import { redis } from "@/lib/redis";
 import { frameKey } from "@/lib/queue";
+import { broadcastConverted } from "@/lib/broadcast";
 import { getDevice } from "@/lib/deviceStore";
 import { getCurrentCandidate, getVotes, castVote, claimFinalization, finalizeBlock, clearCandidate, ValidationVote } from "@/lib/chain";
 import { isBlacklisted, getIP, forbidden } from "@/lib/rateLimit";
@@ -35,6 +36,13 @@ const BLACKLIST_TTL = parseInt(process.env.BLACKLIST_TTL_SECONDS ?? "604800");
 const FRAME_TTL_SEC = parseInt(process.env.DRAW_WINDOW_SEC ?? "900");
 
 async function broadcastValidatedFrame(poolScreen: string, payload: Record<string, unknown>, frameId: string, displayTime: number, blockIndex: number, artistName: string): Promise<void> {
+  const _block = { index: blockIndex, artistName, displayTime, frameId, minedAt: Date.now() };
+  const ttl = Math.max(900, Math.min(displayTime, 7200));
+
+  // Écrans d'autres types ayant opté pour la conversion : indépendant du pool natif
+  // (peut y avoir des récepteurs même si la pool de ce type d'écran est vide).
+  await broadcastConverted(poolScreen, payload, { frameId, extra: { _block }, ttlSec: ttl, sourceDeviceId: "consensus" });
+
   const members = (await redis.smembers(`pool:screen:${poolScreen}`)) as string[];
   if (!members || members.length === 0) return;
 
@@ -43,11 +51,10 @@ async function broadcastValidatedFrame(poolScreen: string, payload: Record<strin
 
   const enrichedPayload = {
     ...payload,
-    _block: { index: blockIndex, artistName, displayTime, frameId, minedAt: Date.now() },
+    _block,
   };
 
   const stored = JSON.stringify({ payload: enrichedPayload, frameId, createdAt: Date.now(), sourceDeviceId: "consensus" });
-  const ttl = Math.max(900, Math.min(displayTime, 7200));
 
   await Promise.all(eligible.map((dId) => redis.set(frameKey(dId, poolScreen), stored, { ex: ttl })));
   console.log(`[validation-result] broadcast pool=${poolScreen} devices=${eligible.length} ttl=${ttl}s`);

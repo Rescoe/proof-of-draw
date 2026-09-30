@@ -77,6 +77,39 @@ function resizeLetterboxGrayscale(
   return dst;
 }
 
+// Même géométrie letterbox que ci-dessus, pour un masque binaire (1 = présent) :
+// un bloc source contenant au moins un pixel du masque le garde (max-filter),
+// cohérent avec le darkest-pixel du gris (un trait fin ne disparaît pas).
+function resizeLetterboxMask(
+  src: Uint8Array, srcW: number, srcH: number, dstW: number, dstH: number,
+): Uint8Array {
+  if (srcW === dstW && srcH === dstH) return src;
+  const dst = new Uint8Array(dstW * dstH);
+  const scale = Math.min(dstW / srcW, dstH / srcH);
+  const fitW  = Math.max(1, Math.round(srcW * scale));
+  const fitH  = Math.max(1, Math.round(srcH * scale));
+  const offX  = Math.floor((dstW - fitW) / 2);
+  const offY  = Math.floor((dstH - fitH) / 2);
+  for (let y = 0; y < fitH; y++) {
+    const dy = offY + y;
+    if (dy < 0 || dy >= dstH) continue;
+    const sy0 = Math.floor((y * srcH) / fitH);
+    const sy1 = Math.max(sy0 + 1, Math.floor(((y + 1) * srcH) / fitH));
+    for (let x = 0; x < fitW; x++) {
+      const dx = offX + x;
+      if (dx < 0 || dx >= dstW) continue;
+      const sx0 = Math.floor((x * srcW) / fitW);
+      const sx1 = Math.max(sx0 + 1, Math.floor(((x + 1) * srcW) / fitW));
+      let any = 0;
+      for (let syy = sy0; syy < Math.min(sy1, srcH) && !any; syy++)
+        for (let sxx = sx0; sxx < Math.min(sx1, srcW); sxx++)
+          if (src[syy * srcW + sxx]) { any = 1; break; }
+      dst[dy * dstW + dx] = any;
+    }
+  }
+  return dst;
+}
+
 /**
  * OLED 0.96" SSD1306 — page-major, no rotation. Mirrors canvasToScreen.ts's
  * oled096 branch: bit=1 => pixel lit (dark).
@@ -124,7 +157,7 @@ function encodeEink27bw(pixels: Uint8Array, w: number, h: number): EncodedFrame 
  * canvasToScreen.ts's eink29bwr branch. ANA line art has no red channel, so
  * red stays all-white — see the plan's note on this screen.
  */
-function encodeEink29bwr(pixels: Uint8Array, w: number, h: number): EncodedFrame {
+function encodeEink29bwr(pixels: Uint8Array, w: number, h: number, red?: Uint8Array): EncodedFrame {
   const bytesPerRow = 128 / 8; // 16
   const BUF_SIZE    = bytesPerRow * 296;
   const blackBuf    = new Uint8Array(BUF_SIZE).fill(0xff);
@@ -138,7 +171,9 @@ function encodeEink29bwr(pixels: Uint8Array, w: number, h: number): EncodedFrame
       const byteIndex = bufRow * bytesPerRow + Math.floor(bufCol / 8);
       const bit       = 7 - (bufCol % 8);
       if (byteIndex >= BUF_SIZE) continue;
-      blackBuf[byteIndex] &= (~(1 << bit)) & 0xff;
+      // pixel rouge (source BWR/TFT) → canal rouge seul ; sinon canal noir
+      if (red && red[y * w + x]) redBuf[byteIndex] &= (~(1 << bit)) & 0xff;
+      else blackBuf[byteIndex] &= (~(1 << bit)) & 0xff;
     }
   }
   return { black: toBase64(blackBuf), red: toBase64(redBuf) };
@@ -152,13 +187,14 @@ function encodeEink29bwr(pixels: Uint8Array, w: number, h: number): EncodedFrame
  * tft18 branch's byte layout exactly — only the source is grayscale bytes
  * instead of an RGBA canvas.
  */
-function encodeTft18(pixels: Uint8Array, w: number, h: number): EncodedFrame {
+function encodeTft18(pixels: Uint8Array, w: number, h: number, red?: Uint8Array): EncodedFrame {
   const buffer = new Uint8Array(w * h * 2).fill(0xff); // white (0xFFFF) by default
   for (let y = 0; y < h; y++) {
     for (let x = 0; x < w; x++) {
       if (pixels[y * w + x] >= DARK_THRESHOLD) continue; // light — leave white
       const off = (y * w + x) * 2;
-      buffer[off] = 0x00; buffer[off + 1] = 0x00; // RGB565 black = 0x0000
+      if (red && red[y * w + x]) { buffer[off] = 0x00; buffer[off + 1] = 0xf8; } // RGB565 red = 0xF800 (LE)
+      else { buffer[off] = 0x00; buffer[off + 1] = 0x00; } // RGB565 black = 0x0000
     }
   }
   return { buffer: toBase64(buffer) };
@@ -170,17 +206,21 @@ function encodeTft18(pixels: Uint8Array, w: number, h: number): EncodedFrame {
  */
 export function encodeForScreen(
   pixels: Uint8Array, canvasW: number, canvasH: number, screenId: ScreenId,
+  opts?: { red?: Uint8Array },   // masque rouge optionnel (1 = rouge), même géométrie que `pixels`
 ): EncodedFrame {
   const profile = SCREEN_PROFILES[screenId];
   if (!profile) throw new Error(`Unknown screen profile: ${screenId}`);
 
   const resized = resizeLetterboxGrayscale(pixels, canvasW, canvasH, profile.width, profile.height);
+  const redMask = opts?.red
+    ? resizeLetterboxMask(opts.red, canvasW, canvasH, profile.width, profile.height)
+    : undefined;
 
   switch (screenId) {
     case "oled096":   return encodeOled096(resized, profile.width, profile.height);
     case "eink27bw":  return encodeEink27bw(resized, profile.width, profile.height);
-    case "eink29bwr": return encodeEink29bwr(resized, profile.width, profile.height);
-    case "tft18":     return encodeTft18(resized, profile.width, profile.height);
+    case "eink29bwr": return encodeEink29bwr(resized, profile.width, profile.height, redMask);
+    case "tft18":     return encodeTft18(resized, profile.width, profile.height, redMask);
     default:
       throw new Error(`encodeForScreen: unsupported screen ${screenId}`);
   }
