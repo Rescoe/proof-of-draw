@@ -893,6 +893,11 @@ export default function ProfilePage() {
     loadPublic();
   }, []);
 
+  // Sans profil, le nom d'artiste par défaut est celui du 1er ESP branché (le plus ancien)
+  const defaultArtistName = [...devices]
+    .filter((d) => d.artistName?.trim())
+    .sort((a, b) => a.createdAt - b.createdAt)[0]?.artistName?.trim() ?? "";
+
   // ── Helpers POST /api/artist ─────────────────────────────────────────────
 
   async function postProfile(updates: {
@@ -904,7 +909,7 @@ export default function ProfilePage() {
   }) {
     setProfError(null);
     const current = profile;
-    const displayName = updates.displayName ?? current?.displayName ?? "";
+    const displayName = updates.displayName ?? current?.displayName ?? defaultArtistName;
     if (!displayName) { setProfError("Définissez d'abord un nom d'artiste."); return false; }
 
     const res  = await fetch("/api/artist", {
@@ -1106,7 +1111,7 @@ export default function ProfilePage() {
                 {/* Nom d'artiste */}
                 <div style={{ fontSize: "1.4rem", fontWeight: 800, letterSpacing: "-0.02em", marginBottom: "0.35rem" }}>
                   <InlineEdit
-                    value={profile?.displayName ?? ""}
+                    value={profile?.displayName ?? defaultArtistName}
                     placeholder="Votre nom d'artiste… (cliquer pour définir)"
                     onSave={saveArtistName}
                     maxLength={60}

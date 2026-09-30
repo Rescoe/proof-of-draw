@@ -5,7 +5,10 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { redis } from "@/lib/redis";
-import { getArtist, getArtistBySlug, getAllDevices } from "@/lib/deviceStore";
+import {
+  getArtist, getArtistBySlug, getAllDevices, ArtistProfile,
+  IMPLICIT_ARTIST_PREFIX, implicitArtistId, isImplicitArtistDevice, implicitArtistProfile,
+} from "@/lib/deviceStore";
 import { getBlockByHash, getBlockImage } from "@/lib/chain";
 
 export const dynamic = "force-dynamic";
@@ -23,8 +26,24 @@ export async function GET(
       return NextResponse.json({ error: "artistId requis" }, { status: 400 });
     }
 
+    const allDevices = await getAllDevices();
+
+    // Artiste implicite : `esp_{deviceId}` = ESP appairé sans profil artiste
+    let profile: ArtistProfile | null = null;
+    let artistDeviceList = allDevices;
+    if (rawParam.startsWith(IMPLICIT_ARTIST_PREFIX)) {
+      const dev = allDevices.find((d) => implicitArtistId(d.deviceId) === rawParam);
+      if (dev && isImplicitArtistDevice(dev)) {
+        profile = implicitArtistProfile(dev);
+        artistDeviceList = [dev];
+      } else if (dev?.artistId) {
+        // L'ESP a rejoint un profil entre-temps : rediriger vers celui-ci
+        profile = await getArtist(dev.artistId);
+      }
+    }
+
     // Résoudre slug OU UUID : essaie le slug d'abord, puis l'UUID
-    let profile = await getArtistBySlug(rawParam);
+    if (!profile) profile = await getArtistBySlug(rawParam);
     if (!profile) profile = await getArtist(rawParam);
     if (!profile) {
       return NextResponse.json({ error: "Artiste introuvable" }, { status: 404 });
@@ -33,9 +52,8 @@ export async function GET(
     const artistId = profile.artistId;
 
     // Devices liés à cet artiste (vue publique sans MAC ni pairCode)
-    const allDevices = await getAllDevices();
-    const artistDevices = allDevices
-      .filter((d) => d.artistId === artistId)
+    const artistDevices = artistDeviceList
+      .filter((d) => d.artistId === artistId || implicitArtistId(d.deviceId) === artistId)
       .map((d) => ({
         deviceId:   d.deviceId,
         deviceName: d.deviceName,

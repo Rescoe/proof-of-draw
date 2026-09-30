@@ -44,6 +44,32 @@ export interface ArtistProfile {
   updatedAt:   number;
 }
 
+// ─── Artistes implicites ──────────────────────────────────────────────────────
+// Un ESP appairé (nom choisi à l'appairage) est un artiste, sans attendre qu'un
+// ArtistProfile soit créé. Tant que l'ESP n'est lié à aucun profil, il apparaît
+// avec l'id synthétique `esp_{deviceId}` ; dès qu'il est lié à un profil
+// (device.artistId), il est absorbé par celui-ci. Rien n'est stocké : dérivé à la volée.
+
+export const IMPLICIT_ARTIST_PREFIX = "esp_";
+
+export function implicitArtistId(deviceId: string): string {
+  return `${IMPLICIT_ARTIST_PREFIX}${deviceId}`;
+}
+
+export function isImplicitArtistDevice(d: Device): boolean {
+  return !d.artistId && !!d.artistName?.trim();
+}
+
+/** Profil synthétique dérivé d'un ESP appairé sans profil artiste. */
+export function implicitArtistProfile(d: Device): ArtistProfile {
+  return {
+    artistId:    implicitArtistId(d.deviceId),
+    displayName: d.artistName!.trim(),
+    createdAt:   d.createdAt,
+    updatedAt:   d.createdAt,
+  };
+}
+
 /**
  * Normalise une chaîne en slug URL-safe :
  * minuscules, sans accents, espaces → tirets, caractères non-alphanum supprimés,

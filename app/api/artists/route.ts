@@ -5,20 +5,17 @@
 
 import { NextResponse } from "next/server";
 import { redis } from "@/lib/redis";
-import { getArtist, getAllDevices, ArtistProfile } from "@/lib/deviceStore";
+import {
+  getArtist, getAllDevices, ArtistProfile,
+  IMPLICIT_ARTIST_PREFIX, isImplicitArtistDevice, implicitArtistProfile,
+} from "@/lib/deviceStore";
 
 export const dynamic = "force-dynamic";
 
 export async function GET() {
   try {
     // Lire tous les artistIds
-    const artistIds = (await redis.smembers("artists:all")) as string[];
-    if (!artistIds || artistIds.length === 0) {
-      return NextResponse.json(
-        { artists: [] },
-        { headers: { "Cache-Control": "public, s-maxage=30, stale-while-revalidate=120" } },
-      );
-    }
+    const artistIds = ((await redis.smembers("artists:all")) as string[]) ?? [];
 
     // Charger tous les devices pour compter ceux liés à chaque artiste
     const allDevices = await getAllDevices();
@@ -32,8 +29,10 @@ export async function GET() {
     // Charger les profils artistes
     const profiles = await Promise.all(artistIds.map((id) => getArtist(id)));
 
-    const artists = profiles
-      .filter((p): p is ArtistProfile => p !== null)
+    // Artistes implicites : ESP appairés (nom choisi) pas encore rattachés à un profil
+    const implicit = allDevices.filter(isImplicitArtistDevice).map(implicitArtistProfile);
+
+    const artists = [...profiles.filter((p): p is ArtistProfile => p !== null), ...implicit]
       .map((p) => ({
         artistId:    p.artistId,
         slug:        p.slug,
@@ -42,7 +41,7 @@ export async function GET() {
         profileImageBlockHash: p.profileImageBlockHash,
         profileImageCrop: p.profileImageCrop,
         createdAt:   p.createdAt,
-        deviceCount: devicesByArtist[p.artistId] ?? 0,
+        deviceCount: p.artistId.startsWith(IMPLICIT_ARTIST_PREFIX) ? 1 : (devicesByArtist[p.artistId] ?? 0),
       }))
       .sort((a, b) => b.createdAt - a.createdAt);
 
