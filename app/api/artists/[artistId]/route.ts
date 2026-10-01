@@ -70,7 +70,7 @@ export async function GET(
       }));
 
     const [blocks, profileImage] = await Promise.all([
-      getArtistBlocks(deviceIdSet),
+      getArtistBlocks(deviceIdSet, undefined, implicit ? undefined : profile.artistId),
       getProfileImagePayload(profile),
     ]);
 

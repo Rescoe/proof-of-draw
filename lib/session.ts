@@ -13,7 +13,8 @@ import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
 
 const COOKIE_NAME = "esp_session";
-const COOKIE_MAX_AGE = 60 * 60 * 24 * 30; // 30 jours
+// 400 jours = maximum accepté par les navigateurs ; renouvelé à chaque visite du profil (GET /api/artist)
+const COOKIE_MAX_AGE = 60 * 60 * 24 * 400;
 
 // SECRET : mets SESSION_SECRET dans ton .env(.local)
 // Fallback dev uniquement — en prod ce fallback ne doit pas être utilisé
@@ -120,7 +121,9 @@ export async function addDeviceToSession(
 ): Promise<void> {
   const current = await getSession();
   const ids = Array.from(new Set([...current.deviceIds, deviceId]));
-  await setSession(res, { deviceIds: ids });
+  // `...current` : conserver artistId — sinon brancher un nouvel ESP faisait oublier
+  // à la session le profil artiste auquel elle appartient.
+  await setSession(res, { ...current, deviceIds: ids });
 }
 
 /** Vérifie qu'un deviceId est dans la session courante. */

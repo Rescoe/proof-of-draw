@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { OwnedDevice } from "@/lib/deviceStore";
 import { SCREEN_PROFILES } from "@/lib/screenProfiles";
 import { BlockFrameCanvas } from "@/app/BlockFrameCanvas";
+import { GiveDeviceModal } from "./GiveDeviceModal";
 import type { BlockImagePayload } from "@/lib/chain";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -826,7 +827,6 @@ export default function ProfilePage() {
   const [minedBlocks,    setMinedBlocks]    = useState<MinedBlock[]>([]);
   // Image de profil résolue par hash côté serveur (même valeur que la fiche publique)
   const [profileImage,   setProfileImage]   = useState<BlockImagePayload | null>(null);
-  const [attachingDev,   setAttachingDev]   = useState<string | null>(null);
   const [showPicker,     setShowPicker]     = useState(false);
   const [devices,        setDevices]        = useState<OwnedDevice[]>([]);
   const [publicDevices,  setPublicDevices]  = useState<PublicDevice[]>([]);
@@ -842,6 +842,7 @@ export default function ProfilePage() {
   const [transferring,   setTransferring]   = useState<string | null>(null);
   const [transferMsg,    setTransferMsg]    = useState<Record<string, string>>({});
   const [deletingDevice, setDeletingDevice] = useState<string | null>(null);
+  const [givingDevice,   setGivingDevice]   = useState<OwnedDevice | null>(null);
   const [profError,      setProfError]      = useState<string | null>(null);
   const [deleting,       setDeleting]       = useState(false);
 
@@ -1015,21 +1016,6 @@ export default function ProfilePage() {
     finally { setToggling(null); }
   }
 
-  // Rattacher / détacher un de mes appareils à mon profil artiste (regroupement explicite)
-  async function handleAttachDevice(deviceId: string, action: "attach" | "detach") {
-    setAttachingDev(deviceId);
-    try {
-      const res = await fetch("/api/artist/devices", {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ deviceId, action }),
-      });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) alert(data.error ?? "Erreur");
-      await Promise.all([loadDevices(), loadMinedBlocks()]);
-    } catch { alert("Erreur réseau"); }
-    finally { setAttachingDev(null); }
-  }
-
   async function handleToggleAnaArt(deviceId: string, current: boolean) {
     setTogglingAna(deviceId);
     try {
@@ -1101,13 +1087,25 @@ export default function ProfilePage() {
 
   // ── Stats ─────────────────────────────────────────────────────────────────
 
-  const totalFrames = devices.reduce((acc, d) => acc + (d.framesSent ?? 0), 0);
-  const onlineCount = devices.filter(d => d.isOnline).length;
+  // ESP "liés" = rattachés à CE profil. Les autres ESP de la session sont des artistes à part
+  // dans l'annuaire tant qu'ils ne sont pas rattachés (bandeau « Tout rattacher »).
+  const linkedDevices = profile ? devices.filter(d => d.artistId === profile.artistId) : devices;
+  const totalFrames = linkedDevices.reduce((acc, d) => acc + (d.framesSent ?? 0), 0);
+  const onlineCount = linkedDevices.filter(d => d.isOnline).length;
 
   // ── Rendu ─────────────────────────────────────────────────────────────────
 
   return (
     <div style={{ maxWidth: 740, margin: "0 auto", padding: "2rem 1rem" }}>
+
+      {givingDevice && (
+        <GiveDeviceModal
+          deviceId={givingDevice.deviceId}
+          label={givingDevice.deviceName || givingDevice.artistName || givingDevice.deviceId}
+          onClose={() => setGivingDevice(null)}
+          onDone={() => { setGivingDevice(null); loadDevices(); loadMinedBlocks(); }}
+        />
+      )}
 
       {/* ── Picker overlay ── */}
       {showPicker && (
@@ -1198,7 +1196,7 @@ export default function ProfilePage() {
                 {/* Stats */}
                 <div className="profile-stats" style={{ display: "flex", gap: "1.5rem", marginTop: "0.5rem", flexWrap: "wrap" }}>
                   {[
-                    { label: "ESP liés",          value: devices.length },
+                    { label: "ESP liés",          value: linkedDevices.length },
                     { label: "En ligne",           value: onlineCount },
                     { label: "Frames envoyées",    value: totalFrames },
                     { label: "Blocs minés",        value: minedBlocks.length },
@@ -1450,19 +1448,6 @@ export default function ProfilePage() {
                           ? <>Rattaché à votre profil <strong>{profile.displayName}</strong></>
                           : <>Artiste à part : <strong>{d.artistName ?? d.deviceId}</strong></>}
                     </div>
-                    {profile && (
-                      <button
-                        onClick={() => handleAttachDevice(d.deviceId, d.artistId === profile.artistId ? "detach" : "attach")}
-                        disabled={attachingDev === d.deviceId}
-                        style={{
-                          padding: "0.35rem 0.9rem", borderRadius: 6, fontSize: "0.75rem", fontWeight: 600,
-                          border: "1px solid var(--border)", background: "var(--bg)", color: "var(--text2)",
-                          cursor: "pointer", opacity: attachingDev === d.deviceId ? 0.5 : 1,
-                        }}
-                      >
-                        {attachingDev === d.deviceId ? "…" : d.artistId === profile.artistId ? "Détacher" : "Rattacher à mon profil"}
-                      </button>
-                    )}
                   </div>
 
                   {/* Écrans */}
@@ -1700,8 +1685,19 @@ export default function ProfilePage() {
                     </div>
                   )}
 
-                  {/* Supprimer */}
-                  <div style={{ marginTop: "1rem", paddingTop: "1rem", borderTop: "1px solid var(--border)", display: "flex", justifyContent: "flex-end" }}>
+                  {/* Donner / Supprimer */}
+                  <div style={{ marginTop: "1rem", paddingTop: "1rem", borderTop: "1px solid var(--border)", display: "flex", justifyContent: "flex-end", gap: "0.5rem", flexWrap: "wrap" }}>
+                    {profile && d.artistId === profile.artistId && (
+                      <button
+                        onClick={() => setGivingDevice(d)}
+                        style={{
+                          padding: "0.35rem 0.8rem", borderRadius: 6, border: "1px solid var(--border)",
+                          background: "var(--bg)", color: "var(--text2)", fontSize: "0.72rem", cursor: "pointer",
+                        }}
+                      >
+                        🎁 Donner cet ESP
+                      </button>
+                    )}
                     <button
                       onClick={() => handleDeleteDevice(d.deviceId, d.deviceName || d.artistName || d.deviceId)}
                       disabled={deletingDevice === d.deviceId}

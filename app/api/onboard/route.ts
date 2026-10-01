@@ -1,7 +1,8 @@
 // app/api/onboard/route.ts
 import { NextRequest, NextResponse } from "next/server";
-import { getDeviceByMac, getDeviceByPairCode, setArtistName } from "@/lib/deviceStore";
-import { addDeviceToSession } from "@/lib/session";
+import { getArtist, getDeviceByMac, getDeviceByPairCode, setArtistName } from "@/lib/deviceStore";
+import { getSession, setSession } from "@/lib/session";
+import { ensureSessionProfile, resolveSessionArtist } from "@/lib/artistDirectory";
 import {
   checkRateLimit, isBlacklisted,
   getIP, tooManyRequests, forbidden,
@@ -21,10 +22,10 @@ export async function POST(req: NextRequest) {
 
   try {
     const body = await req.json();
-    const { pairCode, mac, artistName } = body;
+    const { pairCode, mac } = body;
+    const name = typeof body.artistName === "string" ? body.artistName.trim() : "";
 
-    if (!artistName?.trim())
-      return NextResponse.json({ error: "artistName requis" }, { status: 400 });
+    const session = await getSession();
 
     let device = null;
 
@@ -48,9 +49,26 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "pairCode ou mac requis" }, { status: 400 });
     }
 
-    const updated = await setArtistName(device.deviceId, artistName.trim());
-    if (!updated)
-      return NextResponse.json({ error: "Erreur mise à jour device" }, { status: 500 });
+    // Cet ESP a déjà un profil (lien permanent) : jamais reprendre ni renommer — on retrouve ce profil
+    // si la session n'en a pas (récupération après perte du cookie / nouveau téléphone).
+    const owner = device.artistId ? await getArtist(device.artistId) : null;
+    let profile = null;
+    if (owner) {
+      profile = (await resolveSessionArtist(session)) ?? owner;
+    } else {
+      // Un ESP en session = un artiste : profil existant rejoint, sinon créé avec le nom saisi.
+      if (!name && !device.artistName?.trim())
+        return NextResponse.json({ error: "artistName requis" }, { status: 400 });
+      if (name) {
+        const updated = await setArtistName(device.deviceId, name);
+        if (!updated)
+          return NextResponse.json({ error: "Erreur mise à jour device" }, { status: 500 });
+      }
+      profile = await ensureSessionProfile({
+        deviceIds: Array.from(new Set([...session.deviceIds, device.deviceId])),
+        artistId:  session.artistId,
+      });
+    }
 
     const primaryScreen = device.screens[0];
     const canvasUrl = `/draw/${device.deviceId}/${primaryScreen}`;
@@ -60,9 +78,13 @@ export async function POST(req: NextRequest) {
       deviceId: device.deviceId,
       screen:   primaryScreen,
       canvasUrl,
+      profile:  profile ? { displayName: profile.displayName, slug: profile.slug } : null,
     });
 
-    await addDeviceToSession(res, device.deviceId);
+    await setSession(res, {
+      deviceIds: Array.from(new Set([...session.deviceIds, device.deviceId])),
+      artistId:  profile?.artistId ?? session.artistId,
+    });
     return res;
   } catch (err) {
     console.error("[/api/onboard]", err);

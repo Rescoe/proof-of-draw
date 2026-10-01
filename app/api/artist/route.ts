@@ -15,7 +15,7 @@ import {
   isSlugAvailable,
 } from "@/lib/deviceStore";
 import { getSession, setSession, setArtistIdInSession } from "@/lib/session";
-import { getArtistDeviceIds } from "@/lib/artistDirectory";
+import { getArtistDeviceIds, ensureSessionProfile } from "@/lib/artistDirectory";
 import { getIP, isBlacklisted, forbidden } from "@/lib/rateLimit";
 
 export const dynamic = "force-dynamic";
@@ -30,18 +30,16 @@ function json(body: unknown, status = 200) {
 export async function GET() {
   try {
     const session = await getSession();
+    if (session.deviceIds.length === 0 && !session.artistId) return json({ profile: null });
 
-    // Lookup prioritaire : artistId stocké dans le cookie de session
-    if (session.artistId) {
-      const profile = await getArtist(session.artistId);
-      if (profile) return json({ profile });
-      // artistId périmé → continuer sur le fallback device
-    }
-
-    // Fallback : cherche depuis le premier device de la session
-    if (session.deviceIds.length === 0) return json({ profile: null });
-    const profile = await getArtistByDevice(session.deviceIds[0]);
-    return json({ profile });
+    // Session avec des ESP = artiste : profil créé / ESP rattachés automatiquement (aucune saisie).
+    // Le cookie est renouvelé au passage (400 j glissants).
+    const profile = session.deviceIds.length > 0
+      ? await ensureSessionProfile(session)
+      : (session.artistId ? await getArtist(session.artistId) : null);
+    const res = NextResponse.json({ profile }, { headers: { "Cache-Control": "private, no-store" } });
+    if (profile) await setSession(res, { deviceIds: session.deviceIds, artistId: profile.artistId });
+    return res;
   } catch (err) {
     console.error("[/api/artist GET]", err);
     return json({ error: "Erreur serveur" }, 500);

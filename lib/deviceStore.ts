@@ -203,7 +203,8 @@ async function saveDevice(device: Device): Promise<void> {
   const ttl = deviceTtl(device);
   await Promise.all([
     redis.set(deviceKey(device.deviceId), JSON.stringify(device), { ex: ttl }),
-    redis.set(macKey(device.mac), device.deviceId, { ex: ttl }),
+    // La MAC est l'identité durable de l'ESP : jamais d'expiration (voir registerDevice)
+    redis.set(macKey(device.mac), device.deviceId),
     redis.set(pairKey(device.pairCode), device.deviceId, { ex: ttl }),
   ]);
 }
@@ -232,6 +233,7 @@ export async function registerDevice(
   firmware: string
 ): Promise<{ device: Device; isNew: boolean }> {
   const existing = await getDeviceByMac(mac);
+  const knownId  = existing ? null : await redis.get<string>(macKey(mac));
 
   if (existing) {
     existing.firmware = firmware;
@@ -243,8 +245,15 @@ export async function registerDevice(
     return { device: existing, isNew: false };
   }
 
+  // Fiche expirée mais MAC connue : l'ESP retrouve SON deviceId (et donc ses blocs et son profil)
+  // au lieu d'en recevoir un nouveau — le lien inverse artist:device:{id} est permanent.
+  const revivedId = knownId ? String(knownId) : null;
+  const revivedArtistId = revivedId ? await redis.get<string>(artistDevKey(revivedId)) : null;
+  const revivedArtist   = revivedArtistId ? await getArtist(String(revivedArtistId)) : null;
+
   const device: Device = {
-    deviceId:   generateDeviceId(),
+    deviceId:   revivedId ?? generateDeviceId(),
+    ...(revivedArtist ? { artistId: revivedArtist.artistId, artistName: revivedArtist.displayName } : {}),
     mac,
     screens,
     firmware,
@@ -257,9 +266,9 @@ export async function registerDevice(
 
   await saveDevice(device);
   await redis.sadd("devices:all", device.deviceId);
-  await incrementDeviceCount();
-  console.log(`[deviceStore] NEW ${device.deviceId} (mac: ${mac})`);
-  return { device, isNew: true };
+  if (!revivedId) await incrementDeviceCount();
+  console.log(`[deviceStore] ${revivedId ? "REVIVED" : "NEW"} ${device.deviceId} (mac: ${mac})`);
+  return { device, isNew: !revivedId };
 }
 
 export async function pingDevice(deviceId: string): Promise<Device | null> {
@@ -295,7 +304,7 @@ export async function incrementFramesSent(deviceId: string): Promise<void> {
   device.framesSent += 1;
   // Pas de saveDevice complet ici — on fait un simple incr pour éviter 3 writes
   // On met juste à jour le champ dans le device stocké
-  await redis.set(deviceKey(deviceId), JSON.stringify({ ...device }), { ex: TTL_SECONDS });
+  await redis.set(deviceKey(deviceId), JSON.stringify({ ...device }), { ex: deviceTtl(device) });
 }
 
 export async function getAllDevices(): Promise<Device[]> {
@@ -447,8 +456,6 @@ export async function ackFrameReceived(deviceId: string): Promise<void> {
 
 // ─── Profils artistes ─────────────────────────────────────────────────────────
 
-const ARTIST_TTL = 90 * 24 * 3600; // 90 jours
-
 export async function getArtist(artistId: string): Promise<ArtistProfile | null> {
   const raw = await redis.get(artistKey(artistId));
   if (!raw) return null;
@@ -560,8 +567,9 @@ export async function createOrUpdateArtist(
   }
 
   await Promise.all([
-    redis.set(artistKey(artistId), JSON.stringify(profile), { ex: ARTIST_TTL }),
-    redis.set(slugKey(resolvedSlug), artistId, { ex: ARTIST_TTL }),
+    // Profils permanents : aucune expiration (quelques octets par artiste)
+    redis.set(artistKey(artistId), JSON.stringify(profile)),
+    redis.set(slugKey(resolvedSlug), artistId),
     redis.sadd("artists:all", artistId),
   ]);
   return profile;
@@ -653,7 +661,7 @@ export async function linkDeviceToArtist(deviceId: string, artistId: string): Pr
   device.artistId = artistId;
   await Promise.all([
     saveDevice(device),
-    redis.set(artistDevKey(deviceId), artistId, { ex: ARTIST_TTL }),
+    redis.set(artistDevKey(deviceId), artistId),
   ]);
 }
 
@@ -667,6 +675,25 @@ export async function unlinkDeviceFromArtist(deviceId: string): Promise<void> {
   if (!device) return;
   device.artistId = undefined;
   await Promise.all([saveDevice(device), redis.del(artistDevKey(deviceId))]);
+}
+
+/**
+ * Libère un ESP (don / remise à zéro) : il quitte le profil, perd noms et réglages de partage,
+ * et reçoit un NOUVEAU code d'appairage (l'ancien cesse de fonctionner). Son deviceId (donc sa MAC)
+ * ne change pas : le nouveau propriétaire l'onboarde comme un ESP neuf. Retourne le nouveau code.
+ */
+export async function releaseDevice(deviceId: string): Promise<string | null> {
+  const device = await getDevice(deviceId);
+  if (!device) return null;
+  await Promise.all([redis.del(artistDevKey(deviceId)), redis.del(pairKey(device.pairCode))]);
+  device.artistId = undefined;
+  device.artistName = undefined;
+  device.deviceName = undefined;
+  device.publicMode = false;
+  device.acceptsAnaArt = false;
+  device.pairCode = generatePairCode();
+  await saveDevice(device);
+  return device.pairCode;
 }
 
 /**

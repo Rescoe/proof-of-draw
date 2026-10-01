@@ -20,7 +20,6 @@ function OnboardForm() {
   const [artistName, setArtist]   = useState("");
   const [loading, setLoading]     = useState(false);
   const [error, setError]         = useState<string | null>(null);
-
   useEffect(() => {
     if (codeFromUrl) setMode("qr");
   }, [codeFromUrl]);
@@ -29,7 +28,6 @@ function OnboardForm() {
     e.preventDefault();
     setError(null);
 
-    if (!artistName.trim()) { setError("Le nom d'artiste est requis"); return; }
     if (mode === "qr" && !pairCode.trim()) { setError("Le code de jumelage est requis"); return; }
     if (mode === "mac" && !mac.trim()) { setError("L'adresse MAC est requise"); return; }
 
@@ -143,7 +141,8 @@ function OnboardForm() {
 
         <div>
           <label className="block text-sm font-medium mb-1">
-            Ton nom d&apos;artiste <span className="text-red-400">*</span>
+            Ton nom d&apos;artiste{" "}
+            <span className="text-gray-500 font-normal">(laisse vide si cet ESP a déjà un profil)</span>
           </label>
           <input
             type="text"

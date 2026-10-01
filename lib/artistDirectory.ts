@@ -21,8 +21,10 @@
 import { redis } from "@/lib/redis";
 import {
   getArtist, getAllDevices, isImplicitArtistDevice, implicitArtistProfile,
+  linkDeviceToArtist, setArtistName, setDeviceName, getDevice, createOrUpdateArtist,
   IMPLICIT_ARTIST_PREFIX, type ArtistProfile, type Device,
 } from "@/lib/deviceStore";
+import type { SessionData } from "@/lib/session";
 import { getBlockByHash, getBlockImage, type Block, type BlockImagePayload } from "@/lib/chain";
 
 const ARTISTS_ALL = "artists:all";
@@ -82,12 +84,65 @@ export async function resolveArtistIdForDevices(deviceIds: string[], devices?: D
   return null;
 }
 
+/**
+ * Profil artiste de la session : celui du cookie, sinon celui d'un appareil de la session
+ * (clé inverse / device.artistId), s'il existe encore. null = cette session n'a pas de profil.
+ */
+export async function resolveSessionArtist(session: SessionData, devices?: Device[]): Promise<ArtistProfile | null> {
+  if (session.artistId) {
+    const p = await getArtist(session.artistId);
+    if (p) return p;
+  }
+  const id = await resolveArtistIdForDevices(session.deviceIds, devices);
+  return id ? getArtist(id) : null;
+}
+
+/**
+ * Garantit qu'une session qui possède des ESP a un profil artiste, sans rien demander :
+ *  • profil existant (cookie ou ESP) → les ESP de la session sans profil le rejoignent ;
+ *  • aucun profil → il est créé avec le nom du plus ancien ESP nommé de la session.
+ * Ne reprend jamais un ESP déjà rattaché à un autre profil. null = session sans ESP nommé.
+ */
+export async function ensureSessionProfile(session: SessionData): Promise<ArtistProfile | null> {
+  if (session.deviceIds.length === 0) return null;
+  const devices = (await Promise.all(session.deviceIds.map((id) => getDevice(id)))).filter((d): d is Device => !!d);
+  let profile = await resolveSessionArtist(session, devices);
+  if (!profile) {
+    const first = devices.filter((d) => !d.artistId && d.artistName?.trim()).sort((a, b) => a.createdAt - b.createdAt)[0];
+    if (!first) return null;
+    profile = await createOrUpdateArtist(first.artistName!.trim());
+  }
+  // Un ESP libéré (don) n'a plus de nom : il ne doit pas être ré-attaché par une ancienne session
+  for (const d of devices) if (!d.artistId && d.artistName?.trim()) await attachDeviceToProfile(d.deviceId, profile, d);
+  return profile;
+}
+
+/**
+ * Rattache UN appareil à un profil : lien durable (device.artistId + clé inverse) et nom
+ * d'artiste du profil. Le nom d'origine ("Roubzi Tft") devient le nom de l'appareil pour ne
+ * pas être perdu. Rattachement AUTOMATIQUE (défaut) : ne reprend jamais un appareil déjà
+ * rattaché à un AUTRE profil → false. `force` = choix explicite de l'utilisateur sur son appareil.
+ */
+export async function attachDeviceToProfile(
+  deviceId: string, profile: ArtistProfile, device: Device, opts: { force?: boolean } = {},
+): Promise<boolean> {
+  if (!opts.force && device.artistId && device.artistId !== profile.artistId) return false;
+  if (!device.deviceName && device.artistName && device.artistName !== profile.displayName) {
+    await setDeviceName(deviceId, device.artistName);
+  }
+  await linkDeviceToArtist(deviceId, profile.artistId);
+  await setArtistName(deviceId, profile.displayName);
+  return true;
+}
+
 // ─── Annuaire ─────────────────────────────────────────────────────────────────
 
 /**
  * Liste complète des artistes : profils réellement existants + un artiste
  * implicite par ESP nommé sans profil valide. Nettoie au passage les ids
  * orphelins de artists:all (profil expiré/supprimé). Tri : plus récent d'abord.
+ * Un ESP rattaché à un profil n'est JAMAIS un artiste à part : il compte dans
+ * deviceCount de son profil (même si l'id du profil manquait dans artists:all).
  */
 export async function listArtists(): Promise<ArtistEntry[]> {
   const [ids, devices] = await Promise.all([
@@ -95,9 +150,17 @@ export async function listArtists(): Promise<ArtistEntry[]> {
     getAllDevices(),
   ]);
 
-  const loaded = await Promise.all(ids.map(async (id) => [id, await getArtist(id)] as const));
-  const stale  = loaded.filter(([, p]) => !p).map(([id]) => id);
+  // Profils référencés par un appareil mais absents de artists:all : on les relit
+  // directement (et on répare l'index) plutôt que de transformer leurs ESP en artistes.
+  const known    = new Set(ids);
+  const linked   = [...new Set(devices.map((d) => d.artistId).filter((id): id is string => !!id && !known.has(id)))];
+  const allIds   = [...ids, ...linked];
+
+  const loaded = await Promise.all(allIds.map(async (id) => [id, await getArtist(id)] as const));
+  const stale  = loaded.filter(([id, p]) => !p && known.has(id)).map(([id]) => id);
   if (stale.length > 0) redis.srem(ARTISTS_ALL, ...stale).catch(() => {}); // nettoyage opportuniste
+  const healed = loaded.filter(([id, p]) => !!p && !known.has(id)).map(([id]) => id);
+  if (healed.length > 0) redis.sadd(ARTISTS_ALL, healed[0], ...healed.slice(1)).catch(() => {});
   const profiles = loaded.map(([, p]) => p).filter((p): p is ArtistProfile => !!p);
 
   const validIds = new Set(profiles.map((p) => p.artistId));
@@ -147,8 +210,9 @@ export interface ArtistBlock {
  * (chain:device:{id}:blocks|drawn|owned) ∪ fenêtre chain:recent — plus de dépendance
  * aux 100 derniers blocs seulement.
  */
-export async function getArtistBlocks(deviceIds: Set<string>, limit = BLOCKS_MAX): Promise<ArtistBlock[]> {
-  if (deviceIds.size === 0) return [];
+export async function getArtistBlocks(deviceIds: Set<string>, limit = BLOCKS_MAX, artistId?: string): Promise<ArtistBlock[]> {
+  const retainedHere = artistId ? ((await redis.smembers(`artist:retained:${artistId}`)) as string[]) : [];
+  if (deviceIds.size === 0 && retainedHere.length === 0) return [];
   const ids = [...deviceIds];
 
   const [recent, perDevice] = await Promise.all([
@@ -163,7 +227,15 @@ export async function getArtistBlocks(deviceIds: Set<string>, limit = BLOCKS_MAX
     })),
   ]);
 
-  const hashes = [...new Set([...(recent ?? []), ...perDevice.flat()])];
+  const hashes = [...new Set([...(recent ?? []), ...perDevice.flat(), ...retainedHere])];
+
+  // Œuvres « conservées » lors du don d'un ESP : elles restent au profil qui les a gardées
+  // et disparaissent de la vue du nouveau propriétaire de l'appareil.
+  const keepers = hashes.length
+    ? await redis.mget<(string | null)[]>(...hashes.map((h) => `chain:retained:${h}`))
+    : [];
+  const keptBy = new Map<string, string>();
+  hashes.forEach((h, i) => { if (keepers[i]) keptBy.set(h, String(keepers[i])); });
 
   const rows = await Promise.all(hashes.map(async (hash) => {
     try {
@@ -171,7 +243,9 @@ export async function getArtistBlocks(deviceIds: Set<string>, limit = BLOCKS_MAX
       if (!b) return null;
       const isArtist = deviceIds.has(b.deviceId);
       const isMiner  = !!b.minerDeviceId && deviceIds.has(b.minerDeviceId);
-      const isOwner  = !!b.ownerDeviceId && deviceIds.has(b.ownerDeviceId);
+      const keeper   = keptBy.get(hash);
+      if (keeper && keeper !== artistId) return null;
+      const isOwner  = (!!b.ownerDeviceId && deviceIds.has(b.ownerDeviceId)) || !!keeper;
       if (!isArtist && !isMiner && !isOwner) return null;
       return { b, isArtist, isMiner, isOwner };
     } catch { return null; }
@@ -190,6 +264,16 @@ export async function getArtistBlocks(deviceIds: Set<string>, limit = BLOCKS_MAX
     isArtist, isMiner, isOwner,
     imagePayload: (await getBlockImage(b.blockHash)) ?? null,
   })));
+}
+
+/** Hashes de tous les blocs liés à UN appareil (dessinés, minés ou possédés par lui). */
+export async function relatedBlockHashes(deviceId: string): Promise<Set<string>> {
+  const [mined, drawn, owned] = await Promise.all([
+    redis.lrange<string>(`chain:device:${deviceId}:blocks`, 0, 499),
+    redis.lrange<string>(`chain:device:${deviceId}:drawn`, 0, 499),
+    redis.smembers(`chain:device:${deviceId}:owned`) as Promise<string[]>,
+  ]);
+  return new Set([...(mined ?? []), ...(drawn ?? []), ...(owned ?? [])]);
 }
 
 /** Image de profil résolue DIRECTEMENT par son hash (indépendante de toute fenêtre de blocs). */

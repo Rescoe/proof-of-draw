@@ -30,7 +30,7 @@ export async function GET() {
       : new Set(session.deviceIds);
 
     const [blocks, profile] = await Promise.all([
-      getArtistBlocks(deviceIds),
+      getArtistBlocks(deviceIds, undefined, artistId ?? undefined),
       artistId ? getArtist(artistId) : Promise.resolve(null),
     ]);
     const profileImage = profile ? await getProfileImagePayload(profile) : null;

@@ -9,8 +9,9 @@ export const dynamic = "force-dynamic";
 
 export async function GET() {
   try {
-    const artists = (await listArtists()).map(({ profile: p, deviceCount }) => ({
+    const artists = (await listArtists()).map(({ profile: p, deviceCount, implicit }) => ({
       artistId:    p.artistId,
+      implicit,                      // true = ESP sans profil artiste (pas encore de fiche créée)
       slug:        p.slug,
       displayName: p.displayName,
       bio:         p.bio,

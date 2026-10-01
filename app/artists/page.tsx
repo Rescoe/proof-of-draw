@@ -16,6 +16,7 @@ interface ArtistSummary {
   profileImageCrop?: { cx: number; cy: number; zoom: number };
   createdAt:   number;
   deviceCount: number;
+  implicit?:   boolean;   // ESP appairé sans profil artiste
 }
 
 // Dimensions CSS d'affichage par type d'écran — identiques à BlockFrameCanvas.tsx
@@ -151,7 +152,8 @@ function ArtistCard({ artist }: { artist: ArtistSummary }) {
             </div>
           )}
           <div style={{ fontSize: "0.7rem", color: "var(--text3)", marginTop: "0.3rem" }}>
-            {artist.deviceCount} ESP · membre {timeSince(artist.createdAt)}
+            {artist.deviceCount} ESP · {artist.implicit ? "ESP connecté" : "membre"} {timeSince(artist.createdAt)}
+            {artist.implicit && " · sans profil"}
           </div>
         </div>
 
