@@ -20,6 +20,7 @@ import { encodeForScreen } from "@/lib/screenEncode";
 import { createAnaBlock, saveAnaWorkMeta, type AnaWorkMeta } from "@/lib/anaChain";
 import { SCREEN_IDS } from "@/lib/screenProfiles";
 import { renderPoem, AVATAR_SIZE } from "@/lib/poemRender";
+import { parseFeedItem, type ParsedItem } from "@/lib/anaFeedItem";
 
 const ANA_API_URL      = process.env.ANA_API_URL;
 const ANA_FEED_SECRET  = process.env.ANA_ART_FEED_SECRET;
@@ -28,36 +29,13 @@ const FETCH_TIMEOUT_MS = 5000;
 
 const KEY_INGESTED   = "chain:ana:ingested";     // Set<itemId> — permanent, dedup only
 const KEY_META_SYNCED = "chain:ana:meta-synced"; // Set<itemId> — contexte de l'œuvre déjà écrit
+const KEY_SCREEN_DONE = "chain:ana:screen-done"; // Set<`${itemId}:${screen}`> — écrans déjà ingérés (reprise sans doublon)
 const KEY_CHECK_LOCK = "chain:ana:last-checked"; // TTL gate
 
 // Every registered screen type is encodable for ANA art (screenEncode.ts's
 // encodeForScreen handles all of them, including tft18 — rendered as plain
 // black-ink-on-white RGB565 since ANA line art carries no color channel).
 const ANA_ENCODABLE_SCREENS = SCREEN_IDS;
-
-interface AnaArtFeedItem {
-  id:           string;
-  kind:         "celebration" | "spontaneous" | "poem";
-  // celebration / spontaneous : pixels bruts (base64, 1 octet par pixel, 0 = encre)
-  pixels?:      string;
-  canvasW?:     number;
-  canvasH?:     number;
-  // poem : texte + (facultatif) portrait 40×40 du Normie auteur, base64, 1 octet par pixel, 0 = encre
-  text?:        string;
-  artForm?:     string;
-  avatar?:      string;
-  title:        string;
-  agentTokenId: number;
-  agentName?:   string;
-  publishedAt:  number;
-  // Contexte de l'œuvre (optionnel, voir ANA /api/ana-art/feed) → AnaWorkMeta
-  cartelText?: string; brief?: string; proposal?: string;
-  memorialKind?: "batch" | "requested" | "milestone";
-  burnedTokenIds?: number[]; totalBurnedHonored?: number;
-  voteResult?: "passed" | "rejected"; yesCount?: number; noCount?: number; absCount?: number;
-  revisionCount?: number; onChainWorkId?: number; txHash?: string; collectionAddress?: string;
-  decisionNote?: string;
-}
 
 // ─── Visage du Normie auteur (40×40) ─────────────────────────────────────────
 // API publique des Normies : GET /normie/{id}/pixels → chaîne de 1600 caractères « 0101… » (1 = encre).
@@ -100,21 +78,17 @@ function normieBits(tokenId: number): Promise<string | null> {
   return p;
 }
 
-function toWorkMeta(item: AnaArtFeedItem, avatarBits?: string | null): AnaWorkMeta {
+function toWorkMeta(item: ParsedItem, avatarBits?: string | null): AnaWorkMeta {
   return {
+    ...(item.context as Partial<AnaWorkMeta>),
     avatar: avatarBits ? packBits(avatarBits) : undefined,
-    text: item.text, artForm: item.artForm,
+    text: item.poem?.text, artForm: item.poem?.artForm,
     sourceId: item.id, kind: item.kind, agentTokenId: item.agentTokenId, agentName: item.agentName,
     title: item.title, publishedAt: item.publishedAt,
-    cartelText: item.cartelText, brief: item.brief, proposal: item.proposal,
-    memorialKind: item.memorialKind, burnedTokenIds: item.burnedTokenIds, totalBurnedHonored: item.totalBurnedHonored,
-    voteResult: item.voteResult, yesCount: item.yesCount, noCount: item.noCount, absCount: item.absCount,
-    revisionCount: item.revisionCount, onChainWorkId: item.onChainWorkId, txHash: item.txHash,
-    collectionAddress: item.collectionAddress, decisionNote: item.decisionNote,
   };
 }
 
-async function fetchAnaFeed(): Promise<AnaArtFeedItem[]> {
+async function fetchAnaFeed(): Promise<unknown[]> {
   if (!ANA_API_URL || !ANA_FEED_SECRET) return [];
   try {
     const res = await fetch(`${ANA_API_URL.replace(/\/$/, "")}/api/ana-art/feed?limit=50`, {
@@ -125,7 +99,7 @@ async function fetchAnaFeed(): Promise<AnaArtFeedItem[]> {
       console.error(`[anaFeed] ANA feed returned ${res.status}`);
       return [];
     }
-    const data = await res.json().catch(() => null) as { items?: AnaArtFeedItem[] } | null;
+    const data = await res.json().catch(() => null) as { items?: unknown[] } | null;
     const items = Array.isArray(data?.items) ? data.items : [];
     // Visible dans les logs Vercel : un feed vide ou mal formé n'est plus silencieux
     console.log(`[anaFeed] HTTP ${res.status} — ${items.length} item(s)${data?.items ? "" : " (réponse sans champ items)"}`);
@@ -136,51 +110,38 @@ async function fetchAnaFeed(): Promise<AnaArtFeedItem[]> {
   }
 }
 
-async function ingestItem(item: AnaArtFeedItem): Promise<void> {
-  const isPoem = item.kind === "poem";
-  let rawPixels: Buffer = Buffer.alloc(0);
-  if (!isPoem) {
-    try { rawPixels = Buffer.from(item.pixels ?? "", "base64"); }
-    catch { console.error(`[anaFeed] item ${item.id}: invalid pixels encoding`); return; }
-    const cw = item.canvasW ?? 0, ch = item.canvasH ?? 0;
-    if (rawPixels.length !== cw * ch) {
-      console.error(`[anaFeed] item ${item.id}: pixels length ${rawPixels.length} != canvasW*canvasH ${cw * ch}`);
-      return;
-    }
-  } else if (!item.text?.trim()) {
-    console.error(`[anaFeed] item ${item.id}: poem without text`);
-    return;
-  }
-  // Portrait du Normie auteur : fourni par le feed (1 octet/pixel) sinon récupéré sur l'API des Normies
+/**
+ * Encode l'œuvre pour chaque type d'écran, diffuse aux appareils opt-in et archive un bloc par écran.
+ * Reprise sans doublon : chaque écran terminé est noté (KEY_SCREEN_DONE) ; en cas d'échec en cours de route,
+ * l'exception remonte et l'item sera retenté au prochain contrôle sans re-créer les blocs déjà écrits.
+ */
+async function ingestItem(item: ParsedItem): Promise<void> {
+  // Portrait du Normie auteur (poèmes) : API des Normies, repli = pas de cadre
   let avatar: Uint8Array | undefined;
-  if (isPoem) {
-    if (item.avatar) avatar = new Uint8Array(Buffer.from(item.avatar, "base64"));
-    if (!avatar || avatar.length !== AVATAR_SIZE * AVATAR_SIZE) {
-      const bits = await normieBits(item.agentTokenId);
-      avatar = bits ? bitsToGray(bits) : undefined;
-    }
+  if (item.poem) {
+    const bits = await normieBits(item.agentTokenId);
+    avatar = bits ? bitsToGray(bits) : undefined;
   }
 
   const agentName = item.agentName ?? `Normie #${item.agentTokenId}`;
+  const done = (await redis.smismember(KEY_SCREEN_DONE, ANA_ENCODABLE_SCREENS.map((sc) => `${item.id}:${sc}`))) as number[];
 
   // Une œuvre = un bloc PAR type d'écran, que des devices l'aient activé ou non
   // (la galerie montre la conversion de chaque œuvre sur tous les écrans) ; seule
   // la diffusion live est réservée aux devices opt-in.
-  for (const screen of ANA_ENCODABLE_SCREENS) {
+  for (let i = 0; i < ANA_ENCODABLE_SCREENS.length; i++) {
+    const screen = ANA_ENCODABLE_SCREENS[i];
+    if (done[i]) continue;
     const devices = await getAnaArtDevices(screen);
 
     let encoded: ReturnType<typeof encodeForScreen>;
-    try {
-      if (isPoem) {
-        // Texte rendu directement à la taille de l'écran (cadre Normie 40×40 + texte condensé)
-        const r = renderPoem({ text: item.text!, title: item.title, avatar: avatar?.length === AVATAR_SIZE * AVATAR_SIZE ? avatar : undefined }, screen);
-        encoded = encodeForScreen(r.pixels, r.w, r.h, screen);
-      } else {
-        encoded = encodeForScreen(new Uint8Array(rawPixels), item.canvasW!, item.canvasH!, screen);
-      }
-    } catch (e) {
-      console.error(`[anaFeed] encodeForScreen(${screen}) failed for ${item.id}:`, e);
-      continue;
+    if (item.poem) {
+      // Texte rendu directement à la taille de l'écran (cadre Normie 40×40 + texte condensé)
+      const r = renderPoem({ text: item.poem.displayText ?? item.poem.text, title: item.title, avatar }, screen);
+      encoded = encodeForScreen(r.pixels, r.w, r.h, screen);
+    } else {
+      const img = item.image!;
+      encoded = encodeForScreen(img.gray, img.w, img.h, screen);
     }
     const payload = encoded as Record<string, string>;
 
@@ -198,25 +159,56 @@ async function ingestItem(item: AnaArtFeedItem): Promise<void> {
         publishedAt:  item.publishedAt,
       }),
     ]);
+    await redis.sadd(KEY_SCREEN_DONE, `${item.id}:${screen}`);
   }
 }
 
 /** Runs an ingestion pass unconditionally — for an explicit manual trigger. */
 export async function checkAnaFeedNow(): Promise<{ checked: number; ingested: number }> {
-  const items = await fetchAnaFeed();
-  let ingested = 0;
-  for (const item of items) {
-    // Contexte de l'œuvre (cartel, vote…) : écrit une fois par œuvre, y compris
-    // pour celles ingérées avant l'existence de ces champs (rattrapage).
-    if (await redis.sadd(KEY_META_SYNCED, item.id)) {
-      await saveAnaWorkMeta(toWorkMeta(item, await normieBits(item.agentTokenId))).catch((e) => console.error("[anaFeed] saveAnaWorkMeta:", e));
+  const raw = await fetchAnaFeed();
+  const items: ParsedItem[] = [];
+  const invalid: string[] = [];
+  for (const r of raw) {
+    const p = parseFeedItem(r);
+    if (p.ok) items.push(p.item);
+    else {
+      console.warn(`[anaFeed] item ignoré — ${p.reason}`);
+      if (p.permanent && r && typeof r === "object" && typeof (r as { id?: unknown }).id === "string") invalid.push((r as { id: string }).id);
     }
-    const isNew = await redis.sadd(KEY_INGESTED, item.id);
-    if (!isNew) continue; // already ingested on a previous check
-    await ingestItem(item);
-    ingested++;
   }
-  return { checked: items.length, ingested };
+  // Items définitivement invalides : marqués pour ne pas être relus à chaque contrôle
+  if (invalid.length) await redis.sadd(KEY_INGESTED, invalid[0], ...invalid.slice(1)).catch(() => {});
+  if (items.length === 0) return { checked: raw.length, ingested: 0 };
+
+  // Deux commandes pour tout le lot (et non une par item)
+  const ids = items.map((it) => it.id);
+  const [metaDone, ingestedDone] = await Promise.all([
+    redis.smismember(KEY_META_SYNCED, ids) as Promise<number[]>,
+    redis.smismember(KEY_INGESTED, ids) as Promise<number[]>,
+  ]);
+
+  let ingested = 0;
+  for (let i = 0; i < items.length; i++) {
+    const item = items[i];
+    // Contexte de l'œuvre (cartel, vote…) : écrit une fois par œuvre — marqué SEULEMENT après réussite,
+    // y compris pour celles ingérées avant l'existence de ces champs (rattrapage).
+    if (!metaDone[i]) {
+      try {
+        await saveAnaWorkMeta(toWorkMeta(item, await normieBits(item.agentTokenId)));
+        await redis.sadd(KEY_META_SYNCED, item.id);
+      } catch (e) { console.error(`[anaFeed] saveAnaWorkMeta ${item.id}:`, e); }
+    }
+    if (ingestedDone[i]) continue;
+    try {
+      await ingestItem(item);
+      await redis.sadd(KEY_INGESTED, item.id);   // jamais avant la fin réussie
+      ingested++;
+      console.log(`[anaFeed] ingéré ${item.kind} « ${item.title}» (${item.id})`);
+    } catch (e) {
+      console.error(`[anaFeed] ingestion échouée ${item.id} — sera retentée:`, e);
+    }
+  }
+  return { checked: raw.length, ingested };
 }
 
 /**

@@ -107,7 +107,7 @@ export async function getRecentAnaBlocks(n: number): Promise<AnaBlockWithImage[]
 
 export interface AnaWorkMeta {
   sourceId:      string;
-  kind:          "celebration" | "spontaneous" | "poem";
+  kind:          "celebration" | "spontaneous" | "poem" | "generative-capture";
   agentTokenId:  number;
   agentName?:    string;
   title:         string;
