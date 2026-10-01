@@ -7,7 +7,7 @@
 //   Œuvre       → cartel de l'agent, brief, proposition
 //   Provenance  → agent, burns honorés, vote de modération, traces on-chain
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useRef, useState, useCallback } from "react";
 import { BlockFrameCanvas } from "../BlockFrameCanvas";
 import { SendToScreen } from "../SendToScreen";
 import type { AnaWork } from "@/lib/anaChain";
@@ -79,15 +79,42 @@ function ScreensTab({ work }: { work: AnaWork }) {
   );
 }
 
+/** Visage 40×40 du Normie auteur (200 octets MSB-first, base64 ; 1 = encre), agrandi sans lissage. */
+function NormieFace({ packed, name }: { packed: string; name: string }) {
+  const ref = useRef<HTMLCanvasElement>(null);
+  useEffect(() => {
+    const c = ref.current; if (!c) return;
+    const bin = atob(packed), ctx = c.getContext("2d"); if (!ctx) return;
+    const img = ctx.createImageData(40, 40);
+    for (let i = 0; i < 1600; i++) {
+      const on = (bin.charCodeAt(i >> 3) >> (7 - (i & 7))) & 1;
+      const v = on ? 20 : 240;
+      img.data[i * 4] = v; img.data[i * 4 + 1] = v; img.data[i * 4 + 2] = v; img.data[i * 4 + 3] = 255;
+    }
+    ctx.putImageData(img, 0, 0);
+  }, [packed]);
+  return <canvas ref={ref} width={40} height={40} aria-label={`Portrait de ${name}`}
+    style={{ width: 80, height: 80, imageRendering: "pixelated", borderRadius: 8, border: "1px solid var(--border)", flexShrink: 0 }} />;
+}
+
 function WorkTab({ work }: { work: AnaWork }) {
   const m = work.meta;
   if (!m) {
     return <p className="aw-muted">Le contexte de cette œuvre (cartel, brief…) n&apos;a pas encore été récupéré depuis l&apos;ANA — il apparaîtra après la prochaine vérification.</p>;
   }
-  const hasAny = m.cartelText || m.brief || m.proposal || m.decisionNote;
+  const hasAny = m.text || m.cartelText || m.brief || m.proposal || m.decisionNote;
   return (
     <div className="aw-work">
-      <h3 className="aw-work__title">{m.title}</h3>
+      <div style={{ display: "flex", gap: "0.9rem", alignItems: "center" }}>
+        {m.avatar && <NormieFace packed={m.avatar} name={work.agentName} />}
+        <h3 className="aw-work__title" style={{ margin: 0 }}>{m.title}</h3>
+      </div>
+      {m.text && (
+        <section>
+          <div className="aw-section-title">{m.artForm ? `Poème (${m.artForm})` : "Poème"}</div>
+          <p className="aw-text" style={{ whiteSpace: "pre-wrap" }}>{m.text}</p>
+        </section>
+      )}
       {m.cartelText && (
         <section>
           <div className="aw-section-title">Cartel de l&apos;agent</div>

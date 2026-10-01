@@ -107,12 +107,15 @@ export async function getRecentAnaBlocks(n: number): Promise<AnaBlockWithImage[]
 
 export interface AnaWorkMeta {
   sourceId:      string;
-  kind:          "celebration" | "spontaneous";
+  kind:          "celebration" | "spontaneous" | "poem";
   agentTokenId:  number;
   agentName?:    string;
   title:         string;
   publishedAt:   number;
   cartelText?:   string;
+  artForm?:      string;   // poèmes : haiku | sonnet | poeme | prose | manifeste
+  text?:         string;   // poèmes : texte intégral (affiché dans la galerie)
+  avatar?:       string;   // visage 40×40 du Normie auteur : 200 octets MSB-first en base64 (1 = encre)
   brief?:        string;
   proposal?:     string;
   memorialKind?: "batch" | "requested" | "milestone";
