@@ -21,6 +21,18 @@ Dernière mise à jour : **01/10/2026**. Rien de ce qui est listé « fait » n'
 | Tableau de compatibilité | `docs/COMPATIBILITE_ECRANS.md` | — |
 | ANA (non déployé) : le feed émet les **poèmes** au format V2 (`id = ana-work:<id>:poem:r1`, `contentHash`, `agentImageUrl`, `language`, forme normalisée), cache `ana-art-feed-v3` | `Agentic-Normie-Association/src/app/api/ana-art/feed/route.ts` | `tsc` ANA propre ; GPT à relire |
 
+## Relecture GPT du 01/10 (note 36) — état des P0
+
+| P0 | État |
+|---|---|
+| ANA ignorait les formes réelles `poem` / `manifesto` | **Corrigé** (normalisation tolérante, langue `und`, hash `forme:texte` NFC) — tests unitaires du builder encore à écrire côté ANA |
+| Cache ANA expirant (réveil de Neon par un pull PoD) | **Atténué seulement** : `revalidate` 1800 s → 86 400 s, reconstruction à la publication (`revalidateTag`). La vraie solution (générations + pointeur atomique) reste à faire par GPT |
+| `SCAN device:*` dans le chemin d'ingestion | **Corrigé** : `getAllDevices()` lit l'index `devices:all` (SMEMBERS + MGET = 2 commandes, repli SCAN seulement si l'index est vide) ; opt-in lus **une fois par passe** ; debounce mémoire par instance (le SET NX ne part plus à chaque pull). Bénéfice aussi pour l'annuaire, l'accueil, le profil et le réseau. À noter : `readReverseLinks` (SCAN `artist:device:*`) existe encore hors du chemin ANA |
+| Livraison durable (file, ACK exact, rattrapage, hors-ligne > 2 h) | **À faire** — plus gros lot restant, avant de parler de « compatibilité terminée » |
+
+Budget par nouvelle œuvre après correction : `32 + D` commandes + 2 de découverte pour toute la passe (valeurs de la note 36).
+Tests PoD : 75 passent sur le poste de Claude ; l'erreur `uv_os_get_passwd: ENOMEM` vue par GPT vient de son environnement Windows/Node.
+
 ## À vérifier au premier test réel (poème)
 
 1. Logs Vercel PoD : `[anaFeed] HTTP 200 — N item(s)`, puis `ingéré poem « … »`. Si `N = 0` : cache/feed ANA (voir note du 01/10).

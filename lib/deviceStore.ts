@@ -308,6 +308,21 @@ export async function incrementFramesSent(deviceId: string): Promise<void> {
 }
 
 export async function getAllDevices(): Promise<Device[]> {
+  // Chemin normal : index explicite devices:all (maintenu à l'enregistrement et à la suppression) →
+  // 2 commandes (SMEMBERS + MGET), quel que soit le nombre de clés Redis. Les ids dont la fiche a expiré
+  // sont retirés de l'index au passage. Repli SCAN seulement si l'index est vide (base jamais indexée).
+  const ids = (await redis.smembers("devices:all")) as string[];
+  if (ids.length > 0) {
+    const vals = await redis.mget<(string | Device | null)[]>(...ids.map((id) => deviceKey(id)));
+    const out: Device[] = [];
+    const stale: string[] = [];
+    vals.forEach((v, i) => {
+      if (!v) { stale.push(ids[i]); return; }
+      try { out.push(typeof v === "string" ? JSON.parse(v) : v); } catch { stale.push(ids[i]); }
+    });
+    if (stale.length > 0) redis.srem("devices:all", ...stale).catch(() => {});
+    return out;
+  }
   let cursor = 0;
   const keys: string[] = [];
   do {

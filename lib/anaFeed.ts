@@ -15,6 +15,7 @@
 
 import { redis } from "@/lib/redis";
 import { getAnaArtDevices } from "@/lib/deviceStore";
+import type { Device } from "@/lib/deviceStore";
 import { broadcastToDevices } from "@/lib/broadcast";
 import { encodeForScreen } from "@/lib/screenEncode";
 import { createAnaBlock, saveAnaWorkMeta, type AnaWorkMeta } from "@/lib/anaChain";
@@ -115,7 +116,7 @@ async function fetchAnaFeed(): Promise<unknown[]> {
  * Reprise sans doublon : chaque écran terminé est noté (KEY_SCREEN_DONE) ; en cas d'échec en cours de route,
  * l'exception remonte et l'item sera retenté au prochain contrôle sans re-créer les blocs déjà écrits.
  */
-async function ingestItem(item: ParsedItem): Promise<void> {
+async function ingestItem(item: ParsedItem, optIn: Device[]): Promise<void> {
   // Portrait du Normie auteur (poèmes) : API des Normies, repli = pas de cadre
   let avatar: Uint8Array | undefined;
   if (item.poem) {
@@ -132,7 +133,7 @@ async function ingestItem(item: ParsedItem): Promise<void> {
   for (let i = 0; i < ANA_ENCODABLE_SCREENS.length; i++) {
     const screen = ANA_ENCODABLE_SCREENS[i];
     if (done[i]) continue;
-    const devices = await getAnaArtDevices(screen);
+    const devices = optIn.filter((d) => d.screens.includes(screen));
 
     let encoded: ReturnType<typeof encodeForScreen>;
     if (item.poem) {
@@ -187,6 +188,10 @@ export async function checkAnaFeedNow(): Promise<{ checked: number; ingested: nu
     redis.smismember(KEY_INGESTED, ids) as Promise<number[]>,
   ]);
 
+  // Appareils opt-in : lus UNE fois pour toute la passe (2 commandes), jamais par item ni par profil d'écran
+  const pending = items.some((_, i) => !ingestedDone[i]);
+  const optIn = pending ? await getAnaArtDevices() : [];
+
   let ingested = 0;
   for (let i = 0; i < items.length; i++) {
     const item = items[i];
@@ -200,7 +205,7 @@ export async function checkAnaFeedNow(): Promise<{ checked: number; ingested: nu
     }
     if (ingestedDone[i]) continue;
     try {
-      await ingestItem(item);
+      await ingestItem(item, optIn);
       await redis.sadd(KEY_INGESTED, item.id);   // jamais avant la fin réussie
       ingested++;
       console.log(`[anaFeed] ingéré ${item.kind} « ${item.title}» (${item.id})`);
@@ -217,8 +222,11 @@ export async function checkAnaFeedNow(): Promise<{ checked: number; ingested: nu
  * call this concurrently. Safe to call on every /api/pull from an opted-in
  * device: it's a no-op Redis check the rest of the time.
  */
+let lastLocalCheck = 0;   // debounce par instance : évite un SET NX Redis à chaque pull d'un appareil opt-in
 export async function maybeCheckAnaFeed(): Promise<void> {
   if (!ANA_API_URL || !ANA_FEED_SECRET) return;
+  if (Date.now() - lastLocalCheck < CHECK_DEBOUNCE_SEC * 1000) return;
+  lastLocalCheck = Date.now();
   const acquired = await redis.set(KEY_CHECK_LOCK, "1", { nx: true, ex: CHECK_DEBOUNCE_SEC });
   if (!acquired) return;
   await checkAnaFeedNow().catch((e) => console.error("[anaFeed] maybeCheckAnaFeed error:", e));
