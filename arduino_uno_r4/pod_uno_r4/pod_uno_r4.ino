@@ -487,9 +487,8 @@ static void drainTouch() {
 }
 static void toggleCartel() {
   if (lastFrameId.length() == 0) return;                     // rien d'affiché : rien à habiller
-  // Sans carte SD on ne peut PAS cacher le cartel (la R4 n'a pas la RAM pour garder les pixels qu'il recouvre) : mieux vaut ne jamais
-  // l'afficher que de laisser des bandes collées sur l'œuvre.
-  if (!sdOk) { logf("[TOUCH] cartel indisponible : pas de carte SD (FAT/FAT32) — l'œuvre reste en plein écran"); return; }
+  // Sans carte SD le cartel s'AFFICHE quand même, mais ne peut pas être masqué (la R4 n'a pas la RAM pour garder les pixels qu'il
+  // recouvre) : il reste jusqu'à la prochaine image. La pastille rouge « SD absente » le dit à l'écran ; avec une carte, tout est automatique.
   if (!cartelVisible) {
     drawCartel();
     cartelVisible = true;
