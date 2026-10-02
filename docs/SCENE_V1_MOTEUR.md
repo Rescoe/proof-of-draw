@@ -97,6 +97,17 @@ ANA feed ──► parseFeedItem (revalidation stricte : manifeste, sceneHash, b
 | Animation (10 s, 30 min) | **0** — moteur pur, `fetch` neutralisé pendant le test |
 | Nouvel appareil compatible | 0 recompilation, même `artifactId` |
 
+## 7 bis. Rectangles sales (TFT) et ACK
+
+**Rectangle sale** entre deux ticks consécutifs (le premier tick d'une lecture est toujours plein écran ; la boucle compte : tick 0 vient après le dernier) :
+union des boîtes en pixels, **à `prev` et à `next`**, des seules entités `≠ static` dont le décalage effectif change. Boîte d'une entité = pixels
+touchés (tampon `size`/`width` inclus : marge `⌊n/2⌋` avant, `n−1−⌊n/2⌋` après ; cercle = centre ± rayon pixel), rognée au canevas ; un `linear` dont la boîte
+sort du canevas est déclaré plein-largeur / plein-hauteur (repli en tore). Aucun buffer précédent n'est nécessaire. Propriété garantie et testée
+(TypeScript **et** firmware) : frame complète puis rectangle seul = frame de référence.
+
+**ACK** : `POST /api/ack-frame { deviceId, frameId, mode?: "scene" }` — `mode: "scene"` (facultatif) dit que l'animation a été jouée ; le serveur l'affiche dans
+« Mon profil → Affichage en direct ». Un firmware sans ce champ continue de fonctionner. Détail du firmware TFT : `docs/SCENE_V1_FIRMWARE_TFT.md`.
+
 ## 8. Points à valider avec GPT (ANA)
 
 1. **Cadence** (§4) : ralentir ou sous-échantillonner sur un appareil plus lent que la scène ? Ou borner `tickRate ≤ 2` côté ANA pour le TFT ?

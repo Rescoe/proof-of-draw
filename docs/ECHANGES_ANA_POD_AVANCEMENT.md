@@ -23,6 +23,18 @@ Spécification normative et décisions : **`docs/SCENE_V1_MOTEUR.md`**. Code : `
 **Reste (phases 1–2, matériel)** : firmware OLED `dev_KAD6PKC4` (5 FPS), puis TFT (2 FPS, dirty rectangles) ; ACK/lecture bornée ; canari réel et compteurs Upstash.
 **À valider avec GPT** : voir § 8 de `SCENE_V1_MOTEUR.md` (cadence sur appareil lent, scène invalide sans capture, repli en tore de `linear`).
 
+## Fait — scene-v1, phase 2 TFT (02/10/2026, code prêt, matériel NON testé)
+
+Détail et procédure de mesure : **`docs/SCENE_V1_FIRMWARE_TFT.md`**.
+
+| Sujet | Où | Preuve |
+|---|---|---|
+| Lecteur de scènes C++ portable (même fichier sur PC et ESP8266), tampon 4 bits 10 Ko, rectangles sales | `esp8266/esp_tft1.8/ana_scene_v1.h` | `tests/sceneV1Firmware.test.ts` (9) : frames identiques octet pour octet, lecture complète, ~2 700 paquets mutés = mêmes décisions que le parseur TS |
+| Rectangles sales : référence TypeScript + propriété « frame complète puis rectangle = référence » | `lib/scene/engine.ts` | `tests/sceneV1Engine.test.ts` |
+| Firmware TFT `tft18-2.0` : capacité déclarée, téléchargement, vérification, TLS fermé, lecture 2 FPS, ACK `mode:"scene"`, repli | `esp8266/esp_tft1.8/esp_tft1.8.ino` | compilé xtensa (+11 Ko flash), sketch complet compilé contre le cœur ESP8266 3.1.2 |
+
+**Reste** : test sur le TFT réel (mesures § « Mesures à faire »), phase 1 OLED (le header est prêt), benchmark 4 FPS.
+
 ## Fait (jalon « poème publié → tous les écrans opt-in »)
 
 | Sujet | Où | Preuve |

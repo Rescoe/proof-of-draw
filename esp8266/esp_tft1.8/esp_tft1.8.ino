@@ -57,6 +57,7 @@
 #include <qrcode.h>
 #include <EEPROM.h>
 #include <Ed25519.h>       // Bibliothèque Crypto (rhempel) — ED25519 réel
+#include "ana_scene_v1.h"  // lecteur scene-v1 (œuvres génératives animées) — testé sur PC contre le moteur de référence
 
 // ─── CONFIG ────────────────────────────────────────────────────────────────
 const char* WIFI_SSID = "";
@@ -65,9 +66,17 @@ const char* WIFI_PASSWORD = "";
 
 #define SERVER_URL        "https://proof-of-draw.vercel.app"
 #define SCREEN_TYPE       "tft18"
-#define FIRMWARE_VERSION  "tft18-1.0"
+#define FIRMWARE_VERSION  "tft18-2.0"
 #define PULL_INTERVAL     60000UL   // 1 min
 #define VALIDATE_INTERVAL 30000UL   // 30s
+
+// ── scene-v1 (phase 2 : animation locale sur TFT) ───────────────────────────
+// Cycle : pull → téléchargement du paquet (≤ 4 Ko) → vérification → FERMETURE TLS → lecture locale → ACK.
+// Aucune requête réseau pendant la lecture. Voir docs/SCENE_V1_FIRMWARE_TFT.md.
+#define SCENE_MAX_FPS        2      // contrat : TFT 2 FPS ; 4 FPS seulement après mesure matérielle (voir les stats [SCENE] au Serial)
+#define SCENE_MAX_PACKAGE    4096
+#define SCENE_FETCH_TIMEOUT  15000UL
+#define SCENE_MAX_FAILS      2      // 2 échecs de paquet pour un même frameId → repli sur l'image fixe
 
 // ─── PINS NodeMCU ──────────────────────────────────────────────────────────
 // Côté TFT :
@@ -160,6 +169,10 @@ String pendingDisplayTs  = "";
 
 String pendingObsHashes = "";
 String pendingObsTarget = "";
+
+// scene-v1 : échecs de paquet pour la frame courante (on garde l'affichage, on réessaie, puis repli sur l'image fixe)
+String sceneFailFrameId = "";
+int    sceneFailCount   = 0;
 
 bool qrDisplayed = false;  // true quand le QR d'onboarding est à l'écran
 
@@ -771,9 +784,12 @@ bool doObsConfirm() {
 }
 
 // ─── ACK ───────────────────────────────────────────────────────────────────
-bool ackFrame(const String& frameId) {
+// `mode` : "scene" si l'animation a été jouée (le serveur l'affiche dans « Mon profil ») ; sinon omis = image fixe.
+bool ackFrame(const String& frameId, const char* mode = nullptr) {
   if (frameId.length() == 0) return false;
-  String body = "{\"deviceId\":\"" + deviceId + "\",\"frameId\":\"" + frameId + "\"}";
+  String body = "{\"deviceId\":\"" + deviceId + "\",\"frameId\":\"" + frameId + "\"";
+  if (mode) body += ",\"mode\":\"" + String(mode) + "\"";
+  body += "}";
   String resp;
   bool ok = httpPost("/api/ack-frame", body, resp);
   Serial.printf("[ACK] frameId=%s → %s\n", frameId.c_str(), ok ? "OK" : "FAIL");
@@ -790,6 +806,10 @@ bool doRegister() {
   String body = "{\"mac\":\"" + mac + "\",\"screens\":[\"" + SCREEN_TYPE + "\"],"
                 "\"firmware\":\"" + String(FIRMWARE_VERSION) + "\","
                 "\"publicKey\":\"" + pubHex + "\","
+                // Capacité scene-v1 : strictement la forme du contrat (note 37 §6) ; toute autre valeur = pas de scene-v1.
+                "\"sceneCapability\":{\"sceneV1\":true,\"maxPackageBytes\":4096,\"maxEntities\":24,"
+                "\"maxFps\":" + String(SCENE_MAX_FPS) + ",\"dirtyRectangles\":true,"
+                "\"firmwareVersion\":\"" + String(FIRMWARE_VERSION) + "\"},"
                 "\"ownedHashes\":" + ownedHashes + "}";
   String resp;
 
@@ -956,6 +976,179 @@ bool doFetchFrame(const String& frameId, const String& frameSource) {
   return true;
 }
 
+// ─── SCENE-V1 ───────────────────────────────────────────────────────────────
+// Télécharge le paquet ANAS dans `buf` (déjà alloué, announcedBytes octets). TLS FERMÉ au retour (le client vit dans cette fonction).
+// Retourne true seulement si exactement announcedBytes octets ont été reçus. `httpCode` : 404 = le serveur n'a pas de scène pour nous.
+bool fetchScenePackage(const String& artifactId, size_t announcedBytes, uint8_t* buf, int* httpCode) {
+  WiFiClientSecure client;
+  client.setInsecure();
+  HTTPClient http;
+
+  String url = String(SERVER_URL) + "/api/pull-frame?deviceId=" + deviceId + "&screen=" + String(SCREEN_TYPE)
+               + "&kind=scene&artifactId=" + artifactId + "&fmt=bin";
+  if (!http.begin(client, url)) { *httpCode = -1; return false; }
+  http.setTimeout(SCENE_FETCH_TIMEOUT);
+  http.useHTTP10(true);
+
+  int code = http.GET();
+  *httpCode = code;
+  Serial.printf("[HTTP GET] /api/pull-frame kind=scene (%u B annoncés) → %d\n", (unsigned)announcedBytes, code);
+  if (code != 200) { http.end(); return false; }
+
+  const int declared = http.getSize();   // Content-Length
+  if (declared > 0 && (size_t)declared != announcedBytes) {
+    Serial.printf("[SCENE] Content-Length %d ≠ %u annoncés — paquet refusé\n", declared, (unsigned)announcedBytes);
+    http.end();
+    return false;
+  }
+
+  // readFull : le flux TLS peut rendre moins que demandé (paquets TCP fragmentés)
+  WiFiClient* stream = http.getStreamPtr();
+  size_t total = 0;
+  unsigned long t0 = millis();
+  while (total < announcedBytes && millis() - t0 < SCENE_FETCH_TIMEOUT) {
+    if (stream->available()) total += stream->readBytes(buf + total, announcedBytes - total);
+    else delay(5);
+  }
+  http.end();
+  Serial.printf("[SCENE] reçu %u/%u octets en %lums\n", (unsigned)total, (unsigned)announcedBytes, millis() - t0);
+  return total == announcedBytes;
+}
+
+// Joue la scène : tick 0 plein écran, puis uniquement le rectangle sale de chaque tick (re-rendu complet en RAM, 10 Ko en 4 bits).
+// Aucune requête réseau. Retourne false si le tampon image n'a pas pu être alloué (rien n'a été affiché). Mesures au Serial.
+bool playScene(const anascene::Scene& sc) {
+  const size_t fbBytes = anascene::Fb::bytesFor(TFT_W, TFT_H);
+  uint8_t* fbMem = (uint8_t*)malloc(fbBytes);
+  if (!fbMem) {
+    Serial.printf("[SCENE] malloc(%u) impossible — repli image fixe\n", (unsigned)fbBytes);
+    logHeapState("SCENE-NOMEM");
+    return false;
+  }
+  anascene::Fb fb;
+  fb.init(fbMem, TFT_W, TFT_H);
+  uint16_t rowWords[TFT_W];   // aligné 16 bits ; contient des octets big-endian (voir presentRect)
+
+  const int fps = anascene::effectiveFps(sc, SCENE_MAX_FPS);
+  const unsigned long frameMs = 1000UL / (unsigned long)fps;
+  const int total = (int)sc.durationTicks * (int)sc.loopCount;
+  Serial.printf("[SCENE] lecture: %d ticks × %d boucle(s), %d FPS (scène %d, écran max %d), %lums/frame\n",
+                sc.durationTicks, sc.loopCount, fps, sc.tickRate, SCENE_MAX_FPS, frameMs);
+  logHeapState("SCENE-PLAY-START");
+
+  unsigned long renderSum = 0, renderMax = 0, pushSum = 0, pushMax = 0, pushedPixels = 0;
+  int overruns = 0;
+  uint32_t heapMin = ESP.getFreeHeap();
+  const unsigned long start = millis();
+
+  for (int step = 0; step < total; step++) {
+    const int tick = step % sc.durationTicks;
+    const unsigned long deadline = start + (unsigned long)(step + 1) * frameMs;   // échéancier absolu : pas de dérive cumulée
+
+    const unsigned long t0 = micros();
+    anascene::renderTick(sc, fb, tick);
+    const unsigned long tRender = micros() - t0;
+
+    anascene::Rect r;
+    if (step == 0) r = { 0, 0, TFT_W, TFT_H, true };
+    else           r = anascene::dirtyRectBetween(sc, anascene::prevTickOf(sc, tick), tick);
+
+    const unsigned long t1 = micros();
+    if (r.valid) {
+      tft.startWrite();
+      tft.setAddrWindow(r.x, r.y, r.w, r.h);   // largeur/hauteur, pas coordonnées de fin
+      anascene::presentRect(fb, sc, r, rowWords, [&](const uint16_t* row, int n, int) {
+        tft.writePixels((uint16_t*)row, n, true, true);   // bigEndian=true : octets déjà dans l'ordre du bus
+        yield();
+      });
+      tft.endWrite();
+      pushedPixels += (unsigned long)r.w * (unsigned long)r.h;
+    }
+    const unsigned long tPush = micros() - t1;
+
+    renderSum += tRender; if (tRender > renderMax) renderMax = tRender;
+    pushSum   += tPush;   if (tPush   > pushMax)   pushMax   = tPush;
+    const uint32_t hf = ESP.getFreeHeap(); if (hf < heapMin) heapMin = hf;
+
+    if ((long)(millis() - deadline) > 0) overruns++;       // le frame a pris plus que sa tranche
+    while ((long)(millis() - deadline) < 0) { delay(1); }  // attente cadencée (WiFi/watchdog servis par delay)
+    ESP.wdtFeed();
+  }
+
+  free(fbMem);
+  const unsigned long elapsed = millis() - start;
+  Serial.printf("[SCENE] terminé: %d frames en %lums (cible %lums) — rendu moy/max %lu/%lu us, envoi TFT moy/max %lu/%lu us, "
+                "pixels poussés %lu (plein écran = %lu), dépassements %d, tas min %u\n",
+                total, elapsed, (unsigned long)total * frameMs, renderSum / total, renderMax, pushSum / total, pushMax,
+                pushedPixels, (unsigned long)total * TFT_W * TFT_H, overruns, heapMin);
+  logHeapState("SCENE-PLAY-END");
+  return true;
+}
+
+// Frame annoncée comme « scène » par /api/pull. Politique de repli (contrat note 37 §6, §7) :
+//   • aucun pointeur exploitable, 404, tampon impossible  → image fixe (doFetchFrame), sans erreur ;
+//   • paquet tronqué / corrompu / invalide                 → on GARDE l'affichage, AUCUN ACK, nouvel essai au pull suivant ;
+//                                                            après SCENE_MAX_FAILS échecs pour ce frameId → image fixe.
+bool doFetchScene(const String& frameId, const String& frameSource, const String& artifactId, size_t announcedBytes, const String& hash16) {
+  if (artifactId.length() == 0 || announcedBytes < anascene::HEADER_BYTES + 4 || announcedBytes > SCENE_MAX_PACKAGE) {
+    Serial.println("[SCENE] pointeur de scène inexploitable — image fixe");
+    return doFetchFrame(frameId, frameSource);
+  }
+  if (sceneFailFrameId != frameId) { sceneFailFrameId = frameId; sceneFailCount = 0; }
+  if (sceneFailCount >= SCENE_MAX_FAILS) {
+    Serial.println("[SCENE] trop d'échecs de paquet — image fixe");
+    return doFetchFrame(frameId, frameSource);
+  }
+
+  logHeapState("SCENE-BEFORE");
+  uint8_t* pkg = (uint8_t*)malloc(announcedBytes);
+  if (!pkg) {
+    Serial.println("[SCENE] malloc(paquet) impossible — image fixe");
+    return doFetchFrame(frameId, frameSource);
+  }
+
+  int httpCode = 0;
+  const bool received = fetchScenePackage(artifactId, announcedBytes, pkg, &httpCode);   // TLS fermé au retour
+  if (httpCode == 404) {
+    free(pkg);
+    Serial.println("[SCENE] 404 — pas de scène pour cet appareil, image fixe");
+    return doFetchFrame(frameId, frameSource);
+  }
+
+  anascene::Scene sc;
+  anascene::Err perr = received ? anascene::parse(pkg, announcedBytes, anascene::PROFILE_TFT, sc) : anascene::ERR_TRUNCATED;
+  if (received && perr == anascene::OK && hash16.length() == 16) {
+    // Identité : les 8 premiers octets du sceneHash annoncé par /api/pull doivent être ceux du paquet (octets 24..31)
+    char got[17];
+    for (int i = 0; i < 8; i++) snprintf(got + 2 * i, 3, "%02x", pkg[24 + i]);
+    if (!hash16.equalsIgnoreCase(String(got))) perr = anascene::ERR_HEADER;
+  }
+  if (perr != anascene::OK) {
+    free(pkg);
+    sceneFailCount++;
+    Serial.printf("[SCENE] paquet refusé (%s, échec %d/%d) — affichage conservé, aucun ACK\n",
+                  received ? anascene::errName(perr) : "réception incomplète", sceneFailCount, SCENE_MAX_FAILS);
+    return false;
+  }
+
+  // TLS est fermé : plus aucune requête jusqu'à la fin de la lecture
+  const bool played = playScene(sc);
+  free(pkg);
+  if (!played) return doFetchFrame(frameId, frameSource);
+
+  burnTFTCartel();   // la frame finale reste affichée avec son cartel, comme une image fixe
+
+  hasDisplayedFrame     = true;
+  lastFrameId           = frameId;
+  lastFrameWasConsensus = (frameSource == "consensus");
+  pendingCandidateId    = "";
+  sceneFailCount        = 0;
+
+  ackFrame(frameId, "scene");
+  Serial.printf("[SCENE] ✅ frameId=%s source=%s\n", frameId.c_str(), frameSource.c_str());
+  return true;
+}
+
 // ─── PULL ───────────────────────────────────────────────────────────────────
 bool doPull() {
   logHeapState("PULL-BEFORE");
@@ -966,6 +1159,11 @@ bool doPull() {
   String newFrameId     = "";
   String newFrameSource = "none";
   int    pullRetryAfter = 60;
+  // scene-v1 : `kind` = "scene" uniquement si le serveur sait que CET appareil peut jouer l'animation
+  String newKind          = "frame";
+  String sceneArtifactId  = "";
+  size_t sceneBytes       = 0;
+  String sceneHash16      = "";
 
   {
     WiFiClientSecure client;
@@ -1028,6 +1226,14 @@ bool doPull() {
     newFrameId     = doc["frameId"]     | "";
     pullRetryAfter = doc["retryAfter"]  | 60;
     if (pullRetryAfter <= 0) pullRetryAfter = 60;
+
+    newKind = doc["kind"] | "frame";
+    JsonObject sceneObj = doc["scene"];
+    if (newKind == "scene" && !sceneObj.isNull()) {
+      sceneArtifactId = sceneObj["artifactId"] | "";
+      sceneBytes      = (size_t)(sceneObj["bytes"] | 0);
+      sceneHash16     = sceneObj["hash"] | "";
+    }
 
     if (newFrameId.length() == 0) {
       JsonObject frameObj = doc["frame"];
@@ -1105,7 +1311,8 @@ bool doPull() {
   Serial.printf("[PULL] Nouvelle frame frameId=%s source=%s\n",
                 newFrameId.c_str(), newFrameSource.c_str());
 
-  doFetchFrame(newFrameId, newFrameSource);
+  if (newKind == "scene") doFetchScene(newFrameId, newFrameSource, sceneArtifactId, sceneBytes, sceneHash16);
+  else                    doFetchFrame(newFrameId, newFrameSource);
   return true;
 }
 
@@ -1200,7 +1407,7 @@ bool doValidate() {
 // ─── SETUP ──────────────────────────────────────────────────────────────────
 void setup() {
   Serial.begin(115200);
-  Serial.println("\n[BOOT] Proof-of-Draw TFT 1.8\" v1.0");
+  Serial.println("\n[BOOT] Proof-of-Draw TFT 1.8\" v2.0 (scene-v1)");
 
   eepromInit();
 
