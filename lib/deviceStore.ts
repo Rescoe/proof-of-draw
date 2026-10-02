@@ -6,6 +6,7 @@
 import { redis } from "@/lib/redis";
 import { decrementDeviceCount, incrementDeviceCount } from "@/lib/rateLimit";
 import type { SceneCapability } from "@/lib/scene/spec";
+import { generateLinkCode, type LinkCodeStatus } from "@/lib/linkCode";
 
 export interface Device {
   deviceId:   string;
@@ -149,6 +150,7 @@ function artistKey(artistId: string)    { return `artist:${artistId}`; }
 function artistDevKey(deviceId: string) { return `artist:device:${deviceId}`; }
 function slugKey(slug: string)          { return `artist:slug:${slug}`; }
 function linkCodeKey(code: string)      { return `artist:link:${code.toUpperCase()}`; }
+function linkCodeUsedKey(code: string)  { return `artist:link:used:${code.toUpperCase()}`; }
 
 /** Écrans du device qui acceptent les dessins convertis (défaut : tous). */
 export function convertedScreensOf(d: Device): string[] {
@@ -633,16 +635,6 @@ export async function deleteArtist(artistId: string): Promise<void> {
 // ─── Codes de liaison cross-device ───────────────────────────────────────────
 
 const LINK_CODE_TTL = 600; // 10 minutes
-const LINK_CODE_CHARS = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
-
-function generateLinkCode(): string {
-  const part = (n: number) =>
-    Array.from({ length: n }, () =>
-      LINK_CODE_CHARS[Math.floor(Math.random() * LINK_CODE_CHARS.length)]
-    ).join("");
-  return `${part(4)}-${part(4)}`;
-}
-
 interface LinkCodePayload {
   artistId:  string;
   createdAt: number;
@@ -653,26 +645,38 @@ interface LinkCodePayload {
  * de rejoindre le même profil artiste.
  */
 export async function createLinkCode(artistId: string): Promise<{ code: string; expiresAt: number }> {
-  const code = generateLinkCode();
+  const code = generateLinkCode();   // aléa cryptographique (lib/linkCode.ts)
   const payload: LinkCodePayload = { artistId, createdAt: Date.now() };
   await redis.set(linkCodeKey(code), JSON.stringify(payload), { ex: LINK_CODE_TTL });
   return { code, expiresAt: Date.now() + LINK_CODE_TTL * 1000 };
 }
 
 /**
- * Valide un code de liaison et retourne l'artistId associé.
- * Invalide (DEL) le code après usage.
+ * Valide un code de liaison et retourne l'artistId associé. USAGE UNIQUE ATOMIQUE : GETDEL — deux navigateurs qui
+ * saisissent le même code au même instant ne peuvent pas l'obtenir tous les deux. Laisse une trace « utilisé » (10 min)
+ * pour que l'appareil qui a généré le code sache que l'appairage a eu lieu.
  */
 export async function consumeLinkCode(code: string): Promise<string | null> {
-  const raw = await redis.get<string>(linkCodeKey(code));
+  const raw = await redis.getdel<string>(linkCodeKey(code));
   if (!raw) return null;
   try {
     const payload: LinkCodePayload = typeof raw === "string" ? JSON.parse(raw) : raw;
-    await redis.del(linkCodeKey(code));
+    await redis.set(linkCodeUsedKey(code), "1", { ex: LINK_CODE_TTL });
     return payload.artistId;
   } catch {
     return null;
   }
+}
+
+/** État d'un code (pour l'appareil qui l'a généré) : en attente, utilisé, ou expiré — sans jamais le consommer. */
+export async function peekLinkCode(code: string): Promise<LinkCodeStatus> {
+  if (await redis.get(linkCodeKey(code))) return "pending";
+  return (await redis.get(linkCodeUsedKey(code))) ? "used" : "expired";
+}
+
+/** Le device est-il rattaché à ce profil ? (1 GET sur la clé inverse — utilisé pour les droits d'un navigateur appairé.) */
+export async function isDeviceLinkedToArtist(deviceId: string, artistId: string): Promise<boolean> {
+  return (await redis.get<string>(artistDevKey(deviceId))) === artistId;
 }
 
 /**

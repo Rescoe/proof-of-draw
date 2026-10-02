@@ -2,6 +2,8 @@
 
 import { useEffect, useRef, useState } from "react";
 import { OwnedDevice } from "@/lib/deviceStore";
+import { OwnDisplaysDebug } from "./OwnDisplaysDebug";
+import { PairingSection, PairThisBrowser } from "./PairDevice";
 import { SCREEN_PROFILES } from "@/lib/screenProfiles";
 import { BlockFrameCanvas } from "@/app/BlockFrameCanvas";
 import { GiveDeviceModal } from "./GiveDeviceModal";
@@ -213,183 +215,6 @@ function SlugEditor({
           {statusLabel}
         </span>
       )}
-    </div>
-  );
-}
-
-// ── Composant liaison multi-appareils ─────────────────────────────────────────
-
-function LiaisonSection({ artistId }: { artistId: string }) {
-  const [genCode,    setGenCode]    = useState<string | null>(null);
-  const [expiresAt,  setExpiresAt]  = useState<number>(0);
-  const [countdown,  setCountdown]  = useState(0);
-  const [generating, setGenerating] = useState(false);
-  const [joinCode,   setJoinCode]   = useState("");
-  const [joining,    setJoining]    = useState(false);
-  const [joinMsg,    setJoinMsg]    = useState<{ ok: boolean; text: string } | null>(null);
-  const [copied,     setCopied]     = useState(false);
-  const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
-
-  useEffect(() => {
-    return () => { if (intervalRef.current) clearInterval(intervalRef.current); };
-  }, []);
-
-  async function generateCode() {
-    setGenerating(true);
-    try {
-      const res  = await fetch("/api/artist/link-code", { method: "POST" });
-      const data = await res.json();
-      if (!res.ok) { alert(data.error ?? "Erreur"); return; }
-      setGenCode(data.code);
-      setExpiresAt(data.expiresAt);
-      setCountdown(data.expiresIn);
-      if (intervalRef.current) clearInterval(intervalRef.current);
-      intervalRef.current = setInterval(() => {
-        setCountdown(prev => {
-          if (prev <= 1) { clearInterval(intervalRef.current!); setGenCode(null); return 0; }
-          return prev - 1;
-        });
-      }, 1000);
-    } catch { alert("Erreur réseau"); }
-    finally { setGenerating(false); }
-  }
-
-  async function copyCode() {
-    if (!genCode) return;
-    await navigator.clipboard.writeText(genCode);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
-  }
-
-  async function joinByCode() {
-    const code = joinCode.trim().toUpperCase();
-    if (!code) return;
-    setJoining(true);
-    setJoinMsg(null);
-    try {
-      const res  = await fetch("/api/artist/join", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ code }),
-      });
-      const data = await res.json();
-      if (!res.ok) { setJoinMsg({ ok: false, text: data.error ?? "Erreur" }); return; }
-      setJoinMsg({ ok: true, text: `Connecté au profil "${data.profile.displayName}" !` });
-      setJoinCode("");
-      // Recharger la page pour refléter le nouveau profil
-      setTimeout(() => window.location.reload(), 1200);
-    } catch { setJoinMsg({ ok: false, text: "Erreur réseau" }); }
-    finally { setJoining(false); }
-  }
-
-  void artistId; // utilisé pour la requête generate (via session côté serveur)
-
-  return (
-    <div style={{ marginTop: "2rem" }}>
-      <div style={{
-        padding: "1.5rem",
-        borderRadius: 12,
-        border: "1px solid var(--border)",
-        background: "var(--bg2)",
-      }}>
-        <h2 style={{ fontSize: "0.9rem", fontWeight: 800, letterSpacing: "-0.01em", margin: "0 0 0.35rem" }}>
-          🔗 Connexion multi-appareils
-        </h2>
-        <p style={{ fontSize: "0.78rem", color: "var(--text3)", margin: "0 0 1.25rem", lineHeight: 1.5 }}>
-          Partagez votre session entre plusieurs navigateurs ou appareils.
-          Générez un code sur cet appareil, puis entrez-le sur l&apos;autre.
-        </p>
-
-        <div style={{ display: "flex", gap: "1.5rem", flexWrap: "wrap" }}>
-
-          {/* Génération */}
-          <div style={{ flex: 1, minWidth: 200 }}>
-            <div style={{ fontSize: "0.72rem", color: "var(--text3)", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: "0.6rem" }}>
-              Générer un code
-            </div>
-            {genCode ? (
-              <div style={{ display: "flex", flexDirection: "column", gap: "0.5rem" }}>
-                <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
-                  <span style={{
-                    fontFamily: "JetBrains Mono, monospace",
-                    fontSize: "1.3rem", fontWeight: 800, letterSpacing: "0.12em",
-                    color: countdown > 60 ? "#4ade80" : countdown > 20 ? "#fb923c" : "#f87171",
-                  }}>
-                    {genCode}
-                  </span>
-                  <button onClick={copyCode} style={{
-                    fontSize: "0.72rem", padding: "0.3rem 0.7rem",
-                    borderRadius: 4, border: "1px solid var(--border)",
-                    background: "var(--bg)", cursor: "pointer", color: "var(--text2)",
-                  }}>
-                    {copied ? "✓ Copié" : "Copier"}
-                  </button>
-                </div>
-                <div style={{ fontSize: "0.7rem", color: "var(--text3)" }}>
-                  Expire dans {countdown}s · valable 1 fois
-                </div>
-              </div>
-            ) : (
-              <button
-                onClick={generateCode}
-                disabled={generating}
-                style={{
-                  padding: "0.5rem 1.1rem", borderRadius: 7,
-                  border: "1px solid var(--border)", background: "var(--bg)",
-                  color: "var(--text2)", fontSize: "0.82rem", cursor: "pointer",
-                  opacity: generating ? 0.5 : 1,
-                }}
-              >
-                {generating ? "Génération…" : "Générer un code"}
-              </button>
-            )}
-          </div>
-
-          {/* Rejoindre */}
-          <div style={{ flex: 1, minWidth: 200 }}>
-            <div style={{ fontSize: "0.72rem", color: "var(--text3)", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: "0.6rem" }}>
-              Rejoindre avec un code
-            </div>
-            <div style={{ display: "flex", gap: "0.5rem" }}>
-              <input
-                value={joinCode}
-                onChange={e => setJoinCode(e.target.value.toUpperCase())}
-                placeholder="XXXX-XXXX"
-                maxLength={9}
-                onKeyDown={e => { if (e.key === "Enter") joinByCode(); }}
-                style={{
-                  fontFamily: "JetBrains Mono, monospace",
-                  fontSize: "0.9rem", letterSpacing: "0.08em",
-                  padding: "0.4rem 0.7rem", borderRadius: 6,
-                  border: "1px solid var(--border)", background: "var(--bg)",
-                  color: "var(--text)", width: 130, outline: "none",
-                }}
-              />
-              <button
-                onClick={joinByCode}
-                disabled={joining || !joinCode.trim()}
-                style={{
-                  padding: "0.4rem 0.9rem", borderRadius: 6,
-                  border: "none", background: "var(--accent)",
-                  color: "#fff", fontSize: "0.82rem", cursor: "pointer",
-                  opacity: (joining || !joinCode.trim()) ? 0.5 : 1,
-                }}
-              >
-                {joining ? "…" : "Rejoindre"}
-              </button>
-            </div>
-            {joinMsg && (
-              <div style={{
-                marginTop: "0.5rem", fontSize: "0.75rem",
-                color: joinMsg.ok ? "#4ade80" : "#f87171",
-              }}>
-                {joinMsg.text}
-              </div>
-            )}
-          </div>
-
-        </div>
-      </div>
     </div>
   );
 }
@@ -1118,6 +943,9 @@ export default function ProfilePage() {
         />
       )}
 
+      {/* ── Nouveau navigateur sans profil : appairer avec le code d'un autre appareil ── */}
+      {!profile && !loadingProf && <PairThisBrowser />}
+
       {/* ── Carte profil artiste ── */}
       <div style={{
         padding: "1.75rem 2rem",
@@ -1259,7 +1087,10 @@ export default function ProfilePage() {
       </div>
 
       {/* ── Connexion multi-appareils ── */}
-      {profile && <LiaisonSection artistId={profile.artistId} />}
+      {profile && <PairingSection />}
+
+      {/* ── Affichage en direct : détail réservé au propriétaire ── */}
+      <OwnDisplaysDebug devices={linkedDevices} />
 
       {/* ── Onglets ── */}
       <div style={{

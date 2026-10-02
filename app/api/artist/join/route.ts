@@ -15,7 +15,8 @@ import {
   setArtistName,
 } from "@/lib/deviceStore";
 import { getSession, setSession } from "@/lib/session";
-import { getIP, isBlacklisted, forbidden } from "@/lib/rateLimit";
+import { getIP, isBlacklisted, forbidden, checkRateLimit, tooManyRequests } from "@/lib/rateLimit";
+import { normalizeLinkCode } from "@/lib/linkCode";
 
 export const dynamic = "force-dynamic";
 
@@ -24,16 +25,17 @@ export async function POST(req: NextRequest) {
     const ip = getIP(req);
     if (await isBlacklisted(ip)) return forbidden("Accès refusé");
 
+    // Anti-devinette : 10 tentatives / 10 min / IP (le code a 32^8 combinaisons et vit 10 min, mais jamais sans limite).
+    const rl = await checkRateLimit({ route: "artist-join", id: ip, limit: 10, windowSec: 600, strikeId: ip, strikeType: "ip" });
+    if (!rl.allowed) return tooManyRequests(rl.retryAfter);
+
     let body: Record<string, unknown>;
     try { body = await req.json(); } catch { return NextResponse.json({ error: "JSON invalide" }, { status: 400 }); }
 
-    const raw = typeof body.code === "string" ? body.code.trim().toUpperCase() : "";
-    if (!raw) {
-      return NextResponse.json({ error: "Code requis" }, { status: 400 });
+    const code = normalizeLinkCode(body.code);
+    if (!code) {
+      return NextResponse.json({ error: "Code invalide (format XXXX-XXXX)" }, { status: 400 });
     }
-
-    // Normaliser le code : ajouter le tiret si l'utilisateur l'a omis (XXXXXXXX → XXXX-XXXX)
-    const code = raw.includes("-") ? raw : `${raw.slice(0, 4)}-${raw.slice(4)}`;
 
     const artistId = await consumeLinkCode(code);
     if (!artistId) {

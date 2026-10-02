@@ -222,13 +222,30 @@ Ce que chaque écran **affiche réellement** (≠ dernier bloc miné, ≠ frame 
 POST /api/ack-frame (firmware, après affichage) → lib/displayState.ts recordDisplayed()
   shown:{device}:{écran}     méta ~300 o (titre, artiste, nature, bloc, mode frame|scene)   TTL 30 j
   shown:img:{frameId}:{écran} buffers, SET NX : une copie partagée par tous les appareils du même frameId
-GET /api/network/displays      1 MGET, cache serveur invalidé par ACK (tag network-displays), jamais par visiteur
+GET /api/network/displays      PUBLIC : uniquement les affichages AVEC image ; 1 MGET, cache invalidé par ACK (tag network-displays)
 GET /api/network/display-image image immuable par frameId (cache navigateur 1 an)
-UI : app/network/LiveDisplays.tsx (section « Écrans en direct » + bloc « Affiché maintenant » du panneau appareil)
+GET /api/my-devices/displays   PROPRIÉTAIRE : enregistrements complets (frameId, bloc, mode, affichages personnels)
+UI publique : app/network/LiveDisplays.tsx — IMAGES SEULEMENT (section « Actuellement affiché » + « Affiché maintenant » du panneau)
+UI debug    : app/profile/OwnDisplaysDebug.tsx — « Mon profil » : titre, nature, date, frameId, écrans sans confirmation
 ```
 
 Règles : l'ACK ne doit **jamais** échouer à cause de cet enregistrement ; une frame **personnelle** (`personal:frame:*`) n'est ni
-copiée ni décrite publiquement (« affichage privé ») ; `mode: "scene"` dans le corps de l'ACK = l'appareil a joué l'animation.
+copiée ni exposée publiquement (absente de la vue publique) ; `mode: "scene"` dans le corps de l'ACK = animation jouée.
+Pas de « frame en attente » dans la vue réseau : seul compte ce qui est affiché.
+
+## Appairage d'un navigateur / PC à un profil (02/10/2026)
+
+```
+Appareil d'origine (profil)  « Appairer un nouvel appareil » → POST /api/artist/link-code → code XXXX-XXXX (10 min, 1 usage)
+                             sondage GET /api/artist/link-code?code=… toutes les 4 s (onglet visible) → « ✓ appairé »
+Nouvel appareil (sans profil) « Appairer cet appareil » → POST /api/artist/join {code} → cookie : artistId + ESP du profil
+UI : app/profile/PairDevice.tsx (PairingSection, PairThisBrowser, JoinWithCode) ; logique pure : lib/linkCode.ts
+```
+
+Règles : l'appairage **ajoute** un navigateur, n'en retire jamais ; code à aléa cryptographique (`crypto.getRandomValues`), usage unique
+**atomique** (`GETDEL`), `join` limité à 10 essais / 10 min / IP, `link-code` à 8 codes / 10 min / profil. Les droits suivent le
+**profil** : `sessionOwnsDevice` accepte un ESP lié à l'`artistId` du cookie (clé inverse `artist:device:{id}`, 1 GET) — un PC appairé
+contrôle donc aussi les ESP ajoutés plus tard depuis le téléphone, et perd l'accès à un ESP donné (détaché) sans autre action.
 
 ## Non-goals
 

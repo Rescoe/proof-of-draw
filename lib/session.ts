@@ -11,6 +11,8 @@
 
 import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
+import { isDeviceLinkedToArtist } from "@/lib/deviceStore";
+import { canControlDevice } from "@/lib/linkCode";
 
 const COOKIE_NAME = "esp_session";
 // 400 jours = maximum accepté par les navigateurs ; renouvelé à chaque visite du profil (GET /api/artist)
@@ -126,10 +128,16 @@ export async function addDeviceToSession(
   await setSession(res, { ...current, deviceIds: ids });
 }
 
-/** Vérifie qu'un deviceId est dans la session courante. */
+/**
+ * Vérifie que la session courante contrôle cet ESP : il est dans son cookie, OU il est rattaché au profil porté par le cookie
+ * (appairage d'un navigateur : un PC appairé contrôle aussi les ESP ajoutés plus tard depuis le téléphone).
+ */
 export async function sessionOwnsDevice(deviceId: string): Promise<boolean> {
   const session = await getSession();
-  return session.deviceIds.includes(deviceId);
+  if (session.deviceIds.includes(deviceId)) return true;
+  if (!session.artistId) return false;
+  const linked = await isDeviceLinkedToArtist(deviceId, session.artistId);
+  return canControlDevice(session, deviceId, linked ? session.artistId : null);
 }
 
 /** Retire un deviceId de la session (device supprimé) — l'inverse d'addDeviceToSession. */
