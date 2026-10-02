@@ -247,6 +247,13 @@ Règles : l'appairage **ajoute** un navigateur, n'en retire jamais ; code à al�
 **profil** : `sessionOwnsDevice` accepte un ESP lié à l'`artistId` du cookie (clé inverse `artist:device:{id}`, 1 GET) — un PC appairé
 contrôle donc aussi les ESP ajoutés plus tard depuis le téléphone, et perd l'accès à un ESP donné (détaché) sans autre action.
 
+## Firmware UNO R4 WiFi + TFT 2.8" tactile (02/10/2026)
+
+`arduino_uno_r4/pod_uno_r4/` : même protocole que les ESP, déclaré **`tft18`** (aucun changement serveur), image ×1,5 dans 240×320, cartel natif,
+scènes scene-v1 rejouées à 2 FPS, tactile = rejeu / pull immédiat. Détails, contraintes et mesures à rapporter : `docs/UNO_R4_TFT28.md`.
+**Piège R4 : pile principale de 1 Ko** (protection désactivée) → pas de gros tableau local, tampons statiques, `[MEM]`/`[SELFTEST]` au Serial.
+`ana_scene_v1.h` y est une copie identique de celle de `esp8266/esp_tft1.8/` (test `podR4Display`). Tests : `podHttpR4`, `podR4Display`.
+
 ## Non-goals
 
 Ne pas faire :
