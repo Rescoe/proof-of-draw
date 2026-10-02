@@ -321,17 +321,21 @@ const char* WIFI_PASSWORD = "Mot de passe de votre Wi-Fi";
         </Callout>
         <p>
           Pendant cette phase, l’écran peut se rafraîchir plusieurs fois. Les informations de clé sont montrées avant l’écran
-          d’appairage. Gardez-les privées et attendez l’apparition du QR code ou du code à six caractères.
+          d’appairage. Gardez-les privées et attendez l’apparition du QR code ou du code d’appairage à 8 caractères (par exemple <Code>ABCD2345</Code>).
         </p>
         <Disclosure title="Voir ce qui se passe dans le Moniteur série">
           <p>
             Ouvrez <MenuPath steps={["Outils", "Moniteur série"]} /> et sélectionnez <Code>115200 bauds</Code>.
             Vous pourrez suivre la connexion Wi-Fi, l’enregistrement de l’ESP et la création du code d’appairage.
           </p>
-          <CodeBlock>{`Connexion WiFi...
-WiFi connecté — IP : 192.168.x.x
-Enregistrement ESP...
-Code de jumelage : ABC123`}</CodeBlock>
+          <CodeBlock>{`[WIFI] Connexion....
+[WIFI] IP: 192.168.x.x
+[REGISTER] deviceId: dev_XXXXXXXX
+[REGISTER] paired: non`}</CodeBlock>
+          <p>
+            Si vous voyez à la place un message d’échec de connexion Wi-Fi, vérifiez le nom du réseau, le mot de passe et que le réseau est bien
+            en 2,4 GHz (après un changement de box, le nom ou le mot de passe peut avoir changé). Un ESP8266 ne se connecte pas au 5 GHz.
+          </p>
         </Disclosure>
       </InstallStep>
 
