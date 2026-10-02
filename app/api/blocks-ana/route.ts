@@ -46,6 +46,8 @@ export async function GET(req: NextRequest) {
     const preview = w.screens.find((s) => s.screen === w.previewScreen);
     return {
       ...w,
+      // Le manifeste scene-v1 (≤ 4 Ko) n'est servi que par /api/blocks-ana/work : jamais ×N dans la liste.
+      meta: w.meta?.scene ? { ...w.meta, scene: { ...w.meta.scene, manifest: undefined } } : w.meta,
       screens: w.screens.map(({ screen: sc, blockHash, blockIndex }) => ({ screen: sc, blockHash, blockIndex })),
       previewPayload: preview?.imagePayload ?? null,
     };

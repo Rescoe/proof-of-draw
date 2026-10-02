@@ -11,6 +11,7 @@ import { useEffect, useRef, useState, useCallback } from "react";
 import { BlockFrameCanvas } from "../BlockFrameCanvas";
 import { SendToScreen } from "../SendToScreen";
 import type { AnaWork } from "@/lib/anaChain";
+import { ScenePreview } from "./ScenePreview";
 
 const SCREEN_LABELS: Record<string, string> = {
   eink29bwr: 'E-Ink 2.9" BWR',
@@ -30,7 +31,7 @@ const MEMORIAL_KIND_LABELS: Record<string, string> = {
   milestone: "Monument (palier)",
 };
 
-type Tab = "screens" | "work" | "provenance";
+type Tab = "screens" | "scene" | "work" | "provenance";
 
 function formatDate(ts: number): string {
   return new Date(ts).toLocaleString("fr-FR", {
@@ -216,6 +217,7 @@ export function AnaWorkDetail({ groupKey, initial, onClose }: {
 
   const tabs: { id: Tab; label: string }[] = [
     { id: "screens",    label: `Écrans (${work.screens.length})` },
+    ...(work.meta?.scene ? [{ id: "scene" as Tab, label: work.meta.scene.status === "ok" ? "Scène" : "Scène ⚠" }] : []),
     { id: "work",       label: "Œuvre" },
     { id: "provenance", label: "Provenance" },
   ];
@@ -250,6 +252,7 @@ export function AnaWorkDetail({ groupKey, initial, onClose }: {
             <p className="aw-muted">Chargement des conversions…</p>
           )}
           {tab === "screens"    && <ScreensTab work={work} />}
+          {tab === "scene"      && work.meta?.scene && <ScenePreview scene={work.meta.scene} />}
           {tab === "work"       && <WorkTab work={work} />}
           {tab === "provenance" && <ProvenanceTab work={work} />}
         </div>
