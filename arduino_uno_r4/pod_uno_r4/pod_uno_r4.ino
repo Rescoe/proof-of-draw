@@ -37,8 +37,15 @@
 #include "pod_http.h"
 
 // ─── CONFIG ────────────────────────────────────────────────────────────────
-const char* WIFI_SSID     = "";
-const char* WIFI_PASSWORD = "";
+// Wi-Fi : copier secrets.h.example en secrets.h (ignoré par git) puis renseigner SSID / mot de passe (2,4 GHz).
+#if __has_include("secrets.h")
+  #include "secrets.h"
+  const char* WIFI_SSID     = SECRET_WIFI_SSID;
+  const char* WIFI_PASSWORD = SECRET_WIFI_PASSWORD;
+#else
+  const char* WIFI_SSID     = "";            // ← créer secrets.h (voir secrets.h.example)
+  const char* WIFI_PASSWORD = "";
+#endif
 
 #define SERVER_HOST       "proof-of-draw.vercel.app"
 #define SCREEN_TYPE       "tft28"            // profil serveur 240×320 RGB565 (lib/screenProfiles.ts)
@@ -480,6 +487,9 @@ static void drainTouch() {
 }
 static void toggleCartel() {
   if (lastFrameId.length() == 0) return;                     // rien d'affiché : rien à habiller
+  // Sans carte SD on ne peut PAS cacher le cartel (la R4 n'a pas la RAM pour garder les pixels qu'il recouvre) : mieux vaut ne jamais
+  // l'afficher que de laisser des bandes collées sur l'œuvre.
+  if (!sdOk) { logf("[TOUCH] cartel indisponible : pas de carte SD (FAT/FAT32) — l'œuvre reste en plein écran"); return; }
   if (!cartelVisible) {
     drawCartel();
     cartelVisible = true;

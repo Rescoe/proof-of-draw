@@ -203,6 +203,15 @@ export const SCREEN_PROFILES: Record<ScreenId, ScreenProfile> = {
 /** Liste ordonnée de tous les identifiants d'écrans enregistrés. */
 export const SCREEN_IDS = Object.keys(SCREEN_PROFILES) as ScreenId[];
 
+/**
+ * Longueur MAXIMALE (en caractères base64) d'un buffer d'écran accepté à l'envoi : celle d'un buffer plein, plus une marge de 64.
+ * Dérivée du profil — l'ancienne limite fixe (60 000) refusait toute image du TFT 2.8" (153 600 o = 204 800 caractères base64).
+ */
+export function maxBufferBase64Length(screenId: string): number {
+  const p = SCREEN_PROFILES[screenId as ScreenId];
+  return p ? Math.ceil(p.bufferSize / 3) * 4 + 64 : 0;
+}
+
 /** Vérifie qu'un string est un ScreenId valide. */
 export function isValidScreenId(s: string): s is ScreenId {
   return s in SCREEN_PROFILES;

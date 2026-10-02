@@ -10,7 +10,7 @@ import { getIP, forbidden } from "@/lib/rateLimit";
 import { redis } from "@/lib/redis";
 import { getCurrentCandidate } from "@/lib/chain";
 import { enqueueDraw, getQueueLength, DRAW_QUEUE_MAX } from "@/lib/drawQueue";
-import { SCREEN_IDS, isDualBuffer } from "@/lib/screenProfiles";
+import { SCREEN_IDS, isDualBuffer, maxBufferBase64Length } from "@/lib/screenProfiles";
 import { broadcastDirect } from "@/lib/broadcast";
 
 const DRAW_WINDOW_SEC = parseInt(process.env.DRAW_WINDOW_SEC ?? "900");
@@ -101,8 +101,8 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Payload incomplet" }, { status: 400 });
   }
 
-  // Limite de taille des buffers base64 (~45KB décodé max)
-  const MAX_B64 = 60_000;
+  // Limite de taille des buffers base64 : celle d'un buffer plein DE CET ÉCRAN (tft18 ≈ 54,6 k caractères, tft28 ≈ 204,8 k)
+  const MAX_B64 = maxBufferBase64Length(screen);
   if ((black && black.length > MAX_B64) || (red && red.length > MAX_B64) || (buffer && buffer.length > MAX_B64)) {
     return NextResponse.json({ error: "Buffer trop grand" }, { status: 413 });
   }

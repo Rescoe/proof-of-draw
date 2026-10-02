@@ -15,11 +15,13 @@ import { getDevice } from "@/lib/deviceStore";
 import { sessionOwnsDevice } from "@/lib/session";
 import { getIP, forbidden } from "@/lib/rateLimit";
 import { redis } from "@/lib/redis";
-import { SCREEN_IDS, isDualBuffer } from "@/lib/screenProfiles";
+import { SCREEN_IDS, isDualBuffer, maxBufferBase64Length } from "@/lib/screenProfiles";
 
 const DEVICE_ID_REGEX = /^dev_[A-Z0-9]{8}$/;
 const VALID_SCREENS   = new Set<string>(SCREEN_IDS); // dérivé de lib/screenProfiles.ts
-const MAX_BODY_BYTES  = 20_000;
+// Corps maximal toutes cibles confondues (le plus gros buffer = TFT 2.8", ~205 k caractères base64 + marge JSON) ;
+// la limite PRÉCISE de l'écran demandé est vérifiée plus bas.
+const MAX_BODY_BYTES  = 215_000;
 const PERSONAL_TTL    = 7 * 24 * 3600; // 7 jours — s'efface quand le bloc est miné
 const BLACKLIST_TTL   = parseInt(process.env.BLACKLIST_TTL_SECONDS ?? "604800");
 
@@ -52,6 +54,11 @@ export async function POST(req: NextRequest) {
   }
   if (!screen || !VALID_SCREENS.has(screen)) {
     return NextResponse.json({ error: "Screen invalide" }, { status: 400 });
+  }
+
+  const maxB64 = maxBufferBase64Length(screen);
+  if ((black && black.length > maxB64) || (red && red.length > maxB64) || (buffer && buffer.length > maxB64)) {
+    return NextResponse.json({ error: "Buffer trop grand" }, { status: 413 });
   }
 
   // ── 4. Blacklist ───────────────────────────────────────────────────────────
