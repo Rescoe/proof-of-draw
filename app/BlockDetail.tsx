@@ -108,16 +108,12 @@ function useDeviceLabels(ids: string[]): Record<string, DeviceLabel | null> {
   return labels;
 }
 
-/** « Nom de l'appareil · type d'écran · artiste », suivi de l'identifiant technique en petit. */
-function DeviceValue({ id, label }: { id: string; label?: DeviceLabel | null }) {
-  const screens = (label?.screens ?? []).map((sc) => SCREEN_LABELS[sc] ?? sc).join(" + ");
-  const human = [label?.name ?? label?.artistName, screens, label?.name && label?.artistName ? `artiste ${label.artistName}` : null].filter(Boolean).join(" · ");
-  return (
-    <>
-      {human && <span>{human}<br /></span>}
-      <code className="bd-id-chip">{id}</code>
-    </>
-  );
+/** « Nom de l'appareil · type d'écran · artiste » : écrit sur UNE ligne SOUS la ligne de l'identifiant (trop long pour tenir à côté). */
+function humanDevice(label?: DeviceLabel | null): string | undefined {
+  if (!label) return undefined;
+  const screens = (label.screens ?? []).map((sc) => SCREEN_LABELS[sc] ?? sc).join(" + ");
+  const human = [label.name ?? label.artistName, screens, label.name && label.artistName ? `artiste ${label.artistName}` : null].filter(Boolean).join(" · ");
+  return human || undefined;
 }
 
 function TabDetails({ block }: { block: BlockWithImage }) {
@@ -154,10 +150,10 @@ function TabDetails({ block }: { block: BlockWithImage }) {
         {block.obsConfirmed && <MetaRow label="Observer"  value="Confirmé ✓" green />}
         {/* Propriété du bloc */}
         {block.minerDeviceId && (
-          <MetaRow label="Mineur" value={<DeviceValue id={block.minerDeviceId} label={deviceLabels[block.minerDeviceId]} />} />
+          <MetaRow label="Mineur" value={block.minerDeviceId} sub={humanDevice(deviceLabels[block.minerDeviceId])} />
         )}
         {block.ownerDeviceId && block.ownerDeviceId !== block.minerDeviceId ? (
-          <MetaRow label="Propriétaire" value={<DeviceValue id={block.ownerDeviceId} label={deviceLabels[block.ownerDeviceId]} />} accent />
+          <MetaRow label="Propriétaire" value={block.ownerDeviceId} accent sub={humanDevice(deviceLabels[block.ownerDeviceId])} />
         ) : block.minerDeviceId && (
           <MetaRow label="Propriétaire" value="(mineur)" />
         )}
@@ -191,11 +187,14 @@ function TabDetails({ block }: { block: BlockWithImage }) {
   );
 }
 
-function MetaRow({ label, value, accent, green }: { label: string; value: React.ReactNode; accent?: boolean; green?: boolean }) {
+function MetaRow({ label, value, accent, green, sub }: { label: string; value: string; accent?: boolean; green?: boolean; sub?: string }) {
   return (
-    <div className="bd-meta-row">
-      <span className="bd-meta-label">{label}</span>
-      <span className={`bd-meta-value${accent ? " bd-accent" : green ? " bd-green" : ""}`}>{value}</span>
+    <div className="bd-meta-item">
+      <div className="bd-meta-row">
+        <span className="bd-meta-label">{label}</span>
+        <span className={`bd-meta-value${accent ? " bd-accent" : green ? " bd-green" : ""}`}>{value}</span>
+      </div>
+      {sub && <div className="bd-meta-sub">{sub}</div>}
     </div>
   );
 }
@@ -588,6 +587,7 @@ export function BlockDetail({ block, onClose }: { block: BlockWithImage; onClose
           font-size: 12px; padding: 4px 0;
           border-bottom: 1px solid rgba(255,255,255,0.03);
         }
+        .bd-meta-sub { font-size: 11px; color: var(--text2, #94a3b8); line-height: 1.4; margin: 1px 0 4px; overflow-wrap: anywhere; }
         .bd-meta-label { color: var(--text3, #64748b); }
         .bd-meta-value { color: var(--text2, #94a3b8); font-family: monospace; font-weight: 600; }
         .bd-accent { color: var(--accent, #7c6bff) !important; }

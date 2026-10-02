@@ -14,6 +14,7 @@ Même protocole que les ESP : register → pull → image → ACK, validation Ed
 | Œuvres ANA | **image fixe (aperçu)**, comme les e-ink : cet écran ne déclare **pas** `sceneCapability`, le serveur ne lui envoie jamais de scène |
 | Toucher | **affiche / cache le cartel** : bande haute « RESCOE · #bloc », bande basse « titre · artiste », par-dessus l'œuvre. Par défaut l'œuvre est seule |
 | microSD | garde la dernière image (`/pod/frame.bin`, 153 600 o) + son cartel (`/pod/meta.txt`). Sert à **cacher** le cartel (les deux bandes sont redessinées depuis la carte, sans re-télécharger) et à **réafficher l'œuvre au redémarrage** |
+| Pastille « SD » | en bas à droite du cartel : « SD ok » = le cartel pourra être masqué ; sinon la raison en rouge (« SD absente », « SD ecriture », « SD lecture »…) |
 | Sans carte SD | l'œuvre reste en plein écran **sans cartel** (rien à restaurer sous les bandes) ; le Serial l'indique |
 | Appairage | écran de clés (touché = continuer, sinon 60 s) puis QR + code, comme les ESP |
 
@@ -54,6 +55,12 @@ Aucune scène : `lib/scene/delivery.ts` ne connaît que `oled096` et `tft18`.
 [TOUCH] cartel affiché / masqué en … ms                        ← la restauration depuis la carte
 ```
 Visuel : l'œuvre occupe tout l'écran, sans marge ; toucher = bandes haut/bas ; retoucher = elles disparaissent et l'œuvre est intacte.
+
+## Couleurs
+
+Un dessin fait sur un écran **couleur** garde ses couleurs sur le TFT 2.8" (conversion TFT 1.8" ↔ 2.8" pixel à pixel, `lib/screenConvert.ts`).
+Un dessin fait pour un **e-ink** est en noir / blanc / rouge : c'est son origine, pas un défaut d'affichage. Les frames déjà envoyées ne sont pas
+reconverties : renvoyer le dessin depuis « Afficher sur mon écran » après le déploiement.
 
 ## Pas fait / limites connues
 

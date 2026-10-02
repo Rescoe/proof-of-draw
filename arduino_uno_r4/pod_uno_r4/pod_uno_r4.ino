@@ -104,6 +104,7 @@ bool touchOk = false;
 bool sdOk = false;                                // carte lisible
 bool sdFrameValid = false;                        // /pod/frame.bin complet = l'image affichée → cartel masquable
 bool cartelVisible = false;                       // les bandes sont dessinées par-dessus l'œuvre
+const char* sdWhy = "SD absente";                 // raison affichée dans le cartel quand il ne peut pas être masqué ("" = tout va bien)
 
 // ─── ÉTAT ──────────────────────────────────────────────────────────────────
 String deviceId, pairCode;
@@ -345,17 +346,22 @@ static void drawCartel() {
   String title = asciiFold(pendingWorkTitle), artist = asciiFold(pendingArtistName);
   if (title.length() == 0) title = "Proof-of-Draw";
   if (title.length() > 19) title = title.substring(0, 19);
-  if (artist.length() > 38) artist = artist.substring(0, 38);
+  if (artist.length() > 26) artist = artist.substring(0, 26);
   tft.setTextSize(2); tft.setTextColor(C_WHITE, C_DARK); tft.setCursor(8, BAND_BOT_Y + 8); tft.print(title);
-  if (artist.length()) { tft.setTextSize(1); tft.setTextColor(C_GREY, C_DARK); tft.setCursor(8, BAND_BOT_Y + 30); tft.print(artist); }
+  if (artist.length()) { tft.setTextSize(1); tft.setTextColor(C_GREY, C_DARK); tft.setCursor(8, BAND_BOT_Y + 32); tft.print(artist); }
+  // Pastille d'état de la carte SD (bas droite) : « SD ok » = le cartel pourra être masqué ; sinon la raison, en rouge
+  const String badge = sdFrameValid ? String("SD ok") : String(sdWhy);
+  tft.setTextSize(1); tft.setTextColor(sdFrameValid ? C_GREY : C_RED, C_DARK);
+  tft.setCursor(SCR_W - 8 - (int)badge.length() * 6, BAND_BOT_Y + 32); tft.print(badge);
 }
 
 // ─── microSD ───────────────────────────────────────────────────────────────
 static void initSD() {
   digitalWrite(TFT_CS, HIGH); digitalWrite(STMPE_CS, HIGH);
-  sdOk = SD.begin(SD_CS);
+  for (int attempt = 0; attempt < 3 && !sdOk; attempt++) { sdOk = SD.begin(SD_CS); if (!sdOk) delay(250); }   // certaines cartes ne répondent qu'au 2e essai
   if (sdOk && !SD.exists(SD_DIR)) SD.mkdir(SD_DIR);
-  logf("[SD] %s", sdOk ? "carte lisible (cache de l'image + cartel masquable)" : "carte absente ou non formatée FAT -> œuvre en plein écran SANS cartel");
+  sdWhy = sdOk ? "SD sans image" : "SD absente";
+  logf("[SD] %s", sdOk ? "carte lisible (cache de l'image + cartel masquable)" : "carte absente, non formatée FAT/FAT32 ou illisible -> œuvre en plein écran SANS cartel masquable");
 }
 
 /** Redessine les lignes y0..y0+n-1 depuis /pod/frame.bin (lues séquentiellement, converties LE -> BE). */
@@ -414,17 +420,19 @@ static bool streamFrame(podhttp::Reader<WiFiSSLClient>& rd) {
     if (SD.exists(SD_FRAME)) SD.remove(SD_FRAME);
     f = SD.open(SD_FRAME, FILE_WRITE);
     saving = (bool)f;
-  }
+    if (!saving) { sdWhy = "SD ouverture"; logf("[SD] impossible d'ouvrir %s en écriture", SD_FRAME); }
+  } else logf("[SD] pas de carte : l'image ne sera pas conservée");
   uint8_t* raw = (uint8_t*)g_row;
   for (int y = 0; y < SCR_H; y++) {
     if (rd.readBody(raw, ROW_BYTES) != (size_t)ROW_BYTES) { logf("[FRAME] ligne %d incomplète", y); ok = false; break; }
-    if (saving && f.write(raw, ROW_BYTES) != (size_t)ROW_BYTES) { saving = false; logf("[SD] écriture interrompue (carte pleine ?)"); }
+    if (saving && f.write(raw, ROW_BYTES) != (size_t)ROW_BYTES) { saving = false; sdWhy = "SD ecriture"; logf("[SD] écriture interrompue ligne %d (carte pleine / protégée ?)", y); }
     swapRowBytes();                                          // LE serveur -> BE bus SPI
     pushRow(y);
     if ((y % 80) == 79) logf("[FRAME] %d/%d lignes", y + 1, SCR_H);
   }
   if (f) f.close();
   sdFrameValid = ok && saving;                               // copie complète : le cartel pourra être masqué
+  if (sdFrameValid) sdWhy = "";
   if (sdOk && !sdFrameValid && SD.exists(SD_FRAME)) SD.remove(SD_FRAME);
   return ok;
 }
@@ -479,10 +487,18 @@ static void toggleCartel() {
     return;
   }
   // Masquer : on redessine les deux bandes depuis la copie sur la carte (pas de re-téléchargement)
-  if (!sdFrameValid) { logf("[TOUCH] pas de copie de l'image sur la carte SD : cartel conservé"); return; }
+  if (!sdFrameValid && sdOk && SD.exists(SD_FRAME)) {        // l'indicateur a pu être perdu : on revalide d'après la taille du fichier
+    File chk = SD.open(SD_FRAME, FILE_READ);
+    if (chk) { sdFrameValid = (chk.size() == (unsigned long)FRAME_BYTES); chk.close(); if (sdFrameValid) sdWhy = ""; }
+  }
+  if (!sdFrameValid) {
+    logf("[TOUCH] cartel NON masquable : %s (voir les lignes [SD] ci-dessus)", sdWhy);
+    drawCartel();                                            // rafraîchit la pastille rouge pour montrer pourquoi
+    return;
+  }
   const unsigned long t0 = millis();
   if (restoreRows(0, BAND_TOP_H) && restoreRows(BAND_BOT_Y, BAND_BOT_H)) { cartelVisible = false; logf("[TOUCH] cartel masqué en %lu ms", millis() - t0); }
-  else { sdFrameValid = false; logf("[TOUCH] lecture de la carte impossible : cartel conservé"); }
+  else { sdFrameValid = false; sdWhy = "SD lecture"; logf("[TOUCH] lecture de /pod/frame.bin impossible : cartel conservé"); drawCartel(); }
 }
 static void serviceTouch() {
   if (!touchOk || !ts.touched()) return;

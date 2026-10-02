@@ -14,7 +14,7 @@
 // porter. Une source mono n'invente jamais de rouge.
 
 import { encodeForScreen, type EncodedFrame } from "@/lib/screenEncode";
-import { isValidScreenId, type ScreenId } from "@/lib/screenProfiles";
+import { isValidScreenId, SCREEN_PROFILES, type ScreenId } from "@/lib/screenProfiles";
 
 export interface ScreenBitmap {
   w: number;
@@ -99,9 +99,52 @@ export function decodePayloadToBitmap(payload: Payload): ScreenBitmap | null {
   } catch { return null; }
 }
 
+// ── TFT → TFT : les COULEURS sont conservées ───────────────────────────────────
+// Le chemin général passe par un bitmap « encre noire / rouge » (utile vers les écrans mono) : un dessin en couleur converti d'un
+// TFT à l'autre (ex. 1.8" → 2.8" tactile) deviendrait noir, blanc et rouge, comme sur un e-ink. Entre deux écrans RGB565 on redimensionne
+// donc les pixels EUX-MÊMES : même géométrie « letterbox » que le reste (fond blanc, centré, sans déformation) ; à l'agrandissement un
+// pixel source est répété (le pixel-art reste net), à la réduction le pixel le plus sombre du bloc est gardé (un trait fin ne disparaît pas).
+const RGB565_SCREENS = new Set<string>(["tft18", "tft28"]);
+
+function rgb565Luma(v: number): number {
+  const r = ((v >> 11) & 0x1f) << 3, g = ((v >> 5) & 0x3f) << 2, b = (v & 0x1f) << 3;
+  return (r * 77 + g * 150 + b * 29) >> 8;
+}
+
+function convertRgb565(payload: Payload, source: ScreenId, target: ScreenId): (EncodedFrame & { screen: ScreenId }) | null {
+  const sp = SCREEN_PROFILES[source], tp = SCREEN_PROFILES[target];
+  const src = b64(payload.buffer);
+  if (src.length !== sp.width * sp.height * 2) return null;
+  const sw = sp.width, sh = sp.height, dw = tp.width, dh = tp.height;
+  const out = new Uint8Array(dw * dh * 2).fill(0xff);                       // 0xFFFF = blanc
+  const scale = Math.min(dw / sw, dh / sh);
+  const fitW = Math.max(1, Math.round(sw * scale)), fitH = Math.max(1, Math.round(sh * scale));
+  const offX = Math.floor((dw - fitW) / 2), offY = Math.floor((dh - fitH) / 2);
+  for (let y = 0; y < fitH; y++) {
+    const sy0 = Math.floor((y * sh) / fitH), sy1 = Math.max(sy0 + 1, Math.floor(((y + 1) * sh) / fitH));
+    for (let x = 0; x < fitW; x++) {
+      const sx0 = Math.floor((x * sw) / fitW), sx1 = Math.max(sx0 + 1, Math.floor(((x + 1) * sw) / fitW));
+      let best = 0xffff, bestLuma = 256;
+      for (let yy = sy0; yy < Math.min(sy1, sh); yy++) {
+        for (let xx = sx0; xx < Math.min(sx1, sw); xx++) {
+          const o = (yy * sw + xx) * 2, v = src[o] | (src[o + 1] << 8), l = rgb565Luma(v);
+          if (l < bestLuma) { bestLuma = l; best = v; }
+        }
+      }
+      const d = ((offY + y) * dw + offX + x) * 2;
+      out[d] = best & 0xff; out[d + 1] = best >> 8;
+    }
+  }
+  return { buffer: Buffer.from(out).toString("base64"), screen: target };
+}
+
 /** Convertit un payload vers `target`. null si source/cible inconnue. */
 export function convertPayload(payload: Payload, target: string): (EncodedFrame & { screen: ScreenId }) | null {
   if (!isValidScreenId(target)) return null;
+  const from = String(payload.screen ?? "");
+  if (RGB565_SCREENS.has(from) && RGB565_SCREENS.has(target) && from !== target) {
+    return convertRgb565(payload, from as ScreenId, target);   // couleurs conservées entre TFT
+  }
   const bmp = decodePayloadToBitmap(payload);
   if (!bmp) return null;
   const enc = encodeForScreen(bmp.gray, bmp.w, bmp.h, target, bmp.red ? { red: bmp.red } : undefined);

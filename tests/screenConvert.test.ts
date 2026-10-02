@@ -98,3 +98,36 @@ test("wrapText : coupe aux mots, conserve les strophes, coupe les mots trop long
   assert.deepEqual(wrapText("a\n\nb", 5), ["a", "", "b"]);
   assert.deepEqual(wrapText("abcdefghij", 4), ["abcd", "efgh", "ij"]);
 });
+
+// ── TFT ↔ TFT : les couleurs survivent (un dessin en couleur ne devient pas « noir, blanc, rouge ») ─────────────────────
+function colourFrame(screen: "tft18" | "tft28") {
+  const { width: W, height: H } = SCREEN_PROFILES[screen];
+  const buf = Buffer.alloc(W * H * 2, 0xff);                                      // fond blanc
+  const COLOURS = [0x07e0 /* vert */, 0x001f /* bleu */, 0xffe0 /* jaune */, 0xf81f /* magenta */];
+  for (let y = Math.floor(H * 0.2); y < Math.floor(H * 0.8); y++) {
+    for (let x = Math.floor(W * 0.1); x < Math.floor(W * 0.9); x++) {
+      const v = COLOURS[Math.floor(((x - W * 0.1) / (W * 0.8)) * COLOURS.length)];
+      buf[(y * W + x) * 2] = v & 0xff; buf[(y * W + x) * 2 + 1] = v >> 8;
+    }
+  }
+  return { screen, buffer: buf.toString("base64"), COLOURS };
+}
+const distinct565 = (b64: string) => {
+  const b = Buffer.from(b64, "base64"), s = new Set<number>();
+  for (let i = 0; i < b.length; i += 2) s.add(b[i] | (b[i + 1] << 8));
+  return s;
+};
+
+for (const [from, to] of [["tft18", "tft28"], ["tft28", "tft18"]] as const) {
+  test(`conversion ${from} → ${to} : les couleurs d'origine sont conservées (pas de passage par le noir/rouge)`, () => {
+    const src = colourFrame(from);
+    const out = convertPayload({ screen: from, buffer: src.buffer }, to) as unknown as { screen: string; buffer: string };
+    assert.ok(out, "conversion possible");
+    assert.equal(out.screen, to);
+    assert.equal(Buffer.from(out.buffer, "base64").length, SCREEN_PROFILES[to].bufferSize);
+    const colours = distinct565(out.buffer);
+    for (const c of src.COLOURS) assert.ok(colours.has(c), `couleur 0x${c.toString(16)} perdue`);
+    assert.ok(colours.has(0xffff), "le fond blanc reste blanc");
+    assert.ok(![...colours].every((c) => c === 0xffff || c === 0x0000 || c === 0xf800), "image encore en noir/blanc/rouge");
+  });
+}
