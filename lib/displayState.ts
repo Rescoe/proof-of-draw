@@ -120,18 +120,35 @@ export function toPublicShown(rec: ShownRecord): PublicShown {
   return rec;
 }
 
-/** Une seule commande MGET pour tous les couples (appareil, écran). */
-export async function readShownMap(
+/** Enregistrements COMPLETS (vue du propriétaire : debug). Une seule commande MGET pour tous les couples (appareil, écran). */
+export async function readShownRecords(
   kv: DisplayKV, pairs: { deviceId: string; screen: string }[],
-): Promise<Record<string, Record<string, PublicShown>>> {
-  const out: Record<string, Record<string, PublicShown>> = {};
+): Promise<Record<string, Record<string, ShownRecord>>> {
+  const out: Record<string, Record<string, ShownRecord>> = {};
   if (pairs.length === 0) return out;
   const raws = await kv.mget(...pairs.map((p) => shownKey(p.deviceId, p.screen)));
   pairs.forEach((p, i) => {
     const rec = parseRecord(raws[i]);
-    if (!rec) return;
-    (out[p.deviceId] ??= {})[p.screen] = toPublicShown(rec);
+    if (rec) (out[p.deviceId] ??= {})[p.screen] = rec;
   });
+  return out;
+}
+
+/**
+ * Vue PUBLIQUE : uniquement les affichages qui ont une image à montrer. Une frame personnelle (privée) et un écran sans
+ * confirmation sont simplement absents — la carte réseau n'affiche que des images.
+ */
+export async function readShownMap(
+  kv: DisplayKV, pairs: { deviceId: string; screen: string }[],
+): Promise<Record<string, Record<string, PublicShown>>> {
+  const full = await readShownRecords(kv, pairs);
+  const out: Record<string, Record<string, PublicShown>> = {};
+  for (const [deviceId, screens] of Object.entries(full)) {
+    for (const [screen, rec] of Object.entries(screens)) {
+      if (rec.kind === "personal" || !rec.hasImage) continue;
+      (out[deviceId] ??= {})[screen] = toPublicShown(rec);
+    }
+  }
   return out;
 }
 

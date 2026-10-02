@@ -1,9 +1,8 @@
 "use client";
 
 // app/network/LiveDisplays.tsx
-// « Qui affiche quoi » en direct : ce que chaque ESP a CONFIRMÉ avoir affiché (ACK du firmware), avec l'aperçu de l'image,
-// le titre, l'artiste et la nature de l'œuvre. Distinct du dernier bloc miné/validé : un bloc peut être validé sans être
-// encore affiché (frame en attente), ou remplacé sur l'écran par une autre œuvre (ANA, personnelle…).
+// « Qui affiche quoi » en direct : les IMAGES que chaque ESP a CONFIRMÉ afficher (ACK du firmware). Vue publique volontairement
+// sobre : images seulement. Le détail (titre, nature, frameId, bloc, mode…) vit dans « Mon profil » (OwnDisplaysDebug).
 // Données : /api/network/displays (une requête, cache serveur invalidé par ACK) puis /api/network/display-image par frame
 // (immuable, cache navigateur). Rafraîchissement : toutes les 60 s, seulement onglet visible.
 
@@ -75,7 +74,7 @@ function payloadToImageData(p: ImagePayload): ImageData | null {
   return null;
 }
 
-function ShownThumb({ frameId, screen, box }: { frameId: string; screen: string; box: { w: number; h: number } }) {
+export function ShownThumb({ frameId, screen, box }: { frameId: string; screen: string; box: { w: number; h: number } }) {
   const ref = useRef<HTMLCanvasElement>(null);
   const [state, setState] = useState<"loading" | "ok" | "missing">("loading");
   const [native, setNative] = useState<{ w: number; h: number } | null>(null);
@@ -106,135 +105,80 @@ function ShownThumb({ frameId, screen, box }: { frameId: string; screen: string;
   );
 }
 
-// ─── Libellés ────────────────────────────────────────────────────────────────
-
-const ANA_KIND_LABEL: Record<string, string> = {
-  poem: "Poème d'agent IA",
-  celebration: "Mémorial de burn",
-  spontaneous: "Dessin d'agent IA",
-  "generative-capture": "Œuvre générative",
-};
-
-export function kindLabel(s: PublicShown): string {
-  if (s.kind === "personal") return "Affichage privé";
-  if (s.kind === "ana") return (ANA_KIND_LABEL[s.anaKind ?? ""] ?? "Œuvre ANA") + (s.mode === "scene" ? " · scène animée" : "");
-  return s.blockIndex != null ? `Dessin humain · bloc #${s.blockIndex}` : "Dessin humain";
-}
-
-function ago(ts: number): string {
-  const sec = Math.max(0, Math.floor((Date.now() - ts) / 1000));
-  if (sec < 60) return "à l'instant";
-  if (sec < 3600) return `il y a ${Math.floor(sec / 60)} min`;
-  if (sec < 86400) return `il y a ${Math.floor(sec / 3600)} h`;
-  return `il y a ${Math.floor(sec / 86400)} j`;
-}
+// ─── Vue publique : images seulement ─────────────────────────────────────────
 
 const SCREEN_COLOR: Record<string, string> = { eink29bwr: "#f87171", eink27bw: "#94a3b8", oled096: "#60a5fa", tft18: "#fbbf24" };
 
-// ─── Une carte = un écran ────────────────────────────────────────────────────
-
-export function ShownScreen({ screen, label, shown, box = { w: 150, h: 96 } }: {
-  screen: string; label: string; shown: PublicShown | undefined; box?: { w: number; h: number };
-}) {
-  const color = SCREEN_COLOR[screen] ?? "#a2a3bb";
+/** Une image affichée (miniature + légende minimale : le nom de l'écran en couleur). */
+function ShownImage({ screen, label, shown, box }: { screen: string; label: string; shown: PublicShown; box: { w: number; h: number } }) {
+  if (!shown.frameId) return null;
   return (
-    <div className="ld-screen">
-      <div className="ld-screen__label" style={{ color }}>{label}</div>
-      {!shown ? (
-        <div className="ld-thumb ld-thumb--empty" style={{ width: box.w, height: box.h }}>
-          <span className="ld-muted">pas encore de confirmation d&apos;affichage</span>
-        </div>
-      ) : shown.kind === "personal" ? (
-        <div className="ld-thumb ld-thumb--empty" style={{ width: box.w, height: box.h }}>
-          <span className="ld-muted">🔒 dessin personnel</span>
-        </div>
-      ) : shown.frameId && shown.hasImage ? (
-        <ShownThumb frameId={shown.frameId} screen={screen} box={box} />
-      ) : (
-        <div className="ld-thumb ld-thumb--empty" style={{ width: box.w, height: box.h }}><span className="ld-muted">pas d&apos;aperçu</span></div>
-      )}
-      {shown && (
-        <div className="ld-screen__meta">
-          {shown.kind !== "personal" && shown.workTitle && shown.workTitle !== "Sans titre" && <strong>{shown.workTitle}</strong>}
-          {shown.kind !== "personal" && shown.artistName && <span>{shown.artistName}</span>}
-          <span className="ld-muted">{kindLabel(shown)} · {ago(shown.shownAt)}</span>
-        </div>
-      )}
-    </div>
+    <figure className="ld-img" title={[shown.workTitle, shown.artistName].filter(Boolean).join(" — ") || undefined}>
+      <ShownThumb frameId={shown.frameId} screen={screen} box={box} />
+      <figcaption style={{ color: SCREEN_COLOR[screen] ?? "#a2a3bb" }}>{label}</figcaption>
+    </figure>
   );
 }
 
-/** Bloc « Affiché maintenant » du panneau d'un appareil (un écran, ou tous ses écrans). */
+/** Bloc « Affiché maintenant » du panneau d'un appareil : ses images, rien d'autre (rien du tout s'il n'y en a pas). */
 export function DeviceShownNow({ device, displays, onlyScreen }: {
   device: NetworkDevice; displays: DisplaysMap | null; onlyScreen?: string;
 }) {
-  const screens = device.screens.filter((s) => !onlyScreen || s.screen === onlyScreen);
+  const shown = device.screens
+    .filter((s) => !onlyScreen || s.screen === onlyScreen)
+    .map((s) => ({ s, shown: displays?.[device.deviceId]?.[s.screen] }))
+    .filter((x): x is { s: typeof x.s; shown: PublicShown } => !!x.shown);
+  if (shown.length === 0) return null;
   return (
     <div className="nv2-panel__section">
-      <div className="nv2-panel__section-label">Affiché maintenant sur l&apos;écran</div>
-      {!displays ? <p className="ld-muted">Chargement…</p> : (
-        <div className="ld-row">
-          {screens.map((s) => (
-            <ShownScreen key={s.screen} screen={s.screen} label={s.label} shown={displays[device.deviceId]?.[s.screen]} box={{ w: 200, h: 120 }} />
-          ))}
-        </div>
-      )}
+      <div className="nv2-panel__section-label">Affiché maintenant</div>
+      <div className="ld-row">
+        {shown.map(({ s, shown: sh }) => <ShownImage key={s.screen} screen={s.screen} label={s.label} shown={sh} box={{ w: 200, h: 120 }} />)}
+      </div>
       <LiveStyle />
     </div>
   );
 }
 
-// ─── Section pleine largeur : tous les appareils ─────────────────────────────
-
-export function LiveDisplaysSection({ snapshot, data, error, onSelect }: {
-  snapshot: NetworkSnapshot; data: DisplaysResponse | null; error: boolean;
+/** Section sous la carte : les images en cours d'affichage, par appareil. Masquée tant qu'aucun écran n'a confirmé d'affichage. */
+export function LiveDisplaysSection({ snapshot, data, onSelect }: {
+  snapshot: NetworkSnapshot; data: DisplaysResponse | null;
   onSelect: (device: NetworkDevice, screen?: string) => void;
 }) {
-  const displays = data?.displays ?? null;
-  const lastShown = (d: NetworkDevice) => Math.max(0, ...d.screens.map((s) => displays?.[d.deviceId]?.[s.screen]?.shownAt ?? 0));
-  const devices = [...snapshot.devices].sort((a, b) => Number(b.isOnline) - Number(a.isOnline) || lastShown(b) - lastShown(a));
+  const displays = data?.displays;
+  if (!displays) return null;
+  const cards = snapshot.devices
+    .map((d) => ({ d, items: d.screens.map((s) => ({ s, shown: displays[d.deviceId]?.[s.screen] })).filter((x): x is { s: typeof x.s; shown: PublicShown } => !!x.shown) }))
+    .filter((c) => c.items.length > 0)
+    .sort((a, b) => Math.max(...b.items.map((i) => i.shown.shownAt)) - Math.max(...a.items.map((i) => i.shown.shownAt)));
+  if (cards.length === 0) return null;
 
   return (
-    <section className="ld-section" aria-label="Écrans en direct">
-      <header className="ld-head">
-        <h2>Écrans en direct</h2>
-        <span className="ld-muted">
-          Ce que chaque ESP a confirmé afficher — rafraîchi toutes les minutes
-          {data && ` · mis à jour ${ago(data.generatedAt)}`}
-          {error && " · connexion instable"}
-        </span>
-      </header>
-      {!displays && !error && <p className="ld-muted">Chargement des affichages…</p>}
-      {error && !displays && <p className="ld-muted">Affichages indisponibles pour le moment.</p>}
-      {displays && (
-        <div className="ld-grid">
-          {devices.map((d) => (
-            <article key={d.deviceId} className="ld-card">
-              <button className="ld-card__head" onClick={() => onSelect(d)} title="Ouvrir cet appareil dans la carte">
-                <span className="ld-dot" style={{ background: d.isOnline ? "#4ade80" : "#475569" }} />
-                <strong>{d.artistName || d.deviceId.slice(0, 14)}</strong>
-                <span className="ld-muted">{d.isOnline ? "en ligne" : "hors ligne"}</span>
-              </button>
-              <div className="ld-row">
-                {d.screens.map((s) => (
-                  <ShownScreen key={s.screen} screen={s.screen} label={s.label} shown={displays[d.deviceId]?.[s.screen]} />
-                ))}
-              </div>
-            </article>
-          ))}
-        </div>
-      )}
+    <section className="ld-section" aria-label="Actuellement affiché">
+      <h2 className="ld-title">Actuellement affiché</h2>
+      <div className="ld-grid">
+        {cards.map(({ d, items }) => (
+          <article key={d.deviceId} className="ld-card">
+            <button className="ld-card__head" onClick={() => onSelect(d)} title="Ouvrir cet appareil dans la carte">
+              <span className="ld-dot" style={{ background: d.isOnline ? "#4ade80" : "#475569" }} />
+              <strong>{d.artistName || d.deviceId.slice(0, 14)}</strong>
+            </button>
+            <div className="ld-row">
+              {items.map(({ s, shown }) => <ShownImage key={s.screen} screen={s.screen} label={s.label} shown={shown} box={{ w: 150, h: 96 }} />)}
+            </div>
+          </article>
+        ))}
+      </div>
       <LiveStyle />
     </section>
   );
 }
 
-function LiveStyle() {
+export function LiveStyle() {
   return (
     <style>{`
       .ld-section { margin-top: 18px; background: #080c14; border-radius: 16px; padding: 18px; color: #f1f5f9; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
-      .ld-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 14px; margin-bottom: 14px; }
-      .ld-head h2 { margin: 0; font-size: 16px; }
+      .ld-title { margin: 0 0 12px; font-size: 14px; font-weight: 700; }
       .ld-muted { font-size: 11px; color: rgba(148,163,184,0.75); line-height: 1.5; }
       .ld-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 340px), 1fr)); gap: 12px; }
       .ld-card { background: #0e1422; border: 1px solid rgba(255,255,255,0.06); border-radius: 12px; padding: 10px 12px 12px; min-width: 0; }
@@ -242,12 +186,9 @@ function LiveStyle() {
       .ld-card__head strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
       .ld-dot { width: 8px; height: 8px; border-radius: 50%; flex: none; }
       .ld-row { display: flex; flex-wrap: wrap; gap: 12px; }
-      .ld-screen { display: flex; flex-direction: column; gap: 6px; min-width: 0; max-width: 100%; }
-      .ld-screen__label { font-size: 11px; font-weight: 700; }
-      .ld-screen__meta { display: flex; flex-direction: column; gap: 1px; font-size: 12px; max-width: 220px; overflow-wrap: anywhere; }
-      .ld-screen__meta strong { font-size: 12px; }
+      .ld-img { margin: 0; display: flex; flex-direction: column; gap: 4px; min-width: 0; max-width: 100%; }
+      .ld-img figcaption { font-size: 11px; font-weight: 700; }
       .ld-thumb { display: flex; align-items: center; justify-content: center; background: #fff; border: 1px solid rgba(255,255,255,0.1); border-radius: 6px; overflow: hidden; max-width: 100%; }
-      .ld-thumb--empty { background: #0b101b; border-style: dashed; padding: 6px; text-align: center; }
     `}</style>
   );
 }

@@ -3,7 +3,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
-  buildShownRecord, recordDisplayed, readShownMap, readShownImage, toPublicShown, imagePayloadOf,
+  buildShownRecord, recordDisplayed, readShownMap, readShownRecords, readShownImage, toPublicShown, imagePayloadOf,
   shownKey, shownImageKey, SHOWN_TTL_SEC, type DisplayKV,
 } from "../lib/displayState";
 
@@ -103,7 +103,7 @@ test("mode « scene » transmis par le firmware est conservé ; une valeur absen
   assert.ok(!("mode" in buildShownRecord(anaFrame, "tft18", "consensus", 1)!));
 });
 
-test("lecture publique : UN SEUL MGET pour tout le réseau, appareils sans affichage simplement absents", async () => {
+test("lecture publique : UN SEUL MGET, uniquement les affichages AVEC image — privé et non confirmé absents", async () => {
   const { kv, log } = fakeKV();
   await recordDisplayed(kv, "dev_AAAA1111", "tft18", anaFrame, "consensus", undefined, 100);
   await recordDisplayed(kv, "dev_AAAA1111", "oled096", { frameId: "frame-perso-9", payload: { screen: "oled096" } }, "personal", undefined, 200);
@@ -115,9 +115,17 @@ test("lecture publique : UN SEUL MGET pour tout le réseau, appareils sans affic
   ]);
   assert.deepEqual(log, ["MGET ×3"], "une commande, quel que soit le nombre d'appareils");
   assert.equal(map.dev_AAAA1111.tft18.workTitle, "Neon Pulse Canvas");
-  assert.equal(map.dev_AAAA1111.oled096.kind, "personal");
+  assert.equal(map.dev_AAAA1111.oled096, undefined, "frame personnelle : jamais exposée, pas même son existence");
   assert.equal(map.dev_CCCC3333, undefined);
   assert.deepEqual(await readShownMap(kv, []), {});
+
+  // vue propriétaire : tout, y compris l'affichage personnel (frameId inclus) — 1 seul MGET aussi
+  log.length = 0;
+  const own = await readShownRecords(kv, [{ deviceId: "dev_AAAA1111", screen: "tft18" }, { deviceId: "dev_AAAA1111", screen: "oled096" }]);
+  assert.deepEqual(log, ["MGET ×2"]);
+  assert.equal(own.dev_AAAA1111.oled096.kind, "personal");
+  assert.equal(own.dev_AAAA1111.oled096.frameId, "frame-perso-9");
+  assert.equal(own.dev_AAAA1111.tft18.blockHash, "ab".repeat(32));
 });
 
 test("lecture tolérante : valeurs corrompues ignorées sans exception", async () => {

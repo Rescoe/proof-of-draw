@@ -247,7 +247,6 @@ export function SidePanel({
     </aside>
   );
 
-  const primaryScreenType = device.screens[0]?.screen ?? "";
 
   return (
     <aside className="nv2-panel">
@@ -382,79 +381,10 @@ export function SidePanel({
         </div>
       )}
 
-      {/* ── Frame en cours / dernier bloc — fusionnés si même frameId ── */}
-      {tab === "frame" && (() => {
-        const frameIsBlock = !loadingBlock && lastBlock && device.recentFrame &&
-          device.recentFrame.frameId === lastBlock.frameId;
-
-        if (frameIsBlock) {
-          return (
-            <>
-            <DeviceShownNow device={device} displays={displays} onlyScreen={focusScreen} />
-            <div className="nv2-panel__section">
-              <div className="nv2-panel__section-label" style={{ color: "var(--accent)" }}>
-                ◈ Bloc #{lastBlock!.blockIndex} — validé, en attente d&apos;affichage
-              </div>
-              {lastImage && blockImageToPreview(lastImage).mode !== "none" && (
-                <FramePreviewMini
-                  preview={blockImageToPreview(lastImage)}
-                  screenType={lastImage.screen}
-                />
-              )}
-              <div className="nv2-block-meta" style={{ marginTop: 8 }}>
-                {lastBlock!.workTitle && lastBlock!.workTitle !== "Sans titre" && (
-                  <div className="nv2-block-meta__row">
-                    <span className="nv2-block-meta__label">Titre</span>
-                    <span className="nv2-block-meta__value">{lastBlock!.workTitle}</span>
-                  </div>
-                )}
-                {lastBlock!.drawArtistName && (
-                  <div className="nv2-block-meta__row">
-                    <span className="nv2-block-meta__label">Artiste</span>
-                    <span className="nv2-block-meta__value">{lastBlock!.drawArtistName}</span>
-                  </div>
-                )}
-                <div className="nv2-block-meta__row">
-                  <span className="nv2-block-meta__label">Miné</span>
-                  <span className="nv2-block-meta__value">{formatRelativeTime(lastBlock!.minedAt)}</span>
-                </div>
-                <div className="nv2-block-meta__row">
-                  <span className="nv2-block-meta__label">PoD score</span>
-                  <span className="nv2-block-meta__value nv2-green">{lastBlock!.drawScore}</span>
-                </div>
-                <div className="nv2-block-meta__row">
-                  <span className="nv2-block-meta__label">Display</span>
-                  <span className="nv2-block-meta__value">{lastBlock!.displayTime}s</span>
-                </div>
-              </div>
-            </div>
-            </>
-          );
-        }
-
-        return (
-          <>
-            <DeviceShownNow device={device} displays={displays} onlyScreen={focusScreen} />
-            <div className="nv2-panel__section">
-              <div className="nv2-panel__section-label">Frame en attente d&apos;affichage</div>
-              {device.recentFrame && device.recentFrame.preview.mode !== "none" ? (
-                <>
-                  <FramePreviewMini
-                    preview={device.recentFrame.preview}
-                    screenType={primaryScreenType}
-                  />
-                  <p className="nv2-muted nv2-small" style={{ marginTop: 6 }}>
-                    {`Frame ${device.recentFrame.frameId.slice(0, 8)}… · ${formatRelativeTime(device.recentFrame.createdAt)}`}
-                  </p>
-                  {device.recentFrame.sourceDeviceId && (
-                    <p className="nv2-muted nv2-small">Source : {device.recentFrame.sourceDeviceId}</p>
-                  )}
-                </>
-              ) : (
-                <p className="nv2-muted nv2-small">Aucune frame en attente (l&apos;écran a tout affiché)</p>
-              )}
-            </div>
-
+      {/* ── Frame : l'image réellement affichée + le dernier bloc validé ── */}
+      {tab === "frame" && (
+        <>
+          <DeviceShownNow device={device} displays={displays} onlyScreen={focusScreen} />
             <div className="nv2-panel__section">
               <div className="nv2-panel__section-label">Dernier bloc validé</div>
               {loadingBlock && <p className="nv2-muted nv2-small nv2-loading">Chargement…</p>}
@@ -510,9 +440,8 @@ export function SidePanel({
                 <p className="nv2-muted nv2-small">Aucun bloc miné par ce device</p>
               )}
             </div>
-          </>
-        );
-      })()}
+        </>
+      )}
 
       {tab === "logs" && (
         <EspDeviceLog device={device} activity={activity} lastBlock={lastBlock} />

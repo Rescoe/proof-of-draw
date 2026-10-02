@@ -182,7 +182,6 @@ export function NetworkMap({ snapshot }: Props) {
     <LiveDisplaysSection
       snapshot={snapshot}
       data={live.data}
-      error={live.error}
       onSelect={handleSelect}
     />
     </>
