@@ -90,20 +90,32 @@ export async function getFrameForDevice(
   return frames.reduce((oldest, f) => (f.storedAt < oldest.storedAt ? f : oldest));
 }
 
-export async function clearFrameForDeviceAck(
+/**
+ * ACK d'affichage : retire la frame en attente dont l'id correspond ET la retourne (avec son écran) pour que le serveur
+ * puisse enregistrer ce que l'appareil affiche réellement (lib/displayState.ts). null si aucune frame ne correspond.
+ */
+export async function takeFrameForDeviceAck(
   deviceId: string,
   screens: string[],
   frameId: string
-): Promise<boolean> {
+): Promise<{ frame: StoredFrame; screen: string } | null> {
   for (const screen of screens) {
     const raw = await redis.get(frameKey(deviceId, screen));
     const frame = parseFrame(raw);
     if (frame && frame.frameId === frameId) {
       await redis.del(frameKey(deviceId, screen));
-      return true;
+      return { frame, screen };
     }
   }
-  return false;
+  return null;
+}
+
+export async function clearFrameForDeviceAck(
+  deviceId: string,
+  screens: string[],
+  frameId: string
+): Promise<boolean> {
+  return (await takeFrameForDeviceAck(deviceId, screens, frameId)) !== null;
 }
 
 // Compat legacy

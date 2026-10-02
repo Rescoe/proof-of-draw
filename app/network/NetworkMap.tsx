@@ -6,6 +6,7 @@ import { NetworkStage } from "./NetworkStage";
 import { SidePanel } from "./SidePanel";
 import { ServerInfoPanel } from "./ServerInfoPanel";
 import { GlobalTerminalPanel } from "./GlobalTerminal";
+import { LiveDisplaysSection, useLiveDisplays } from "./LiveDisplays";
 
 type Props = { snapshot: NetworkSnapshot | null };
 
@@ -17,6 +18,8 @@ type Selection =
 
 export function NetworkMap({ snapshot }: Props) {
   const [selected, setSelected] = useState<Selection | null>(null);
+  // Ce que chaque écran affiche réellement (ACK firmware) — une requête partagée par la section « en direct » et le panneau appareil
+  const live = useLiveDisplays();
 
   const handleSelect = useCallback((device: NetworkDevice, screen?: string) => {
     setSelected((prev) => {
@@ -43,7 +46,8 @@ export function NetworkMap({ snapshot }: Props) {
   }
 
   return (
-    // Le panel est toujours présent — console par défaut, device info si sélectionné
+    <>
+    {/* Le panel est toujours présent — console par défaut, device info si sélectionné */}
     <div className="nv2-layout nv2-layout--panel">
       <NetworkStage
         snapshot={snapshot}
@@ -58,6 +62,7 @@ export function NetworkMap({ snapshot }: Props) {
           <SidePanel
             device={selected.device}
             focusScreen={selected.focusScreen}
+            displays={live.data?.displays ?? null}
             onClose={() => setSelected(null)}
           />
         ) : selected?.kind === "server" ? (
@@ -173,5 +178,13 @@ export function NetworkMap({ snapshot }: Props) {
         .nv2-empty small { font-size: 13px; opacity: 0.5; }
       `}</style>
     </div>
+
+    <LiveDisplaysSection
+      snapshot={snapshot}
+      data={live.data}
+      error={live.error}
+      onSelect={handleSelect}
+    />
+    </>
   );
 }

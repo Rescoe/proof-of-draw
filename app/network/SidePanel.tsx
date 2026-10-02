@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { NetworkDevice, NetworkPreview } from "@/lib/networkSnapshot";
 import { eink29bwrToCanvas, eink27bwToCanvas, oled096ToCanvas } from "@/lib/screenToCanvas";
+import { DeviceShownNow, type DisplaysMap } from "./LiveDisplays";
 
 // ─── Types locaux (évite d'importer des modules serveur) ─────────────────────
 
@@ -177,9 +178,12 @@ const TAB_LABEL: Record<SidePanelTab, string> = {
 export function SidePanel({
   device,
   focusScreen,
+  displays = null,
   onClose,
 }: {
   device: NetworkDevice | null;
+  // Ce que chaque écran a confirmé afficher (ACK) — voir LiveDisplays.tsx. null = pas encore chargé.
+  displays?: DisplaysMap | null;
   // Renseigné quand l'utilisateur a cliqué sur un nœud-écran (et non sur l'ESP
   // lui-même) — on met alors en avant le bloc/la frame affichée sur CET écran
   // (hash, contenu, timestamp, statut de rendu) plutôt que les infos générales.
@@ -295,6 +299,7 @@ export function SidePanel({
       {/* ── Aperçu : écrans connectés + métriques ── */}
       {tab === "apercu" && (
         <>
+          <DeviceShownNow device={device} displays={displays} />
           <div className="nv2-panel__section">
             <div className="nv2-panel__section-label">Écrans connectés</div>
             <div className="nv2-screen-grid">
@@ -384,9 +389,11 @@ export function SidePanel({
 
         if (frameIsBlock) {
           return (
+            <>
+            <DeviceShownNow device={device} displays={displays} onlyScreen={focusScreen} />
             <div className="nv2-panel__section">
               <div className="nv2-panel__section-label" style={{ color: "var(--accent)" }}>
-                ◈ Bloc #{lastBlock!.blockIndex} — actuellement affiché
+                ◈ Bloc #{lastBlock!.blockIndex} — validé, en attente d&apos;affichage
               </div>
               {lastImage && blockImageToPreview(lastImage).mode !== "none" && (
                 <FramePreviewMini
@@ -421,13 +428,15 @@ export function SidePanel({
                 </div>
               </div>
             </div>
+            </>
           );
         }
 
         return (
           <>
+            <DeviceShownNow device={device} displays={displays} onlyScreen={focusScreen} />
             <div className="nv2-panel__section">
-              <div className="nv2-panel__section-label">Frame en cours d&apos;affichage</div>
+              <div className="nv2-panel__section-label">Frame en attente d&apos;affichage</div>
               {device.recentFrame && device.recentFrame.preview.mode !== "none" ? (
                 <>
                   <FramePreviewMini
@@ -442,7 +451,7 @@ export function SidePanel({
                   )}
                 </>
               ) : (
-                <p className="nv2-muted nv2-small">Aucune frame active</p>
+                <p className="nv2-muted nv2-small">Aucune frame en attente (l&apos;écran a tout affiché)</p>
               )}
             </div>
 

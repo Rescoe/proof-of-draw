@@ -177,21 +177,21 @@ async function ingestItem(item: ParsedItem, optIn: Device[]): Promise<void> {
     const payload = encoded as Record<string, string>;
     const scenePointer = pointers && isSceneScreen(screen) ? pointers[screen] : undefined;
 
-    await Promise.all([
-      broadcastToDevices(devices.map((d) => d.deviceId), screen, payload, {
-        workTitle: item.title, drawArtistName: agentName, ...(scenePointer ? { scene: scenePointer } : {}),
-      }),
-      createAnaBlock({
-        sourceId:     `${generative ? item.sourceId : item.id}:${screen}`,
-        agentTokenId: item.agentTokenId,
-        agentName,
-        title:        item.title,
-        poolScreen:   screen,
-        payload,
-        publishedAt:  item.publishedAt,
-        upsert:       generative,
-      }),
-    ]);
+    // Le bloc galerie d'abord : la frame diffusée porte son hash et la nature de l'œuvre (vue réseau « en direct »).
+    const block = await createAnaBlock({
+      sourceId:     `${generative ? item.sourceId : item.id}:${screen}`,
+      agentTokenId: item.agentTokenId,
+      agentName,
+      title:        item.title,
+      poolScreen:   screen,
+      payload,
+      publishedAt:  item.publishedAt,
+      upsert:       generative,
+    });
+    await broadcastToDevices(devices.map((d) => d.deviceId), screen, payload, {
+      workTitle: item.title, drawArtistName: agentName, anaKind: item.kind, blockHash: block.blockHash,
+      ...(scenePointer ? { scene: scenePointer } : {}),
+    });
     await redis.sadd(KEY_SCREEN_DONE, `${item.id}:${screen}`);
   }
 }

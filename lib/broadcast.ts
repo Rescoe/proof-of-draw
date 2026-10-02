@@ -30,7 +30,8 @@ const DRAW_WINDOW_SEC = parseInt(process.env.DRAW_WINDOW_SEC ?? "900");
 const ANA_FRAME_TTL_SEC = parseInt(process.env.ANA_FRAME_TTL_SEC ?? "7200");
 
 // `scene` : pointeur léger vers le paquet ANAS (scene-v1) — jamais le paquet lui-même ; la frame (buffer) reste le repli.
-type FrameMeta = { workTitle?: string; drawArtistName?: string; displayTs?: string; scene?: ScenePointer };
+// `anaKind` / `blockHash` : nature de l'œuvre ANA et son bloc galerie, pour la vue réseau « en direct » (lib/displayState.ts).
+type FrameMeta = { workTitle?: string; drawArtistName?: string; displayTs?: string; scene?: ScenePointer; anaKind?: string; blockHash?: string };
 
 function buildFrame(
   screen: string, payload: Record<string, string>, sourceDeviceId: string, meta?: FrameMeta,

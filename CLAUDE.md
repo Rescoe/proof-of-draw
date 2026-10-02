@@ -214,6 +214,22 @@ Règles à respecter :
 - aucune navigation automatique sur erreur dans la page de dessin : le dessin ne doit jamais être perdu ;
 - avant tout commit touchant le moteur : `npm test`, `npx tsc --noEmit`.
 
+## Vue réseau « en direct » (02/10/2026)
+
+Ce que chaque écran **affiche réellement** (≠ dernier bloc miné, ≠ frame en attente supprimée à l'ACK) :
+
+```
+POST /api/ack-frame (firmware, après affichage) → lib/displayState.ts recordDisplayed()
+  shown:{device}:{écran}     méta ~300 o (titre, artiste, nature, bloc, mode frame|scene)   TTL 30 j
+  shown:img:{frameId}:{écran} buffers, SET NX : une copie partagée par tous les appareils du même frameId
+GET /api/network/displays      1 MGET, cache serveur invalidé par ACK (tag network-displays), jamais par visiteur
+GET /api/network/display-image image immuable par frameId (cache navigateur 1 an)
+UI : app/network/LiveDisplays.tsx (section « Écrans en direct » + bloc « Affiché maintenant » du panneau appareil)
+```
+
+Règles : l'ACK ne doit **jamais** échouer à cause de cet enregistrement ; une frame **personnelle** (`personal:frame:*`) n'est ni
+copiée ni décrite publiquement (« affichage privé ») ; `mode: "scene"` dans le corps de l'ACK = l'appareil a joué l'animation.
+
 ## Non-goals
 
 Ne pas faire :
