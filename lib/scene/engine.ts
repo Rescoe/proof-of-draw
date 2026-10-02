@@ -177,3 +177,73 @@ export function renderPosterGray(scene: AnaScene, width: number, height: number)
   const idx = renderSceneIndices(scene, width, height, posterTick(scene));
   return indicesToPosterGray(idx, scene.palette, scene.backgroundIndex);
 }
+
+// ─── Rectangles sales (TFT : ne retransmettre que ce qui change) ──────────────
+// Zone MINIMALE CONSERVATRICE à redessiner pour passer du tick `prev` au tick `next` : union des boîtes (en pixels) des
+// seules entités dont le décalage change entre les deux ticks, prises à `prev` ET à `next`. Déterministe, sans buffer
+// précédent (le firmware n'a pas la RAM de garder deux frames). Propriété garantie (testée sur toutes les scènes et tous les
+// ticks, boucle comprise) : redessiner la frame COMPLÈTE puis ne retransmettre que ce rectangle donne exactement la frame de
+// référence. Un mouvement `linear` dont la boîte déborde du canevas est déclaré plein-largeur / plein-hauteur (repli en tore).
+
+export interface Rect { x: number; y: number; w: number; h: number }
+
+/** Décalage effectif en pixels-normalisés : `linear` ramené dans 0..65535 (tore), les autres inchangés. */
+function effectiveOffset(e: SceneEntity, tick: number): { x: number; y: number } {
+  const o = motionOffset(e.motion, tick);
+  return e.motion.type === "linear" ? { x: mod(o.x, 65536), y: mod(o.y, 65536) } : o;
+}
+
+function entityBox(e: SceneEntity, tick: number, w: number, h: number): Rect | null {
+  const wrap = e.motion.type === "linear";
+  const o = effectiveOffset(e, tick);
+  const px = (x: number) => toPixel(x + o.x, w);
+  const py = (y: number) => toPixel(y + o.y, h);
+  const lo = (s: number) => s >> 1, hi = (s: number) => s - 1 - (s >> 1);
+  const g = e.geometry;
+  let x0: number, y0: number, x1: number, y1: number;
+  switch (g.type) {
+    case "point": x0 = px(g.x) - lo(g.size); x1 = px(g.x) + hi(g.size); y0 = py(g.y) - lo(g.size); y1 = py(g.y) + hi(g.size); break;
+    case "line": {
+      x0 = Math.min(px(g.x1), px(g.x2)) - lo(g.width); x1 = Math.max(px(g.x1), px(g.x2)) + hi(g.width);
+      y0 = Math.min(py(g.y1), py(g.y2)) - lo(g.width); y1 = Math.max(py(g.y1), py(g.y2)) + hi(g.width);
+      break;
+    }
+    case "rect": x0 = px(g.x0); x1 = px(g.x1); y0 = py(g.y0); y1 = py(g.y1); break;
+    case "circle": {
+      const r = Math.floor((g.r * (Math.min(w, h) - 1)) / 65535);
+      x0 = px(g.cx) - r; x1 = px(g.cx) + r; y0 = py(g.cy) - r; y1 = py(g.cy) + r;
+      break;
+    }
+    case "polyline": {
+      const xs = g.points.map((p) => px(p.x)), ys = g.points.map((p) => py(p.y));
+      x0 = Math.min(...xs) - lo(g.width); x1 = Math.max(...xs) + hi(g.width);
+      y0 = Math.min(...ys) - lo(g.width); y1 = Math.max(...ys) + hi(g.width);
+      break;
+    }
+  }
+  if (wrap) {
+    if (x0 < 0 || x1 > w - 1) { x0 = 0; x1 = w - 1; }
+    if (y0 < 0 || y1 > h - 1) { y0 = 0; y1 = h - 1; }
+  } else {
+    x0 = Math.max(x0, 0); y0 = Math.max(y0, 0); x1 = Math.min(x1, w - 1); y1 = Math.min(y1, h - 1);
+  }
+  return x0 > x1 || y0 > y1 ? null : { x: x0, y: y0, w: x1 - x0 + 1, h: y1 - y0 + 1 };
+}
+
+/** Rectangle à retransmettre entre deux ticks consécutifs (le premier tick d'une lecture est toujours plein écran). null = rien ne change. */
+export function dirtyRectBetween(scene: AnaScene, width: number, height: number, prevTick: number, tick: number): Rect | null {
+  let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+  for (const e of scene.entities) {
+    if (e.motion.type === "static") continue;
+    const a = effectiveOffset(e, prevTick), b = effectiveOffset(e, tick);
+    if (a.x === b.x && a.y === b.y) continue;
+    for (const box of [entityBox(e, prevTick, width, height), entityBox(e, tick, width, height)]) {
+      if (!box) continue;
+      x0 = Math.min(x0, box.x); y0 = Math.min(y0, box.y); x1 = Math.max(x1, box.x + box.w - 1); y1 = Math.max(y1, box.y + box.h - 1);
+    }
+  }
+  return x0 > x1 ? null : { x: x0, y: y0, w: x1 - x0 + 1, h: y1 - y0 + 1 };
+}
+
+/** Tick précédent dans la lecture (boucle comprise) : 0 → durationTicks−1. */
+export const prevTickOf = (scene: AnaScene, tick: number): number => (tick - 1 + scene.durationTicks) % scene.durationTicks;

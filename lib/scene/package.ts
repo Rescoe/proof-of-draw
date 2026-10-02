@@ -143,6 +143,8 @@ class Reader {
   get offset() { return this.o; }
   private need(n: number) { if (this.o + n > this.end) throw new Error("paquet tronqué"); }
   u8() { this.need(1); return this.v.getUint8(this.o++); }
+  /** Booléen strict : 0 ou 1, tout autre octet = paquet invalide (aucune interprétation « truthy »). */
+  bool() { const b = this.u8(); if (b > 1) throw new Error("booléen invalide"); return b === 1; }
   u16() { this.need(2); const x = this.v.getUint16(this.o, true); this.o += 2; return x; }
   i16() { this.need(2); const x = this.v.getInt16(this.o, true); this.o += 2; return x; }
 }
@@ -151,10 +153,10 @@ function readGeometry(r: Reader, primitive: string): SceneGeometry {
   switch (primitive) {
     case "point": return { type: "point", x: r.u16(), y: r.u16(), size: r.u8() };
     case "line": return { type: "line", x1: r.u16(), y1: r.u16(), x2: r.u16(), y2: r.u16(), width: r.u8() };
-    case "rect": return { type: "rect", x0: r.u16(), y0: r.u16(), x1: r.u16(), y1: r.u16(), fill: r.u8() === 1 };
-    case "circle": return { type: "circle", cx: r.u16(), cy: r.u16(), r: r.u16(), fill: r.u8() === 1 };
+    case "rect": return { type: "rect", x0: r.u16(), y0: r.u16(), x1: r.u16(), y1: r.u16(), fill: r.bool() };
+    case "circle": return { type: "circle", cx: r.u16(), cy: r.u16(), r: r.u16(), fill: r.bool() };
     default: {
-      const n = r.u8(), closed = r.u8() === 1, width = r.u8();
+      const n = r.u8(), closed = r.bool(), width = r.u8();
       const points: Array<{ x: number; y: number }> = [];
       for (let i = 0; i < n; i++) points.push({ x: r.u16(), y: r.u16() });
       return { type: "polyline", points, closed, width };

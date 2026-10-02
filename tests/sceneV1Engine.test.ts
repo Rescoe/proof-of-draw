@@ -6,7 +6,7 @@ import path from "node:path";
 import { createHash } from "node:crypto";
 import {
   toPixel, bresenham, midpointCircle, renderSceneIndices, indicesToRgb565LE, indicesToOledBuffer, indicesToPosterGray,
-  indicesToRgba, renderPosterGray, posterTick, playbackMs,
+  indicesToRgba, renderPosterGray, posterTick, playbackMs, dirtyRectBetween, prevTickOf,
 } from "../lib/scene/engine";
 import { PACKAGE_PROFILE_DIMENSIONS, type ScenePackageProfile } from "../lib/scene/package";
 import { encodeForScreen } from "../lib/screenEncode";
@@ -185,4 +185,34 @@ test("ENDURANCE 10 s et 30 min : zéro Redis, zéro HTTP par frame (moteur pur, 
     assert.equal(play(2, 1800, "tft18").frames, 3600);     // 30 min TFT
   } finally { globalThis.fetch = realFetch; }
   assert.deepEqual(calls, [], "aucun appel réseau pendant la lecture");
+});
+
+test("RECTANGLES SALES : redessiner la frame complète puis ne retransmettre que le rectangle = la frame de référence (tous ticks, boucle comprise)", () => {
+  for (const [name, scene] of Object.entries(ALL_SCENES)) {
+    for (const [w, h] of [[128, 64], [128, 160]] as const) {
+      // « écran » = ce que le TFT contient : frame du tick 0 entière, puis uniquement les rectangles reçus
+      let screen = renderSceneIndices(scene, w, h, 0);
+      for (let step = 1; step <= scene.durationTicks * 2; step++) {
+        const tick = step % scene.durationTicks, prev = prevTickOf(scene, tick);
+        const rect = dirtyRectBetween(scene, w, h, prev, tick);
+        const next = renderSceneIndices(scene, w, h, tick);
+        const updated = Uint8Array.from(screen);
+        if (rect) for (let y = rect.y; y < rect.y + rect.h; y++) for (let x = rect.x; x < rect.x + rect.w; x++) updated[y * w + x] = next[y * w + x];
+        assert.deepEqual(Array.from(updated), Array.from(next), `${name} ${w}x${h} tick ${tick} rect ${JSON.stringify(rect)}`);
+        screen = updated;
+      }
+    }
+  }
+});
+
+test("rectangles sales : null quand rien ne bouge, bornés au canevas, bien plus petits que l'écran pour un mouvement local", () => {
+  assert.equal(dirtyRectBetween(ALL_SCENES.static, 128, 160, 0, 1), null, "scène statique : aucun octet à envoyer");
+  for (const [name, scene] of Object.entries(ALL_SCENES)) {
+    for (let t = 0; t < scene.durationTicks; t++) {
+      const r = dirtyRectBetween(scene, 128, 160, prevTickOf(scene, t), t);
+      if (r) assert.ok(r.x >= 0 && r.y >= 0 && r.x + r.w <= 128 && r.y + r.h <= 160 && r.w > 0 && r.h > 0, `${name} ${t}`);
+    }
+  }
+  const osc = dirtyRectBetween(ALL_SCENES.oscillate, 128, 160, 0, 1)!;
+  assert.ok(osc.w * osc.h < 128 * 160, "mouvement local : moins que l'écran entier");
 });
