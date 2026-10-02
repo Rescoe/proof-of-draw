@@ -233,19 +233,25 @@ Règles : l'ACK ne doit **jamais** échouer à cause de cet enregistrement ; une
 copiée ni exposée publiquement (absente de la vue publique) ; `mode: "scene"` dans le corps de l'ACK = animation jouée.
 Pas de « frame en attente » dans la vue réseau : seul compte ce qui est affiché.
 
-## Appairage d'un navigateur / PC à un profil (02/10/2026)
+## Autoriser un autre équipement (navigateur / PC) à accéder au profil (02/10/2026)
 
 ```
-Appareil d'origine (profil)  « Appairer un nouvel appareil » → POST /api/artist/link-code → code XXXX-XXXX (10 min, 1 usage)
+Appareil d'origine (profil)  « Autoriser un autre équipement » → POST /api/artist/link-code → code XXXX-XXXX (10 min, 1 usage)
                              sondage GET /api/artist/link-code?code=… toutes les 4 s (onglet visible) → « ✓ appairé »
-Nouvel appareil (sans profil) « Appairer cet appareil » → POST /api/artist/join {code} → cookie : artistId + ESP du profil
+Nouvel équipement (sans profil) « Utiliser ce code » → POST /api/artist/join {code} → cookie : artistId + ESP du profil
 UI : app/profile/PairDevice.tsx (PairingSection, PairThisBrowser, JoinWithCode) ; logique pure : lib/linkCode.ts
 ```
 
-Règles : l'appairage **ajoute** un navigateur, n'en retire jamais ; code à aléa cryptographique (`crypto.getRandomValues`), usage unique
+Libellés : « équipement » = PC/navigateur ; « ESP » = écran physique (on l'ajoute par « + Ajouter un ESP », jamais par ce code). Règles : l'autorisation **ajoute** un navigateur, n'en retire jamais ; code à aléa cryptographique (`crypto.getRandomValues`), usage unique
 **atomique** (`GETDEL`), `join` limité à 10 essais / 10 min / IP, `link-code` à 8 codes / 10 min / profil. Les droits suivent le
 **profil** : `sessionOwnsDevice` accepte un ESP lié à l'`artistId` du cookie (clé inverse `artist:device:{id}`, 1 GET) — un PC appairé
 contrôle donc aussi les ESP ajoutés plus tard depuis le téléphone, et perd l'accès à un ESP donné (détaché) sans autre action.
+
+## Page profil : liste « Mes ESP » (02/10/2026)
+
+`app/profile/DevicesPanel.tsx` : carte compacte par appareil (nom, état, écrans, pastilles), UN bouton « ✏️ Dessiner » (menu de choix d'écran si plusieurs),
+UN bouton « ⚙ Gérer » → sous-menus Réglages · Accès · Blocs · Zone sensible (un seul panneau ouvert). **Suppression protégée** : retaper le nom de
+l'appareil (`lib/deviceDeleteGuard.ts`, testé). `InlineEdit` vit dans son propre fichier (un `page.tsx` ne peut exporter que la page).
 
 ## Firmware UNO R4 WiFi + TFT 2.8" tactile (02/10/2026)
 

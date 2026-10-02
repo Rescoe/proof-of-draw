@@ -1,9 +1,10 @@
 "use client";
 
 // app/profile/PairDevice.tsx
-// Appairage d'un appareil (PC, tablette, autre navigateur) à son profil, par un code à usage unique de 10 minutes.
-//   • Côté profil existant (téléphone)  : « Appairer un nouvel appareil » → code + statut en direct (« ✓ appairé »).
-//   • Côté nouvel appareil (sans profil) : « Appairer ce navigateur » → saisie du code → l'appareil rejoint le profil.
+// Autoriser un autre ÉQUIPEMENT (PC, tablette, autre navigateur) à accéder au profil et à tous ses ESP, par un code à usage unique de 10 minutes.
+// (À ne pas confondre avec l'appairage d'un nouvel ESP, qui se fait depuis l'écran de l'ESP via /onboard.)
+//   • Côté profil existant (téléphone)  : « Autoriser un autre équipement » → code + statut en direct (« ✓ autorisé »).
+//   • Côté nouvel équipement (sans profil) : saisie du code → l'équipement rejoint le profil.
 // L'appareil d'origine GARDE tous ses droits : l'appairage ajoute un navigateur au profil, il n'en retire jamais.
 
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -17,7 +18,7 @@ const small: React.CSSProperties = { fontSize: "0.78rem", color: "var(--text3)",
 
 // ─── Nouvel appareil : saisir le code ─────────────────────────────────────────
 
-export function JoinWithCode({ label = "Appairer cet appareil" }: { label?: string }) {
+export function JoinWithCode({ label = "Utiliser ce code" }: { label?: string }) {
   const [code, setCode] = useState("");
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
@@ -62,10 +63,10 @@ export function JoinWithCode({ label = "Appairer cet appareil" }: { label?: stri
 export function PairThisBrowser() {
   return (
     <div style={{ ...box, marginBottom: "2rem" }}>
-      <h2 style={{ fontSize: "0.95rem", fontWeight: 800, margin: "0 0 0.35rem" }}>🔗 Vous avez déjà un profil sur un autre appareil ?</h2>
+      <h2 style={{ fontSize: "0.95rem", fontWeight: 800, margin: "0 0 0.35rem" }}>🔑 Vous avez déjà un profil sur un autre équipement ?</h2>
       <p style={{ ...small, marginBottom: "1rem" }}>
-        Sur l&apos;appareil qui a vos ESP (votre téléphone), ouvrez <strong>Mon profil → Appairer un nouvel appareil</strong> : un code
-        s&apos;affiche. Saisissez-le ici pour retrouver votre profil et vos ESP sur ce navigateur. L&apos;autre appareil garde ses droits.
+        Sur l&apos;équipement qui a vos ESP (votre téléphone), ouvrez <strong>Mon profil → Autoriser un autre équipement</strong> : un code
+        s&apos;affiche. Saisissez-le ici pour retrouver votre profil et vos ESP sur ce navigateur. L&apos;autre équipement garde ses droits.
       </p>
       <JoinWithCode />
     </div>
@@ -123,19 +124,19 @@ export function PairingSection() {
   }
 
   return (
-    <div style={{ marginTop: "2rem" }}>
+    <div id="acces-equipements" style={{ marginTop: "2rem", scrollMarginTop: "5rem" }}>
       <div style={box}>
-        <h2 style={{ fontSize: "0.95rem", fontWeight: 800, margin: "0 0 0.35rem" }}>🔗 Appairer un nouvel appareil</h2>
+        <h2 style={{ fontSize: "0.95rem", fontWeight: 800, margin: "0 0 0.35rem" }}>🔑 Autoriser un autre équipement à accéder à vos ESP</h2>
         <p style={{ ...small, marginBottom: "1rem" }}>
-          Pour utiliser votre profil et vos ESP depuis un PC, une tablette ou un autre navigateur : générez un code ici, puis saisissez-le
-          sur le nouvel appareil (page « Mon profil »). <strong>Cet appareil garde tous ses droits</strong>, et le nouveau reçoit les mêmes
-          — y compris sur les ESP que vous ajouterez plus tard.
+          Pour piloter votre profil et <strong>tous vos ESP</strong> depuis un autre PC, une tablette ou un autre navigateur : générez un code ici,
+          puis saisissez-le sur cet équipement (page « Mon profil »). Votre équipement actuel garde tous ses droits ; le nouveau reçoit les mêmes,
+          y compris sur les ESP que vous ajouterez plus tard. <em>Cela n&apos;ajoute aucun ESP</em> : pour brancher un nouvel ESP, utilisez « + Ajouter un ESP ».
         </p>
 
         {(state === "idle" || state === "expired") && (
           <>
             {state === "expired" && <p style={{ ...small, color: "#fb923c", marginBottom: "0.7rem" }}>Le code a expiré ou a déjà servi sans être utilisé.</p>}
-            <button onClick={generate} disabled={busy} style={{ ...btn, opacity: busy ? 0.6 : 1 }}>{busy ? "Génération…" : "Appairer un nouvel appareil"}</button>
+            <button onClick={generate} disabled={busy} style={{ ...btn, opacity: busy ? 0.6 : 1 }}>{busy ? "Génération…" : "Autoriser un autre équipement"}</button>
           </>
         )}
 
@@ -153,9 +154,9 @@ export function PairingSection() {
 
         {state === "paired" && (
           <div role="status">
-            <p style={{ fontSize: "0.9rem", fontWeight: 700, color: "#4ade80", margin: "0 0 0.6rem" }}>✓ Nouvel appareil appairé</p>
-            <p style={{ ...small, marginBottom: "0.8rem" }}>Il a maintenant accès à votre profil et à vos ESP. Vous pouvez en appairer un autre.</p>
-            <button onClick={generate} disabled={busy} style={btnGhost}>Appairer un autre appareil</button>
+            <p style={{ fontSize: "0.9rem", fontWeight: 700, color: "#4ade80", margin: "0 0 0.6rem" }}>✓ Équipement autorisé</p>
+            <p style={{ ...small, marginBottom: "0.8rem" }}>Il a maintenant accès à votre profil et à vos ESP. Vous pouvez en autoriser un autre.</p>
+            <button onClick={generate} disabled={busy} style={btnGhost}>Autoriser un autre équipement</button>
           </div>
         )}
 
@@ -163,11 +164,11 @@ export function PairingSection() {
 
         <div style={{ marginTop: "1.25rem", borderTop: "1px solid var(--border)", paddingTop: "0.9rem" }}>
           <button onClick={() => setShowJoin((v) => !v)} style={{ ...btnGhost, border: "none", background: "none", padding: 0, textDecoration: "underline" }}>
-            {showJoin ? "▾" : "▸"} J&apos;ai un code d&apos;un autre appareil
+            {showJoin ? "▾" : "▸"} J&apos;ai reçu un code d&apos;un autre équipement
           </button>
           {showJoin && (
             <div style={{ marginTop: "0.8rem" }}>
-              <p style={{ ...small, marginBottom: "0.6rem" }}>Cet appareil rejoindra le profil du code ; ses ESP actuels y seront rattachés.</p>
+              <p style={{ ...small, marginBottom: "0.6rem" }}>Cet équipement rejoindra le profil du code ; ses ESP actuels y seront rattachés.</p>
               <JoinWithCode label="Rejoindre" />
             </div>
           )}

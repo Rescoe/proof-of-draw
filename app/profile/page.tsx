@@ -6,7 +6,8 @@ import { OwnDisplaysDebug } from "./OwnDisplaysDebug";
 import { PairingSection, PairThisBrowser } from "./PairDevice";
 import { SCREEN_PROFILES } from "@/lib/screenProfiles";
 import { BlockFrameCanvas } from "@/app/BlockFrameCanvas";
-import { GiveDeviceModal } from "./GiveDeviceModal";
+import { InlineEdit } from "./InlineEdit";
+import { DevicesPanel } from "./DevicesPanel";
 import type { BlockImagePayload } from "@/lib/chain";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -84,20 +85,6 @@ function isKnownScreen(sid: string): sid is keyof typeof SCREEN_PROFILES {
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
-
-function timeSince(ts?: number): string {
-  if (!ts) return "jamais";
-  const s = Math.floor((Date.now() - ts) / 1000);
-  if (s < 60)   return `il y a ${s}s`;
-  if (s < 3600) return `il y a ${Math.floor(s / 60)}min`;
-  return `il y a ${Math.floor(s / 3600)}h`;
-}
-
-function statusColor(isOnline: boolean, lastPing?: number): string {
-  if (isOnline) return "#4ade80";
-  if (!lastPing) return "var(--text3)";
-  return Math.floor((Date.now() - lastPing) / 1000) < 3600 ? "#fb923c" : "var(--text3)";
-}
 
 // ── Composant édition de slug ─────────────────────────────────────────────────
 
@@ -216,75 +203,6 @@ function SlugEditor({
         </span>
       )}
     </div>
-  );
-}
-
-// ── Composant édition inline ──────────────────────────────────────────────────
-
-function InlineEdit({
-  value, placeholder, onSave, multiline = false, maxLength = 60, style,
-}: {
-  value: string; placeholder: string; onSave: (v: string) => Promise<void>;
-  multiline?: boolean; maxLength?: number; style?: React.CSSProperties;
-}) {
-  const [editing, setEditing] = useState(false);
-  const [draft,   setDraft]   = useState(value);
-  const [saving,  setSaving]  = useState(false);
-  const ref = useRef<HTMLInputElement & HTMLTextAreaElement>(null);
-
-  useEffect(() => { if (editing && ref.current) ref.current.focus(); }, [editing]);
-
-  async function save() {
-    if (draft.trim() === value) { setEditing(false); return; }
-    setSaving(true);
-    try { await onSave(draft.trim()); setEditing(false); }
-    finally { setSaving(false); }
-  }
-
-  if (!editing) {
-    return (
-      <span
-        onClick={() => { setDraft(value); setEditing(true); }}
-        title="Cliquer pour modifier"
-        style={{ cursor: "text", borderBottom: "1px dashed var(--border)", paddingBottom: 1, ...style }}
-      >
-        {value || <span style={{ color: "var(--text3)" }}>{placeholder}</span>}
-      </span>
-    );
-  }
-
-  const commonProps = {
-    value: draft, maxLength, disabled: saving,
-    onChange: (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => setDraft(e.target.value),
-    onKeyDown: (e: React.KeyboardEvent) => {
-      if (!multiline && e.key === "Enter") { e.preventDefault(); save(); }
-      if (e.key === "Escape") { setDraft(value); setEditing(false); }
-    },
-    style: {
-      border: "1px solid var(--accent)", borderRadius: 6,
-      padding: "0.25rem 0.5rem", background: "var(--bg)",
-      color: "var(--text)", fontSize: "inherit", fontFamily: "inherit",
-      fontWeight: "inherit", width: "100%", outline: "none",
-      resize: multiline ? ("vertical" as const) : ("none" as const), ...style,
-    },
-  };
-
-  return (
-    <span style={{ display: "inline-flex", alignItems: "center", gap: "0.5rem", width: "100%" }}>
-      {multiline
-        ? <textarea ref={ref as React.RefObject<HTMLTextAreaElement>} rows={3} {...commonProps} />
-        : <input    ref={ref as React.RefObject<HTMLInputElement>}             {...commonProps} />}
-      <button
-        onClick={save} disabled={saving}
-        style={{
-          padding: "0.2rem 0.6rem", borderRadius: 5, border: "none",
-          background: "var(--accent)", color: "#fff", fontSize: "0.75rem",
-          cursor: "pointer", flexShrink: 0, opacity: saving ? 0.6 : 1,
-        }}
-      >
-        {saving ? "…" : "✓"}
-      </button>
-    </span>
   );
 }
 
@@ -657,17 +575,6 @@ export default function ProfilePage() {
   const [publicDevices,  setPublicDevices]  = useState<PublicDevice[]>([]);
   const [loading,        setLoading]        = useState(true);
   const [loadingPub,     setLoadingPub]     = useState(false);
-  const [rotating,       setRotating]       = useState<string | null>(null);
-  const [newCode,        setNewCode]        = useState<Record<string, string>>({});
-  const [copyMsg,        setCopyMsg]        = useState<Record<string, string>>({});
-  const [toggling,       setToggling]       = useState<string | null>(null);
-  const [togglingAna,    setTogglingAna]    = useState<string | null>(null);
-  const [togglingConv,   setTogglingConv]   = useState<string | null>(null);
-  const [transferTarget, setTransferTarget] = useState<Record<string, string>>({});
-  const [transferring,   setTransferring]   = useState<string | null>(null);
-  const [transferMsg,    setTransferMsg]    = useState<Record<string, string>>({});
-  const [deletingDevice, setDeletingDevice] = useState<string | null>(null);
-  const [givingDevice,   setGivingDevice]   = useState<OwnedDevice | null>(null);
   const [profError,      setProfError]      = useState<string | null>(null);
   const [deleting,       setDeleting]       = useState(false);
 
@@ -697,8 +604,8 @@ export default function ProfilePage() {
     } catch { setMinedBlocks([]); setProfileImage(null); }
   }
 
-  async function loadDevices() {
-    setLoading(true);
+  async function loadDevices(silent = false) {
+    if (!silent) setLoading(true);
     try {
       const res  = await fetch("/api/devices?mine=1", { cache: "no-store" });
       const data = await res.json();
@@ -795,121 +702,6 @@ export default function ProfilePage() {
     finally { setDeleting(false); }
   }
 
-  // ── Actions devices ────────────────────────────────────────────────────────
-
-  async function saveDeviceName(deviceId: string, deviceName: string) {
-    const res  = await fetch("/api/devices/rename", {
-      method:  "POST",
-      headers: { "Content-Type": "application/json" },
-      body:    JSON.stringify({ deviceId, deviceName }),
-    });
-    if (res.ok) {
-      const data = await res.json();
-      setDevices(prev =>
-        prev.map(d => d.deviceId === deviceId ? { ...d, deviceName: data.deviceName } : d)
-      );
-    }
-  }
-
-  async function handleRotateCode(deviceId: string) {
-    if (!confirm("Générer un nouveau code ? L'ancien ne fonctionnera plus.")) return;
-    setRotating(deviceId);
-    try {
-      const res  = await fetch("/api/devices/rotate-code", {
-        method:  "POST",
-        headers: { "Content-Type": "application/json" },
-        body:    JSON.stringify({ deviceId }),
-      });
-      const data = await res.json();
-      if (data.ok && data.pairCode) {
-        setNewCode(p => ({ ...p, [deviceId]: data.pairCode }));
-      } else { alert(data.error ?? "Erreur"); }
-    } catch { alert("Erreur réseau"); }
-    finally { setRotating(null); }
-  }
-
-  async function handleTogglePublic(deviceId: string, current: boolean) {
-    setToggling(deviceId);
-    try {
-      await fetch(`/api/my-devices/${deviceId}/availability`, {
-        method:  "POST",
-        headers: { "Content-Type": "application/json" },
-        body:    JSON.stringify({ enabled: !current }),
-      });
-      await loadDevices();
-    } catch { alert("Erreur réseau"); }
-    finally { setToggling(null); }
-  }
-
-  async function handleToggleAnaArt(deviceId: string, current: boolean) {
-    setTogglingAna(deviceId);
-    try {
-      await fetch(`/api/my-devices/${deviceId}/accepts-ana-art`, {
-        method:  "POST",
-        headers: { "Content-Type": "application/json" },
-        body:    JSON.stringify({ enabled: !current }),
-      });
-      await loadDevices();
-    } catch { alert("Erreur réseau"); }
-    finally { setTogglingAna(null); }
-  }
-
-  async function handleToggleConverted(deviceId: string, screen: string, current: boolean) {
-    const k = `${deviceId}:${screen}`;
-    setTogglingConv(k);
-    try {
-      await fetch(`/api/my-devices/${deviceId}/accepts-converted`, {
-        method:  "POST",
-        headers: { "Content-Type": "application/json" },
-        body:    JSON.stringify({ screen, enabled: !current }),
-      });
-      await loadDevices();
-    } catch { alert("Erreur réseau"); }
-    finally { setTogglingConv(null); }
-  }
-
-  async function handleTransferBlocks(fromDeviceId: string) {
-    const toDeviceId = transferTarget[fromDeviceId];
-    if (!toDeviceId) return;
-    setTransferring(fromDeviceId);
-    setTransferMsg(m => ({ ...m, [fromDeviceId]: "" }));
-    try {
-      const res = await fetch("/api/transfer-blocks", {
-        method:  "POST",
-        headers: { "Content-Type": "application/json" },
-        body:    JSON.stringify({ fromDeviceId, toDeviceId }),
-      });
-      const data = await res.json();
-      setTransferMsg(m => ({
-        ...m,
-        [fromDeviceId]: res.ok
-          ? `${data.transferred}/${data.total} bloc(s) transféré(s).`
-          : (data.error ?? "Échec du transfert."),
-      }));
-    } catch {
-      setTransferMsg(m => ({ ...m, [fromDeviceId]: "Erreur réseau." }));
-    } finally {
-      setTransferring(null);
-    }
-  }
-
-  async function handleDeleteDevice(deviceId: string, label: string) {
-    if (!confirm(`Supprimer définitivement « ${label} » ? Cette action est irréversible — pense à transférer ses blocs vers un autre appareil avant si besoin.`)) return;
-    setDeletingDevice(deviceId);
-    try {
-      const res = await fetch(`/api/my-devices/${deviceId}/delete`, { method: "POST" });
-      if (!res.ok) { const data = await res.json().catch(() => ({})); alert(data.error ?? "Échec de la suppression."); return; }
-      await loadDevices();
-    } catch { alert("Erreur réseau"); }
-    finally { setDeletingDevice(null); }
-  }
-
-  async function copyCode(deviceId: string, code: string) {
-    await navigator.clipboard.writeText(code);
-    setCopyMsg(p => ({ ...p, [deviceId]: "Copié !" }));
-    setTimeout(() => setCopyMsg(p => ({ ...p, [deviceId]: "" })), 2000);
-  }
-
   // ── Stats ─────────────────────────────────────────────────────────────────
 
   // ESP "liés" = rattachés à CE profil. Les autres ESP de la session sont des artistes à part
@@ -922,15 +714,6 @@ export default function ProfilePage() {
 
   return (
     <div style={{ maxWidth: 740, margin: "0 auto", padding: "2rem 1rem" }}>
-
-      {givingDevice && (
-        <GiveDeviceModal
-          deviceId={givingDevice.deviceId}
-          label={givingDevice.deviceName || givingDevice.artistName || givingDevice.deviceId}
-          onClose={() => setGivingDevice(null)}
-          onDone={() => { setGivingDevice(null); loadDevices(); loadMinedBlocks(); }}
-        />
-      )}
 
       {/* ── Picker overlay ── */}
       {showPicker && (
@@ -1187,366 +970,12 @@ export default function ProfilePage() {
 
       {/* ── Tab : Mes ESP ── */}
       {tab === "mine" && (
-        loading ? (
-          <div style={{ color: "var(--text3)", textAlign: "center", padding: "3rem" }}>Chargement…</div>
-        ) : devices.length === 0 ? (
-          <div style={{
-            textAlign: "center", padding: "4rem 2rem",
-            border: "1px dashed var(--border)", borderRadius: 12,
-          }}>
-            <div style={{ fontSize: "3rem", marginBottom: "1rem" }}>📡</div>
-            <p style={{ color: "var(--text2)", marginBottom: "1rem" }}>Aucun ESP associé à cette session.</p>
-            <a href="/onboard" style={{ color: "var(--accent)", textDecoration: "none", fontWeight: 600 }}>
-              Connecter mon premier ESP →
-            </a>
-          </div>
-        ) : (
-          <div style={{ display: "flex", flexDirection: "column", gap: "1rem" }}>
-            {devices.map(d => {
-              const primaryScreen = d.screens?.[0];
-              const drawUrl       = primaryScreen ? `/draw/${d.deviceId}/${primaryScreen}` : null;
-              const displayCode   = newCode[d.deviceId];
-
-              return (
-                <div key={d.deviceId} style={{
-                  padding: "1.25rem 1.5rem", borderRadius: 10,
-                  border: "1px solid var(--border)", background: "var(--bg2)",
-                }}>
-                  {/* En-tête */}
-                  <div className="device-header" style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: "1rem" }}>
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", marginBottom: "0.2rem" }}>
-                        <div style={{
-                          width: 8, height: 8, borderRadius: "50%", flexShrink: 0,
-                          background: statusColor(d.isOnline, d.lastPing),
-                        }} />
-                        <span style={{ fontWeight: 700, fontSize: "1rem" }}>
-                          <InlineEdit
-                            value={d.deviceName ?? ""}
-                            placeholder={d.artistName ?? "Nommer cet appareil…"}
-                            onSave={v => saveDeviceName(d.deviceId, v)}
-                            maxLength={40}
-                            style={{ fontSize: "1rem", fontWeight: 700 }}
-                          />
-                        </span>
-                      </div>
-                      <div style={{ fontFamily: "JetBrains Mono, monospace", fontSize: "0.7rem", color: "var(--text3)" }}>
-                        {d.firmware ?? "firmware inconnu"} · {d.deviceId}
-                      </div>
-                    </div>
-                    {drawUrl && (
-                      <a href={drawUrl} className="device-draw-btn" style={{
-                        padding: "0.5rem 1.1rem", borderRadius: 6,
-                        background: "var(--accent)", color: "#fff",
-                        textDecoration: "none", fontWeight: 600, fontSize: "0.875rem",
-                        whiteSpace: "nowrap", flexShrink: 0,
-                      }}>
-                        ✏️ Dessiner
-                      </a>
-                    )}
-                  </div>
-
-                  {/* Stats */}
-                  <div className="device-stats-grid" style={{
-                    display: "grid", gridTemplateColumns: "repeat(3, 1fr)",
-                    gap: "0.75rem", marginTop: "1rem",
-                  }}>
-                    {[
-                      { label: "Frames envoyées", value: d.framesSent ?? 0 },
-                      { label: "Dernier ping",    value: timeSince(d.lastPing) },
-                      { label: "Enregistré",      value: timeSince(d.createdAt) },
-                    ].map(s => (
-                      <div key={s.label} style={{ padding: "0.75rem", borderRadius: 8, background: "var(--bg3)" }}>
-                        <div style={{ color: "var(--text3)", fontSize: "0.68rem", textTransform: "uppercase", letterSpacing: "0.05em" }}>
-                          {s.label}
-                        </div>
-                        <div style={{
-                          fontWeight: 700, fontSize: "0.95rem", marginTop: "0.25rem",
-                          fontFamily: typeof s.value === "number" ? "JetBrains Mono, monospace" : undefined,
-                        }}>
-                          {s.value}
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-
-                  {/* Profil artiste : regroupement explicite des ESP d'un même artiste */}
-                  <div style={{ marginTop: "1rem", display: "flex", alignItems: "center", justifyContent: "space-between", gap: "1rem", flexWrap: "wrap" }}>
-                    <div style={{ fontSize: "0.78rem", color: "var(--text2)" }}>
-                      {!profile
-                        ? "Créez votre profil artiste pour regrouper vos ESP sous un même artiste."
-                        : d.artistId === profile.artistId
-                          ? <>Rattaché à votre profil <strong>{profile.displayName}</strong></>
-                          : <>Artiste à part : <strong>{d.artistName ?? d.deviceId}</strong></>}
-                    </div>
-                  </div>
-
-                  {/* Écrans */}
-                  <div style={{ marginTop: "1rem", display: "flex", gap: "0.5rem", flexWrap: "wrap" }}>
-                    {d.screens?.map(sid => {
-                      if (!isKnownScreen(sid)) return null;
-                      const p = SCREEN_PROFILES[sid];
-                      const isTft = sid === "tft18";
-                      return (
-                        <a key={sid} href={`/draw/${d.deviceId}/${sid}`} style={{
-                          display: "flex", alignItems: "center", gap: "0.5rem",
-                          padding: "0.3rem 0.75rem", borderRadius: 6,
-                          border: "1px solid var(--border)", background: "var(--bg)",
-                          textDecoration: "none", color: "var(--text2)", fontSize: "0.78rem",
-                        }}>
-                          <div>
-                            <div>{p.name}</div>
-                            <div style={{ fontSize: "0.65rem", color: "var(--text3)", fontFamily: "JetBrains Mono, monospace" }}>
-                              {p.width}×{p.height}
-                            </div>
-                          </div>
-                          {isTft ? (
-                            <span style={{
-                              fontSize: "0.65rem", fontWeight: 700,
-                              background: "linear-gradient(90deg, #f55, #4f4, #55f)",
-                              WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent",
-                            }}>RGB</span>
-                          ) : (
-                            <div style={{ display: "flex", gap: 3 }}>
-                              {p.colors.map((c: string) => (
-                                <div key={c} style={{
-                                  width: 8, height: 8, borderRadius: 2,
-                                  background: c, border: "1px solid rgba(255,255,255,0.1)",
-                                }} />
-                              ))}
-                            </div>
-                          )}
-                        </a>
-                      );
-                    })}
-                  </div>
-
-                  {/* Sécurité */}
-                  <div style={{
-                    marginTop: "1.25rem", paddingTop: "1rem",
-                    borderTop: "1px solid var(--border)",
-                    display: "flex", flexDirection: "column", gap: "0.5rem",
-                  }}>
-                    <div style={{ fontSize: "0.72rem", color: "var(--text3)", textTransform: "uppercase", letterSpacing: "0.05em" }}>
-                      Sécurité
-                    </div>
-                    {displayCode && (
-                      <div style={{
-                        display: "flex", alignItems: "center", gap: "0.75rem",
-                        padding: "0.6rem 0.9rem", borderRadius: 6,
-                        background: "var(--bg3)", border: "1px solid var(--border)",
-                      }}>
-                        <span style={{
-                          fontFamily: "JetBrains Mono, monospace",
-                          fontSize: "1rem", fontWeight: 700, letterSpacing: "0.08em", color: "#4ade80",
-                        }}>
-                          {displayCode}
-                        </span>
-                        <button onClick={() => copyCode(d.deviceId, displayCode)} style={{
-                          marginLeft: "auto", fontSize: "0.75rem",
-                          padding: "0.3rem 0.7rem", borderRadius: 4,
-                          border: "1px solid var(--border)", background: "var(--bg)",
-                          color: "var(--text2)", cursor: "pointer",
-                        }}>
-                          {copyMsg[d.deviceId] || "Copier"}
-                        </button>
-                        <span style={{ fontSize: "0.72rem", color: "var(--text3)" }}>Nouveau code — à noter !</span>
-                      </div>
-                    )}
-                    <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap" }}>
-                      <button
-                        onClick={() => handleRotateCode(d.deviceId)}
-                        disabled={rotating === d.deviceId}
-                        style={{
-                          padding: "0.4rem 0.9rem", borderRadius: 6,
-                          border: "1px solid var(--border)", background: "var(--bg)",
-                          color: "var(--text2)", fontSize: "0.78rem", cursor: "pointer",
-                          opacity: rotating === d.deviceId ? 0.5 : 1,
-                        }}
-                      >
-                        🔄 {rotating === d.deviceId ? "En cours…" : "Nouveau code de jumelage"}
-                      </button>
-                      <a href="/onboard" style={{
-                        padding: "0.4rem 0.9rem", borderRadius: 6,
-                        border: "1px solid var(--border)", background: "var(--bg)",
-                        color: "var(--text2)", fontSize: "0.78rem", textDecoration: "none",
-                      }}>
-                        📲 Connecter un autre appareil
-                      </a>
-                    </div>
-                    <p style={{ fontSize: "0.7rem", color: "var(--text3)", marginTop: "0.25rem" }}>
-                      Pour reprendre le contrôle depuis un autre appareil, utilisez{" "}
-                      <a href="/onboard" style={{ color: "var(--accent)" }}>/onboard</a>{" "}
-                      avec le code affiché sur l&apos;écran.
-                    </p>
-                  </div>
-
-                  {/* Prêt public */}
-                  <div style={{ marginTop: "1rem", paddingTop: "1rem", borderTop: "1px solid var(--border)" }}>
-                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "1rem" }}>
-                      <div>
-                        <div style={{ fontSize: "0.72rem", color: "var(--text3)", textTransform: "uppercase", letterSpacing: "0.05em" }}>
-                          Prêt public
-                        </div>
-                        <p style={{ fontSize: "0.72rem", color: "var(--text3)", marginTop: "0.2rem", marginBottom: 0 }}>
-                          {d.publicMode
-                            ? "D'autres artistes peuvent dessiner sur cet ESP."
-                            : "Seul vous pouvez dessiner sur cet ESP."}
-                        </p>
-                      </div>
-                      <button
-                        onClick={() => handleTogglePublic(d.deviceId, !!d.publicMode)}
-                        disabled={toggling === d.deviceId}
-                        style={{
-                          padding: "0.4rem 1rem", borderRadius: 6,
-                          border: `1px solid ${d.publicMode ? "rgba(74,222,128,0.4)" : "var(--border)"}`,
-                          background: d.publicMode ? "rgba(74,222,128,0.1)" : "var(--bg)",
-                          color: d.publicMode ? "#4ade80" : "var(--text2)",
-                          fontSize: "0.78rem", cursor: "pointer", fontWeight: 600, flexShrink: 0,
-                          opacity: toggling === d.deviceId ? 0.5 : 1,
-                        }}
-                      >
-                        {toggling === d.deviceId ? "…" : d.publicMode ? "✓ Public" : "Privé"}
-                      </button>
-                    </div>
-                  </div>
-
-                  {/* Œuvres d'agent IA (ANA) */}
-                  <div style={{ marginTop: "1rem", paddingTop: "1rem", borderTop: "1px solid var(--border)" }}>
-                    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "1rem" }}>
-                      <div>
-                        <div style={{ fontSize: "0.72rem", color: "var(--text3)", textTransform: "uppercase", letterSpacing: "0.05em" }}>
-                          Œuvres d'agent IA
-                        </div>
-                        <p style={{ fontSize: "0.72rem", color: "var(--text3)", marginTop: "0.2rem", marginBottom: 0 }}>
-                          {d.acceptsAnaArt
-                            ? "Reçoit aussi les dessins publiés par les agents normies de l'ANA."
-                            : "N'affiche que les dessins humains."}
-                        </p>
-                      </div>
-                      <button
-                        onClick={() => handleToggleAnaArt(d.deviceId, !!d.acceptsAnaArt)}
-                        disabled={togglingAna === d.deviceId}
-                        style={{
-                          padding: "0.4rem 1rem", borderRadius: 6,
-                          border: `1px solid ${d.acceptsAnaArt ? "rgba(124,107,255,0.4)" : "var(--border)"}`,
-                          background: d.acceptsAnaArt ? "rgba(124,107,255,0.1)" : "var(--bg)",
-                          color: d.acceptsAnaArt ? "#7c6bff" : "var(--text2)",
-                          fontSize: "0.78rem", cursor: "pointer", fontWeight: 600, flexShrink: 0,
-                          opacity: togglingAna === d.deviceId ? 0.5 : 1,
-                        }}
-                      >
-                        {togglingAna === d.deviceId ? "…" : d.acceptsAnaArt ? "✓ Activé" : "Désactivé"}
-                      </button>
-                    </div>
-                  </div>
-
-                  {/* Dessins d'autres types d'écran, convertis (réglage par écran) */}
-                  <div style={{ marginTop: "1rem", paddingTop: "1rem", borderTop: "1px solid var(--border)" }}>
-                    <div style={{ fontSize: "0.72rem", color: "var(--text3)", textTransform: "uppercase", letterSpacing: "0.05em" }}>
-                      Dessins d'autres écrans (conversion)
-                    </div>
-                    <p style={{ fontSize: "0.72rem", color: "var(--text3)", marginTop: "0.2rem", marginBottom: "0.6rem" }}>
-                      Active, écran par écran, la réception des dessins conçus pour un autre type d'écran, convertis automatiquement au format de celui-ci.
-                    </p>
-                    {d.screens.map((sc) => {
-                      const on = (d.acceptsConvertedScreens ?? []).includes(sc);
-                      const k  = `${d.deviceId}:${sc}`;
-                      return (
-                        <div key={sc} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "1rem", marginTop: "0.4rem" }}>
-                          <span style={{ fontSize: "0.8rem", color: "var(--text2)" }}>
-                            {(SCREEN_PROFILES as Record<string, { name: string }>)[sc]?.name ?? sc}
-                          </span>
-                          <button
-                            onClick={() => handleToggleConverted(d.deviceId, sc, on)}
-                            disabled={togglingConv === k}
-                            style={{
-                              padding: "0.4rem 1rem", borderRadius: 6,
-                              border: `1px solid ${on ? "rgba(124,107,255,0.4)" : "var(--border)"}`,
-                              background: on ? "rgba(124,107,255,0.1)" : "var(--bg)",
-                              color: on ? "#7c6bff" : "var(--text2)",
-                              fontSize: "0.78rem", cursor: "pointer", fontWeight: 600, flexShrink: 0,
-                              opacity: togglingConv === k ? 0.5 : 1,
-                            }}
-                          >
-                            {togglingConv === k ? "…" : on ? "✓ Activé" : "Désactivé"}
-                          </button>
-                        </div>
-                      );
-                    })}
-                  </div>
-
-                  {/* Transférer les blocs minés vers un autre de mes appareils */}
-                  {devices.length > 1 && (
-                    <div style={{ marginTop: "1rem", paddingTop: "1rem", borderTop: "1px solid var(--border)" }}>
-                      <div style={{ fontSize: "0.72rem", color: "var(--text3)", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: "0.4rem" }}>
-                        Transférer les blocs minés
-                      </div>
-                      <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap", alignItems: "center" }}>
-                        <select
-                          value={transferTarget[d.deviceId] ?? ""}
-                          onChange={e => setTransferTarget(t => ({ ...t, [d.deviceId]: e.target.value }))}
-                          style={{
-                            padding: "0.4rem 0.6rem", borderRadius: 6, border: "1px solid var(--border)",
-                            background: "var(--bg)", color: "var(--text2)", fontSize: "0.78rem",
-                          }}
-                        >
-                          <option value="">vers…</option>
-                          {devices.filter(o => o.deviceId !== d.deviceId).map(o => (
-                            <option key={o.deviceId} value={o.deviceId}>
-                              {o.deviceName || o.artistName || o.deviceId}
-                            </option>
-                          ))}
-                        </select>
-                        <button
-                          onClick={() => handleTransferBlocks(d.deviceId)}
-                          disabled={!transferTarget[d.deviceId] || transferring === d.deviceId}
-                          style={{
-                            padding: "0.4rem 0.9rem", borderRadius: 6, border: "1px solid var(--border)",
-                            background: "var(--bg)", color: "var(--text2)", fontSize: "0.78rem", cursor: "pointer",
-                            opacity: (!transferTarget[d.deviceId] || transferring === d.deviceId) ? 0.5 : 1,
-                          }}
-                        >
-                          {transferring === d.deviceId ? "Transfert…" : "↪ Transférer tous les blocs"}
-                        </button>
-                      </div>
-                      {transferMsg[d.deviceId] && (
-                        <p style={{ fontSize: "0.72rem", color: "var(--text3)", marginTop: "0.3rem" }}>{transferMsg[d.deviceId]}</p>
-                      )}
-                    </div>
-                  )}
-
-                  {/* Donner / Supprimer */}
-                  <div style={{ marginTop: "1rem", paddingTop: "1rem", borderTop: "1px solid var(--border)", display: "flex", justifyContent: "flex-end", gap: "0.5rem", flexWrap: "wrap" }}>
-                    {profile && d.artistId === profile.artistId && (
-                      <button
-                        onClick={() => setGivingDevice(d)}
-                        style={{
-                          padding: "0.35rem 0.8rem", borderRadius: 6, border: "1px solid var(--border)",
-                          background: "var(--bg)", color: "var(--text2)", fontSize: "0.72rem", cursor: "pointer",
-                        }}
-                      >
-                        🎁 Donner cet ESP
-                      </button>
-                    )}
-                    <button
-                      onClick={() => handleDeleteDevice(d.deviceId, d.deviceName || d.artistName || d.deviceId)}
-                      disabled={deletingDevice === d.deviceId}
-                      style={{
-                        padding: "0.35rem 0.8rem", borderRadius: 6,
-                        border: "1px solid rgba(248,113,113,0.3)", background: "var(--bg)",
-                        color: "#f87171", fontSize: "0.72rem", cursor: "pointer",
-                        opacity: deletingDevice === d.deviceId ? 0.5 : 1,
-                      }}
-                    >
-                      {deletingDevice === d.deviceId ? "Suppression…" : "🗑 Supprimer cet appareil"}
-                    </button>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        )
+        <DevicesPanel
+          devices={devices}
+          profile={profile ? { artistId: profile.artistId, displayName: profile.displayName } : null}
+          loading={loading}
+          onReload={() => { loadDevices(true); loadMinedBlocks(); }}
+        />
       )}
 
       <style>{`
