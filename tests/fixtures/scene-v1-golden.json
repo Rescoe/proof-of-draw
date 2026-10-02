@@ -1,0 +1,222 @@
+{
+  "_doc": "Vecteurs normatifs scene-v1 — voir docs/SCENE_V1_MOTEUR.md. Généré par scene-v1-golden.generate.ts.",
+  "xorshift32Seed1": [
+    270369,
+    67634689,
+    2647435461,
+    307599695,
+    2398689233,
+    745495504,
+    632435482,
+    435756210,
+    2005365029,
+    2916098932
+  ],
+  "sinTable": {
+    "count": 256,
+    "sha256": "e6ba60bf7f71eb7ace29b911099673bd949b59f9b8d07b8d1c240f3bbfb72ba3"
+  },
+  "bundleExample": {
+    "sourceId": "work_golden",
+    "revision": 1,
+    "artworkText": "<!DOCTYPE html><html><body><canvas></canvas></body></html>",
+    "captureHash": "sha256:capture-golden",
+    "sourceHash": "sha256:f0fcc1939d292d672bab8bf7d1a2d22f6fc330937088a5668518295bdd13aba8",
+    "contentHashSceneAndCapture": "sha256:01aafec5f190d2652f071ff5e313debc4271b64de30bff262004bc1370c85e62",
+    "contentHashSceneOnly": "sha256:01f929a3df3a87fd9de77dd2f1e09ff0bf8195c00cabbf594273b63d0e7e7050"
+  },
+  "scenes": {
+    "static": {
+      "canonicalJson": "{\"schema\":\"ana-scene-v1\",\"rendererVersion\":1,\"seed\":3735928559,\"tickRate\":5,\"durationTicks\":10,\"loopCount\":1,\"backgroundIndex\":0,\"palette\":[0,65535,63488,2016,31,65504],\"clear\":\"solid\",\"entities\":[{\"id\":0,\"primitive\":\"rect\",\"colorIndex\":1,\"geometry\":{\"type\":\"rect\",\"x0\":8000,\"y0\":8000,\"x1\":30000,\"y1\":20000,\"fill\":true},\"motion\":{\"type\":\"static\"}},{\"id\":1,\"primitive\":\"circle\",\"colorIndex\":2,\"geometry\":{\"type\":\"circle\",\"cx\":32768,\"cy\":32768,\"r\":12000,\"fill\":false},\"motion\":{\"type\":\"static\"}},{\"id\":2,\"primitive\":\"point\",\"colorIndex\":3,\"geometry\":{\"type\":\"point\",\"x\":60000,\"y\":5000,\"size\":3},\"motion\":{\"type\":\"static\"}},{\"id\":3,\"primitive\":\"line\",\"colorIndex\":4,\"geometry\":{\"type\":\"line\",\"x1\":2000,\"y1\":60000,\"x2\":63000,\"y2\":50000,\"width\":2},\"motion\":{\"type\":\"static\"}},{\"id\":4,\"primitive\":\"circle\",\"colorIndex\":5,\"geometry\":{\"type\":\"circle\",\"cx\":50000,\"cy\":40000,\"r\":6000,\"fill\":true},\"motion\":{\"type\":\"static\"}}]}",
+      "sceneHash": "sha256:ea32cb8295683ac906c9c641e37243760d69e5cec6dd1e19abe173d8f3845428",
+      "canonicalBytes": 916,
+      "posterTick": 5,
+      "profiles": {
+        "oled096": {
+          "packageBytes": 105,
+          "packageSha256": "e8f563ce0dc3f0ded5ce74d5eee669307346f8ae50ba5fac3823122f1ba14cb8",
+          "frameSha256ByTick": {
+            "0": "e1632cc90b3aa436c39f39c0d7d342360ad73054dc6536e2275094637ec8ca3b",
+            "1": "e1632cc90b3aa436c39f39c0d7d342360ad73054dc6536e2275094637ec8ca3b",
+            "5": "e1632cc90b3aa436c39f39c0d7d342360ad73054dc6536e2275094637ec8ca3b",
+            "9": "e1632cc90b3aa436c39f39c0d7d342360ad73054dc6536e2275094637ec8ca3b"
+          }
+        },
+        "tft18": {
+          "packageBytes": 105,
+          "packageSha256": "bd1174d8f0b2149b40a8f1e376e6ab241f70f0df4c0a1c4f13b307236d1d3253",
+          "frameSha256ByTick": {
+            "0": "ea356fb39280fa7eee1b1ae0c40d587a089a56f78db86bab0fe0cc59c12562d7",
+            "1": "ea356fb39280fa7eee1b1ae0c40d587a089a56f78db86bab0fe0cc59c12562d7",
+            "5": "ea356fb39280fa7eee1b1ae0c40d587a089a56f78db86bab0fe0cc59c12562d7",
+            "9": "ea356fb39280fa7eee1b1ae0c40d587a089a56f78db86bab0fe0cc59c12562d7"
+          }
+        }
+      },
+      "posterFrameSha256": {
+        "eink27bw": "9a6a3e386a8fcf390d9a48a9536dfec3821fc10072d2c8eb1798b322ac519453",
+        "eink29bwr": "873a165a89fd247c8e4d9e8f29968bfbe7cdf3906bfea28e212915ab185a60c7"
+      }
+    },
+    "linearWrap": {
+      "canonicalJson": "{\"schema\":\"ana-scene-v1\",\"rendererVersion\":1,\"seed\":42,\"tickRate\":4,\"durationTicks\":20,\"loopCount\":2,\"backgroundIndex\":0,\"palette\":[0,65535,63488,2016,31,65504],\"clear\":\"solid\",\"entities\":[{\"id\":0,\"primitive\":\"point\",\"colorIndex\":1,\"geometry\":{\"type\":\"point\",\"x\":1000,\"y\":30000,\"size\":4},\"motion\":{\"type\":\"linear\",\"dx\":3000,\"dy\":1000,\"edge\":\"wrap\"}},{\"id\":1,\"primitive\":\"rect\",\"colorIndex\":2,\"geometry\":{\"type\":\"rect\",\"x0\":20000,\"y0\":20000,\"x1\":26000,\"y1\":26000,\"fill\":true},\"motion\":{\"type\":\"linear\",\"dx\":-2500,\"dy\":700,\"edge\":\"wrap\"}},{\"id\":2,\"primitive\":\"line\",\"colorIndex\":3,\"geometry\":{\"type\":\"line\",\"x1\":5000,\"y1\":5000,\"x2\":12000,\"y2\":9000,\"width\":1},\"motion\":{\"type\":\"linear\",\"dx\":4000,\"dy\":0,\"edge\":\"wrap\"}}]}",
+      "sceneHash": "sha256:9db5e8c67c723cc85c56bda1e898b6fdf5adde9d1fe468241407bebf2e4d4528",
+      "canonicalBytes": 717,
+      "posterTick": 10,
+      "profiles": {
+        "oled096": {
+          "packageBytes": 95,
+          "packageSha256": "ba99718e50c8b9d579c1b3f1d5c5583953561de8dae0c7be330d6751b25a12a4",
+          "frameSha256ByTick": {
+            "0": "50f05174d385dd27d41393a3c1759be8eab666cc24d2cf0b7cbe3ceaa46acf9e",
+            "1": "2a392ca466b824fd267548aae440370a63f77a2ab8a665293639e70b1ef1715c",
+            "10": "dba0b6e9d1970b02cb64e46de744eab4aa35e24853d42b922c47cca1124cdb37",
+            "19": "c1e9b68145bca0fc87acbec7fa18cb4cc445a08f985cf613eacb200ad2775aba"
+          }
+        },
+        "tft18": {
+          "packageBytes": 95,
+          "packageSha256": "e1d62234f19715fb32b78c8a7934099361db8defaa1a9c527b2033230fa7bbde",
+          "frameSha256ByTick": {
+            "0": "2c592c2e2b557958598e868bc2561002d051803ace282de292c9e8e9df48a394",
+            "1": "d0e40b54e94d3b4693bf6e51eea2ebe646246270b84defe4a7c5fd9c094ad163",
+            "10": "7eaa7fd0bcb93f2d59a56a65080fb5357cef7a991796d3e2f7fdc1f98728fe39",
+            "19": "5879cdd3952b10d49d702977a751d2f4d4b2b654da3c42122ec8a58bcf78444f"
+          }
+        }
+      },
+      "posterFrameSha256": {
+        "eink27bw": "c41878130179c5d658a17ce8033d78d531974353eebcd09646a18ca439c66494",
+        "eink29bwr": "b1a02ff1f099ba255a6f3bf5ba97d7d4c3e757dbe2885dcc4acfbf21c13f8be8"
+      }
+    },
+    "oscillate": {
+      "canonicalJson": "{\"schema\":\"ana-scene-v1\",\"rendererVersion\":1,\"seed\":7,\"tickRate\":5,\"durationTicks\":16,\"loopCount\":3,\"backgroundIndex\":0,\"palette\":[0,65535,63488,2016,31,65504],\"clear\":\"solid\",\"entities\":[{\"id\":0,\"primitive\":\"rect\",\"colorIndex\":1,\"geometry\":{\"type\":\"rect\",\"x0\":24000,\"y0\":10000,\"x1\":40000,\"y1\":18000,\"fill\":true},\"motion\":{\"type\":\"oscillate-x\",\"amplitude\":15000,\"period\":8,\"phase\":0}},{\"id\":1,\"primitive\":\"circle\",\"colorIndex\":3,\"geometry\":{\"type\":\"circle\",\"cx\":32768,\"cy\":40000,\"r\":5000,\"fill\":true},\"motion\":{\"type\":\"oscillate-y\",\"amplitude\":12000,\"period\":16,\"phase\":5}},{\"id\":2,\"primitive\":\"point\",\"colorIndex\":5,\"geometry\":{\"type\":\"point\",\"x\":32768,\"y\":60000,\"size\":2},\"motion\":{\"type\":\"oscillate-x\",\"amplitude\":30000,\"period\":5,\"phase\":3}}]}",
+      "sceneHash": "sha256:17b4371bcebecf249b4c7c0abc4c786d8395b90bde46ecbaf37194024adcc5d1",
+      "canonicalBytes": 747,
+      "posterTick": 8,
+      "profiles": {
+        "oled096": {
+          "packageBytes": 93,
+          "packageSha256": "e789ad0282a3721919506642cba5ded00febd7636dbce3cc872a942f332f8825",
+          "frameSha256ByTick": {
+            "0": "c102d74ec2dc90f8c363bd8b7b1ce45913c29b98863dabafb8aa1d9f590c42a9",
+            "1": "d5179d89e77f58ed16f235c2c8a76b30650b048325167d106c66db95acada1fe",
+            "8": "e68e5cf55b4898da11c956a0135dcc5928d69f995b16c2219ecf343f4f5be3f0",
+            "15": "0a4f278064d14eff0520bfb762b7fe56ef1ffac1f719f693cff4ea7abb68964b"
+          }
+        },
+        "tft18": {
+          "packageBytes": 93,
+          "packageSha256": "cd8c9082aa3f1899a28500d09f95fa34d27573817bc3fd6b5117a09558ffe62a",
+          "frameSha256ByTick": {
+            "0": "7abcaf1c57ecf4a85f5d86631480ef41df61bd7c1a62e3d83c506f962ce38ee7",
+            "1": "6bafbcba52f176809e00b1dbef0c4ebb677b68a9f9afa97afa5f8d408f413998",
+            "8": "8eedc1228ad38c51be9a754305a704378559e897358943fef5d93ee9d68ed516",
+            "15": "04f47d6dc004101ed1386e5a1f7ca0d0a6ca035115fa961bd820b49ced2a2c64"
+          }
+        }
+      },
+      "posterFrameSha256": {
+        "eink27bw": "b1b205bc1d76902ecb9576b45d10e1bc61271a1472080c49b0bdb9a41e2109e3",
+        "eink29bwr": "c8a3ce1abba453c76fa7b47da4d949cdc0e02fcd16bc93a3b05d667d27fbd436"
+      }
+    },
+    "orbit": {
+      "canonicalJson": "{\"schema\":\"ana-scene-v1\",\"rendererVersion\":1,\"seed\":99,\"tickRate\":5,\"durationTicks\":24,\"loopCount\":1,\"backgroundIndex\":4,\"palette\":[0,65535,63488,2016,31,65504],\"clear\":\"solid\",\"entities\":[{\"id\":0,\"primitive\":\"circle\",\"colorIndex\":5,\"geometry\":{\"type\":\"circle\",\"cx\":32768,\"cy\":32768,\"r\":4000,\"fill\":true},\"motion\":{\"type\":\"orbit\",\"radiusX\":22000,\"radiusY\":12000,\"period\":24,\"phase\":0}},{\"id\":1,\"primitive\":\"point\",\"colorIndex\":1,\"geometry\":{\"type\":\"point\",\"x\":32768,\"y\":32768,\"size\":3},\"motion\":{\"type\":\"orbit\",\"radiusX\":9000,\"radiusY\":9000,\"period\":12,\"phase\":4}},{\"id\":2,\"primitive\":\"circle\",\"colorIndex\":2,\"geometry\":{\"type\":\"circle\",\"cx\":32768,\"cy\":32768,\"r\":2000,\"fill\":false},\"motion\":{\"type\":\"static\"}}]}",
+      "sceneHash": "sha256:a6e36c4165d81157bb0f5781287e7df7e299bb80dc61a15e2d9994116fc6292c",
+      "canonicalBytes": 711,
+      "posterTick": 12,
+      "profiles": {
+        "oled096": {
+          "packageBytes": 91,
+          "packageSha256": "69714be90d43fdc60a04634e16caddb2ef97002f8ea67b972df4a6bbd55fb1d0",
+          "frameSha256ByTick": {
+            "0": "62fbfbbb0ca1b3f328c660b004a48586df6803f2bed6f8ef318723d71e78d872",
+            "1": "45456c023c2b4fe5623edc1cd349dea79b4afbe3644ccc2bb7b798a1e3833f1f",
+            "12": "5034bbf07bf3e8e8ccb9855bb718b98b40d97c6edb5a3a002a4504bb69464c49",
+            "23": "09132771b577fc902433745f167d4aac07d82d6d8b857db714bf0920e9d37609"
+          }
+        },
+        "tft18": {
+          "packageBytes": 91,
+          "packageSha256": "c227c468453584d0c099ed124ea5e355abd6c8a2b539b3b0028dce8a2cb2b080",
+          "frameSha256ByTick": {
+            "0": "4331947b56fc3f67ff06eec9418f73c7f84736f60c657749aa79f33f47ef7aca",
+            "1": "065b25cdd9efe462f40e470ca0d0090a57f228f1d1a7b84862520d0071ad9173",
+            "12": "42ef0ae3239b3c090c971f9d148f5ab6cff26a2734b8e473a84551034a6049e5",
+            "23": "3759286997b4fb16e155170712ff046f210a96579ddd755a83d222a8999d4c31"
+          }
+        }
+      },
+      "posterFrameSha256": {
+        "eink27bw": "6333b700a78515f1542a6f48136b078a80742d30930eb51b9a878aa5a3cebfc8",
+        "eink29bwr": "3861ef67c42ccfab9dc5d0004c30e89f8f7b3dc17c37919f7ea7a460c219939c"
+      }
+    },
+    "polyline": {
+      "canonicalJson": "{\"schema\":\"ana-scene-v1\",\"rendererVersion\":1,\"seed\":12345,\"tickRate\":3,\"durationTicks\":12,\"loopCount\":2,\"backgroundIndex\":0,\"palette\":[0,65535,63488,2016,31,65504],\"clear\":\"solid\",\"entities\":[{\"id\":0,\"primitive\":\"polyline\",\"colorIndex\":5,\"geometry\":{\"type\":\"polyline\",\"points\":[{\"x\":32768,\"y\":6000},{\"x\":40000,\"y\":26000},{\"x\":60000,\"y\":26000},{\"x\":44000,\"y\":38000},{\"x\":50000,\"y\":58000}],\"closed\":true,\"width\":2},\"motion\":{\"type\":\"oscillate-x\",\"amplitude\":4000,\"period\":12,\"phase\":2}},{\"id\":1,\"primitive\":\"polyline\",\"colorIndex\":3,\"geometry\":{\"type\":\"polyline\",\"points\":[{\"x\":5000,\"y\":50000},{\"x\":20000,\"y\":40000},{\"x\":30000,\"y\":58000}],\"closed\":false,\"width\":1},\"motion\":{\"type\":\"static\"}}]}",
+      "sceneHash": "sha256:17ce1f0baf447f95711d9c1b579f4f120b7ab46f7fb7ad29c7ba72fca75d8ca4",
+      "canonicalBytes": 692,
+      "posterTick": 6,
+      "profiles": {
+        "oled096": {
+          "packageBytes": 98,
+          "packageSha256": "509a595df5f1cc74b27814f37b0f5b78cc45b1cc10f652f954e711d5ab0a720e",
+          "frameSha256ByTick": {
+            "0": "2913dd755cddbca6724858303edef4d2987afb3fd73863d403828f792af6a65f",
+            "1": "2cb27e590d90a894676e05730ab47764074ad0b466cd2834781ccc897d88afbe",
+            "6": "51436e7314948a9f39cf7838c0d4f075343513487d010f735b47bab1a8f49673",
+            "11": "494da7f972109008753e695bafd364583f67fcb9658f4d601ed9fa03e852dcb6"
+          }
+        },
+        "tft18": {
+          "packageBytes": 98,
+          "packageSha256": "2e4ac1ffb8766e09fbfb507ccf11cdfb7af6b90f8afcf7f91f77bd97df9f5f76",
+          "frameSha256ByTick": {
+            "0": "b427b6e42e5ff90e265d70f1bb2fc99406b81c1e61a50cf6df1bc244786ff2ff",
+            "1": "4ea57f10a9b4a3b40f4943f5a32e31db74e7217f71890757319bdea05a44e5af",
+            "6": "82bf44e46e8c12c2154a22472258bd5233000616b03a902ae4514c302d5628d8",
+            "11": "17095c72ed2eb70c2b371e4c5481bfc68c290734097040a80bf550911b53efc8"
+          }
+        }
+      },
+      "posterFrameSha256": {
+        "eink27bw": "100e9e45ddb5ee37ca808794bbb5038b5de041ba76f0fae05e2b62c6b5b655fc",
+        "eink29bwr": "f79ac63ce65fe5d8c5c5a4e634e3d0c819c6d10c0c7aba6026d7805cd82f86df"
+      }
+    },
+    "full24": {
+      "canonicalJson": "{\"schema\":\"ana-scene-v1\",\"rendererVersion\":1,\"seed\":20261002,\"tickRate\":5,\"durationTicks\":50,\"loopCount\":3,\"backgroundIndex\":0,\"palette\":[0,65535,63488,2016,31,65504],\"clear\":\"solid\",\"entities\":[{\"id\":0,\"primitive\":\"point\",\"colorIndex\":1,\"geometry\":{\"type\":\"point\",\"x\":4000,\"y\":4000,\"size\":1},\"motion\":{\"type\":\"static\"}},{\"id\":1,\"primitive\":\"point\",\"colorIndex\":2,\"geometry\":{\"type\":\"point\",\"x\":10000,\"y\":13000,\"size\":2},\"motion\":{\"type\":\"linear\",\"dx\":600,\"dy\":-300,\"edge\":\"wrap\"}},{\"id\":2,\"primitive\":\"point\",\"colorIndex\":3,\"geometry\":{\"type\":\"point\",\"x\":16000,\"y\":22000,\"size\":3},\"motion\":{\"type\":\"static\"}},{\"id\":3,\"primitive\":\"point\",\"colorIndex\":4,\"geometry\":{\"type\":\"point\",\"x\":22000,\"y\":31000,\"size\":4},\"motion\":{\"type\":\"static\"}},{\"id\":4,\"primitive\":\"point\",\"colorIndex\":5,\"geometry\":{\"type\":\"point\",\"x\":28000,\"y\":40000,\"size\":1},\"motion\":{\"type\":\"static\"}},{\"id\":5,\"primitive\":\"point\",\"colorIndex\":1,\"geometry\":{\"type\":\"point\",\"x\":34000,\"y\":49000,\"size\":2},\"motion\":{\"type\":\"static\"}},{\"id\":6,\"primitive\":\"point\",\"colorIndex\":2,\"geometry\":{\"type\":\"point\",\"x\":40000,\"y\":8000,\"size\":3},\"motion\":{\"type\":\"static\"}},{\"id\":7,\"primitive\":\"point\",\"colorIndex\":3,\"geometry\":{\"type\":\"point\",\"x\":46000,\"y\":17000,\"size\":4},\"motion\":{\"type\":\"static\"}},{\"id\":8,\"primitive\":\"point\",\"colorIndex\":4,\"geometry\":{\"type\":\"point\",\"x\":52000,\"y\":26000,\"size\":1},\"motion\":{\"type\":\"static\"}},{\"id\":9,\"primitive\":\"point\",\"colorIndex\":5,\"geometry\":{\"type\":\"point\",\"x\":58000,\"y\":35000,\"size\":2},\"motion\":{\"type\":\"static\"}},{\"id\":10,\"primitive\":\"line\",\"colorIndex\":2,\"geometry\":{\"type\":\"line\",\"x1\":3000,\"y1\":3000,\"x2\":62000,\"y2\":60000,\"width\":1},\"motion\":{\"type\":\"oscillate-y\",\"amplitude\":2000,\"period\":10,\"phase\":0}},{\"id\":11,\"primitive\":\"line\",\"colorIndex\":3,\"geometry\":{\"type\":\"line\",\"x1\":6000,\"y1\":3000,\"x2\":58000,\"y2\":58000,\"width\":2},\"motion\":{\"type\":\"static\"}},{\"id\":12,\"primitive\":\"line\",\"colorIndex\":4,\"geometry\":{\"type\":\"line\",\"x1\":9000,\"y1\":3000,\"x2\":54000,\"y2\":56000,\"width\":3},\"motion\":{\"type\":\"static\"}},{\"id\":13,\"primitive\":\"line\",\"colorIndex\":5,\"geometry\":{\"type\":\"line\",\"x1\":12000,\"y1\":3000,\"x2\":50000,\"y2\":54000,\"width\":4},\"motion\":{\"type\":\"static\"}},{\"id\":14,\"primitive\":\"line\",\"colorIndex\":2,\"geometry\":{\"type\":\"line\",\"x1\":15000,\"y1\":3000,\"x2\":46000,\"y2\":52000,\"width\":1},\"motion\":{\"type\":\"static\"}},{\"id\":15,\"primitive\":\"rect\",\"colorIndex\":1,\"geometry\":{\"type\":\"rect\",\"x0\":10000,\"y0\":12000,\"x1\":18000,\"y1\":20000,\"fill\":true},\"motion\":{\"type\":\"oscillate-x\",\"amplitude\":6000,\"period\":12,\"phase\":0}},{\"id\":16,\"primitive\":\"rect\",\"colorIndex\":2,\"geometry\":{\"type\":\"rect\",\"x0\":19000,\"y0\":18000,\"x1\":27000,\"y1\":26000,\"fill\":false},\"motion\":{\"type\":\"oscillate-x\",\"amplitude\":6000,\"period\":12,\"phase\":3}},{\"id\":17,\"primitive\":\"rect\",\"colorIndex\":3,\"geometry\":{\"type\":\"rect\",\"x0\":28000,\"y0\":24000,\"x1\":36000,\"y1\":32000,\"fill\":true},\"motion\":{\"type\":\"static\"}},{\"id\":18,\"primitive\":\"circle\",\"colorIndex\":2,\"geometry\":{\"type\":\"circle\",\"cx\":20000,\"cy\":30000,\"r\":5000,\"fill\":false},\"motion\":{\"type\":\"orbit\",\"radiusX\":8000,\"radiusY\":6000,\"period\":20,\"phase\":0}},{\"id\":19,\"primitive\":\"circle\",\"colorIndex\":3,\"geometry\":{\"type\":\"circle\",\"cx\":32000,\"cy\":30000,\"r\":6500,\"fill\":true},\"motion\":{\"type\":\"orbit\",\"radiusX\":8000,\"radiusY\":6000,\"period\":20,\"phase\":6}},{\"id\":20,\"primitive\":\"circle\",\"colorIndex\":4,\"geometry\":{\"type\":\"circle\",\"cx\":44000,\"cy\":30000,\"r\":8000,\"fill\":false},\"motion\":{\"type\":\"static\"}},{\"id\":21,\"primitive\":\"polyline\",\"colorIndex\":3,\"geometry\":{\"type\":\"polyline\",\"points\":[{\"x\":8000,\"y\":8000},{\"x\":22000,\"y\":14000},{\"x\":14000,\"y\":30000}],\"closed\":true,\"width\":1},\"motion\":{\"type\":\"static\"}},{\"id\":22,\"primitive\":\"polyline\",\"colorIndex\":4,\"geometry\":{\"type\":\"polyline\",\"points\":[{\"x\":9000,\"y\":8000},{\"x\":22000,\"y\":19000},{\"x\":14000,\"y\":30000}],\"closed\":false,\"width\":2},\"motion\":{\"type\":\"static\"}},{\"id\":23,\"primitive\":\"polyline\",\"colorIndex\":5,\"geometry\":{\"type\":\"polyline\",\"points\":[{\"x\":10000,\"y\":8000},{\"x\":22000,\"y\":24000},{\"x\":14000,\"y\":30000}],\"closed\":true,\"width\":3},\"motion\":{\"type\":\"static\"}}]}",
+      "sceneHash": "sha256:a567c1a89a05f8a53745754de5e143c680df8589138f612b57707f8de5b4afc4",
+      "canonicalBytes": 4009,
+      "posterTick": 25,
+      "profiles": {
+        "oled096": {
+          "packageBytes": 360,
+          "packageSha256": "e1d423dee0d4e953473b27a9a79b514d3757d218bbb1d12d5a52ea7747ffc264",
+          "frameSha256ByTick": {
+            "0": "a8a3ad05213c811faf918c4ed1e510b630c66a3900970c8948d73b022a8abedb",
+            "1": "48824304362bbccaf6aabcc18226d026ba672eaaeb054b5b957e64b4cabc711d",
+            "25": "1f744acf2d020be08ffe22236359b302110b0145741a4d7d5a498babeb3cf6f0",
+            "49": "3911a6e744769ef24f8a609dbb41c59bbc2649e3f39c4f8c476aeb49c96f0473"
+          }
+        },
+        "tft18": {
+          "packageBytes": 360,
+          "packageSha256": "2af234f51b0b557449d8e664dadedf19e025269a891e93d854f3d2ffe5cac1bd",
+          "frameSha256ByTick": {
+            "0": "3b7f3758ad3fdc8e1234cb622a6aa794467919d8eb399805c0d55afdfe5c4def",
+            "1": "ef765d52706414176ec4b03c39466a194b61defd93f911c3819fb7ec1851f843",
+            "25": "ef78b63d5023c08a3562c6f5ccbbf95de0bab10227a32d3f1200b6f591d2c70d",
+            "49": "6f7ec7ca36b930f38a046b25062764d1b232280fc7326bdd3097eda3cdb57531"
+          }
+        }
+      },
+      "posterFrameSha256": {
+        "eink27bw": "fcd37bdc94b8178d8a0f40f2b4e5dc07140936df0ddca04e004784b4f4f144f4",
+        "eink29bwr": "65fe609d907b46a094467cf557b27b679853d76ac64a217707fc5b26a108f8b5"
+      }
+    }
+  }
+}
