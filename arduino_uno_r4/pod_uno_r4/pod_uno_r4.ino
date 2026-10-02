@@ -36,12 +36,13 @@
 #include "ana_scene_v1.h"   // copie identique de esp8266/esp_tft1.8/ana_scene_v1.h (vérifié par tests/podHttpR4.test.ts)
 
 // ─── CONFIG ────────────────────────────────────────────────────────────────
-const char* WIFI_SSID     = "";
-const char* WIFI_PASSWORD = "";
+const char* WIFI_SSID     = "AndroidF";
+const char* WIFI_PASSWORD = "Lincoln55";
 
 #define SERVER_HOST       "proof-of-draw.vercel.app"
 #define SCREEN_TYPE       "tft18"            // profil serveur 128×160 RGB565 (agrandi ×1,5 ici)
 #define FIRMWARE_VERSION  "r4tft28-1.0"
+#define TOUCH_ENABLED     0                  // 0 = tactile ignoré (rien n'est initialisé) ; 1 = toucher = rejeu de la scène / pull immédiat
 #define PULL_INTERVAL     60000UL
 #define VALIDATE_INTERVAL 30000UL
 #define HTTP_TIMEOUT_MS   20000UL
@@ -795,8 +796,12 @@ void setup() {
 
   tft.begin();
   tft.setRotation(0);
+#if TOUCH_ENABLED
   touchOk = ts.begin();
   logf("[TOUCH] STMPE610 %s", touchOk ? "détecté" : "NON détecté (toucher désactivé)");
+#else
+  logf("[TOUCH] désactivé (TOUCH_ENABLED 0)");
+#endif
   tftStatus("Proof-of-Draw", "Connexion WiFi...");
 
   if (WiFi.status() == WL_NO_MODULE) { tftStatus("Module WiFi absent", "", C_RED); while (true) delay(1000); }
@@ -825,7 +830,7 @@ void setup() {
   while (!registered) { if (doRegister()) break; delay(5000); }
   if (paired) { logf("[BOOT] premier pull immédiat"); doPull(); }
   lastPullMs = millis(); lastValidateMs = millis();
-  logf("[BOOT] prêt — pull toutes les %lu s (toucher = rejouer / pull immédiat)", PULL_INTERVAL / 1000UL);
+  logf("[BOOT] prêt — pull toutes les %lu s", PULL_INTERVAL / 1000UL);
 }
 
 void loop() {

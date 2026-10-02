@@ -14,7 +14,7 @@ L'appareil se déclare **`tft18`** (128×160) : **aucun changement serveur**. Il
 | Image fixe | flux RGB565 128×160 (40 960 o), agrandi **×1,5** (192×240) au centre de l'écran 240×320 |
 | Cartel | bandes natives 40 px : « RESCOE #bloc » en haut, titre (2×) + artiste en bas (accents repliés en ASCII) |
 | Œuvre ANA animée (scene-v1) | paquet ANAS ≤ 4 Ko téléchargé, vérifié (CRC, règles, hash), puis **rejoué localement à 2 FPS** (rectangles sales agrandis) ; ACK `mode:"scene"` après la lecture |
-| Tactile (STMPE610) | un toucher **rejoue la scène en cours** ; sur une image fixe, il **force un pull immédiat** |
+| Tactile (STMPE610) | **désactivé par défaut** (`TOUCH_ENABLED 0`). À `1` : un toucher rejoue la scène en cours, ou force un pull immédiat sur une image fixe |
 | Appairage | écran de clés (touché = continuer, sinon 60 s) puis QR + code ; même flux que les ESP |
 
 Pas de microSD (broche 4 maintenue HIGH, bus partagé) : elle n'est pas nécessaire.
