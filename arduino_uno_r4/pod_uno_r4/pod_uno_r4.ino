@@ -35,6 +35,7 @@
 #include <Ed25519.h>
 #include <SHA256.h>
 #include "pod_http.h"
+#include "pod_bench.h"
 
 // ─── CONFIG ────────────────────────────────────────────────────────────────
 // Wi-Fi : copier secrets.h.example en secrets.h (ignoré par git) puis renseigner SSID / mot de passe (2,4 GHz).
@@ -49,11 +50,20 @@
 
 #define SERVER_HOST       "proof-of-draw.vercel.app"
 #define SCREEN_TYPE       "tft28"            // profil serveur 240×320 RGB565 (lib/screenProfiles.ts)
-#define FIRMWARE_VERSION  "r4tft28-2.0"
+#define FIRMWARE_VERSION  "r4tft28-2.1"
 #define TOUCH_ENABLED     1                  // toucher = afficher / cacher le cartel
 #define PULL_INTERVAL     60000UL
 #define VALIDATE_INTERVAL 30000UL
 #define HTTP_TIMEOUT_MS   20000UL
+
+// Banc d'essai d'animation (voir docs/BENCH_ANIMATION.md) : le propriétaire l'active depuis l'app ; l'appareil le découvre dans /api/pull
+// ("benchMode") puis interroge /api/bench/poll toutes les 3 s pendant au plus 31 min.
+#define BENCH_POLL_MS      3000UL
+#define BENCH_MODE_MAX_MS  (31UL * 60UL * 1000UL)
+#define BENCH_MAX_CLIP     9216        // octets : le clip + la copie 1 Ko de l'image courante vivent dans le tas pendant la lecture
+#define BENCH_FRAME        1024        // = podbench::FRAME_BYTES (les macros FRAME_BYTES / ROW_BYTES de ce sketch masquent les constantes de pod_bench.h)
+#define BENCH_HDR          20          // = podbench::HEADER_BYTES
+static_assert(podbench::W * podbench::H / 8 == BENCH_FRAME && podbench::HEADER_BYTES == BENCH_HDR, "pod_bench.h : constantes désynchronisées");
 
 // ─── PINS (shield Adafruit 2.8" TFT Touch) ─────────────────────────────────
 #define TFT_CS    10
@@ -129,6 +139,11 @@ unsigned long lastPullMs = 0, lastValidateMs = 0, nextPullIntervalMs = PULL_INTE
 
 String pendingWorkTitle = "", pendingArtistName = "";
 String pendingObsHashes = "", pendingObsTarget = "";
+
+bool benchMode = false;                           // mode banc d'essai actif (annoncé par /api/pull)
+unsigned long benchModeSince = 0, lastBenchPollMs = 0;
+String lastBenchClipId = "";
+static bool g_quietHttp = false;                  // pas de ligne [HTTP] pour chaque poll réussi (toutes les 3 s)
 
 static char     g_body[3072];                   // corps JSON des réponses
 static uint16_t g_row[SCR_W];                   // une ligne d'image (octets little-endian reçus, puis big-endian pour le bus)
@@ -306,7 +321,7 @@ static int httpCall(const char* method, const String& path, const String* body, 
   resp = "";
   Conn c(HTTP_TIMEOUT_MS);
   const int code = c.request(method, path, body);
-  logf("[HTTP %s] %s -> %d", method, path.length() > 60 ? (path.substring(0, 60) + "...").c_str() : path.c_str(), code);
+  if (!(g_quietHttp && code == 200)) logf("[HTTP %s] %s -> %d", method, path.length() > 60 ? (path.substring(0, 60) + "...").c_str() : path.c_str(), code);
   if (code < 0) { if (code == -2) logf("[HTTP] connexion TLS impossible (voir l'en-tête du sketch)"); return code; }
   size_t len = 0;
   const bool complete = c.rd.readBodyString(g_body, sizeof(g_body), &len);
@@ -631,6 +646,7 @@ static bool doRegister() {
 // ─── PULL ──────────────────────────────────────────────────────────────────
 static bool doPull() {
   String newBlockHash = "", newCandId = "", newFrameId = "", newFrameSource = "none";
+  bool newBenchMode = false;
   int newBlockIndex = -1, pullRetryAfter = 60;
 
   {
@@ -660,6 +676,7 @@ static bool doPull() {
     newFrameSource = doc["frameSource"] | "none";
     newFrameId     = doc["frameId"] | "";
     pullRetryAfter = doc["retryAfter"] | 60;
+    newBenchMode = doc["benchMode"] | false;
     if (pullRetryAfter <= 0) pullRetryAfter = 60;
     if (newFrameId.length() == 0) { JsonObject fo = doc["frame"]; if (!fo.isNull()) newFrameId = fo["frameId"] | ""; }
 
@@ -684,6 +701,9 @@ static bool doPull() {
     if (strlen(owned) >= 16) saveOwnedBlockHash(String(owned));
   }
 
+  if (newBenchMode && !benchMode) { benchModeSince = millis(); lastBenchPollMs = 0; logf("[BENCH] mode banc d'essai ACTIVÉ par l'app (poll toutes les %lu s)", BENCH_POLL_MS / 1000UL); }
+  if (!newBenchMode && benchMode) logf("[BENCH] mode banc d'essai désactivé");
+  benchMode = newBenchMode;
   nextPullIntervalMs = (newFrameSource == "none" && newCandId.length() == 0) ? (unsigned long)pullRetryAfter * 1000UL : PULL_INTERVAL;
   if (newBlockHash.length() > 0 && newBlockHash != currentBlockHash) {
     currentBlockHash = newBlockHash; currentBlockIndex = newBlockIndex;
@@ -733,6 +753,111 @@ static bool doValidate() {
     if (vResp.indexOf("Signature") >= 0) { logf("[VALIDATE] resynchronisation de la clé publique (re-register)"); doRegister(); }
   }
   return blockMined;
+}
+
+// ─── BANC D'ESSAI D'ANIMATION ───────────────────────────────────────────────
+static void postBenchResult(const String& clipId, uint32_t frames, unsigned long expectedMs, unsigned long elapsedMs, unsigned long workSumUs,
+                            unsigned long workMaxUs, uint32_t overruns, unsigned long maxLateMs, unsigned long downloadMs, size_t bytes,
+                            bool stopped, const char* error) {
+  String body = "{\"deviceId\":\"" + deviceId + "\",\"clipId\":\"" + clipId + "\",\"frames\":" + String(frames)
+              + ",\"expectedMs\":" + String(expectedMs) + ",\"elapsedMs\":" + String(elapsedMs)
+              + ",\"avgWorkUs\":" + String(frames ? workSumUs / frames : 0UL) + ",\"maxWorkUs\":" + String(workMaxUs)
+              + ",\"overruns\":" + String(overruns) + ",\"maxLateMs\":" + String(maxLateMs) + ",\"downloadMs\":" + String(downloadMs)
+              + ",\"bytes\":" + String((unsigned long)bytes) + ",\"heapFree\":" + String((unsigned long)freeHeapBytes())
+              + ",\"stopped\":" + (stopped ? "true" : "false");
+  if (error) body += String(",\"error\":\"") + error + "\"";
+  body += "}";
+  String resp;
+  httpCall("POST", "/api/bench/result", &body, resp);
+}
+
+/** Télécharge le clip (TLS fermé ensuite), le valide entièrement, le joue en mesurant, renvoie les mesures, puis remet l'œuvre (carte SD). */
+static void playBenchClip(const String& clipId, size_t announced) {
+  logf("[BENCH] clip %s : %u octets annoncés", clipId.c_str(), (unsigned)announced);
+  lastBenchClipId = clipId;                                   // jamais rejoué en boucle, même en cas d'échec
+  if (announced < (size_t)(BENCH_HDR + 5 + BENCH_FRAME) || announced > BENCH_MAX_CLIP) {
+    logf("[BENCH] taille refusée (%u)", (unsigned)announced);
+    postBenchResult(clipId, 0, 0, 0, 0, 0, 0, 0, 0, announced, false, "taille refusee");
+    return;
+  }
+  uint8_t* clip = (uint8_t*)malloc(announced);
+  uint8_t* cur = (uint8_t*)malloc(BENCH_FRAME);
+  if (!clip || !cur) {
+    free(clip); free(cur);
+    logf("[BENCH] mémoire insuffisante");
+    postBenchResult(clipId, 0, 0, 0, 0, 0, 0, 0, 0, announced, false, "memoire");
+    return;
+  }
+
+  const unsigned long tDl = millis();
+  bool got = false;
+  {
+    Conn c(HTTP_TIMEOUT_MS);
+    const int code = c.request("GET", "/api/bench/clip?deviceId=" + deviceId + "&clipId=" + clipId, nullptr);
+    if (code == 200 && (c.rd.contentLength() < 0 || (size_t)c.rd.contentLength() == announced))
+      got = c.rd.readBody(clip, announced) == announced && c.rd.complete();
+    c.client.stop();
+  }
+  const unsigned long downloadMs = millis() - tDl;
+  podbench::Clip pc;
+  podbench::Err perr = got ? podbench::parse(clip, announced, pc, cur) : podbench::ERR_SIZE;
+  if (!got || perr != podbench::OK) {
+    logf("[BENCH] clip refusé (%s)", got ? podbench::errName(perr) : "téléchargement incomplet");
+    free(clip); free(cur);
+    postBenchResult(clipId, 0, 0, 0, 0, 0, 0, 0, downloadMs, announced, false, got ? "clip invalide" : "telechargement");
+    return;
+  }
+  logf("[BENCH] reçu en %lu ms — %u images x %u boucle(s), lecture", downloadMs, (unsigned)pc.frames, (unsigned)pc.loops);
+
+  tft.setRotation(0);
+  tft.fillScreen(pc.bg);
+  cartelVisible = false;                                      // l'écran est désormais celui du banc d'essai
+  uint32_t frames = 0, overruns = 0;
+  unsigned long workSum = 0, workMax = 0, maxLate = 0, expectedMs = 0, lastTouchChk = millis();
+  bool stopped = false;
+  const unsigned long t0 = millis();
+  unsigned long target = t0;                                  // instant où l'image courante DOIT apparaître
+  unsigned long workStartUs = micros();
+  const bool completed = podbench::play(pc, cur, tft, g_row, [&](uint32_t k, uint16_t delayMs) -> bool {
+    const unsigned long workUs = micros() - workStartUs;       // appliquer la différence + peindre
+    if (k > 0) { const long late = (long)(millis() - target); if (late > 5) { overruns++; if ((unsigned long)late > maxLate) maxLate = (unsigned long)late; } }
+    workSum += workUs; if (workUs > workMax) workMax = workUs;
+    frames++; expectedMs += delayMs;
+    target += delayMs;                                         // horloge ABSOLUE : pas de dérive cumulée
+    while ((long)(millis() - target) < 0) {
+      if (touchOk && millis() - lastTouchChk > 200UL) { lastTouchChk = millis(); if (ts.touched()) { drainTouch(); stopped = true; return false; } }
+      delay(1);
+    }
+    workStartUs = micros();
+    return true;
+  });
+  (void)completed;
+  const unsigned long elapsed = millis() - t0;
+  logf("[BENCH] lecture %s : %lu images en %lu ms (prévu %lu) — travail moy %lu us, max %lu us, retards %lu (max %lu ms)",
+       stopped ? "INTERROMPUE" : "terminée", (unsigned long)frames, elapsed, expectedMs, frames ? workSum / frames : 0UL, workMax, (unsigned long)overruns, maxLate);
+  free(clip); free(cur);                                      // libérés AVANT d'ouvrir une connexion TLS pour les mesures
+  postBenchResult(clipId, frames, expectedMs, elapsed, workSum, workMax, overruns, maxLate, downloadMs, announced, stopped, nullptr);
+  if (sdFrameValid) {                                         // l'œuvre revient depuis la carte SD
+    const unsigned long tr = millis();
+    if (restoreRows(0, SCR_H)) logf("[BENCH] œuvre remise en place depuis la carte SD en %lu ms", millis() - tr);
+  }
+}
+
+static void doBenchPoll() {
+  String resp;
+  g_quietHttp = true;
+  const int code = httpCall("GET", "/api/bench/poll?deviceId=" + deviceId, nullptr, resp);
+  g_quietHttp = false;
+  if (code == 429) return;
+  if (code != 200) { logf("[BENCH] poll en erreur (%d)", code); return; }
+  JSON_DOC(doc, 384);
+  if (deserializeJson(doc, resp)) return;
+  if (!(doc["mode"] | false)) { benchMode = false; logf("[BENCH] mode terminé côté serveur"); return; }
+  JsonObject c = doc["clip"];
+  if (c.isNull()) return;
+  const String id = c["clipId"] | "";
+  const size_t bytes = (size_t)(c["bytes"] | 0);
+  if (id.length() > 0 && id != lastBenchClipId) playBenchClip(id, bytes);
 }
 
 // ─── AUTO-TEST Ed25519 (au boot) : prouve que signature + vérification passent dans 1 Ko de pile + marge du tas ────────────
@@ -821,6 +946,11 @@ void loop() {
   }
 
   serviceTouch();
+
+  if (benchMode) {
+    if (millis() - benchModeSince > BENCH_MODE_MAX_MS) { benchMode = false; logf("[BENCH] mode expiré (31 min)"); }
+    else if (millis() - lastBenchPollMs >= BENCH_POLL_MS) { lastBenchPollMs = millis(); doBenchPoll(); }
+  }
 
   if (now - lastPullMs >= nextPullIntervalMs) {
     const String prevCand = pendingCandidateId;

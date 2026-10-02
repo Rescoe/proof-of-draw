@@ -261,6 +261,12 @@ redessiner les bandes sans re-télécharger. Détails, contraintes et mesures à
 **Piège R4 : pile principale de 1 Ko** (protection désactivée) → pas de gros tableau local, tampons statiques, `[MEM]`/`[SELFTEST]` au Serial.
 Vue réseau : icône dédiée (tablette portrait) + turquoise. Tests : `podHttpR4`, `canvasToScreen` (tft28), `screenConvert` (boucle sur tous les écrans).
 
+## Banc d'essai d'animation — TFT 2.8" (02/10/2026, v1 test)
+
+Page `/bench` (lien sur la carte de l'appareil) : animation 128×64 1 bit → clip « PBC1 » en DIFFÉRENCES (`lib/bench/clip.ts`, plafond 9 Ko) → `/api/bench/{send,mode,poll,clip,result,status}`
+(Redis `bench:*`, TTL courts) → firmware `pod_bench.h` (repeint les seuls octets modifiés, ×15/8, mesures renvoyées). `/api/pull` ajoute `benchMode` pour un tft28 quand le mode est actif.
+Détails, format et mesures à rapporter : `docs/BENCH_ANIMATION.md`. Tests : `benchClip`, `podBenchR4` (g++ + validation différentielle).
+
 ## Non-goals
 
 Ne pas faire :

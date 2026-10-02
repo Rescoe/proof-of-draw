@@ -242,6 +242,10 @@ export async function GET(req: NextRequest) {
       }
     }
 
+    // ── Banc d'essai d'animation (TFT 2.8" tactile uniquement) : 1 GET, seulement pour ces appareils ──
+    // Quand le propriétaire a activé le mode, on le dit à l'appareil ; il passe alors en poll rapide sur /api/bench/poll.
+    const benchMode = device.screens?.includes("tft28") ? (await redis.get(`bench:mode:${deviceId}`)) !== null : false;
+
     // ── Réponse ─────────────────────────────────────────────────────────────
     // Bloc `scene` : métadonnées SEULES — le binaire passe par /api/pull-frame?kind=scene.
     const sceneMeta = delivery.kind === "scene" ? scenePullMeta(delivery) : undefined;
@@ -274,6 +278,9 @@ export async function GET(req: NextRequest) {
       // L'ESP doit sauvegarder ce hash dans ses slots EEPROM "blocs possédés".
       // null si ce device n'a pas miné de nouveau bloc depuis le dernier pull.
       ownedBlock: ownedNotif ?? null,
+
+      // Uniquement pour un TFT 2.8" dont le propriétaire a activé le banc d'essai (zéro octet ajouté sinon).
+      ...(benchMode ? { benchMode: true } : {}),
     });
 
   } catch (err) {
