@@ -41,6 +41,7 @@ interface Layout { avatarScale: number; avatarTop: boolean; scales: number[]; ti
 const LAYOUT: Record<ScreenId, Layout> = {
   oled096:   { avatarScale: 1, avatarTop: false, scales: [1],    titleLines: 0 },
   tft18:     { avatarScale: 1, avatarTop: true,  scales: [1],    titleLines: 4 },
+  tft28:     { avatarScale: 2, avatarTop: true,  scales: [2, 1], titleLines: 4 },
   eink27bw:  { avatarScale: 2, avatarTop: false, scales: [2, 1], titleLines: 1 },
   eink29bwr: { avatarScale: 2, avatarTop: false, scales: [2, 1], titleLines: 1 },
 };

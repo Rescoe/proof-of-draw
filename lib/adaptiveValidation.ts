@@ -57,6 +57,12 @@ const SCREEN_FLOORS: Record<string, ScreenFloor> = {
     coverage:   0.05,
     complexity: 0.03,
   },
+  tft28: {
+    durationMs: 15_000, // même exigence que le TFT 1.8"
+    strokes:    3,
+    coverage:   0.05,
+    complexity: 0.03,
+  },
   _default: {
     durationMs: 10_000,
     strokes:    2,

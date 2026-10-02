@@ -34,6 +34,7 @@ const SCREEN_LABELS: Record<string, string> = {
   eink27bw:  'E-Ink 2.7" BW',
   oled096:   'OLED 0.96"',
   tft18:     'TFT 1.8" RGB',
+  tft28:     'TFT 2.8" tactile',
 };
 
 // Une carte = une œuvre ; l'aperçu est une conversion (écran d'aperçu préféré),
@@ -181,6 +182,7 @@ export function AnaGalleryClient() {
           <option value="eink27bw">E-Ink 2.7" BW</option>
           <option value="oled096">OLED 0.96"</option>
           <option value="tft18">TFT 1.8" RGB</option>
+          <option value="tft28">TFT 2.8" tactile</option>
         </select>
       </div>
 

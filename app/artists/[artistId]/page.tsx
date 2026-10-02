@@ -26,6 +26,7 @@ const DISPLAY_SIZES_PUB: Record<string, { w: number; h: number }> = {
   eink27bw:  { w: 132, h: 88  },
   oled096:   { w: 128, h: 64  },
   tft18:     { w: 128, h: 160 },
+  tft28:     { w: 144, h: 192 },  // 240×320 × 0.6
 };
 
 function pubCoverTransform(screen: string, size: number, crop?: { cx: number; cy: number; zoom: number }) {
@@ -100,6 +101,7 @@ const SCREEN_LABELS: Record<string, string> = {
   eink27bw:  'E-Ink 2.7" BW',
   oled096:   'OLED 0.96"',
   tft18:     'TFT 1.8" RGB',
+  tft28:     'TFT 2.8" tactile',
 };
 
 function isKnownScreen(sid: string): sid is keyof typeof SCREEN_PROFILES {

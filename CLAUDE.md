@@ -253,12 +253,13 @@ contrôle donc aussi les ESP ajoutés plus tard depuis le téléphone, et perd l
 UN bouton « ⚙ Gérer » → sous-menus Réglages · Accès · Blocs · Zone sensible (un seul panneau ouvert). **Suppression protégée** : retaper le nom de
 l'appareil (`lib/deviceDeleteGuard.ts`, testé). `InlineEdit` vit dans son propre fichier (un `page.tsx` ne peut exporter que la page).
 
-## Firmware UNO R4 WiFi + TFT 2.8" tactile (02/10/2026)
+## Firmware UNO R4 WiFi + TFT 2.8" tactile — écran `tft28` (02/10/2026)
 
-`arduino_uno_r4/pod_uno_r4/` : même protocole que les ESP, déclaré **`tft18`** (aucun changement serveur), image ×1,5 dans 240×320, cartel natif,
-scènes scene-v1 rejouées à 2 FPS, tactile = rejeu / pull immédiat. Détails, contraintes et mesures à rapporter : `docs/UNO_R4_TFT28.md`.
+Nouveau type d'écran **`tft28`** (240×320 RGB565, 153 600 o, profil dans `lib/screenProfiles.ts`) : l'œuvre est plein écran ; **pas de scene-v1** (aucune
+`sceneCapability`) — les œuvres ANA arrivent comme image fixe. Le toucher affiche/cache le cartel ; la microSD garde la dernière image pour pouvoir
+redessiner les bandes sans re-télécharger. Détails, contraintes et mesures à rapporter : `docs/UNO_R4_TFT28.md`.
 **Piège R4 : pile principale de 1 Ko** (protection désactivée) → pas de gros tableau local, tampons statiques, `[MEM]`/`[SELFTEST]` au Serial.
-`ana_scene_v1.h` y est une copie identique de celle de `esp8266/esp_tft1.8/` (test `podR4Display`). Tests : `podHttpR4`, `podR4Display`.
+Vue réseau : icône dédiée (tablette portrait) + turquoise. Tests : `podHttpR4`, `canvasToScreen` (tft28), `screenConvert` (boucle sur tous les écrans).
 
 ## Non-goals
 

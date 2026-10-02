@@ -13,7 +13,7 @@ import { ShownThumb } from "../network/LiveDisplays";
 type OwnMap = Record<string, Record<string, ShownRecord>>;
 
 const SCREEN_LABEL: Record<string, string> = {
-  eink29bwr: 'E-Ink 2.9" BWR', eink27bw: 'E-Ink 2.7" BW', oled096: 'OLED 0.96"', tft18: 'TFT 1.8"',
+  eink29bwr: 'E-Ink 2.9" BWR', eink27bw: 'E-Ink 2.7" BW', oled096: 'OLED 0.96"', tft18: 'TFT 1.8"', tft28: 'TFT 2.8" tactile',
 };
 const ANA_KIND: Record<string, string> = {
   poem: "Poème d'agent IA", celebration: "Mémorial de burn", spontaneous: "Dessin d'agent IA", "generative-capture": "Œuvre générative (ANA)",

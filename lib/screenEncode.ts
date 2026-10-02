@@ -221,6 +221,7 @@ export function encodeForScreen(
     case "eink27bw":  return encodeEink27bw(resized, profile.width, profile.height);
     case "eink29bwr": return encodeEink29bwr(resized, profile.width, profile.height, redMask);
     case "tft18":     return encodeTft18(resized, profile.width, profile.height, redMask);
+    case "tft28":     return encodeTft18(resized, profile.width, profile.height, redMask);   // même format RGB565, autre résolution
     default:
       throw new Error(`encodeForScreen: unsupported screen ${screenId}`);
   }

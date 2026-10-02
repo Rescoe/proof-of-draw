@@ -73,8 +73,7 @@ function decodeEink29(blackB64: string, redB64: string, fg: string, fg2: string)
 // ─── TFT 1.8" ST7735 128×160 RGB565 ──────────────────────────────────────────
 // Buffer RGB565 little-endian, 40960 bytes — couleurs réelles
 // Les pixels blancs (#ffffff ± marge) sont skippés (fond = background)
-function decodeTft18(bufferB64: string, _fg: string): Decoded {
-  const W = 128, H = 160;
+function decodeTft18(bufferB64: string, _fg: string, W = 128, H = 160): Decoded {
   const buf = b64ToBytes(bufferB64);
   const pixels: Pixel[] = [];
   for (let y = 0; y < H; y++) {
@@ -134,6 +133,8 @@ export function generatePixelSVGFromBuffer(
       decoded = decodeEink29(black, red, fg, fg2);
     else if (screen === "tft18" && buffer)
       decoded = decodeTft18(buffer, fg);
+    else if (screen === "tft28" && buffer)
+      decoded = decodeTft18(buffer, fg, 240, 320);
     else
       return null;
 

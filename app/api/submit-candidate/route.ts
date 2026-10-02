@@ -67,14 +67,15 @@ export async function POST(req: NextRequest) {
     pixels = decodeEinkBuffer(buffer, 176, 264);
   } else if (screen === "oled096" && buffer) {
     pixels = decodeEinkBuffer(buffer, 128, 64);
-  } else if (screen === "tft18" && buffer) {
-    // tft18 : RGB565 little-endian → binaire "dessiné / fond blanc"
+  } else if ((screen === "tft18" || screen === "tft28") && buffer) {
+    // tft18 / tft28 : RGB565 little-endian → binaire "dessiné / fond blanc"
     // On compare directement à 0xFFFF (blanc pur) plutôt que via luminance :
     // la luminance rate les couleurs claires (sable, ciel, jaune) dont lum > 230.
     // Tout pixel qui n'est pas blanc pur = dessiné.
     const rgbBytes = Buffer.from(buffer, "base64");
-    pixels = new Uint8Array(128 * 160);
-    for (let i = 0; i < 128 * 160; i++) {
+    const tftPx = screen === "tft28" ? 240 * 320 : 128 * 160;
+    pixels = new Uint8Array(tftPx);
+    for (let i = 0; i < tftPx; i++) {
       const rgb565 = rgbBytes[i * 2] | (rgbBytes[i * 2 + 1] << 8);
       pixels[i] = rgb565 !== 0xFFFF ? 1 : 0;
     }
@@ -85,10 +86,12 @@ export async function POST(req: NextRequest) {
   const W = screen === "eink29bwr" ? 296
           : screen === "eink27bw"  ? 176
           : screen === "tft18"     ? 128
+          : screen === "tft28"     ? 240
           : 128;
   const H = screen === "eink29bwr" ? 128
           : screen === "eink27bw"  ? 264
           : screen === "tft18"     ? 160
+          : screen === "tft28"     ? 320
           : 64;
 
   // ── Métriques visuelles + seuils adaptatifs ──────────────────────────────────

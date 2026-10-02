@@ -157,12 +157,13 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ frameId, ...payload });
     }
 
-    // ── tft18 : buffer RGB565 little-endian (128×160×2 = 40960 bytes) ───────
-    if (targetScreen === "tft18") {
+    // ── tft18 / tft28 : buffer RGB565 little-endian (tft18 128×160×2 = 40960 o · tft28 240×320×2 = 153600 o) ───────
+    // tft28 (TFT 2.8" tactile) : jamais de scène scene-v1 (isSceneScreen = false) — l'œuvre arrive comme image fixe.
+    if (targetScreen === "tft18" || targetScreen === "tft28") {
       const { buffer } = payload as { buffer?: string };
       if (!buffer) {
-        console.error(`[pull-frame] payload manquant buffer pour ${deviceId} (tft18)`);
-        return NextResponse.json({ error: "payload incomplet pour tft18" }, { status: 404 });
+        console.error(`[pull-frame] payload manquant buffer pour ${deviceId} (${targetScreen})`);
+        return NextResponse.json({ error: `payload incomplet pour ${targetScreen}` }, { status: 404 });
       }
 
       if (fmt === "bin") {

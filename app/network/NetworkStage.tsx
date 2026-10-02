@@ -21,6 +21,7 @@ const SCREEN_COLOR: Record<string, string> = {
   eink27bw:  "#94a3b8",
   oled096:   "#60a5fa",
   tft18:     "#fbbf24",
+  tft28:     "#2dd4bf",   // turquoise : TFT 2.8" tactile (distinct du TFT 1.8" jaune)
 };
 function screenColor(s: string) { return SCREEN_COLOR[s] ?? "#a2a3bb"; }
 
@@ -499,18 +500,36 @@ export function NetworkStage({ snapshot, onDeviceSelect, selectedDeviceId, onSer
                           className="nv2-sel-ring" />
                 )}
                 <circle r="20" fill={active ? `${color}12` : "rgba(255,255,255,0.04)"} />
-                <rect
-                  x="-14" y="-11" width="28" height="18" rx="3.5"
-                  fill="rgba(10,10,15,0.98)"
-                  stroke={isParentSelected ? color : active ? `${color}80` : "rgba(148,163,184,0.15)"}
-                  strokeWidth={isParentSelected ? 2 : 1.8}
-                />
-                <rect
-                  x="-11" y="-8" width="22" height="12" rx="1.5"
-                  fill={active ? `${color}1a` : "rgba(255,255,255,0.03)"}
-                />
-                <rect x="-3" y="7" width="6" height="6" rx="1" fill="rgba(10,10,15,0.9)" />
-                <line x1="0" y1="13" x2="0" y2="16" stroke="rgba(148,163,184,0.4)" strokeWidth="1.5" strokeLinecap="round" />
+                {sn.screen.screen === "tft28" ? (
+                  <>
+                    {/* TFT 2.8" tactile : tablette portrait + point de contact (distinct du moniteur des autres écrans) */}
+                    <rect
+                      x="-10" y="-15" width="20" height="29" rx="4"
+                      fill="rgba(10,10,15,0.98)"
+                      stroke={isParentSelected ? color : active ? `${color}80` : "rgba(148,163,184,0.15)"}
+                      strokeWidth={isParentSelected ? 2 : 1.8}
+                    />
+                    <rect x="-7.5" y="-12" width="15" height="20" rx="1.5" fill={active ? `${color}1a` : "rgba(255,255,255,0.03)"} />
+                    <circle cx="2" cy="-3" r="3.2" fill="none" stroke={active ? color : "rgba(148,163,184,0.3)"} strokeWidth="1.2" strokeOpacity="0.8" />
+                    <circle cx="2" cy="-3" r="1.1" fill={active ? color : "rgba(148,163,184,0.3)"} />
+                    <circle cx="0" cy="11" r="1.4" fill="rgba(148,163,184,0.45)" />
+                  </>
+                ) : (
+                  <>
+                    <rect
+                      x="-14" y="-11" width="28" height="18" rx="3.5"
+                      fill="rgba(10,10,15,0.98)"
+                      stroke={isParentSelected ? color : active ? `${color}80` : "rgba(148,163,184,0.15)"}
+                      strokeWidth={isParentSelected ? 2 : 1.8}
+                    />
+                    <rect
+                      x="-11" y="-8" width="22" height="12" rx="1.5"
+                      fill={active ? `${color}1a` : "rgba(255,255,255,0.03)"}
+                    />
+                    <rect x="-3" y="7" width="6" height="6" rx="1" fill="rgba(10,10,15,0.9)" />
+                    <line x1="0" y1="13" x2="0" y2="16" stroke="rgba(148,163,184,0.4)" strokeWidth="1.5" strokeLinecap="round" />
+                  </>
+                )}
                 <text
                   x="0" y="24"
                   textAnchor="middle"

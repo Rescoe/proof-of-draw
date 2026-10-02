@@ -187,7 +187,7 @@ export interface AnaWork {
 }
 
 // Écran d'aperçu préféré : eink27bw partage le ratio 3:2 du canvas ANA (pas de letterbox).
-const PREVIEW_ORDER = ["eink27bw", "eink29bwr", "tft18", "oled096"];
+const PREVIEW_ORDER = ["eink27bw", "eink29bwr", "tft18", "oled096", "tft28"];
 
 function pickPreview(screens: AnaWorkScreen[]): string {
   for (const s of PREVIEW_ORDER) if (screens.some((x) => x.screen === s)) return s;

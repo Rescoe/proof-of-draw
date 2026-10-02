@@ -26,6 +26,7 @@ const SCREEN_COLOR: Record<string, string> = {
   eink27bw:  "#94a3b8",
   oled096:   "#60a5fa",
   tft18:     "#fbbf24",
+  tft28:     "#2dd4bf",   // turquoise : TFT 2.8" tactile (distinct du TFT 1.8" jaune)
 };
 
 function fmtTime(ts: number): string {

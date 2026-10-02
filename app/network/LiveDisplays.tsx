@@ -9,7 +9,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { NetworkDevice, NetworkSnapshot } from "@/lib/networkSnapshot";
 import type { PublicShown } from "@/lib/displayState";
-import { eink29bwrToCanvas, eink27bwToCanvas, oled096ToCanvas, tft18ToCanvas } from "@/lib/screenToCanvas";
+import { eink29bwrToCanvas, eink27bwToCanvas, oled096ToCanvas, tft18ToCanvas, tft28ToCanvas } from "@/lib/screenToCanvas";
 
 export type DisplaysMap = Record<string, Record<string, PublicShown>>;
 interface DisplaysResponse { generatedAt: number; displays: DisplaysMap }
@@ -70,6 +70,7 @@ function payloadToImageData(p: ImagePayload): ImageData | null {
     if (p.screen === "eink27bw" && p.buffer) return eink27bwToCanvas(p.buffer);
     if (p.screen === "oled096" && p.buffer) return oled096ToCanvas(p.buffer);
     if (p.screen === "tft18" && p.buffer) return tft18ToCanvas(p.buffer);
+    if (p.screen === "tft28" && p.buffer) return tft28ToCanvas(p.buffer);
   } catch { /* buffer corrompu : pas d'aperçu */ }
   return null;
 }
@@ -107,7 +108,7 @@ export function ShownThumb({ frameId, screen, box }: { frameId: string; screen: 
 
 // ─── Vue publique : images seulement ─────────────────────────────────────────
 
-const SCREEN_COLOR: Record<string, string> = { eink29bwr: "#f87171", eink27bw: "#94a3b8", oled096: "#60a5fa", tft18: "#fbbf24" };
+const SCREEN_COLOR: Record<string, string> = { eink29bwr: "#f87171", eink27bw: "#94a3b8", oled096: "#60a5fa", tft18: "#fbbf24", tft28: "#2dd4bf" };
 
 /** Une image affichée (miniature + légende minimale : le nom de l'écran en couleur). */
 function ShownImage({ screen, label, shown, box }: { screen: string; label: string; shown: PublicShown; box: { w: number; h: number } }) {

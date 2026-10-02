@@ -1,7 +1,7 @@
 import { ScreenId, SCREEN_PROFILES } from "@/lib/screenProfiles";
 
 export type ScreenPayload =
-  | { screen: "oled096" | "eink27bw" | "tft18"; buffer: string }
+  | { screen: "oled096" | "eink27bw" | "tft18" | "tft28"; buffer: string }
   | { screen: "eink29bwr"; black: string; red: string };
 
 function uint8ArrayToBase64(buf: Uint8Array): string {
@@ -221,14 +221,15 @@ if (screenId === "eink27bw") {
   // Le firmware lit le buffer via writePixels((uint16_t*)rowBuf, 128) —
   // le hardware SPI envoie high byte en premier (MSB), conforme ST7735.
   // ════════════════════════════════════════════════════════════════
-  if (screenId === "tft18") {
-    const TFT_W = 128;
-    const TFT_H = 160;
-    const BUF_SIZE = TFT_W * TFT_H * 2; // 40960 bytes
+  // tft28 (TFT 2.8" tactile) : MÊME format en 240×320 (153 600 octets) — dimensions lues dans le profil.
+  if (screenId === "tft18" || screenId === "tft28") {
+    const TFT_W = profile.width;
+    const TFT_H = profile.height;
+    const BUF_SIZE = TFT_W * TFT_H * 2; // tft18 : 40960 octets · tft28 : 153600 octets
 
     if (w !== TFT_W || h !== TFT_H) {
       throw new Error(
-        `tft18 canvas size mismatch: got ${w}x${h}, expected ${TFT_W}x${TFT_H}`
+        `${screenId} canvas size mismatch: got ${w}x${h}, expected ${TFT_W}x${TFT_H}`
       );
     }
 
@@ -261,7 +262,7 @@ if (screenId === "eink27bw") {
       }
     }
 
-    return { screen: "tft18", buffer: uint8ArrayToBase64(buffer) };
+    return { screen: screenId, buffer: uint8ArrayToBase64(buffer) };
   }
 
   throw new Error(`Unsupported screen: ${screenId}`);

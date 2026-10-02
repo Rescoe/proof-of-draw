@@ -8,7 +8,7 @@
 
 import { useEffect, useRef, useCallback } from "react";
 import type { BlockImagePayload } from "@/lib/chain";
-import { eink29bwrToCanvas, eink27bwToCanvas, oled096ToCanvas, tft18ToCanvas } from "@/lib/screenToCanvas";
+import { eink29bwrToCanvas, eink27bwToCanvas, oled096ToCanvas, tft18ToCanvas, tft28ToCanvas } from "@/lib/screenToCanvas";
 
 // Dimensions CSS d'affichage par type d'écran
 const DISPLAY_SIZES: Record<string, { w: number; h: number }> = {
@@ -16,6 +16,7 @@ const DISPLAY_SIZES: Record<string, { w: number; h: number }> = {
   eink27bw:  { w: 132, h: 88  },  // 264×176 × 0.5
   oled096:   { w: 128, h: 64  },  // 128×64  × 1
   tft18:     { w: 128, h: 160 },  // 128×160 × 1
+  tft28:     { w: 144, h: 192 },  // 240×320 × 0.6
 };
 
 export function BlockFrameCanvas({
@@ -52,6 +53,8 @@ export function BlockFrameCanvas({
         imageData = oled096ToCanvas(payload.buffer);
       } else if (payload.screen === "tft18" && payload.buffer) {
         imageData = tft18ToCanvas(payload.buffer);
+      } else if (payload.screen === "tft28" && payload.buffer) {
+        imageData = tft28ToCanvas(payload.buffer);
       }
       if (!imageData) return;
 

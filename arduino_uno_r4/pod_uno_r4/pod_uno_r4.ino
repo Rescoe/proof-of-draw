@@ -1,20 +1,22 @@
 // pod_uno_r4.ino
 // Proof-of-Draw — Firmware UNO R4 WiFi + shield « 2.8" TFT Touch » (ILI9341 240×320 + STMPE610 + microSD)
 //
-// Même protocole que les firmwares ESP8266 (register → pull → frame/scene → ACK, validation Ed25519, observation),
+// Même protocole que les firmwares ESP8266 (register → pull → image → ACK, validation Ed25519, observation, blocs possédés),
 // porté sur l'UNO R4 WiFi :
 //   • le Wi-Fi/TLS passe par le coprocesseur ESP32-S3 (WiFiSSLClient) : plus de BearSSL dans la RAM du microcontrôleur ;
-//   • l'appareil se déclare « tft18 » (128×160) : le serveur n'a RIEN à changer. L'image est agrandie ×1,5 (192×240) au centre
-//     de l'écran 240×320, avec un cartel natif (titre / artiste / n° de bloc) en bandes haute et basse ;
-//   • œuvres ANA animées (scene-v1) : le paquet ANAS (≤ 4 Ko) est téléchargé, vérifié, puis rejoué localement (2 FPS) ;
-//   • tactile (STMPE610) : un toucher REJOUE l'animation en cours, ou, sur une image fixe, force un pull immédiat.
+//   • l'appareil se déclare « tft28 » (240×320 RGB565, 153 600 o) : l'œuvre occupe TOUT l'écran. Pas de scene-v1 sur cet écran :
+//     une œuvre ANA arrive comme image fixe (son aperçu), comme sur les écrans e-ink ;
+//   • tactile (STMPE610) : un toucher AFFICHE ou CACHE le cartel — bande haute « RESCOE · #bloc », bande basse « titre · artiste » —
+//     par-dessus l'œuvre en plein écran ;
+//   • microSD : la dernière image y est gardée (/pod/frame.bin). Elle sert à cacher le cartel (on redessine les deux bandes depuis la
+//     carte, sans re-télécharger) et à réafficher l'œuvre au redémarrage. Sans carte : l'œuvre reste en plein écran, sans cartel.
 //
-// Câblage : le shield s'enfiche tel quel sur l'UNO R4 WiFi (TFT CS 10 / DC 9, tactile CS 8, SD CS 4 — non utilisée ici).
-// Bibliothèques : Adafruit ILI9341, Adafruit GFX, Adafruit BusIO, Adafruit STMPE610, ArduinoJson (≥ 6, testé 7.4), QRCode, Crypto (Ed25519, SHA256).
+// Câblage : le shield s'enfiche tel quel sur l'UNO R4 WiFi (TFT CS 10 / DC 9, tactile CS 8, microSD CS 4).
+// Bibliothèques : Adafruit ILI9341, Adafruit GFX, Adafruit BusIO, Adafruit STMPE610, ArduinoJson (≥ 6, testé 7.4), QRCode, Crypto, SD.
 // Carte : « Arduino UNO R4 WiFi ». Moniteur série : 115200.
 //
-// ⚠ Débit : la liaison RA4M1 ↔ ESP32-S3 est à 115200 bauds → une image complète (40 960 o) met plusieurs secondes ;
-//   un paquet de scène (≤ 4 Ko) moins d'une seconde. Les temps réels sont affichés au Serial ([FRAME] / [SCENE]).
+// ⚠ Débit : la liaison RA4M1 ↔ ESP32-S3 est à 115200 bauds → une image complète (153 600 o) met une vingtaine de secondes à arriver
+//   (elle se dessine de haut en bas pendant ce temps). Les temps réels sont affichés au Serial ([FRAME]).
 // ⚠ TLS : le coprocesseur vérifie le certificat avec son lot de certificats racine. Si « connexion TLS impossible » s'affiche,
 //   mettre à jour le firmware du module Wi-Fi (IDE → Outils → Updater le firmware) et/ou ajouter le certificat racine du serveur.
 
@@ -23,6 +25,7 @@
 #include <stdarg.h>
 #include <WiFiS3.h>
 #include <SPI.h>
+#include <SD.h>
 #include <EEPROM.h>
 #include <ArduinoJson.h>
 #include <Adafruit_GFX.h>
@@ -32,25 +35,18 @@
 #include <Ed25519.h>
 #include <SHA256.h>
 #include "pod_http.h"
-#include "pod_scale.h"
-#include "ana_scene_v1.h"   // copie identique de esp8266/esp_tft1.8/ana_scene_v1.h (vérifié par tests/podHttpR4.test.ts)
 
 // ─── CONFIG ────────────────────────────────────────────────────────────────
-const char* WIFI_SSID     = "AndroidF";
-const char* WIFI_PASSWORD = "Lincoln55";
+const char* WIFI_SSID     = "";
+const char* WIFI_PASSWORD = "";
 
 #define SERVER_HOST       "proof-of-draw.vercel.app"
-#define SCREEN_TYPE       "tft18"            // profil serveur 128×160 RGB565 (agrandi ×1,5 ici)
-#define FIRMWARE_VERSION  "r4tft28-1.0"
-#define TOUCH_ENABLED     0                  // 0 = tactile ignoré (rien n'est initialisé) ; 1 = toucher = rejeu de la scène / pull immédiat
+#define SCREEN_TYPE       "tft28"            // profil serveur 240×320 RGB565 (lib/screenProfiles.ts)
+#define FIRMWARE_VERSION  "r4tft28-2.0"
+#define TOUCH_ENABLED     1                  // toucher = afficher / cacher le cartel
 #define PULL_INTERVAL     60000UL
 #define VALIDATE_INTERVAL 30000UL
 #define HTTP_TIMEOUT_MS   20000UL
-
-// scene-v1 : le serveur compile pour la classe « f2 » du TFT ; ne pas déclarer plus tant que lib/scene/delivery.ts n'a pas de classe f4+.
-#define SCENE_MAX_FPS       2
-#define SCENE_MAX_PACKAGE   4096
-#define SCENE_MAX_FAILS     2
 
 // ─── PINS (shield Adafruit 2.8" TFT Touch) ─────────────────────────────────
 #define TFT_CS    10
@@ -58,21 +54,14 @@ const char* WIFI_PASSWORD = "Lincoln55";
 #define STMPE_CS  8
 #define SD_CS     4
 
-// ─── GÉOMÉTRIE ─────────────────────────────────────────────────────────────
-#define SRC_W   128
-#define SRC_H   160
-#define SRC_ROW_BYTES (SRC_W * 2)
-#define SRC_BYTES     (SRC_W * SRC_H * 2)     // 40960
-#define SCR_W   240
-#define SCR_H   320
-#define ART_W   192                           // 128 × 1,5
-#define ART_H   240                           // 160 × 1,5
-#define ART_X   ((SCR_W - ART_W) / 2)         // 24
-#define ART_Y   ((SCR_H - ART_H) / 2)         // 40
-#define BAND_H  ART_Y                         // bandes cartel haute/basse
-
-// agrandissement ×1,5 « plus proche voisin » : voir pod_scale.h (testé sur PC contre le moteur de référence)
-using podscale::up;
+// ─── GÉOMÉTRIE : écran 240×320 portrait, l'œuvre en occupe la totalité ─────
+#define SCR_W         240
+#define SCR_H         320
+#define ROW_BYTES     (SCR_W * 2)                 // 480
+#define FRAME_BYTES   (SCR_W * SCR_H * 2)         // 153 600
+#define BAND_TOP_H    40                          // cartel haut : y 0..39
+#define BAND_BOT_Y    272                         // cartel bas : y 272..319 (48 px)
+#define BAND_BOT_H    (SCR_H - BAND_BOT_Y)
 
 // Couleurs RGB565
 #define C_BLACK  0x0000
@@ -97,6 +86,11 @@ using podscale::up;
 #define OWNED_SLOTS_MAX        10
 #define OWNED_HASH_LEN         32
 
+// ─── microSD : dernière image + son cartel ─────────────────────────────────
+#define SD_DIR    "/pod"
+#define SD_FRAME  "/pod/frame.bin"                // 153 600 o RGB565 little-endian, tel que reçu du serveur
+#define SD_META   "/pod/meta.txt"                 // 4 lignes : frameId, n° de bloc, titre, artiste (écrit APRÈS l'image complète)
+
 #if ARDUINOJSON_VERSION_MAJOR >= 7
   #define JSON_DOC(name, cap) JsonDocument name
 #else
@@ -107,6 +101,9 @@ using podscale::up;
 Adafruit_ILI9341  tft(TFT_CS, TFT_DC);
 Adafruit_STMPE610 ts(STMPE_CS);
 bool touchOk = false;
+bool sdOk = false;                                // carte lisible
+bool sdFrameValid = false;                        // /pod/frame.bin complet = l'image affichée → cartel masquable
+bool cartelVisible = false;                       // les bandes sont dessinées par-dessus l'œuvre
 
 // ─── ÉTAT ──────────────────────────────────────────────────────────────────
 String deviceId, pairCode;
@@ -121,22 +118,12 @@ String currentBlockHash = "";
 int    currentBlockIndex = -1;
 String pendingCandidateId = "";
 unsigned long lastPullMs = 0, lastValidateMs = 0, nextPullIntervalMs = PULL_INTERVAL;
-bool   pullNow = false;                         // posé par un toucher
 
 String pendingWorkTitle = "", pendingArtistName = "";
 String pendingObsHashes = "", pendingObsTarget = "";
 
-String sceneFailFrameId = "";
-int    sceneFailCount = 0;
-
-// scène courante conservée (≤ 4 Ko, tampon statique : pas de fragmentation du tas) pour pouvoir la REJOUER au toucher
-static uint8_t scenePkg[SCENE_MAX_PACKAGE];
-static anascene::Scene curScene;
-static bool   sceneLoaded = false;
-
 static char     g_body[3072];                   // corps JSON des réponses
-static uint16_t g_srcRow[SRC_W];                // une ligne source, octets big-endian (voir presentRect)
-static uint16_t g_dstRow[ART_W];                // une ligne agrandie
+static uint16_t g_row[SCR_W];                   // une ligne d'image (octets little-endian reçus, puis big-endian pour le bus)
 
 // ─── LOG ───────────────────────────────────────────────────────────────────
 static void logf(const char* fmt, ...) {
@@ -148,8 +135,8 @@ static void logf(const char* fmt, ...) {
 // ─── MÉMOIRE : 32 Ko de RAM, PILE PRINCIPALE DE 1 Ko SEULEMENT (cœur Arduino R4, BSP_CFG_STACK_MAIN_BYTES = 0x400) ─────────
 // Le cœur désactive la protection de pile (MSPLIM = 0) : une pile qui dépasse 1 Ko descend dans le HAUT du tas (zone libre tant que
 // le tas est peu rempli). Ed25519 a besoin d'environ 1,7 Ko : ça tient parce que le tas est presque vide à ce moment-là.
-// Règle de ce firmware : jamais de gros bloc (hors tampon image de scène, alloué seulement pendant la lecture) ni de gros tableau
-// local. Les diagnostics [MEM] affichent le tas libre et la profondeur de pile atteinte : à relever au premier essai.
+// Règle de ce firmware : aucun gros bloc ni gros tableau local (tampons statiques). Les diagnostics [MEM] affichent le tas libre et
+// la profondeur de pile atteinte : à relever au premier essai.
 extern "C" char* sbrk(int incr);
 extern char __HeapLimit;                    // symbole de l'éditeur de liens : fin du tas = bas de la pile principale
 static const uint32_t STACK_PAINT_BYTES = 2048;
@@ -332,51 +319,119 @@ static void tftStatus(const String& line1, const String& line2 = "", uint16_t bg
   if (line2.length()) { tft.setTextSize(1); tft.setTextColor(C_GREY, bg); tft.setCursor(8, 168); tft.print(asciiFold(line2)); }
 }
 
-/** Marges noires autour de l'œuvre (192×240 au centre) — appelé avant de dessiner une image. */
-static void beginArt() {
-  tft.fillRect(0, ART_Y, ART_X, ART_H, C_BLACK);
-  tft.fillRect(ART_X + ART_W, ART_Y, SCR_W - ART_X - ART_W, ART_H, C_BLACK);
+/** Pousse g_row (déjà en octets BIG-endian) sur la ligne y : fenêtre d'une ligne, puis 240 pixels. */
+static void pushRow(int y) {
+  tft.startWrite();
+  tft.setAddrWindow(0, y, SCR_W, 1);
+  tft.writePixels(g_row, SCR_W, true, true);
+  tft.endWrite();
+}
+static void swapRowBytes() {
+  uint8_t* b = (uint8_t*)g_row;
+  for (int i = 0; i < ROW_BYTES; i += 2) { const uint8_t t = b[i]; b[i] = b[i + 1]; b[i + 1] = t; }
 }
 
-/** Bandes de cartel natives (texte 2× plus net que sur le TFT 1,8") : « RESCOE #bloc » en haut, titre + artiste en bas. */
-static void burnCartel() {
-  tft.fillRect(0, 0, SCR_W, BAND_H - 1, C_DARK);
-  tft.drawFastHLine(0, BAND_H - 1, SCR_W, C_GOLD);
+/** Cartel PAR-DESSUS l'œuvre : « RESCOE #bloc » en haut, titre + artiste en bas. Redessiné à chaque toucher « afficher ». */
+static void drawCartel() {
+  tft.fillRect(0, 0, SCR_W, BAND_TOP_H - 1, C_DARK);
+  tft.drawFastHLine(0, BAND_TOP_H - 1, SCR_W, C_GOLD);
   tft.setTextSize(2); tft.setTextColor(C_GOLD, C_DARK); tft.setCursor(8, 12); tft.print("RESCOE");
   if (currentBlockIndex >= 0) {
     const String blk = "#" + String(currentBlockIndex);
     tft.setTextColor(C_GREY, C_DARK); tft.setCursor(SCR_W - 8 - (int)blk.length() * 12, 12); tft.print(blk);
   }
-  const int fy = ART_Y + ART_H;
-  tft.fillRect(0, fy + 1, SCR_W, SCR_H - fy - 1, C_DARK);
-  tft.drawFastHLine(0, fy, SCR_W, C_GOLD);
+  tft.fillRect(0, BAND_BOT_Y + 1, SCR_W, BAND_BOT_H - 1, C_DARK);
+  tft.drawFastHLine(0, BAND_BOT_Y, SCR_W, C_GOLD);
   String title = asciiFold(pendingWorkTitle), artist = asciiFold(pendingArtistName);
   if (title.length() == 0) title = "Proof-of-Draw";
   if (title.length() > 19) title = title.substring(0, 19);
   if (artist.length() > 38) artist = artist.substring(0, 38);
-  tft.setTextSize(2); tft.setTextColor(C_WHITE, C_DARK); tft.setCursor(8, fy + 6); tft.print(title);
-  if (artist.length()) { tft.setTextSize(1); tft.setTextColor(C_GREY, C_DARK); tft.setCursor(8, fy + 26); tft.print(artist); }
+  tft.setTextSize(2); tft.setTextColor(C_WHITE, C_DARK); tft.setCursor(8, BAND_BOT_Y + 8); tft.print(title);
+  if (artist.length()) { tft.setTextSize(1); tft.setTextColor(C_GREY, C_DARK); tft.setCursor(8, BAND_BOT_Y + 30); tft.print(artist); }
 }
 
-// ─── Image fixe : flux 40 960 o RGB565 little-endian, ligne par ligne ───────
-static bool streamFrame(podhttp::Reader<WiFiSSLClient>& rd) {
-  bool ok = true;
-  uint8_t* be = (uint8_t*)g_srcRow;                       // la ligne est lue ET convertie sur place (pas de tableau local : pile de 1 Ko)
-  podscale::openWindow(tft, ART_X, ART_Y, 0, 0, SRC_W, SRC_H);   // = fenêtre 192×240
-  for (int y = 0; y < SRC_H; y++) {
-    if (rd.readBody(be, SRC_ROW_BYTES) != (size_t)SRC_ROW_BYTES) { logf("[FRAME] ligne %d incomplète", y); ok = false; break; }
-    for (int i = 0; i < SRC_ROW_BYTES; i += 2) { const uint8_t t = be[i]; be[i] = be[i + 1]; be[i + 1] = t; }   // LE serveur -> BE bus SPI
-    podscale::pushRow(tft, be, 0, SRC_W, y, g_dstRow);
+// ─── microSD ───────────────────────────────────────────────────────────────
+static void initSD() {
+  digitalWrite(TFT_CS, HIGH); digitalWrite(STMPE_CS, HIGH);
+  sdOk = SD.begin(SD_CS);
+  if (sdOk && !SD.exists(SD_DIR)) SD.mkdir(SD_DIR);
+  logf("[SD] %s", sdOk ? "carte lisible (cache de l'image + cartel masquable)" : "carte absente ou non formatée FAT -> œuvre en plein écran SANS cartel");
+}
+
+/** Redessine les lignes y0..y0+n-1 depuis /pod/frame.bin (lues séquentiellement, converties LE -> BE). */
+static bool restoreRows(int y0, int n) {
+  File f = SD.open(SD_FRAME, FILE_READ);
+  if (!f) return false;
+  if (f.size() != (unsigned long)FRAME_BYTES) { f.close(); return false; }
+  bool ok = f.seek((uint32_t)y0 * ROW_BYTES);
+  for (int i = 0; ok && i < n; i++) {
+    ok = f.read((uint8_t*)g_row, ROW_BYTES) == ROW_BYTES;
+    if (!ok) break;
+    swapRowBytes();
+    pushRow(y0 + i);
   }
-  tft.endWrite();
+  f.close();
   return ok;
 }
 
-static bool ackFrame(const String& frameId, const char* mode = nullptr) {
+static void saveMeta(const String& frameId) {
+  if (!sdOk) return;
+  if (SD.exists(SD_META)) SD.remove(SD_META);
+  File f = SD.open(SD_META, FILE_WRITE);
+  if (!f) return;
+  f.println(frameId);
+  f.println(currentBlockIndex);
+  f.println(pendingWorkTitle);
+  f.println(pendingArtistName);
+  f.close();
+}
+
+/** Au démarrage : réaffiche la dernière œuvre depuis la carte (sans attendre le réseau) et retrouve son cartel. */
+static void restoreLastFrame() {
+  if (!sdOk || !SD.exists(SD_META) || !SD.exists(SD_FRAME)) return;
+  File m = SD.open(SD_META, FILE_READ);
+  if (!m) return;
+  String id = m.readStringUntil('\n'); id.trim();
+  String blk = m.readStringUntil('\n'); blk.trim();
+  String title = m.readStringUntil('\n'); title.trim();
+  String artist = m.readStringUntil('\n'); artist.trim();
+  m.close();
+  if (id.length() == 0) return;
+  const unsigned long t0 = millis();
+  if (!restoreRows(0, SCR_H)) { logf("[SD] image enregistrée illisible"); return; }
+  lastFrameId = id; currentBlockIndex = blk.toInt(); pendingWorkTitle = title; pendingArtistName = artist;
+  sdFrameValid = true; cartelVisible = false;
+  logf("[SD] dernière œuvre réaffichée en %lu ms (frameId=%s)", millis() - t0, id.c_str());
+}
+
+// ─── Image : flux 153 600 o RGB565 little-endian, ligne par ligne, plein écran ──
+/** Lit 320 lignes, les range sur la carte (si présente) ET les affiche au fur et à mesure. true = image complète. */
+static bool streamFrame(podhttp::Reader<WiFiSSLClient>& rd) {
+  bool ok = true;
+  File f;
+  bool saving = false;
+  if (sdOk) {
+    if (SD.exists(SD_FRAME)) SD.remove(SD_FRAME);
+    f = SD.open(SD_FRAME, FILE_WRITE);
+    saving = (bool)f;
+  }
+  uint8_t* raw = (uint8_t*)g_row;
+  for (int y = 0; y < SCR_H; y++) {
+    if (rd.readBody(raw, ROW_BYTES) != (size_t)ROW_BYTES) { logf("[FRAME] ligne %d incomplète", y); ok = false; break; }
+    if (saving && f.write(raw, ROW_BYTES) != (size_t)ROW_BYTES) { saving = false; logf("[SD] écriture interrompue (carte pleine ?)"); }
+    swapRowBytes();                                          // LE serveur -> BE bus SPI
+    pushRow(y);
+    if ((y % 80) == 79) logf("[FRAME] %d/%d lignes", y + 1, SCR_H);
+  }
+  if (f) f.close();
+  sdFrameValid = ok && saving;                               // copie complète : le cartel pourra être masqué
+  if (sdOk && !sdFrameValid && SD.exists(SD_FRAME)) SD.remove(SD_FRAME);
+  return ok;
+}
+
+static bool ackFrame(const String& frameId) {
   if (frameId.length() == 0) return false;
-  String body = "{\"deviceId\":\"" + deviceId + "\",\"frameId\":\"" + frameId + "\"";
-  if (mode) body += ",\"mode\":\"" + String(mode) + "\"";
-  body += "}";
+  const String body = "{\"deviceId\":\"" + deviceId + "\",\"frameId\":\"" + frameId + "\"}";
   String resp;
   const bool ok = httpCall("POST", "/api/ack-frame", &body, resp) == 200;
   logf("[ACK] %s -> %s", frameId.c_str(), ok ? "OK" : "FAIL");
@@ -391,136 +446,43 @@ static bool doFetchFrame(const String& frameId, const String& frameSource) {
     const int code = c.request("GET", "/api/pull-frame?deviceId=" + deviceId + "&screen=" SCREEN_TYPE "&fmt=bin", nullptr);
     logf("[HTTP GET] /api/pull-frame -> %d (contenu %ld)", code, c.rd.contentLength());
     if (code == 404) noFrame = true;
-    else if (code == 200 && (c.rd.contentLength() < 0 || c.rd.contentLength() == SRC_BYTES)) {
-      beginArt();
+    else if (code == 200 && (c.rd.contentLength() < 0 || c.rd.contentLength() == FRAME_BYTES)) {
+      cartelVisible = false;                                 // une nouvelle image remplace tout, cartel compris
       shown = streamFrame(c.rd) && c.rd.complete();
+    } else if (code == 200) {
+      logf("[FRAME] taille annoncée %ld != %d (le serveur sert-il bien tft28 ?)", c.rd.contentLength(), FRAME_BYTES);
     }
     c.client.stop();
   }
   if (noFrame) { logf("[FRAME] pas de frame disponible"); return true; }
-  if (!shown) { logf("[FRAME] image incomplète — affichage conservé, pas d'ACK"); return false; }
-  burnCartel();
-  sceneLoaded = false;                                   // l'image fixe remplace la scène : un toucher = pull
+  if (!shown) { logf("[FRAME] image incomplète — pas d'ACK, nouvel essai au prochain pull"); sdFrameValid = false; return false; }
   lastFrameId = frameId;
   lastFrameWasConsensus = (frameSource == "consensus");
   pendingCandidateId = "";
-  logf("[FRAME] OK en %lu ms (frameId=%s source=%s)", millis() - t0, frameId.c_str(), frameSource.c_str());
+  if (sdFrameValid) saveMeta(frameId);
+  logf("[FRAME] OK en %lu ms (frameId=%s source=%s, cache SD: %s)", millis() - t0, frameId.c_str(), frameSource.c_str(), sdFrameValid ? "oui" : "non");
   ackFrame(frameId);
   return true;
 }
 
-// ─── scene-v1 ──────────────────────────────────────────────────────────────
-/** Pousse un rectangle de la scène (coordonnées source) agrandi ×1,5 : fenêtre d'adresse exacte, lignes répétées 1 ou 2 fois. */
-static void pushScaledRect(const anascene::Fb& fb, const anascene::Scene& sc, const anascene::Rect& r) {
-  podscale::openWindow(tft, ART_X, ART_Y, r.x, r.y, r.w, r.h);
-  anascene::presentRect(fb, sc, r, g_srcRow, [&](const uint16_t* row, int n, int y) {
-    podscale::pushRow(tft, (const uint8_t*)row, r.x, n, y, g_dstRow);
-  });
-  tft.endWrite();
-}
-
-/** Joue la scène : tick 0 plein cadre, puis uniquement le rectangle sale. Aucun réseau. false = tampon image impossible. */
-static bool playScene(const anascene::Scene& sc) {
-  const size_t fbBytes = anascene::Fb::bytesFor(SRC_W, SRC_H);
-  uint8_t* fbMem = (uint8_t*)malloc(fbBytes);
-  if (!fbMem) { logf("[SCENE] malloc(%u) impossible", (unsigned)fbBytes); return false; }
-  anascene::Fb fb; fb.init(fbMem, SRC_W, SRC_H);
-
-  const int fps = anascene::effectiveFps(sc, SCENE_MAX_FPS);
-  const unsigned long frameMs = 1000UL / (unsigned long)fps;
-  const int total = (int)sc.durationTicks * (int)sc.loopCount;
-  logf("[SCENE] lecture: %d ticks x %d boucle(s), %d FPS (scène %d, écran max %d)", sc.durationTicks, sc.loopCount, fps, sc.tickRate, SCENE_MAX_FPS);
-
-  beginArt();
-  unsigned long renderMax = 0, pushMax = 0, pixels = 0; int overruns = 0;
-  const unsigned long start = millis();
-  for (int step = 0; step < total; step++) {
-    const int tick = step % sc.durationTicks;
-    const unsigned long deadline = start + (unsigned long)(step + 1) * frameMs;   // échéancier absolu
-
-    const unsigned long t0 = micros();
-    anascene::renderTick(sc, fb, tick);
-    const unsigned long tRender = micros() - t0;
-
-    anascene::Rect r;
-    if (step == 0) r = { 0, 0, SRC_W, SRC_H, true };
-    else           r = anascene::dirtyRectBetween(sc, anascene::prevTickOf(sc, tick), tick);
-    const unsigned long t1 = micros();
-    if (r.valid) { pushScaledRect(fb, sc, r); pixels += (unsigned long)r.w * r.h; }
-    const unsigned long tPush = micros() - t1;
-
-    if (tRender > renderMax) renderMax = tRender;
-    if (tPush > pushMax) pushMax = tPush;
-    if ((long)(millis() - deadline) > 0) overruns++;
-    while ((long)(millis() - deadline) < 0) delay(1);
-  }
-  reportMem("fin de lecture (tampon image encore alloué)");
-  free(fbMem);
-  logf("[SCENE] terminé: %d frames en %lu ms (cible %lu) — rendu max %lu us, envoi TFT max %lu us, pixels %lu (plein = %lu), dépassements %d",
-       total, millis() - start, (unsigned long)total * frameMs, renderMax, pushMax, pixels, (unsigned long)total * SRC_W * SRC_H, overruns);
-  return true;
-}
-
-/** Télécharge le paquet ANAS dans scenePkg (TLS fermé au retour). httpCode 404 = pas de scène pour nous. */
-static bool fetchScenePackage(const String& artifactId, size_t announced, int* httpCode) {
-  Conn c(HTTP_TIMEOUT_MS);
-  const int code = c.request("GET", "/api/pull-frame?deviceId=" + deviceId + "&screen=" SCREEN_TYPE "&kind=scene&artifactId=" + artifactId + "&fmt=bin", nullptr);
-  *httpCode = code;
-  logf("[HTTP GET] /api/pull-frame kind=scene (%u o annoncés) -> %d", (unsigned)announced, code);
-  if (code != 200) { c.client.stop(); return false; }
-  const long declared = c.rd.contentLength();
-  if (declared >= 0 && (size_t)declared != announced) { logf("[SCENE] Content-Length %ld != %u annoncés", declared, (unsigned)announced); c.client.stop(); return false; }
-  const unsigned long t0 = millis();
-  const size_t got = c.rd.readBody(scenePkg, announced);
-  const bool ok = got == announced && c.rd.complete();
-  c.client.stop();
-  logf("[SCENE] reçu %u/%u o en %lu ms", (unsigned)got, (unsigned)announced, millis() - t0);
-  return ok;
-}
-
-/** Frame annoncée « scène » par /api/pull. Repli : image fixe (pas de pointeur, 404, tampon impossible) ; paquet invalide = on garde l'affichage, pas d'ACK. */
-static bool doFetchScene(const String& frameId, const String& frameSource, const String& artifactId, size_t announced, const String& hash16) {
-  if (artifactId.length() == 0 || announced < anascene::HEADER_BYTES + 4 || announced > SCENE_MAX_PACKAGE) {
-    logf("[SCENE] pointeur inexploitable — image fixe");
-    return doFetchFrame(frameId, frameSource);
-  }
-  if (sceneFailFrameId != frameId) { sceneFailFrameId = frameId; sceneFailCount = 0; }
-  if (sceneFailCount >= SCENE_MAX_FAILS) { logf("[SCENE] trop d'échecs — image fixe"); return doFetchFrame(frameId, frameSource); }
-
-  int httpCode = 0;
-  const bool received = fetchScenePackage(artifactId, announced, &httpCode);
-  if (httpCode == 404) { logf("[SCENE] 404 — image fixe"); return doFetchFrame(frameId, frameSource); }
-
-  anascene::Scene sc;
-  anascene::Err perr = received ? anascene::parse(scenePkg, announced, anascene::PROFILE_TFT, sc) : anascene::ERR_TRUNCATED;
-  if (received && perr == anascene::OK && hash16.length() == 16) {
-    char got[17];
-    for (int i = 0; i < 8; i++) snprintf(got + 2 * i, 3, "%02x", scenePkg[24 + i]);
-    if (!hash16.equalsIgnoreCase(String(got))) perr = anascene::ERR_HEADER;   // identité : 8 octets de hash annoncés = ceux du paquet
-  }
-  if (perr != anascene::OK) {
-    sceneFailCount++;
-    sceneLoaded = false;
-    logf("[SCENE] paquet refusé (%s, échec %d/%d) — affichage conservé, aucun ACK", received ? anascene::errName(perr) : "réception incomplète", sceneFailCount, SCENE_MAX_FAILS);
-    return false;
-  }
-  curScene = sc; sceneLoaded = true;                       // curScene pointe dans scenePkg (statique) : rejouable au toucher
-  if (!playScene(curScene)) { sceneLoaded = false; return doFetchFrame(frameId, frameSource); }
-  burnCartel();
-  lastFrameId = frameId;
-  lastFrameWasConsensus = (frameSource == "consensus");
-  pendingCandidateId = "";
-  sceneFailCount = 0;
-  ackFrame(frameId, "scene");
-  logf("[SCENE] OK frameId=%s source=%s", frameId.c_str(), frameSource.c_str());
-  return true;
-}
-
-// ─── Tactile ───────────────────────────────────────────────────────────────
-// Un toucher : rejoue l'animation en cours (scène), sinon force un pull immédiat (image fixe / rien à l'écran).
+// ─── Tactile : un toucher affiche / cache le cartel ────────────────────────
 static void drainTouch() {
   while (!ts.bufferEmpty()) ts.getPoint();
   ts.writeRegister8(STMPE_INT_STA, 0xFF);
+}
+static void toggleCartel() {
+  if (lastFrameId.length() == 0) return;                     // rien d'affiché : rien à habiller
+  if (!cartelVisible) {
+    drawCartel();
+    cartelVisible = true;
+    logf("[TOUCH] cartel affiché");
+    return;
+  }
+  // Masquer : on redessine les deux bandes depuis la copie sur la carte (pas de re-téléchargement)
+  if (!sdFrameValid) { logf("[TOUCH] pas de copie de l'image sur la carte SD : cartel conservé"); return; }
+  const unsigned long t0 = millis();
+  if (restoreRows(0, BAND_TOP_H) && restoreRows(BAND_BOT_Y, BAND_BOT_H)) { cartelVisible = false; logf("[TOUCH] cartel masqué en %lu ms", millis() - t0); }
+  else { sdFrameValid = false; logf("[TOUCH] lecture de la carte impossible : cartel conservé"); }
 }
 static void serviceTouch() {
   if (!touchOk || !ts.touched()) return;
@@ -528,14 +490,7 @@ static void serviceTouch() {
   while (ts.touched() && millis() - t0 < 1500UL) { delay(5); }   // attend le relâchement (anti-rebond)
   drainTouch();
   delay(120);
-  if (sceneLoaded) {
-    logf("[TOUCH] rejeu de la scène");
-    playScene(curScene);
-    burnCartel();
-  } else {
-    logf("[TOUCH] pull immédiat");
-    pullNow = true;
-  }
+  toggleCartel();
   drainTouch();
 }
 static bool waitTapOrTimeout(unsigned long ms) {   // pour l'écran des clés : touché = continuer
@@ -618,12 +573,10 @@ static String macString() {
 
 static bool doRegister() {
   const String mac = macString();
+  // Pas de « sceneCapability » : cet écran n'est pas un lecteur de scènes, le serveur lui sert toujours une image fixe.
   const String body = "{\"mac\":\"" + mac + "\",\"screens\":[\"" SCREEN_TYPE "\"],"
                       "\"firmware\":\"" FIRMWARE_VERSION "\","
                       "\"publicKey\":\"" + (keysLoaded ? bytesToHex(publicKey, 32) : String("")) + "\","
-                      // capacité scene-v1 : strictement la forme du contrat ; toute autre valeur = pas de scene-v1
-                      "\"sceneCapability\":{\"sceneV1\":true,\"maxPackageBytes\":4096,\"maxEntities\":24,"
-                      "\"maxFps\":" + String(SCENE_MAX_FPS) + ",\"dirtyRectangles\":true,\"firmwareVersion\":\"" FIRMWARE_VERSION "\"},"
                       "\"ownedHashes\":" + loadOwnedHashesJson() + "}";
   String resp;
   if (httpCall("POST", "/api/register", &body, resp) != 200) {
@@ -654,8 +607,6 @@ static bool doRegister() {
 static bool doPull() {
   String newBlockHash = "", newCandId = "", newFrameId = "", newFrameSource = "none";
   int newBlockIndex = -1, pullRetryAfter = 60;
-  String newKind = "frame", sceneArtifactId = "", sceneHash16 = "";
-  size_t sceneBytes = 0;
 
   {
     String resp;
@@ -685,14 +636,6 @@ static bool doPull() {
     newFrameId     = doc["frameId"] | "";
     pullRetryAfter = doc["retryAfter"] | 60;
     if (pullRetryAfter <= 0) pullRetryAfter = 60;
-
-    newKind = doc["kind"] | "frame";
-    JsonObject sceneObj = doc["scene"];
-    if (newKind == "scene" && !sceneObj.isNull()) {
-      sceneArtifactId = sceneObj["artifactId"] | "";
-      sceneBytes      = (size_t)(sceneObj["bytes"] | 0);
-      sceneHash16     = sceneObj["hash"] | "";
-    }
     if (newFrameId.length() == 0) { JsonObject fo = doc["frame"]; if (!fo.isNull()) newFrameId = fo["frameId"] | ""; }
 
     JsonObject cm = doc["cartelMeta"];
@@ -726,10 +669,9 @@ static bool doPull() {
 
   if (newFrameSource == "none" || newFrameId.length() == 0) { logf("[PULL] aucune frame"); return true; }
   if (newFrameId == lastFrameId) { logf("[PULL] frame déjà affichée"); return true; }
-  logf("[PULL] nouvelle frame %s (%s, %s)", newFrameId.c_str(), newFrameSource.c_str(), newKind.c_str());
+  logf("[PULL] nouvelle frame %s (%s)", newFrameId.c_str(), newFrameSource.c_str());
 
-  if (newKind == "scene") doFetchScene(newFrameId, newFrameSource, sceneArtifactId, sceneBytes, sceneHash16);
-  else                    doFetchFrame(newFrameId, newFrameSource);
+  doFetchFrame(newFrameId, newFrameSource);
   reportMem("après pull");
   return true;
 }
@@ -792,17 +734,18 @@ void setup() {
 
   pinMode(TFT_CS, OUTPUT);   digitalWrite(TFT_CS, HIGH);
   pinMode(STMPE_CS, OUTPUT); digitalWrite(STMPE_CS, HIGH);
-  pinMode(SD_CS, OUTPUT);    digitalWrite(SD_CS, HIGH);     // microSD non utilisée : désélectionnée sur le bus partagé
+  pinMode(SD_CS, OUTPUT);    digitalWrite(SD_CS, HIGH);
 
   tft.begin();
   tft.setRotation(0);
 #if TOUCH_ENABLED
   touchOk = ts.begin();
-  logf("[TOUCH] STMPE610 %s", touchOk ? "détecté" : "NON détecté (toucher désactivé)");
+  logf("[TOUCH] STMPE610 %s", touchOk ? "détecté (toucher = afficher / cacher le cartel)" : "NON détecté (toucher désactivé)");
 #else
   logf("[TOUCH] désactivé (TOUCH_ENABLED 0)");
 #endif
   tftStatus("Proof-of-Draw", "Connexion WiFi...");
+  initSD();
 
   if (WiFi.status() == WL_NO_MODULE) { tftStatus("Module WiFi absent", "", C_RED); while (true) delay(1000); }
   logf("[WIFI] firmware du module: %s", WiFi.firmwareVersion());
@@ -817,7 +760,6 @@ void setup() {
 
   if (!keysAlreadyGenerated()) generateKeys();
   else { loadKeysFromEEPROM(); logf("[KEYS] clés chargées: %s", bytesToHex(publicKey, 32).c_str()); }
-
   selfTestEd25519();
 
   currentBlockHash = loadBlockHashFromEEPROM();
@@ -828,7 +770,11 @@ void setup() {
   }
 
   while (!registered) { if (doRegister()) break; delay(5000); }
-  if (paired) { logf("[BOOT] premier pull immédiat"); doPull(); }
+  if (paired) {
+    restoreLastFrame();                                 // la dernière œuvre revient tout de suite depuis la carte SD
+    logf("[BOOT] premier pull immédiat");
+    doPull();
+  }
   lastPullMs = millis(); lastValidateMs = millis();
   logf("[BOOT] prêt — pull toutes les %lu s", PULL_INTERVAL / 1000UL);
 }
@@ -851,8 +797,7 @@ void loop() {
 
   serviceTouch();
 
-  if (pullNow || now - lastPullMs >= nextPullIntervalMs) {
-    pullNow = false;
+  if (now - lastPullMs >= nextPullIntervalMs) {
     const String prevCand = pendingCandidateId;
     doPull();
     lastPullMs = millis();

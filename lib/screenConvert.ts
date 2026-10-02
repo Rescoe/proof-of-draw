@@ -70,7 +70,8 @@ function decodeEink29(p: Payload): ScreenBitmap {
 // TFT couleur : seuil de "blanc" volontairement large (lum < 200 = encre) pour
 // ne pas perdre les aplats clairs (jaune, cyan…) d'un dessin en couleur.
 function decodeTft(p: Payload): ScreenBitmap {
-  const W = 128, H = 160, buf = b64(p.buffer);
+  const [W, H] = p.screen === "tft28" ? [240, 320] : [128, 160];
+  const buf = b64(p.buffer);
   const gray = new Uint8Array(W * H).fill(255);
   const red  = new Uint8Array(W * H);
   for (let i = 0; i < W * H; i++) {
@@ -91,7 +92,8 @@ export function decodePayloadToBitmap(payload: Payload): ScreenBitmap | null {
       case "oled096":   return decodeOled(payload);
       case "eink27bw":  return decodeEink27(payload);
       case "eink29bwr": return decodeEink29(payload);
-      case "tft18":     return decodeTft(payload);
+      case "tft18":
+      case "tft28":     return decodeTft(payload);
       default:          return null;
     }
   } catch { return null; }

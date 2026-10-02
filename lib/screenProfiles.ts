@@ -10,7 +10,7 @@
 //   4. Tout le reste (network map, validation, draw, SVG) s'adapte automatiquement.
 // ═══════════════════════════════════════════════════════════════════════════════
 
-export type ScreenId = "eink29bwr" | "oled096" | "eink27bw" | "tft18";
+export type ScreenId = "eink29bwr" | "oled096" | "eink27bw" | "tft18" | "tft28";
 
 export interface ScreenProfile {
   id: ScreenId;
@@ -47,6 +47,36 @@ export interface ScreenProfile {
   svgFg: string;    // couleur de pixel principal
   svgFg2?: string;  // couleur secondaire (dual uniquement — canal rouge)
 }
+
+// Palette couleur des écrans TFT (RGB565) — partagée par le TFT 1.8" et le TFT 2.8"
+const TFT_PALETTE: string[] = [
+  // Rouges
+  "#FF0000", "#CC0000", "#FF4444", "#FF6666",
+  // Oranges
+  "#FF8800", "#FF6600", "#FFAA44", "#CC6600",
+  // Jaunes
+  "#FFFF00", "#FFD700", "#FFEE88", "#CCAA00",
+  // Verts
+  "#00FF00", "#00CC00", "#44FF88", "#006600",
+  // Cyans
+  "#00FFFF", "#00CCDD", "#44FFDD", "#00AAAA",
+  // Bleus
+  "#0000FF", "#0055FF", "#4488FF", "#0000AA",
+  // Mauves/Indigo
+  "#6600FF", "#4400CC", "#9966FF", "#330099",
+  // Roses/Magentas
+  "#FF00FF", "#FF0088", "#FF66CC", "#CC0088",
+  // Blancs/Gris clairs
+  "#FFFFFF", "#EEEEEE", "#DDDDDD", "#CCCCCC",
+  // Gris moyens
+  "#AAAAAA", "#888888", "#666666", "#444444",
+  // Sombres + Noir
+  "#222222", "#111111", "#000000",
+  // Accents supplémentaires
+  "#FF9900", "#00FF88", "#FF3366", "#33CCFF",
+  "#FF66FF", "#99FF00", "#FF4400", "#0088CC",
+  "#FFCC00", "#00FFCC",
+];
 
 export const SCREEN_PROFILES: Record<ScreenId, ScreenProfile> = {
 
@@ -129,35 +159,8 @@ export const SCREEN_PROFILES: Record<ScreenId, ScreenProfile> = {
     width: 128,
     height: 160,
 
-    // Palette 48 couleurs couvrant le spectre complet + tons neutres
-    colors: [
-      // Rouges
-      "#FF0000", "#CC0000", "#FF4444", "#FF6666",
-      // Oranges
-      "#FF8800", "#FF6600", "#FFAA44", "#CC6600",
-      // Jaunes
-      "#FFFF00", "#FFD700", "#FFEE88", "#CCAA00",
-      // Verts
-      "#00FF00", "#00CC00", "#44FF88", "#006600",
-      // Cyans
-      "#00FFFF", "#00CCDD", "#44FFDD", "#00AAAA",
-      // Bleus
-      "#0000FF", "#0055FF", "#4488FF", "#0000AA",
-      // Mauves/Indigo
-      "#6600FF", "#4400CC", "#9966FF", "#330099",
-      // Roses/Magentas
-      "#FF00FF", "#FF0088", "#FF66CC", "#CC0088",
-      // Blancs/Gris clairs
-      "#FFFFFF", "#EEEEEE", "#DDDDDD", "#CCCCCC",
-      // Gris moyens
-      "#AAAAAA", "#888888", "#666666", "#444444",
-      // Sombres + Noir
-      "#222222", "#111111", "#000000",
-      // Accents supplémentaires
-      "#FF9900", "#00FF88", "#FF3366", "#33CCFF",
-      "#FF66FF", "#99FF00", "#FF4400", "#0088CC",
-      "#FFCC00", "#00FFCC",
-    ],
+    // Palette 48 couleurs couvrant le spectre complet + tons neutres (TFT_PALETTE)
+    colors: TFT_PALETTE,
     colorLabels: [], // géré dynamiquement côté UI (affiche le hex)
     dithering: false,
     grayscale: false,
@@ -168,6 +171,30 @@ export const SCREEN_PROFILES: Record<ScreenId, ScreenProfile> = {
 
     svgBg: "#ffffff",
     svgFg: "#000000",    // inutilisé pour RGB565 (couleurs réelles dans le buffer)
+  },
+
+  // ── TFT 2.8" ILI9341 tactile RGB565 (shield Adafruit sur Arduino UNO R4 WiFi) ─
+  // Même format que le tft18, en 240×320 : RGB565 little-endian, 240 × 320 × 2 = 153 600 octets.
+  // Ce profil n'a PAS de scène scene-v1 (isSceneScreen = false) : les œuvres ANA y arrivent comme image fixe (aperçu).
+  tft28: {
+    id: "tft28",
+    name: 'TFT 2.8" tactile',
+    description: "240×320px — TFT RGB565 couleur complète, tactile",
+    pixelRatio: 2,
+
+    width: 240,
+    height: 320,
+    colors: TFT_PALETTE,
+    colorLabels: [],
+    dithering: false,
+    grayscale: false,
+
+    payloadType: "mono",
+    pixelFormat: "rgb565",
+    bufferSize: 153600,  // 240 × 320 × 2 octets
+
+    svgBg: "#ffffff",
+    svgFg: "#000000",
   },
 };
 

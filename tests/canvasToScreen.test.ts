@@ -29,9 +29,32 @@ test("refactor sans régression : rgbaToScreenPayload == ancienne implémentatio
         rgba[i + 3] = round === 0 ? 255 : Math.floor(r() * 256);
       }
       const a = rgbaToScreenPayload(rgba, id);
+      if (id === "tft28") continue;   // écran apparu après la copie « legacy » : vérifié par le test dédié ci-dessous
       const b = legacyEncode(fakeCanvas(rgba), id);
       assert.deepEqual(a, b, `${id} round ${round}`);
     }
+  }
+});
+
+test("tft28 (TFT 2.8\" tactile 240×320) : RGB565 little-endian, transparent = blanc — formule indépendante, octet pour octet", () => {
+  const p = SCREEN_PROFILES.tft28;
+  assert.deepEqual([p.width, p.height, p.bufferSize], [240, 320, 153600]);
+  const r = rng(7);
+  const rgba = new Uint8ClampedArray(p.width * p.height * 4);
+  for (let i = 0; i < rgba.length; i += 4) {
+    rgba[i] = Math.floor(r() * 256); rgba[i + 1] = Math.floor(r() * 256); rgba[i + 2] = Math.floor(r() * 256);
+    rgba[i + 3] = Math.floor(r() * 256);
+  }
+  const payload = rgbaToScreenPayload(rgba, "tft28") as { screen: string; buffer: string };
+  assert.equal(payload.screen, "tft28");
+  const buf = Buffer.from(payload.buffer, "base64");
+  assert.equal(buf.length, 153600);
+  for (let px = 0; px < p.width * p.height; px++) {
+    const transparent = rgba[px * 4 + 3] < 32;
+    const [rr, gg, bb] = transparent ? [255, 255, 255] : [rgba[px * 4], rgba[px * 4 + 1], rgba[px * 4 + 2]];
+    const v = ((rr >> 3) << 11) | ((gg >> 2) << 5) | (bb >> 3);
+    assert.equal(buf[px * 2], v & 0xff, `pixel ${px} octet bas`);
+    assert.equal(buf[px * 2 + 1], v >> 8, `pixel ${px} octet haut`);
   }
 });
 

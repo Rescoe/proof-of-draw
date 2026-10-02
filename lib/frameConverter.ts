@@ -63,6 +63,13 @@ export const SCREEN_PROFILES_SERVER: Record<string, ScreenProfile> = {
     buffers: ["buffer"],
     byteSize: 128 * 160 * 2, // 40960 — RGB565 (2 bytes/pixel)
   },
+  tft28: {
+    // TFT 2.8" tactile : même format que le tft18 en 240×320 → 153600 octets
+    width: 240, height: 320,
+    type: "tft",
+    buffers: ["buffer"],
+    byteSize: 240 * 320 * 2,
+  },
 };
 
 // ─── Types de frames ──────────────────────────────────────────────────────────
@@ -70,7 +77,7 @@ export const SCREEN_PROFILES_SERVER: Record<string, ScreenProfile> = {
 export type FramePayloadBWR  = { screen: "eink29bwr"; black: string; red: string };
 export type FramePayloadBW   = { screen: "eink27bw";  buffer: string };
 export type FramePayloadOLED = { screen: "oled096";   buffer: string };
-export type FramePayloadTFT  = { screen: "tft18";     buffer: string };
+export type FramePayloadTFT  = { screen: "tft18" | "tft28"; buffer: string };
 export type AnyFramePayload  = FramePayloadBWR | FramePayloadBW | FramePayloadOLED | FramePayloadTFT;
 
 // ─── Utilitaires bas niveau ───────────────────────────────────────────────────
@@ -240,7 +247,7 @@ export function convertFrame(
         }
       }
     }
-  } else if (sourceScreenId === "tft18") {
+  } else if (sourceScreenId === "tft18" || sourceScreenId === "tft28") {
     // Format RGB565 little-endian → luminance binaire (0=blanc, 1=actif)
     const p       = payload as FramePayloadTFT;
     const rgbBytes = Buffer.from(p.buffer, "base64");
@@ -299,7 +306,7 @@ export function convertFrame(
     };
   }
 
-  if (targetScreenId === "tft18") {
+  if (targetScreenId === "tft18" || targetScreenId === "tft28") {
     // Convertit pixels binaires (0=blanc, 1=actif) → RGB565 little-endian
     // La couleur "actif" est noir (0x0000) pour les conversions cross-screen
     const buf = new Uint8Array(dstW * dstH * 2);
@@ -309,7 +316,7 @@ export function convertFrame(
       buf[i * 2 + 1] = (rgb565 >> 8) & 0xFF;
     }
     return {
-      screen: "tft18",
+      screen: targetScreenId,
       buffer: Buffer.from(buf).toString("base64"),
     };
   }

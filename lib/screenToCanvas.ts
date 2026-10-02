@@ -11,6 +11,7 @@ export type ScreenPayload =
   | { screen: "oled096";   buffer: string }
   | { screen: "eink27bw";  buffer: string }
   | { screen: "tft18";     buffer: string }
+  | { screen: "tft28";     buffer: string }
   | { screen: "eink29bwr"; black: string; red: string };
 
 /**
@@ -135,7 +136,17 @@ export function eink29bwrToCanvas(blackB64: string, redB64: string): ImageData {
 // Convention : little-endian — byte[off]=low, byte[off+1]=high
 // Expansion des canaux : R5→R8, G6→G8, B5→B8 (shift left pour remplir les bits bas)
 export function tft18ToCanvas(bufferB64: string): ImageData {
-  const W = 128, H = 160;
+  return rgb565ToCanvas(bufferB64, 128, 160);
+}
+
+// ─── TFT 2.8" ILI9341 240×320 RGB565 (tactile) ──────────────────────────────
+// Même format que le TFT 1.8" en 240×320 : 153600 octets.
+export function tft28ToCanvas(bufferB64: string): ImageData {
+  return rgb565ToCanvas(bufferB64, 240, 320);
+}
+
+/** RGB565 little-endian, row-major, W×H → ImageData. */
+function rgb565ToCanvas(bufferB64: string, W: number, H: number): ImageData {
   const buf = b64ToBytes(bufferB64);
   const rgba = new Uint8ClampedArray(W * H * 4);
 
@@ -169,6 +180,8 @@ export function screenPayloadToCanvas(payload: ScreenPayload): ImageData {
       return eink27bwToCanvas(payload.buffer);
     case "tft18":
       return tft18ToCanvas(payload.buffer);
+    case "tft28":
+      return tft28ToCanvas(payload.buffer);
     case "eink29bwr":
       return eink29bwrToCanvas(payload.black, payload.red);
     default: {

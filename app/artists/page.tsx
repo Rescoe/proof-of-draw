@@ -27,6 +27,7 @@ const DISPLAY_SIZES: Record<string, { w: number; h: number }> = {
   eink27bw:  { w: 132, h: 88  },
   oled096:   { w: 128, h: 64  },
   tft18:     { w: 128, h: 160 },
+  tft28:     { w: 144, h: 192 },  // 240×320 × 0.6
 };
 
 const AVATAR_SIZE = 56;
