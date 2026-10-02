@@ -3,6 +3,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { redis } from "@/lib/redis";
 import { getDevice } from "@/lib/deviceStore";
 import { getFrameForDevice } from "@/lib/queue";
+import { isSceneScreen, selectDelivery } from "@/lib/scene/delivery";
+import { getScenePackage } from "@/lib/scene/store";
 
 const DEVICE_ID_REGEX = /^dev_[A-Z0-9]{8}$/;
 const personalKey = (deviceId: string) => `personal:frame:${deviceId}`;
@@ -20,6 +22,35 @@ export async function GET(req: NextRequest) {
     const device = await getDevice(deviceId);
     if (!device)
       return NextResponse.json({ error: "device inconnu" }, { status: 404 });
+
+    // ── scene-v1 : paquet binaire ANAS (≤ 4 Ko) ────────────────────────────
+    // GET /api/pull-frame?deviceId=…&screen=oled096&kind=scene&artifactId=…&fmt=bin
+    // N'est servi qu'à un appareil déclaré scene-v1 ET seulement l'artefact désigné par SA frame en attente (le pointeur
+    // de /api/pull) : pas de lecture arbitraire. Coût : 1 GET frame + 1 GET paquet, jamais de commande par frame d'animation.
+    // En cas de refus (404) le firmware retombe sur le chemin frame ci-dessous, sans `kind` — comportement inchangé.
+    if (url.searchParams.get("kind") === "scene") {
+      const artifactId = url.searchParams.get("artifactId");
+      if (fmt !== "bin" || !screen || !isSceneScreen(screen) || !artifactId)
+        return NextResponse.json({ error: "kind=scene exige fmt=bin, screen oled096|tft18 et artifactId" }, { status: 400 });
+
+      const pending = await getFrameForDevice(deviceId, [screen]);
+      const selection = selectDelivery(device, screen, pending?.payload as Record<string, unknown> | undefined);
+      if (selection.kind !== "scene" || selection.artifactId !== artifactId)
+        return NextResponse.json({ error: "aucune scène en attente pour cet appareil" }, { status: 404 });
+
+      const pkg = await getScenePackage(redis, artifactId);
+      if (!pkg) return NextResponse.json({ error: "paquet de scène absent" }, { status: 404 });
+
+      return new NextResponse(pkg as unknown as BodyInit, {
+        status: 200,
+        headers: {
+          "Content-Type":   "application/octet-stream",
+          "Content-Length": String(pkg.length),
+          "X-Scene-Hash":   selection.pointer.sceneHash.replace(/^sha256:/, "").slice(0, 16),
+          "X-Frame-Id":     pending?.frameId ?? "",
+        },
+      });
+    }
 
     // Cherche consensus puis personal
     let payload: Record<string, unknown> | null = null;

@@ -18,10 +18,14 @@ import { getAnaArtDevices } from "@/lib/deviceStore";
 import type { Device } from "@/lib/deviceStore";
 import { broadcastToDevices } from "@/lib/broadcast";
 import { encodeForScreen } from "@/lib/screenEncode";
-import { createAnaBlock, saveAnaWorkMeta, type AnaWorkMeta } from "@/lib/anaChain";
-import { SCREEN_IDS } from "@/lib/screenProfiles";
+import { createAnaBlock, saveAnaWorkMeta, type AnaWorkMeta, type AnaWorkSceneMeta } from "@/lib/anaChain";
+import { SCREEN_IDS, SCREEN_PROFILES } from "@/lib/screenProfiles";
 import { renderPoem, AVATAR_SIZE } from "@/lib/poemRender";
 import { parseFeedItem, type ParsedItem } from "@/lib/anaFeedItem";
+import { compileSceneArtifacts } from "@/lib/scene/store";
+import { isSceneScreen, type ScenePointer } from "@/lib/scene/delivery";
+import { renderPosterGray } from "@/lib/scene/engine";
+import type { ScenePackageProfile } from "@/lib/scene/package";
 
 const ANA_API_URL      = process.env.ANA_API_URL;
 const ANA_FEED_SECRET  = process.env.ANA_ART_FEED_SECRET;
@@ -79,6 +83,15 @@ function normieBits(tokenId: number): Promise<string | null> {
   return p;
 }
 
+/** État scene-v1 pour la galerie : manifeste rejouable si valide, motifs sinon, et le repli reçu par les appareils sans scene-v1. */
+function toSceneMeta(item: ParsedItem): AnaWorkSceneMeta | undefined {
+  if (!item.scene) return undefined;
+  const fallback: AnaWorkSceneMeta["fallback"] = item.image ? "capture" : item.scene.status === "ok" ? "poster" : "none";
+  return item.scene.status === "ok"
+    ? { status: "ok", manifest: item.scene.scene, sceneHash: item.scene.sceneHash, fallback }
+    : { status: "invalid", errors: item.scene.errors, fallback };
+}
+
 function toWorkMeta(item: ParsedItem, avatarBits?: string | null): AnaWorkMeta {
   return {
     ...(item.context as Partial<AnaWorkMeta>),
@@ -86,8 +99,12 @@ function toWorkMeta(item: ParsedItem, avatarBits?: string | null): AnaWorkMeta {
     text: item.poem?.text, artForm: item.poem?.artForm,
     sourceId: item.id, kind: item.kind, agentTokenId: item.agentTokenId, agentName: item.agentName,
     title: item.title, publishedAt: item.publishedAt,
+    scene: toSceneMeta(item),
   };
 }
+
+// Les e-ink ne reçoivent jamais de scène : poster frame calculée par le moteur de référence (contrat note 37 §1).
+const EINK_SCREENS = new Set<string>(["eink27bw", "eink29bwr"]);
 
 async function fetchAnaFeed(): Promise<unknown[]> {
   if (!ANA_API_URL || !ANA_FEED_SECRET) return [];
@@ -127,6 +144,15 @@ async function ingestItem(item: ParsedItem, optIn: Device[]): Promise<void> {
   const agentName = item.agentName ?? `Normie #${item.agentTokenId}`;
   const done = (await redis.smismember(KEY_SCREEN_DONE, ANA_ENCODABLE_SCREENS.map((sc) => `${item.id}:${sc}`))) as number[];
 
+  // scene-v1 : paquets compilés UNE fois par (contentHash, profil, classe) — SET NX, idempotent à la reprise.
+  // Un échec Redis remonte : l'item sera retenté, jamais marqué ingéré à moitié.
+  const sceneOk = item.scene?.status === "ok" ? item.scene : null;
+  const pointers: Record<ScenePackageProfile, ScenePointer> | null = sceneOk && item.contentHash
+    ? await compileSceneArtifacts(redis, { scene: sceneOk.scene, sceneHash: sceneOk.sceneHash, contentHash: item.contentHash })
+    : null;
+  // Remplacement par sourceId : une révision (capture puis scène ajoutée) réécrit les blocs au lieu de les dupliquer.
+  const generative = item.kind === "generative-capture";
+
   // Une œuvre = un bloc PAR type d'écran, que des devices l'aient activé ou non
   // (la galerie montre la conversion de chaque œuvre sur tous les écrans) ; seule
   // la diffusion live est réservée aux devices opt-in.
@@ -140,24 +166,30 @@ async function ingestItem(item: ParsedItem, optIn: Device[]): Promise<void> {
       // Texte rendu directement à la taille de l'écran (cadre Normie 40×40 + texte condensé)
       const r = renderPoem({ text: item.poem.displayText ?? item.poem.text, title: item.title, avatar }, screen);
       encoded = encodeForScreen(r.pixels, r.w, r.h, screen);
+    } else if (sceneOk && (EINK_SCREENS.has(screen) || !item.image)) {
+      // e-ink (toujours), ou œuvre sans capture : poster frame du moteur de référence, à la résolution native de l'écran
+      const p = SCREEN_PROFILES[screen];
+      encoded = encodeForScreen(renderPosterGray(sceneOk.scene, p.width, p.height), p.width, p.height, screen);
     } else {
       const img = item.image!;
       encoded = encodeForScreen(img.gray, img.w, img.h, screen);
     }
     const payload = encoded as Record<string, string>;
+    const scenePointer = pointers && isSceneScreen(screen) ? pointers[screen] : undefined;
 
     await Promise.all([
       broadcastToDevices(devices.map((d) => d.deviceId), screen, payload, {
-        workTitle: item.title, drawArtistName: agentName,
+        workTitle: item.title, drawArtistName: agentName, ...(scenePointer ? { scene: scenePointer } : {}),
       }),
       createAnaBlock({
-        sourceId:     `${item.id}:${screen}`,
+        sourceId:     `${generative ? item.sourceId : item.id}:${screen}`,
         agentTokenId: item.agentTokenId,
         agentName,
         title:        item.title,
         poolScreen:   screen,
         payload,
         publishedAt:  item.publishedAt,
+        upsert:       generative,
       }),
     ]);
     await redis.sadd(KEY_SCREEN_DONE, `${item.id}:${screen}`);

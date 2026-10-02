@@ -12,6 +12,7 @@
 import { redis } from "@/lib/redis";
 import { sha256Hex } from "@/lib/crypto";
 import type { Block, BlockImagePayload } from "@/lib/chain";
+import type { AnaScene } from "@/lib/scene/spec";
 
 const KEY_ANA_RECENT = "chain:ana:recent"; // List<blockHash>, newest first
 const KEY_ANA_LENGTH = "chain:ana:length";
@@ -29,10 +30,15 @@ export interface CreateAnaBlockParams {
   poolScreen:  string;
   payload:     Record<string, string>; // { buffer } or { black, red } — already screen-encoded
   publishedAt: number;
+  /**
+   * Remplacement par sourceId (contrat note 37 §2) : si un bloc de même hash existe déjà, son image et ses champs sont
+   * RÉÉCRITS en gardant son index et sa place dans la liste récente — une révision d'une œuvre générative (capture puis
+   * scène ajoutée) ne crée donc pas un second jeu de blocs. `sourceId` doit alors être stable entre révisions.
+   */
+  upsert?:     boolean;
 }
 
 export async function createAnaBlock(params: CreateAnaBlockParams): Promise<Block> {
-  const length = parseInt((await redis.get<string>(KEY_ANA_LENGTH)) ?? "0");
   const canonical = JSON.stringify({
     sourceId:    params.sourceId,
     poolScreen:  params.poolScreen,
@@ -40,6 +46,8 @@ export async function createAnaBlock(params: CreateAnaBlockParams): Promise<Bloc
     publishedAt: params.publishedAt,
   });
   const blockHash = await sha256Hex(canonical);
+  const previous = params.upsert ? await getAnaBlockByHash(blockHash) : null;
+  const length = previous ? previous.blockIndex : parseInt((await redis.get<string>(KEY_ANA_LENGTH)) ?? "0");
 
   const block: Block = {
     blockIndex:   length,
@@ -62,6 +70,14 @@ export async function createAnaBlock(params: CreateAnaBlockParams): Promise<Bloc
   };
 
   const imagePayload: BlockImagePayload = { screen: params.poolScreen, ...params.payload };
+
+  if (previous) {
+    await Promise.all([
+      redis.set(anaBlockKey(blockHash), JSON.stringify(block)),
+      redis.set(anaImageKey(blockHash), JSON.stringify(imagePayload)),
+    ]);
+    return block;
+  }
 
   await Promise.all([
     redis.set(anaBlockKey(blockHash), JSON.stringify(block)),
@@ -105,6 +121,16 @@ export async function getRecentAnaBlocks(n: number): Promise<AnaBlockWithImage[]
 // séparé, écrit/rafraîchi à chaque lecture du feed ANA (voir lib/anaFeed.ts) —
 // ce qui permet aussi de les rattraper pour les œuvres déjà ingérées.
 
+/** État scene-v1 d'une œuvre générative, affiché dans la galerie (aperçu par profil, repli et erreurs visibles). */
+export interface AnaWorkSceneMeta {
+  status:     "ok" | "invalid";
+  errors?:    string[];          // scène invalide : motifs (≤ 8)
+  manifest?:  AnaScene;          // scène valide : manifeste ≤ 4 Ko, rejoué par le moteur de référence côté navigateur
+  sceneHash?: string;
+  /** Ce que reçoivent les appareils sans scene-v1 : la capture, ou la poster frame si l'œuvre n'a pas de capture. */
+  fallback:   "capture" | "poster" | "none";
+}
+
 export interface AnaWorkMeta {
   sourceId:      string;
   kind:          "celebration" | "spontaneous" | "poem" | "generative-capture";
@@ -130,6 +156,7 @@ export interface AnaWorkMeta {
   txHash?:       string;
   collectionAddress?: string;
   decisionNote?: string;
+  scene?:        AnaWorkSceneMeta;
 }
 
 const anaMetaKey = (groupKey: string) => `chain:ana:workmeta:${groupKey}`;

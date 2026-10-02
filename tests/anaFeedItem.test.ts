@@ -48,11 +48,14 @@ test("capture : taille incohérente ou encodage inconnu refusés", () => {
   assert.ok(!parseFeedItem({ ...base, kind: "generative-capture", capture: { pixelEncoding: "png", pixels: b64(new Uint8Array(4)), width: 2, height: 2 } }).ok);
 });
 
-test("scene-v1 et kinds inconnus : ignorés sans être marqués définitivement invalides", () => {
-  const s = parseFeedItem({ ...base, kind: "generative-scene" });
-  assert.ok(!s.ok && !s.permanent);
+test("kinds inconnus : ignorés sans être marqués définitivement invalides (peuvent devenir valides plus tard)", () => {
   const u = parseFeedItem({ ...base, kind: "hologramme" });
   assert.ok(!u.ok && !u.permanent);
+});
+
+test("generative-scene sans scène (item mal formé) : refus définitif, plus ignoré silencieusement", () => {
+  const s = parseFeedItem({ ...base, kind: "generative-scene" });
+  assert.ok(!s.ok && s.permanent);
 });
 
 test("entrées absurdes : jamais d'exception", () => {

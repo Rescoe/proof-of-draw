@@ -7,6 +7,7 @@ import { isBlacklisted, getIP, forbidden } from "@/lib/rateLimit";
 import { getChainHead, getCurrentCandidate, popObsTask } from "@/lib/chain";
 import type { ChainSummary } from "@/lib/chain";
 import { maybeCheckAnaFeed } from "@/lib/anaFeed";
+import { selectDelivery, withoutScenePointer, sceneRetryAfterSec, scenePullMeta, type DeliverySelection } from "@/lib/scene/delivery";
 
 const DEVICE_ID_REGEX = /^dev_[A-Z0-9]{8}$/;
 // 5 pulls/min — compatible avec PULL_INTERVAL=60s + VALIDATE_INTERVAL=30s du firmware
@@ -38,8 +39,10 @@ function payloadMeta(payload: FramePayload): Record<string, unknown> {
   delete rest["black"];
   delete rest["red"];
   delete rest["buffer"];
-  // "screen" est intentionnellement conservé
-  return rest;
+  // "screen" est intentionnellement conservé.
+  // Le pointeur scene-v1 est retiré : le JSON léger ne doit JAMAIS grossir pour un firmware qui ne l'a pas demandé
+  // (DynamicJsonDocument de 512–1024 octets côté ESP) ; un appareil scene-v1 le reçoit dans le bloc `scene` dédié.
+  return withoutScenePointer(rest);
 }
 
 export async function GET(req: NextRequest) {
@@ -144,12 +147,15 @@ export async function GET(req: NextRequest) {
     let frameSource: "consensus" | "personal" | "none" = "none";
     let frameId: string | null = null;
     let screen: string | null = null;
+    // scene-v1 : décidé ici, sans aucune lecture Redis supplémentaire (device + frame déjà lus). `kind: "frame"` par défaut.
+    let delivery: DeliverySelection = { kind: "frame" };
 
     if (consensusFrame?.payload) {
       frameMeta    = payloadMeta(consensusFrame.payload);
       frameSource  = "consensus";
       frameId      = consensusFrame.frameId ?? null;
       screen       = (consensusFrame.payload as Record<string, unknown>).screen as string ?? null;
+      delivery     = selectDelivery(device, screen, consensusFrame.payload as Record<string, unknown>);
     } else if (personalFrame?.payload) {
       frameMeta    = payloadMeta(personalFrame.payload);
       frameSource  = "personal";
@@ -186,7 +192,8 @@ export async function GET(req: NextRequest) {
 
     // ── retryAfter : hint pour les ESP afin de réduire le polling en idle ───
     const isIdle = frameSource === "none" && pendingValidation === null;
-    const retryAfter = isIdle ? 300 : 60;
+    // Appareil scene-v1 : aucun poll pendant l'animation → retryAfter = durée complète des boucles + marge (contrat §6).
+    const retryAfter = delivery.kind === "scene" ? sceneRetryAfterSec(delivery) : isIdle ? 300 : 60;
 
     // ── Métadonnées cartel (lecture à plat, accessible sans parser frame{}) ──
     // Priorité : payload frame Redis → fallback chaîne (chain:head).
@@ -236,10 +243,17 @@ export async function GET(req: NextRequest) {
     }
 
     // ── Réponse ─────────────────────────────────────────────────────────────
+    // Bloc `scene` : métadonnées SEULES — le binaire passe par /api/pull-frame?kind=scene.
+    const sceneMeta = delivery.kind === "scene" ? scenePullMeta(delivery) : undefined;
+
     return json({
       frameId,
       frameSource,
       screen,
+      // `kind` ("frame" | "scene") et `scene` : UNIQUEMENT pour un appareil ayant déclaré scene-v1. Un firmware existant
+      // reçoit exactement la même réponse qu'avant (zéro octet ajouté — son JSON est dimensionné au plus juste).
+      ...(device.sceneCapability?.sceneV1 ? { kind: delivery.kind } : {}),
+      ...(sceneMeta ? { scene: sceneMeta } : {}),
 
       // Métadonnées lues directement à la racine par le firmware — évite
       // le parsing imbriqué dans frame{} et fonctionne quel que soit le chemin

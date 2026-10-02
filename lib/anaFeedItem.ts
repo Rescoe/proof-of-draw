@@ -5,12 +5,20 @@
 //   V1  : { id, kind: "celebration"|"spontaneous", pixels, canvasW, canvasH, title, agentTokenId, … }
 //   V2  : même chose + schemaVersion 2, sourceId, revision, contentHash, agentImageUrl, media{…}
 //         + kinds "poem" (text/display/language), "generative-capture" (capture{rgba8888|gray8}),
-//           "generative-scene" (scene-v1 : non pris en charge, voir docs/ECHANGES_ANA_POD_AVANCEMENT.md).
+//           "generative-scene" (scene-v1 sans capture).
+//   Bundle générative V2 (note 37) : `kind` "generative-capture" (capture ± scène) ou "generative-scene" (scène seule).
+//   Les deux sont normalisés en ParsedItem.kind = "generative-capture" ; `scene` porte le résultat de la REVALIDATION
+//   stricte (lib/scene/bundle.ts). Scène invalide + capture → la capture sert, l'erreur reste visible ;
+//   scène invalide sans capture → refus définitif (l'item est content-addressed : il ne changera pas).
+
+import { evaluateSceneBundle, type SceneStatusOk, type SceneStatusInvalid } from "./scene/bundle";
 
 const MAX_PIXELS = 2_000_000;       // garde-fou : ~1400×1400
 const MAX_TEXT   = 20_000;
 
 export type ParsedKind = "celebration" | "spontaneous" | "poem" | "generative-capture";
+
+export type ParsedScene = SceneStatusOk | SceneStatusInvalid;
 
 export interface ParsedItem {
   id:           string;
@@ -24,6 +32,8 @@ export interface ParsedItem {
   context:      Record<string, unknown>;   // cartel, brief, vote… (recopié tel quel dans AnaWorkMeta)
   image?:       { gray: Uint8Array; w: number; h: number };            // dessins et captures
   poem?:        { text: string; displayText?: string; artForm: string; language?: string };
+  revision?:    number;                                // bundle générative
+  scene?:       ParsedScene;                           // bundle générative portant une scène (valide ou non)
 }
 
 export type ParseResult =
@@ -64,15 +74,14 @@ export function parseFeedItem(raw: unknown): ParseResult {
   const bad = (reason: string, permanent = true): ParseResult => ({ ok: false, reason: `${id}: ${reason}`, permanent });
 
   const kind = str(r.kind);
-  if (kind === "generative-scene") return bad("scene-v1 non pris en charge (prototype matériel requis)", false);
-  if (kind !== "celebration" && kind !== "spontaneous" && kind !== "poem" && kind !== "generative-capture") {
+  if (kind !== "celebration" && kind !== "spontaneous" && kind !== "poem" && kind !== "generative-capture" && kind !== "generative-scene") {
     return bad(`kind inconnu « ${kind} »`, false);   // peut devenir valide dans une version ultérieure de PoD
   }
   const agentTokenId = num(r.agentTokenId);
   if (agentTokenId === undefined) return bad("agentTokenId manquant");
 
   const item: ParsedItem = {
-    id, sourceId: str(r.sourceId) ?? id, kind,
+    id, sourceId: str(r.sourceId) ?? id, kind: kind === "generative-scene" ? "generative-capture" : kind,
     title: (str(r.title) ?? "Sans titre").slice(0, 200),
     publishedAt: num(r.publishedAt) ?? 0,
     agentTokenId, agentName: str(r.agentName),
@@ -101,9 +110,20 @@ export function parseFeedItem(raw: unknown): ParseResult {
     return { ok: true, item };
   }
 
-  // generative-capture
+  // generative-capture / generative-scene
+  const sceneStatus = evaluateSceneBundle(r);
+  if (sceneStatus.status !== "absent") {
+    item.scene = sceneStatus;
+    item.revision = num(r.revision);
+  }
+
   const cap = rec(r.capture);
-  if (!cap) return bad("capture manquante");
+  if (!cap) {
+    // Scène seule : il faut une scène VALIDE, sinon plus rien à diffuser (item content-addressed : pas de nouvel essai).
+    if (kind === "generative-scene" && item.scene?.status === "ok") return { ok: true, item };
+    if (item.scene?.status === "invalid") return bad(`scene invalide, aucune capture de repli — ${item.scene.errors.join(" ; ")}`);
+    return bad(kind === "generative-scene" ? "scene manquante" : "capture manquante");
+  }
   const w = num(cap.width), h = num(cap.height), enc = str(cap.pixelEncoding), data = b64(cap.pixels);
   if (!w || !h || !data || w * h > MAX_PIXELS) return bad("capture invalide");
   if (enc === "rgba8888") {

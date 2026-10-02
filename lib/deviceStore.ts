@@ -5,6 +5,7 @@
 
 import { redis } from "@/lib/redis";
 import { decrementDeviceCount, incrementDeviceCount } from "@/lib/rateLimit";
+import type { SceneCapability } from "@/lib/scene/spec";
 
 export interface Device {
   deviceId:   string;
@@ -36,6 +37,11 @@ export interface Device {
   // y compris pour les ESP nouvellement appairés) ; dès le premier basculement
   // la liste devient explicite. Toujours lire via convertedScreensOf().
   acceptsConvertedScreens?: string[];
+
+  // ── scene-v1 : capacité d'animation locale déclarée par le firmware à l'enregistrement
+  // (contrat ANA↔PoD note 37 §6). ABSENT = pas de scene-v1 → l'appareil reçoit toujours une frame fixe.
+  // Ne s'applique qu'à l'écran oled096 / tft18 du device ; les e-ink ne reçoivent jamais de scène.
+  sceneCapability?: SceneCapability;
 }
 
 // ─── ArtistProfile ────────────────────────────────────────────────────────────
@@ -230,7 +236,8 @@ export async function getDeviceByPairCode(code: string): Promise<Device | null> 
 export async function registerDevice(
   mac: string,
   screens: string[],
-  firmware: string
+  firmware: string,
+  sceneCapability?: SceneCapability
 ): Promise<{ device: Device; isNew: boolean }> {
   const existing = await getDeviceByMac(mac);
   const knownId  = existing ? null : await redis.get<string>(macKey(mac));
@@ -238,6 +245,7 @@ export async function registerDevice(
   if (existing) {
     existing.firmware = firmware;
     existing.screens  = screens;
+    existing.sceneCapability = sceneCapability;   // absent = firmware sans scene-v1 (efface une déclaration périmée)
     existing.lastSeen = Date.now();
     await saveDevice(existing);
     // S'assurer que l'index global contient bien ce device (idempotent)
@@ -257,6 +265,7 @@ export async function registerDevice(
     mac,
     screens,
     firmware,
+    ...(sceneCapability ? { sceneCapability } : {}),
     pairCode:   generatePairCode(),
     lastSeen:   Date.now(),
     lastPing:   Date.now(),

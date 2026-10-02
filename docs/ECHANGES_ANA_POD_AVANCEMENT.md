@@ -2,7 +2,26 @@
 
 Tenu par Claude (côté PoD) en concertation avec GPT (côté ANA). Contrat de référence :
 `C:\Users\thibf\Documents\ChatGPT\ANA\notes\32-contrat-echange-ana-pod-oeuvres-2026-10-01.md` (+ note 33, coût Neon/Upstash).
-Dernière mise à jour : **01/10/2026**. Rien de ce qui est listé « fait » n'est déployé tant que le porteur n'a pas poussé.
+Dernière mise à jour : **02/10/2026** (phase 0 scene-v1). Rien de ce qui est listé « fait » n'est déployé tant que le porteur n'a pas poussé.
+
+## Fait — scene-v1, phase 0 PoD (02/10/2026, non déployé)
+
+Spécification normative et décisions : **`docs/SCENE_V1_MOTEUR.md`**. Code : `lib/scene/`. 62 tests nouveaux (137 au total), `tsc` et `next build` propres.
+
+| Sujet | Où | Preuve |
+|---|---|---|
+| Revalidation stricte du bundle ANA (manifeste, sceneHash, bytes, sourceHash, contentHash, suffixe d'id) ; scène seule, scène + capture, capture seule | `lib/anaFeedItem.ts`, `lib/scene/bundle.ts` | `tests/sceneV1Feed.test.ts` (9) |
+| Moteur de référence unique (xorshift32, table Q15 + hash, Bresenham, midpoint, mouvements entiers) | `lib/scene/engine.ts`, `spec.ts`, `validate.ts` | `tests/sceneV1Spec.test.ts` (17), `sceneV1Engine.test.ts` (13) |
+| Golden vectors **calculés par le code ANA et par PoD, identiques** (6 scènes, framebuffers OLED/TFT ticks 0/1/milieu/dernier, poster e-ink) | `tests/fixtures/scene-v1-golden.json` | générateur refuse d'écrire si ANA ≠ PoD |
+| Poster e-ink par le moteur puis le chemin frame existant (aucun changement e-ink) | `lib/anaFeed.ts` | golden poster 2.7" et 2.9" |
+| Paquet binaire `ANAS` ≤ 4 Ko + CRC32, rejet atomique des paquets tronqués/corrompus | `lib/scene/package.ts` | `tests/sceneV1Package.test.ts` (10) |
+| Compilation unique par (contentHash, profil, classe), 1 paquet Redis par `artifactId`, pointeur léger dans la livraison | `lib/scene/store.ts`, `delivery.ts` | `tests/sceneV1Delivery.test.ts` (12) |
+| `/api/pull` : `kind`/`scene` **uniquement** pour un appareil déclaré scene-v1 (réponse inchangée pour les autres) ; `/api/pull-frame?kind=scene&fmt=bin` | `app/api/pull*/route.ts`, `register` | tests de pointeur/JSON léger |
+| Galerie : onglet « Scène » — aperçu animé OLED/TFT, poster e-ink, repli et erreurs visibles | `app/gallery-ana/ScenePreview.tsx` | vérifié dans le navigateur |
+| Endurance : 10 s et 30 min d'animation sans aucun appel réseau ; blocs galerie remplacés par `sourceId` | tests moteur, `lib/anaChain.ts` | tests |
+
+**Reste (phases 1–2, matériel)** : firmware OLED `dev_KAD6PKC4` (5 FPS), puis TFT (2 FPS, dirty rectangles) ; ACK/lecture bornée ; canari réel et compteurs Upstash.
+**À valider avec GPT** : voir § 8 de `SCENE_V1_MOTEUR.md` (cadence sur appareil lent, scène invalide sans capture, repli en tore de `linear`).
 
 ## Fait (jalon « poème publié → tous les écrans opt-in »)
 
@@ -49,7 +68,7 @@ Tests PoD : 75 passent sur le poste de Claude ; l'erreur `uv_os_get_passwd: ENOM
 - **Poèmes V2** : défilement local OLED/TFT ou séquence bornée (multi-frames ; mémoire ESP8266 à mesurer) ; pagination e-ink.
 - **Génératif** :
   - *Capture fixe* : prête côté PoD (parseur + encodage) ; manque le **renderer isolé côté ANA** (voir note 32).
-  - *`scene-v1`* : prototype matériel isolé d'abord (sous-ensemble de primitives commun aux firmwares, plafonds taille/CPU/heap, zéro requête par frame). **Exécuter du HTML/JS sur les ESP8266 actuels : NO-GO** (≈ 47 Ko de heap, BearSSL ≈ 16 Ko, TFT en streaming ligne par ligne) — avis partagé avec GPT.
+  - *`scene-v1`* : **phase 0 PoD faite (voir ci-dessus)** ; prototype matériel isolé d'abord (sous-ensemble de primitives commun aux firmwares, plafonds taille/CPU/heap, zéro requête par frame). **Exécuter du HTML/JS sur les ESP8266 actuels : NO-GO** (≈ 47 Ko de heap, BearSSL ≈ 16 Ko, TFT en streaming ligne par ligne) — avis partagé avec GPT.
   - Écrans e-ink : poster frame calculée, jamais d'animation.
 - **ACK signé Ed25519** (cible durable) ; la V1 vérifie la tête de file exacte.
 - **Budget Redis** : brancher réellement `incrBudget` (jamais appelé aujourd'hui), mesurer par route avant d'optimiser (`docs/IDEES_A_PLUS_TARD.md`, § Quota Upstash).

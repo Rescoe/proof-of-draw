@@ -12,6 +12,7 @@ import { frameKey } from "@/lib/queue";
 import { getConvertedReceivers } from "@/lib/deviceStore";
 import { convertPayload } from "@/lib/screenConvert";
 import { SCREEN_IDS } from "@/lib/screenProfiles";
+import type { ScenePointer } from "@/lib/scene/delivery";
 
 const DRAW_WINDOW_SEC = parseInt(process.env.DRAW_WINDOW_SEC ?? "900");
 // broadcastToDevices() (the ANA bridge) was reusing DRAW_WINDOW_SEC (15 min) —
@@ -28,7 +29,8 @@ const DRAW_WINDOW_SEC = parseInt(process.env.DRAW_WINDOW_SEC ?? "900");
 // ANA content, meant to be a lasting piece, deserves at least the same.
 const ANA_FRAME_TTL_SEC = parseInt(process.env.ANA_FRAME_TTL_SEC ?? "7200");
 
-type FrameMeta = { workTitle?: string; drawArtistName?: string; displayTs?: string };
+// `scene` : pointeur léger vers le paquet ANAS (scene-v1) — jamais le paquet lui-même ; la frame (buffer) reste le repli.
+type FrameMeta = { workTitle?: string; drawArtistName?: string; displayTs?: string; scene?: ScenePointer };
 
 function buildFrame(
   screen: string, payload: Record<string, string>, sourceDeviceId: string, meta?: FrameMeta,
