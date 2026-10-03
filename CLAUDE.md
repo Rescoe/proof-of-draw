@@ -270,6 +270,12 @@ Galerie `/gallery-anim` (animations faites à la main, `lib/anim/store.ts`, `ani
 Firmware 2.2 : pixels envoyés PAR BLOC (`fastPixels` = `SPI.transfer(buf, n)` ; `Adafruit_SPITFT::writePixels` fait 2 transferts d'octet par pixel sur la R4), une transaction SPI par image,
 métrique de retard = retard de DÉMARRAGE (+ marge min), `loops = 0` = boucle sans fin (arrêt : toucher / nouvel envoi / fin du mode / 1 h ; contrôle serveur toutes les 20 s).
 
+## Animations : écrans, atelier, firmwares (03/10/2026)
+
+Écrans compatibles du banc d'essai : `lib/bench/screens.ts` (`tft28` validé ; `tft18` et `oled096` ⚠ non testés sur le matériel). Atelier ouvert à tous : `/animer`. Lecteur de clips `pod_bench.h` et réseau ESP `pod_bench_esp.h`
+existent en COPIES IDENTIQUES par dossier de firmware : après toute modification de l'original, `node scripts/sync-bench-header.js` (test `benchHeaderCopies`). **Avant de modifier un `.ino`, le sauvegarder dans `firmware-backups/<date>/`.**
+Tout code non testé sur le matériel porte un avertissement (en-tête, doc, interface). Plan : `docs/PLAN_ANIMATIONS_ET_PORTS_R4.md`.
+
 ## Règle PRIMORDIALE — quotas Upstash Redis (écrite le 03/10/2026)
 
 Ne jamais saturer Redis. Toute route, page, cron ou firmware qui y accède doit être pensé en **commandes Redis / heure / acteur AVANT d'être codé** (écrire le coût dans le commit ou la doc).

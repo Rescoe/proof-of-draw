@@ -97,6 +97,17 @@ Premier essai mesuré : 24 images en 2 400 ms, travail moyen 39,6 ms (max 124,8 
   Maintenant le cartel n'est appliqué que lorsque le pull apporte une nouvelle image ; `/api/send-to-screen` joint le n° du bloc d'origine (`blockIndex`) et `/api/pull` l'utilise pour `cartelMeta`.
   Après un redémarrage avec carte SD, le cartel revient depuis `/pod/meta.txt`.
 
+## Écrans compatibles et atelier d'animation (03/10/2026, soir)
+
+- **Écrans** (`lib/bench/screens.ts`) : `tft28` (UNO R4, **validé**), `tft18` (ESP8266, firmware `tft18-2.1`, ⚠ **non testé**), `oled096` (ESP8266 e-ink 2.7" + OLED, firmware `multiscreen-2.1`, ⚠ **non testé**).
+  La page `/bench` liste les appareils ayant un de ces écrans, vérifie la version du firmware par type d'écran et affiche un bandeau orange tant que `tested` vaut `false`.
+- **Rendu** : TFT 2.8" ×1,875 centré ; TFT 1.8" 1:1 posé à y = 48 sur le 128×160 ; OLED 1:1 (`drawBitmap` + `display()`, I2C à 400 kHz pendant la lecture).
+- **Lecteur commun** `pod_bench.h` (géométries `GeoR4`, `GeoOne<Y>`, `playBitmap`) : une seule source, copiée dans chaque dossier de firmware par `node scripts/sync-bench-header.js` (un test échoue si une copie diverge). Réseau ESP8266 : `esp8266/_shared/pod_bench_esp.h`.
+- **Serveur** : `/api/pull` annonce `benchMode` à tout écran compatible et ramène `retryAfter` à 30 s tant que le mode est actif (l'appareil le découvre vite ; coût : 4 commandes Redis par pull, pendant 30 min au plus).
+- **Atelier d'animation** `/animer` : même éditeur (variante « studio » : sans modèles de test ni mesures), brouillon distinct, entrée « Animer » dans le menu. Création, export GIF, galerie, envoi sur écran compatible.
+- **Sauvegarde** des firmwares d'avant : `firmware-backups/2026-10-03_avant-integration-animation/` + tag `firmware-avant-animations-2026-10-03`.
+- Faisabilité détaillée, essai couleur/grand (PBC2) et plan : `ANIMATIONS_FAISABILITE_ESP_ET_COULEUR.md`, `PLAN_ANIMATIONS_ET_PORTS_R4.md`.
+
 ## Passer le banc d'essai « en réel » : faisabilité
 
 | Niveau | Contenu | État |
