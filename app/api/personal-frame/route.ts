@@ -58,7 +58,9 @@ export async function POST(req: NextRequest) {
 
   const maxB64 = maxBufferBase64Length(screen);
   if ((black && black.length > maxB64) || (red && red.length > maxB64) || (buffer && buffer.length > maxB64)) {
-    return NextResponse.json({ error: "Buffer trop grand" }, { status: 413 });
+    const got = Math.max(black?.length ?? 0, red?.length ?? 0, buffer?.length ?? 0);
+    console.warn(`[personal-frame] Buffer trop grand device=${deviceId} screen=${screen} reçu=${got} max=${maxB64}`);
+    return NextResponse.json({ error: `Buffer trop grand (reçu ${got} caractères, maximum ${maxB64} pour ${screen})` }, { status: 413 });
   }
 
   // ── 4. Blacklist ───────────────────────────────────────────────────────────

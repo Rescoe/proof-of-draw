@@ -104,7 +104,10 @@ export async function POST(req: NextRequest) {
   // Limite de taille des buffers base64 : celle d'un buffer plein DE CET ÉCRAN (tft18 ≈ 54,6 k caractères, tft28 ≈ 204,8 k)
   const MAX_B64 = maxBufferBase64Length(screen);
   if ((black && black.length > MAX_B64) || (red && red.length > MAX_B64) || (buffer && buffer.length > MAX_B64)) {
-    return NextResponse.json({ error: "Buffer trop grand" }, { status: 413 });
+    // Le message donne les chiffres : « reçu X, max Y pour <écran> » — un écart révèle tout de suite un client ou un déploiement décalé.
+    const got = Math.max(black?.length ?? 0, red?.length ?? 0, buffer?.length ?? 0);
+    console.warn(`[draw] Buffer trop grand device=${deviceId} screen=${screen} reçu=${got} max=${MAX_B64}`);
+    return NextResponse.json({ error: `Buffer trop grand (reçu ${got} caractères, maximum ${MAX_B64} pour ${screen})` }, { status: 413 });
   }
 
   if (drawScore !== null && drawScore <= 0) {

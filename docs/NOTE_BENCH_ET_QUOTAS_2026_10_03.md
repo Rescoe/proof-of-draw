@@ -187,3 +187,11 @@ Nouveaux utilitaires : `getBlocksAligned` / `parseBlocks` / `getBlockImages` (`l
 
 ### 7.5 Comment suivre la baisse
 Noter chaque matin dans la console Upstash : commandes des dernières 24 h, lectures, écritures. Objectif : ≤ 9 k/jour ; état de départ : ≈ 100 k/jour (02/10). Si la courbe ne tombe pas sous ≈ 20 k après 48 h, c'est qu'un consommateur non audité reste (§ 6.3) : fournir alors les journaux Vercel par route.
+
+---
+
+## 8. Complément (03/10, soir)
+
+- **Historique du banc d'essai** : remis à zéro à chaque activation du mode (1 commande `DEL`), en plus du bouton « Effacer l'historique ».
+- **Erreur « Buffer trop grand » à l'envoi d'un dessin du TFT 2.8"** : non reproduite dans le code actuel (l'encodeur produit 204 800 caractères pour une limite de 204 864 ; un appel direct de `POST /api/draw` avec un buffer `tft28` plein passe le contrôle de taille). La cause d'origine (limite fixe à 60 000, corrigée le 02/10 par `eaad342`) est écartée. Le message donne désormais les chiffres : `Buffer trop grand (reçu X caractères, maximum Y pour <écran>)` + journal serveur. Si le message réapparaît SANS ces chiffres, le serveur déployé est antérieur au correctif ; avec les chiffres, ils désignent le coupable. Le repli « format TFT 1.8" agrandi » n'est pas nécessaire tant que cette limite par écran fonctionne.
+- **Documentation** : notes du vault Obsidian `01 - Projets/PoD - Incident quota Upstash Redis (octobre 2026).md` et `PoD - TFT 2.8 tactile et banc d'essai d'animation (octobre 2026).md` ; section ajoutée à `Proof of Draw.md`.
