@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState, useCallback } from "react";
 
-type LogEventType = "BLOCK_MINED" | "VALIDATION_PENDING" | "VALIDATION_VOTE" | "CHAIN_EMPTY";
+type LogEventType = "BLOCK_MINED" | "VALIDATION_PENDING" | "VALIDATION_VOTE" | "ANIMATION" | "CHAIN_EMPTY";
 
 type LogEvent = {
   id: string;
@@ -81,6 +81,17 @@ function EventLine({ ev }: { ev: LogEvent }) {
           {ev.drawScore !== undefined && (
             <span className="gterm__seg gterm__seg--dim">PoD&nbsp;{(ev.drawScore * 100).toFixed(0)}%</span>
           )}
+        </>
+      );
+      break;
+
+    case "ANIMATION":
+      content = (
+        <>
+          <span className="gterm__tag" style={{ color: "#2dd4bf" }}>ANIM</span>
+          {ev.artistName && <span className="gterm__seg">{ev.artistName}</span>}
+          {ev.workTitle && <span className="gterm__seg gterm__seg--muted">&quot;{ev.workTitle}&quot;</span>}
+          <span className="gterm__seg gterm__seg--dim">{ev.message.split(" · ").pop()}</span>
         </>
       );
       break;

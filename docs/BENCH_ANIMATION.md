@@ -49,6 +49,29 @@ Un octet source = 8 pixels = **exactement 15 pixels** à l'écran (×15/8) : pas
 et la carte « Mesures » de la page. Questions auxquelles ça répond : **débit réel du Wi-Fi** (Ko/s), **temps de peinture par octet modifié**, **images/s maximales**
 (pire cas = plein écran clignotant), **marge de tas** pendant la lecture.
 
+## Ajouts du 03/10 (retour du premier essai)
+
+- **Diagnostic « rien n'arrive »** : la page affiche maintenant la **version du firmware enregistrée** de l'écran et **alerte en rouge** si elle est < r4tft28-2.1
+  (une 2.0 ignore le mode banc d'essai : aucun contrôle rapide, aucun téléchargement — c'est exactement ce qui s'était passé : la base disait `r4tft28-2.0`).
+- **Journal du banc d'essai** (page `/bench`, 30 lignes / 24 h, `bench:log:{deviceId}`) : mode activé, clip envoyé, écran connecté (premier contrôle rapide), clip téléchargé, lecture terminée.
+- **Export** : GIF animé ×4 aux couleurs de l'écran (`lib/bench/gif.ts`, vérifié par un décodeur LZW indépendant) ; projet `.json` (export + import).
+- **Galerie « Animations »** (`/gallery-anim`, lien dans le menu) : les animations **faites à la main** y sont enregistrées (à l'envoi ou via « 💾 Galerie seule »), jamais les modèles de test
+  (balle, vague, bruit… : un modèle chargé n'est « fait à la main » qu'une fois modifié). Dédoublonnage par empreinte du clip, 200 au plus. Chaque carte rejoue l'animation, exporte le GIF
+  ou la rouvre dans le banc d'essai. Les dernières animations apparaissent aussi dans le **journal global** de l'accueil (étiquette `ANIM`).
+
+## Passer le banc d'essai « en réel » : faisabilité
+
+| Niveau | Contenu | État |
+|---|---|---|
+| A. Traçabilité | journal par appareil (fait) + événements dans le journal global (fait) | ✅ |
+| B. Galerie | enregistrement, rejeu, GIF, réouverture (fait) | ✅ |
+| C. Chaîne complète | l'animation devient un **bloc** : candidat → validation par quorum (signatures Ed25519) → bloc miné → diffusion | à décider |
+
+Pour C il faut : un nouveau type de charge utile « animation » dans les frames et les blocs (aujourd'hui une image fixe par écran) ; une **définition du score Proof-of-Draw d'une animation**
+(rejeu des traits sur plusieurs images, variation entre images, durée) ; le vote des appareils qui ne savent pas l'afficher (e-ink : ils valideraient sur la 1re image) ; la diffusion par un
+**pointeur dans /api/pull** (comme scene-v1) plutôt que par le poll rapide ; l'affichage dans l'explorateur de blocs. Charge réelle : ≈ 1 à 2 jours, surtout la définition du score
+et la compatibilité des écrans qui n'animent pas. Recommandation : **valider d'abord l'écran physique** (ce banc), puis faire C en réutilisant le format PBC1 et le lecteur déjà testés.
+
 ## Limites connues / suite possible
 
 - 1 bit, 128×64 seulement ; clip ≤ 9 Ko en RAM. Avec la carte SD : clips plus gros, lus depuis la carte (pas fait).

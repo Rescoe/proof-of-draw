@@ -21,6 +21,7 @@ export const benchKeys = {
   clip: (id: string, clipId: string) => `bench:clip:${id}:${clipId}`,
   seen: (id: string) => `bench:seen:${id}`,
   results: (id: string) => `bench:results:${id}`,
+  log: (id: string) => `bench:log:${id}`,
   lock: (kind: string, id: string) => `bench:lock:${kind}:${id}`,
 };
 
@@ -31,6 +32,17 @@ export interface ClipPointer {
   loops: number;
   playMs: number;
   createdAt: number;
+}
+
+export interface BenchLogLine { t: number; text: string }
+
+/** Journal du banc d'essai (30 lignes, 24 h) : envoi, présence de l'écran, téléchargement, lecture… affiché dans la page /bench. */
+export async function benchLog(deviceId: string, text: string): Promise<void> {
+  try {
+    const key = benchKeys.log(deviceId);
+    await redis.lpush(key, JSON.stringify({ t: Date.now(), text: text.slice(0, 160) } satisfies BenchLogLine));
+    await Promise.all([redis.ltrim(key, 0, 29), redis.expire(key, RESULT_TTL_SEC)]);
+  } catch { /* le journal ne doit jamais casser une route */ }
 }
 
 export interface BenchResult {
@@ -67,8 +79,9 @@ export async function setBenchMode(deviceId: string, on: boolean): Promise<void>
 
 /** 1 MGET (mode + pointeur) + 1 SET (présence) : le coût d'un poll. */
 export async function benchPoll(deviceId: string): Promise<{ mode: boolean; clip: ClipPointer | null }> {
-  const [mode, ptr] = await redis.mget<(string | ClipPointer | null)[]>(benchKeys.mode(deviceId), benchKeys.ptr(deviceId));
+  const [mode, ptr, seen] = await redis.mget<(string | ClipPointer | null)[]>(benchKeys.mode(deviceId), benchKeys.ptr(deviceId), benchKeys.seen(deviceId));
   await redis.set(benchKeys.seen(deviceId), String(Date.now()), { ex: 120 });
+  if ((seen === null || seen === undefined) && mode !== null && mode !== undefined) await benchLog(deviceId, "écran connecté : premier contrôle rapide reçu");
   return { mode: mode !== null && mode !== undefined, clip: parse<ClipPointer>(ptr) };
 }
 
@@ -90,12 +103,13 @@ export async function pushResult(deviceId: string, r: BenchResult): Promise<void
   await Promise.all([redis.ltrim(key, 0, RESULTS_KEPT - 1), redis.expire(key, RESULT_TTL_SEC)]);
 }
 
-export async function benchStatus(deviceId: string): Promise<{ mode: boolean; clip: ClipPointer | null; seenAgoMs: number | null; results: BenchResult[] }> {
-  const [mode, ptr, seen, results] = await Promise.all([
+export async function benchStatus(deviceId: string): Promise<{ mode: boolean; clip: ClipPointer | null; seenAgoMs: number | null; results: BenchResult[]; log: BenchLogLine[] }> {
+  const [mode, ptr, seen, results, log] = await Promise.all([
     redis.get(benchKeys.mode(deviceId)),
     redis.get(benchKeys.ptr(deviceId)),
     redis.get(benchKeys.seen(deviceId)),
     redis.lrange(benchKeys.results(deviceId), 0, RESULTS_KEPT - 1),
+    redis.lrange(benchKeys.log(deviceId), 0, 29),
   ]);
   const seenAt = seen ? Number(seen) : NaN;
   return {
@@ -103,6 +117,7 @@ export async function benchStatus(deviceId: string): Promise<{ mode: boolean; cl
     clip: parse<ClipPointer>(ptr),
     seenAgoMs: Number.isFinite(seenAt) ? Math.max(0, Date.now() - seenAt) : null,
     results: (results as unknown[]).map((x) => parse<BenchResult>(x)).filter((x): x is BenchResult => !!x),
+    log: (log as unknown[]).map((x) => parse<BenchLogLine>(x)).filter((x): x is BenchLogLine => !!x),
   };
 }
 

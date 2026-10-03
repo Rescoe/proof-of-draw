@@ -4,7 +4,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getDevice } from "@/lib/deviceStore";
 import { sessionOwnsDevice } from "@/lib/session";
-import { DEVICE_ID_REGEX, MODE_TTL_SEC, setBenchMode } from "@/lib/bench/store";
+import { benchLog, DEVICE_ID_REGEX, MODE_TTL_SEC, setBenchMode } from "@/lib/bench/store";
 
 export async function POST(req: NextRequest) {
   let body: Record<string, unknown>;
@@ -16,5 +16,6 @@ export async function POST(req: NextRequest) {
   if (!device?.screens.includes("tft28")) return NextResponse.json({ error: "Le banc d'essai ne concerne que le TFT 2.8\" tactile" }, { status: 400 });
   const on = body.on === true;
   await setBenchMode(deviceId, on);
+  await benchLog(deviceId, on ? "mode banc d'essai ACTIVÉ (30 min) — l'écran le lira à son prochain contrôle (≤ 1 min)" : "mode banc d'essai désactivé");
   return NextResponse.json({ ok: true, mode: on, expiresInSec: on ? MODE_TTL_SEC : 0 });
 }

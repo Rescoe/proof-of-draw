@@ -7,6 +7,7 @@ import { NextResponse } from "next/server";
 import { redis } from "@/lib/redis";
 import { getBlockByHash, getCurrentCandidate, getVotes } from "@/lib/chain";
 import type { Block } from "@/lib/chain";
+import { recentAnimationEvents } from "@/lib/anim/store";
 
 export const dynamic = "force-dynamic";
 
@@ -14,6 +15,7 @@ export type LogEventType =
   | "BLOCK_MINED"
   | "VALIDATION_PENDING"
   | "VALIDATION_VOTE"
+  | "ANIMATION"
   | "CHAIN_EMPTY";
 
 export type LogEvent = {
@@ -110,6 +112,16 @@ export async function GET() {
     }
 
     // Trier par ts DESC (plus récent en premier)
+    // ── Animations de la galerie « Animations » (faites à la main, banc d'essai) ───────────────────────
+    try {
+      for (const a of await recentAnimationEvents(5)) {
+        events.push({
+          id: `anim-${a.id}`, type: "ANIMATION", ts: a.createdAt, artistName: a.author, workTitle: a.title,
+          message: `ANIMATION · ${a.title} · ${a.author} · ${a.frames} images`,
+        });
+      }
+    } catch { /* la galerie d'animations ne doit jamais casser le journal */ }
+
     events.sort((a, b) => b.ts - a.ts);
 
     return NextResponse.json(

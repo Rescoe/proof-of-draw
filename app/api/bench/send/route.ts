@@ -1,13 +1,15 @@
 // POST /api/bench/send — le propriétaire envoie une animation au TFT 2.8" tactile (banc d'essai).
 // Corps : { deviceId, frames: string[] (base64, 1024 octets chacune), delaysMs: number[], loops, fg, bg } (fg/bg = RGB565).
 // Le serveur ENCODE (différences entre images) et applique les plafonds — l'interface n'est jamais la source de vérité.
+// Option : gallery: { title } → l'animation FAITE À LA MAIN est aussi enregistrée dans la galerie « Animations » (jamais les modèles de test).
 
 import { NextRequest, NextResponse } from "next/server";
 import { randomBytes } from "node:crypto";
 import { getDevice } from "@/lib/deviceStore";
 import { sessionOwnsDevice } from "@/lib/session";
 import { CLIP, clipStats, encodeClip, validateClipInput } from "@/lib/bench/clip";
-import { benchLock, DEVICE_ID_REGEX, storeClip, type ClipPointer } from "@/lib/bench/store";
+import { benchLock, benchLog, DEVICE_ID_REGEX, storeClip, type ClipPointer } from "@/lib/bench/store";
+import { buildAnimItem, galleryRefusal, saveAnimation } from "@/lib/anim/store";
 
 export async function POST(req: NextRequest) {
   let body: Record<string, unknown>;
@@ -48,5 +50,14 @@ export async function POST(req: NextRequest) {
     bytes: bin.length, frames: frames.length, loops: input.loops, playMs: stats.playMs, createdAt: Date.now(),
   };
   await storeClip(deviceId, bin, ptr);
-  return NextResponse.json({ ok: true, ...ptr, stats });
+
+  let gallery: { id: string; duplicate: boolean } | { refused: string } | undefined;
+  const g = body.gallery;
+  if (g && typeof g === "object") {
+    const refusal = galleryRefusal(input);
+    if (refusal) gallery = { refused: refusal };
+    else gallery = await saveAnimation(buildAnimItem(input, { title: (g as { title?: unknown }).title, author: device.artistName, deviceId }));
+  }
+  await benchLog(deviceId, `clip ${ptr.clipId} ENVOYÉ : ${bin.length} octets, ${frames.length} images, ${input.loops} boucle(s)${gallery && "id" in gallery ? (gallery.duplicate ? " · déjà dans la galerie" : " · enregistré dans la galerie") : ""}`);
+  return NextResponse.json({ ok: true, ...ptr, stats, ...(gallery ? { gallery } : {}) });
 }

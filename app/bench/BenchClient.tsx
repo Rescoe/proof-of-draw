@@ -7,7 +7,8 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { CLIP, clipPixel, clipPlayMs, clipStats, type ClipInput } from "@/lib/bench/clip";
-import type { BenchResult, ClipPointer } from "@/lib/bench/store";
+import type { BenchLogLine, BenchResult, ClipPointer } from "@/lib/bench/store";
+import { encodeGif } from "@/lib/bench/gif";
 
 const W = CLIP.W, H = CLIP.H, RB = CLIP.ROW_BYTES;
 const DRAFT_KEY = "pod-bench-draft-v1";
@@ -125,10 +126,23 @@ const label: React.CSSProperties = { fontSize: "0.68rem", color: "var(--text3)",
 const muted: React.CSSProperties = { fontSize: "0.76rem", color: "var(--text3)", lineHeight: 1.5, margin: 0 };
 
 interface Dev { deviceId: string; deviceName?: string; artistName?: string; screens: string[]; isOnline: boolean }
-interface Status { mode: boolean; clip: ClipPointer | null; seenAgoMs: number | null; results: BenchResult[] }
+interface Status { mode: boolean; clip: ClipPointer | null; seenAgoMs: number | null; results: BenchResult[]; log: BenchLogLine[]; firmware: string | null; lastPingAgoMs: number | null }
 type Tool = "pencil" | "eraser" | "line";
 
-interface Draft { frames: string[]; delays: number[]; loops: number; fg: string; bg: string }
+interface Draft { frames: string[]; delays: number[]; loops: number; fg: string; bg: string; handmade?: boolean; title?: string }
+
+/** Le banc d'essai exige le firmware r4tft28-2.1 ou plus : une 2.0 ignore le mode et ne fait jamais de contrôle rapide. */
+function firmwareOk(fw: string | null): boolean | null {
+  if (!fw) return null;
+  const m = /^r4tft28-(\d+)\.(\d+)/.exec(fw);
+  return m ? Number(m[1]) > 2 || (Number(m[1]) === 2 && Number(m[2]) >= 1) : false;
+}
+const hexToRgb = (hex: string): [number, number, number] => { const n = parseInt(hex.slice(1), 16); return [(n >> 16) & 0xff, (n >> 8) & 0xff, n & 0xff]; };
+function download(name: string, data: BlobPart, type: string) {
+  const url = URL.createObjectURL(new Blob([data], { type }));
+  const a = document.createElement("a"); a.href = url; a.download = name; a.click();
+  setTimeout(() => URL.revokeObjectURL(url), 2000);
+}
 function loadDraft(): Draft | null {
   try { const raw = localStorage.getItem(DRAFT_KEY); return raw ? (JSON.parse(raw) as Draft) : null; } catch { return null; }
 }
@@ -150,6 +164,11 @@ export default function BenchClient() {
   const [status, setStatus] = useState<Status | null>(null);
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
+  // Une animation est « faite à la main » dès qu'on la modifie ; un modèle de test chargé ne l'est pas (et n'entre jamais dans la galerie).
+  const [handmade, setHandmade] = useState<boolean>(draft?.handmade ?? true);
+  const [title, setTitle] = useState(draft?.title ?? "");
+  const [toGallery, setToGallery] = useState(true);
+  const [allDevices, setAllDevices] = useState<Dev[]>([]);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const dragRef = useRef<{ x0: number; y0: number; base: Uint8Array } | null>(null);
 
@@ -161,10 +180,10 @@ export default function BenchClient() {
   // ── Brouillon local ────────────────────────────────────────────────────────
   useEffect(() => {
     const t = setTimeout(() => {
-      try { localStorage.setItem(DRAFT_KEY, JSON.stringify({ frames: frames.map(toB64), delays, loops, fg, bg } satisfies Draft)); } catch { /* stockage indisponible */ }
+      try { localStorage.setItem(DRAFT_KEY, JSON.stringify({ frames: frames.map(toB64), delays, loops, fg, bg, handmade, title } satisfies Draft)); } catch { /* stockage indisponible */ }
     }, 400);
     return () => clearTimeout(t);
-  }, [frames, delays, loops, fg, bg]);
+  }, [frames, delays, loops, fg, bg, handmade, title]);
 
   // ── Aperçu animé (délais par image) ────────────────────────────────────────
   useEffect(() => {
@@ -180,6 +199,7 @@ export default function BenchClient() {
       .then((r) => (r.ok ? r.json() : { devices: [] }))
       .then((d: { devices?: Dev[] }) => {
         if (!alive) return;
+        setAllDevices(d.devices ?? []);
         const mine = (d.devices ?? []).filter((x) => x.screens?.includes("tft28"));
         setDevices(mine);
         if (mine.length) setDeviceId((cur) => cur || mine[0].deviceId);
@@ -204,7 +224,7 @@ export default function BenchClient() {
   }, [deviceId, refreshStatus]);
 
   // ── Édition ────────────────────────────────────────────────────────────────
-  const update = (fn: (f: Uint8Array) => Uint8Array) => setFrames((fs) => fs.map((f, i) => (i === idx ? fn(f) : f)));
+  const update = (fn: (f: Uint8Array) => Uint8Array) => { setHandmade(true); setFrames((fs) => fs.map((f, i) => (i === idx ? fn(f) : f))); };
   const pixelAt = (e: React.PointerEvent) => {
     const r = (e.currentTarget as HTMLCanvasElement).getBoundingClientRect();
     return { x: Math.max(0, Math.min(W - 1, Math.floor(((e.clientX - r.left) / r.width) * W))), y: Math.max(0, Math.min(H - 1, Math.floor(((e.clientY - r.top) / r.height) * H))) };
@@ -224,20 +244,39 @@ export default function BenchClient() {
   };
   const onUp = () => { dragRef.current = null; };
 
-  const addFrame = () => { setFrames((fs) => [...fs.slice(0, idx + 1), blank(), ...fs.slice(idx + 1)]); setDelays((ds) => [...ds.slice(0, idx + 1), ds[idx] ?? 100, ...ds.slice(idx + 1)]); setCur(idx + 1); };
-  const dupFrame = () => { setFrames((fs) => [...fs.slice(0, idx + 1), Uint8Array.from(fs[idx]), ...fs.slice(idx + 1)]); setDelays((ds) => [...ds.slice(0, idx + 1), ds[idx] ?? 100, ...ds.slice(idx + 1)]); setCur(idx + 1); };
-  const delFrame = () => { if (n < 2) { setFrames([blank()]); return; } setFrames((fs) => fs.filter((_, i) => i !== idx)); setDelays((ds) => ds.filter((_, i) => i !== idx)); setCur(Math.max(0, idx - 1)); };
+  const addFrame = () => { setHandmade(true); setFrames((fs) => [...fs.slice(0, idx + 1), blank(), ...fs.slice(idx + 1)]); setDelays((ds) => [...ds.slice(0, idx + 1), ds[idx] ?? 100, ...ds.slice(idx + 1)]); setCur(idx + 1); };
+  const dupFrame = () => { setHandmade(true); setFrames((fs) => [...fs.slice(0, idx + 1), Uint8Array.from(fs[idx]), ...fs.slice(idx + 1)]); setDelays((ds) => [...ds.slice(0, idx + 1), ds[idx] ?? 100, ...ds.slice(idx + 1)]); setCur(idx + 1); };
+  const delFrame = () => { setHandmade(true); if (n < 2) { setFrames([blank()]); return; } setFrames((fs) => fs.filter((_, i) => i !== idx)); setDelays((ds) => ds.filter((_, i) => i !== idx)); setCur(Math.max(0, idx - 1)); };
   const setDelay = (v: number, all: boolean) => setDelays((ds) => ds.map((d, i) => (all || i === idx ? v : d)));
-  const loadPreset = (a: Anim) => { setPlaying(false); setFrames(a.frames); setDelays(a.delays); setCur(0); setMsg(null); };
+  const loadPreset = (a: Anim) => { setPlaying(false); setFrames(a.frames); setDelays(a.delays); setCur(0); setMsg(null); setHandmade(false); setTitle(""); };
 
   // ── Statistiques du clip (même codeur que le serveur) ──────────────────────
   const input: ClipInput = useMemo(() => ({ frames, delaysMs: delays.slice(0, frames.length), loops, fg: hexTo565(fg), bg: hexTo565(bg) }), [frames, delays, loops, fg, bg]);
   const stats = useMemo(() => { try { return clipStats(input); } catch { return null; } }, [input]);
   const playMs = clipPlayMs(input.delaysMs, loops);
 
+  // ── Export : GIF, projet (.json), import ───────────────────────────────────
+  const baseName = (title.trim() || "animation").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 40) || "animation";
+  const exportGif = () => download(`${baseName}.gif`, encodeGif({ frames, delaysMs: input.delaysMs, fg: hexToRgb(fg), bg: hexToRgb(bg), scale: 4 }) as BlobPart, "image/gif");
+  const exportProject = () => download(`${baseName}.pod-anim.json`, JSON.stringify({ kind: "pod-bench-animation", v: 1, title, frames: frames.map(toB64), delays: input.delaysMs, loops, fg, bg } satisfies Record<string, unknown>, null, 1), "application/json");
+  const importProject = async (file: File | undefined) => {
+    if (!file) return;
+    try {
+      const j = JSON.parse(await file.text());
+      if (j.kind !== "pod-bench-animation" || !Array.isArray(j.frames) || !j.frames.length || j.frames.length > CLIP.MAX_FRAMES) throw new Error("fichier non reconnu");
+      const fr: Uint8Array[] = j.frames.map((x: string) => fromB64(String(x)));
+      if (fr.some((f) => f.length !== CLIP.FRAME_BYTES)) throw new Error("images invalides");
+      setPlaying(false); setFrames(fr); setDelays(fr.map((_, i) => Math.max(20, Math.min(2550, Number(j.delays?.[i]) || 100))));
+      setLoops(Math.max(1, Math.min(CLIP.MAX_LOOPS, Number(j.loops) || 1))); setFg(/^#[0-9a-f]{6}$/i.test(j.fg) ? j.fg : "#00ff88"); setBg(/^#[0-9a-f]{6}$/i.test(j.bg) ? j.bg : "#000000");
+      setTitle(String(j.title ?? "")); setCur(0); setHandmade(true); setMsg({ ok: true, text: "Projet importé." });
+    } catch (e) { setMsg({ ok: false, text: `Import impossible : ${e instanceof Error ? e.message : "fichier illisible"}` }); }
+  };
+
   const device = devices?.find((d) => d.deviceId === deviceId);
   const seen = status?.seenAgoMs ?? null;
   const connected = status?.mode === true && seen !== null && seen < 15_000;
+  const fwState = firmwareOk(status?.firmware ?? null);
+  const authorDevice = deviceId || allDevices[0]?.deviceId || "";
 
   async function setMode(on: boolean) {
     setMsg(null);
@@ -251,11 +290,26 @@ export default function BenchClient() {
     try {
       const r = await fetch("/api/bench/send", {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ deviceId, frames: frames.map(toB64), delaysMs: input.delaysMs, loops, fg: input.fg, bg: input.bg }),
+        body: JSON.stringify({ deviceId, frames: frames.map(toB64), delaysMs: input.delaysMs, loops, fg: input.fg, bg: input.bg, ...(handmade && toGallery ? { gallery: { title: title.trim() || "Sans titre" } } : {}) }),
       });
       const d = await r.json().catch(() => ({}));
-      setMsg(r.ok ? { ok: true, text: `Envoyé : clip ${d.clipId} (${d.bytes} octets). ${status?.mode ? "L'écran le joue dans quelques secondes." : "Activez le mode banc d'essai pour que l'écran le récupère vite."}` } : { ok: false, text: d.error ?? "Envoi impossible" });
+      const g = d.gallery as { id?: string; duplicate?: boolean; refused?: string } | undefined;
+      const galleryText = !g ? "" : g.id ? (g.duplicate ? " Déjà présente dans la galerie Animations." : " Enregistrée dans la galerie Animations.") : ` Pas ajoutée à la galerie : ${g.refused}.`;
+      setMsg(r.ok ? { ok: true, text: `Envoyé : clip ${d.clipId} (${d.bytes} octets). ${status?.mode ? "L'écran le joue dans quelques secondes." : "Activez le mode banc d'essai pour que l'écran le récupère vite."}${galleryText}` } : { ok: false, text: d.error ?? "Envoi impossible" });
       refreshStatus();
+    } catch { setMsg({ ok: false, text: "Erreur réseau" }); }
+    finally { setBusy(false); }
+  }
+
+  async function saveOnly() {
+    setBusy(true); setMsg(null);
+    try {
+      const r = await fetch("/api/anim/save", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ deviceId: authorDevice, title: title.trim() || "Sans titre", frames: frames.map(toB64), delaysMs: input.delaysMs, loops, fg: input.fg, bg: input.bg }),
+      });
+      const d = await r.json().catch(() => ({}));
+      setMsg(r.ok ? { ok: true, text: d.duplicate ? "Cette animation est déjà dans la galerie." : "Enregistrée dans la galerie Animations." } : { ok: false, text: d.error ?? "Enregistrement impossible" });
     } catch { setMsg({ ok: false, text: "Erreur réseau" }); }
     finally { setBusy(false); }
   }
@@ -286,6 +340,12 @@ export default function BenchClient() {
             </span>
           </div>
         )}
+        {device && fwState === false && (
+          <p role="alert" style={{ ...muted, marginTop: 8, color: "#f87171", fontWeight: 600 }}>
+            ⚠ Cet écran exécute le firmware « {status?.firmware} » : il ne connaît pas le banc d&apos;essai et ne fera jamais de contrôle rapide. Reflashez <code>pod_uno_r4</code> (version r4tft28-2.1 ou plus), puis redémarrez la carte.
+          </p>
+        )}
+        {device && fwState === true && <p style={{ ...muted, marginTop: 8 }}>Firmware de l&apos;écran : {status?.firmware} ✓</p>}
         <p style={{ ...muted, marginTop: 8 }}>Le mode accélère les contrôles de l&apos;écran (≈ toutes les 3 s) pendant 30 minutes, puis s&apos;éteint tout seul. {device && !device.isOnline ? "⚠ L'appareil semble hors ligne." : ""}</p>
       </div>
 
@@ -368,9 +428,22 @@ export default function BenchClient() {
           </div>
         ) : <p style={{ ...muted, color: "#f87171" }}>Animation invalide (vérifiez images, délais, boucles).</p>}
         {stats && !stats.fitsDevice && <p role="alert" style={{ ...muted, color: "#f87171" }}>Trop gros pour l&apos;appareil : moins d&apos;images, ou moins de pixels qui changent entre deux images.</p>}
+        <div style={{ display: "flex", gap: "0.6rem", flexWrap: "wrap", alignItems: "center", margin: "0.4rem 0 0.7rem" }}>
+          <input value={title} onChange={(e) => setTitle(e.target.value.slice(0, 60))} placeholder="Titre de l'animation" aria-label="Titre de l'animation" style={{ ...btn, minWidth: 220, flex: "1 1 220px" }} />
+          <label style={{ ...muted, display: "inline-flex", gap: 6, alignItems: "center", opacity: handmade ? 1 : 0.55 }} title={handmade ? "" : "Un modèle de test n'est jamais enregistré dans la galerie : modifiez-le pour en faire votre animation."}>
+            <input type="checkbox" checked={handmade && toGallery} disabled={!handmade} onChange={(e) => setToGallery(e.target.checked)} /> aussi dans la galerie <a href="/gallery-anim" style={{ color: "var(--accent)" }}>Animations</a>
+            {!handmade && " (modèle de test : non)"}
+          </label>
+        </div>
         <button type="button" onClick={send} disabled={busy || !deviceId || !stats || !stats.fitsDevice} style={{ ...btnOn, padding: "0.55rem 1.2rem", fontWeight: 700, opacity: busy || !deviceId || !stats?.fitsDevice ? 0.5 : 1 }}>
           {busy ? "Envoi…" : "📺 Envoyer au TFT 2.8\""}
         </button>
+        <div style={{ display: "inline-flex", gap: 6, flexWrap: "wrap", marginLeft: 8, verticalAlign: "middle" }}>
+          <button type="button" style={btn} onClick={exportGif} disabled={!stats} title="GIF animé ×4 (couleurs de l'écran)">⬇ GIF</button>
+          <button type="button" style={btn} onClick={exportProject} title="Projet modifiable (.json)">⬇ Projet</button>
+          <label style={{ ...btn, cursor: "pointer" }} title="Recharger un projet .json">⬆ Importer<input type="file" accept=".json,application/json" hidden onChange={(e) => { importProject(e.target.files?.[0]); e.target.value = ""; }} /></label>
+          <button type="button" style={btn} onClick={saveOnly} disabled={busy || !handmade || !authorDevice || !stats} title={handmade ? "Enregistrer dans la galerie sans l'envoyer à l'écran" : "Un modèle de test n'est pas enregistrable"}>💾 Galerie seule</button>
+        </div>
         {msg && <p role="status" style={{ ...muted, color: msg.ok ? "#4ade80" : "#f87171", marginTop: 8 }}>{msg.text}</p>}
 
         <div style={{ ...label, marginTop: "1rem" }}>Mesures renvoyées par l&apos;écran</div>
@@ -378,6 +451,15 @@ export default function BenchClient() {
           <div style={{ display: "flex", flexDirection: "column", gap: 6, marginTop: 6 }}>
             {status.results.map((r) => <ResultRow key={`${r.clipId}-${r.at}`} r={r} />)}
           </div>
+        )}
+      </div>
+
+      <div style={card}>
+        <div style={label}>Journal du banc d&apos;essai</div>
+        {!status || status.log.length === 0 ? <p style={{ ...muted, marginTop: 4 }}>Rien pour l&apos;instant. Chaque étape y apparaît : mode activé, clip envoyé, écran connecté, clip téléchargé, lecture terminée.</p> : (
+          <ul style={{ listStyle: "none", margin: "6px 0 0", padding: 0, fontFamily: "JetBrains Mono, monospace", fontSize: "0.72rem", lineHeight: 1.7, color: "var(--text2)" }}>
+            {status.log.map((l, i) => <li key={`${l.t}-${i}`}><span style={{ color: "var(--text3)" }}>{new Date(l.t).toLocaleTimeString()}</span> {l.text}</li>)}
+          </ul>
         )}
       </div>
 
