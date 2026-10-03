@@ -61,3 +61,5 @@ next-env.d.ts
 
 #Claude
 .claude
+# Firmware : identifiants Wi-Fi locaux
+arduino_uno_r4/**/secrets.h
