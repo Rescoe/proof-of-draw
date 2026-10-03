@@ -223,7 +223,8 @@ export async function GET(req: NextRequest) {
       drawArtistName: (fm?.["drawArtistName"] as string | undefined)
                       || (chainHead?.drawArtistName ?? chainHead?.artistName ?? null),
       displayTs:      (fm?.["displayTs"]      as string | undefined) ?? fallbackTs,
-      blockIndex:     chainSummary?.blockIndex ?? -1,
+      // Image renvoyée depuis une galerie : le n° du bloc d'origine (send-to-screen) ; sinon la tête de chaîne.
+      blockIndex:     typeof fm?.["blockIndex"] === "number" ? (fm["blockIndex"] as number) : (chainSummary?.blockIndex ?? -1),
     };
 
     // ── Tâche d'observation (device idle → revalide des blocs antérieurs) ────

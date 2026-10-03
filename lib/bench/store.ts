@@ -98,6 +98,11 @@ export async function loadClip(deviceId: string, clipId: string): Promise<Buffer
   return raw ? Buffer.from(String(raw), "base64") : null;
 }
 
+/** Efface l'historique d'essais (mesures + journal) : un seul DEL. */
+export async function clearBenchHistory(deviceId: string): Promise<void> {
+  await redis.del(benchKeys.results(deviceId), benchKeys.log(deviceId));
+}
+
 export async function pushResult(deviceId: string, r: BenchResult): Promise<void> {
   const key = benchKeys.results(deviceId);
   await redis.lpush(key, JSON.stringify(r));

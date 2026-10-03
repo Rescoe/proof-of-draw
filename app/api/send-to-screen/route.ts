@@ -61,6 +61,7 @@ export async function POST(req: NextRequest) {
   let image: Record<string, unknown> | null = null;
   let workTitle: string | undefined;
   let drawArtistName: string | undefined;
+  let blockIndex: number | undefined;     // n° du bloc d'origine : le cartel de l'écran doit afficher CELUI-LÀ, pas la tête de chaîne
 
   if (source === "human") {
     const [block, img] = await Promise.all([getBlockByHash(blockHash), getBlockImage(blockHash)]);
@@ -68,11 +69,13 @@ export async function POST(req: NextRequest) {
     image = { ...img };
     workTitle = block.workTitle;
     drawArtistName = block.drawArtistName ?? block.artistName;
+    blockIndex = block.blockIndex;
   } else {
     const block = await getAnaBlockByHash(blockHash);
     if (!block) return NextResponse.json({ error: "Bloc introuvable" }, { status: 404 });
     workTitle = block.workTitle;
     drawArtistName = block.drawArtistName ?? block.artistName;
+    blockIndex = block.blockIndex;
     // Bloc natif de l'écran cible dans la même œuvre, s'il existe
     const key = anaGroupKey(block);
     const sibling = (await getRecentAnaWorks()).find((w) => w.groupKey === key)
@@ -100,7 +103,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Trop d'envois (10/heure max par écran)" }, { status: 429 });
 
   const stored = JSON.stringify({
-    payload: { ...payload, screen, ...(workTitle ? { workTitle } : {}), ...(drawArtistName ? { drawArtistName } : {}) },
+    payload: { ...payload, screen, ...(workTitle ? { workTitle } : {}), ...(drawArtistName ? { drawArtistName } : {}), ...(typeof blockIndex === "number" ? { blockIndex } : {}) },
     frameId:   crypto.randomUUID(),
     createdAt: Date.now(),
     personal:  true,

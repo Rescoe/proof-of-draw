@@ -156,7 +156,7 @@ export default function BenchClient() {
   const frame = frames[idx];
   const canUndo = hist.past.length > 0, canRedo = hist.future.length > 0;
 
-  const [loops, setLoops] = useState(draft?.loops ?? 3);
+  const [loops, setLoops] = useState(draft?.loops ?? 0);   // par défaut : en boucle jusqu'au toucher
   const [fg, setFg] = useState(draft?.fg ?? "#00ff88");
   const [bg, setBg] = useState(draft?.bg ?? "#000000");
   const [tool, setTool] = useState<Tool>("pencil");
@@ -307,18 +307,29 @@ export default function BenchClient() {
   }, []);
 
   // ── État du banc d'essai (mode, présence, mesures, journal) ────────────────
+  // Quota Upstash : chaque lecture d'état coûte ~6 commandes Redis. Rythme adaptatif : rapide (2,5 s) seulement juste après un envoi / un
+  // changement de mode, 8 s tant que le mode est actif, 20 s sinon ; AUCUNE lecture quand l'onglet est caché.
+  const fastUntil = useRef(0);
+  const modeOn = useRef(false);
   const refreshStatus = useCallback(async () => {
     if (!deviceId) return;
     try {
       const r = await fetch(`/api/bench/status?deviceId=${deviceId}`, { cache: "no-store" });
-      if (r.ok) setStatus(await r.json());
+      if (r.ok) { const s: Status = await r.json(); modeOn.current = s.mode === true; setStatus(s); }
     } catch { /* réseau : on réessaie au prochain tour */ }
   }, [deviceId]);
   useEffect(() => {
     if (!deviceId) return;
-    const first = setTimeout(refreshStatus, 0);
-    const t = setInterval(refreshStatus, 2500);
-    return () => { clearTimeout(first); clearInterval(t); };
+    let stopped = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const schedule = () => {
+      const ms = Date.now() < fastUntil.current ? 2500 : modeOn.current ? 8000 : 20000;
+      timer = setTimeout(async () => { if (stopped) return; if (!document.hidden) await refreshStatus(); if (!stopped) schedule(); }, ms);
+    };
+    const onVisible = () => { if (!document.hidden) { clearTimeout(timer); void refreshStatus().then(() => { if (!stopped) schedule(); }); } };
+    document.addEventListener("visibilitychange", onVisible);
+    timer = setTimeout(() => { void refreshStatus().then(() => { if (!stopped) schedule(); }); }, 0);
+    return () => { stopped = true; clearTimeout(timer); document.removeEventListener("visibilitychange", onVisible); };
   }, [deviceId, refreshStatus]);
 
   // ── Statistiques du clip (même codeur que le serveur) ──────────────────────
@@ -353,13 +364,19 @@ export default function BenchClient() {
 
   async function setMode(on: boolean) {
     setMsg(null);
+    fastUntil.current = Date.now() + 30_000;
     const r = await fetch("/api/bench/mode", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ deviceId, on }) });
     const d = await r.json().catch(() => ({}));
     if (!r.ok) setMsg({ ok: false, text: d.error ?? "Erreur" });
     refreshStatus();
   }
+  async function clearHistory() {
+    await fetch("/api/bench/clear", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ deviceId }) });
+    setStatus((s) => (s ? { ...s, results: [], log: [] } : s));
+  }
   async function send() {
     setBusy(true); setMsg(null);
+    fastUntil.current = Date.now() + 45_000;          // l'écran télécharge puis joue : on suit de près pendant 45 s
     try {
       const r = await fetch("/api/bench/send", {
         method: "POST", headers: { "Content-Type": "application/json" },
@@ -590,10 +607,13 @@ export default function BenchClient() {
         </div>
         {msg && <p role="status" style={{ ...muted, color: msg.ok ? "#4ade80" : "#f87171", marginTop: 8 }}>{msg.text}</p>}
 
-        <div style={{ ...label, marginTop: "1rem" }}>Mesures renvoyées par l&apos;écran</div>
+        <div style={{ ...label, marginTop: "1rem", display: "flex", gap: 10, alignItems: "center" }}>
+          Mesures renvoyées par l&apos;écran
+          {status && (status.results.length > 0 || status.log.length > 0) && <button type="button" style={{ ...btn, padding: "2px 8px", fontSize: "0.7rem" }} onClick={clearHistory} title="Efface les mesures et le journal de cet écran">Effacer l&apos;historique</button>}
+        </div>
         {!status || status.results.length === 0 ? <p style={{ ...muted, marginTop: 4 }}>Aucune mesure pour l&apos;instant. Elles apparaissent ici après la lecture d&apos;un clip.</p> : (
           <div style={{ display: "flex", flexDirection: "column", gap: 6, marginTop: 6 }}>
-            {status.results.map((r) => <ResultRow key={`${r.clipId}-${r.at}`} r={r} />)}
+            {status.results.map((r, i) => <ResultRow key={`${r.clipId}-${r.at}`} r={r} latest={i === 0} />)}
           </div>
         )}
       </div>
@@ -612,13 +632,13 @@ export default function BenchClient() {
   );
 }
 
-function ResultRow({ r }: { r: BenchResult }) {
+function ResultRow({ r, latest }: { r: BenchResult; latest: boolean }) {
   const secs = r.elapsedMs / 1000, fps = secs > 0 ? r.frames / secs : 0;
   const ok = !r.error && r.overruns === 0;
   return (
-    <div style={{ padding: "0.5rem 0.7rem", borderRadius: 8, border: `1px solid ${r.error ? "rgba(248,113,113,0.4)" : ok ? "rgba(74,222,128,0.3)" : "rgba(251,146,60,0.4)"}`, background: "var(--bg)", fontSize: "0.78rem", lineHeight: 1.5 }}>
+    <div style={{ opacity: latest ? 1 : 0.55, padding: "0.5rem 0.7rem", borderRadius: 8, border: `1px solid ${r.error ? "rgba(248,113,113,0.4)" : ok ? "rgba(74,222,128,0.3)" : "rgba(251,146,60,0.4)"}`, background: "var(--bg)", fontSize: "0.78rem", lineHeight: 1.5 }}>
       <strong style={{ color: r.error ? "#f87171" : ok ? "#4ade80" : "#fb923c" }}>{r.error ? `✗ ${r.error}` : ok ? "✓ cadence tenue" : `⚠ ${r.overruns} image(s) démarrée(s) en retard`}</strong>{" "}
-      <span style={{ color: "var(--text3)" }}>clip {r.clipId} · {new Date(r.at).toLocaleTimeString()}{r.stopped ? " · interrompu au toucher" : ""}</span>
+      <span style={{ color: "var(--text3)" }}>{latest ? "dernier essai · " : ""}clip {r.clipId} · {new Date(r.at).toLocaleTimeString()}{r.stopped ? " · interrompu au toucher" : ""}</span>
       <div style={{ color: "var(--text2)" }}>
         {r.frames} images en {secs.toFixed(2)} s (prévu {(r.expectedMs / 1000).toFixed(2)} s) → <strong>{fps.toFixed(1)} images/s</strong> ·
         travail par image : moy. {(r.avgWorkUs / 1000).toFixed(1)} ms, max {(r.maxWorkUs / 1000).toFixed(1)} ms

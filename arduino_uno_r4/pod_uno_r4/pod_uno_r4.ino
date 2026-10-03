@@ -50,7 +50,7 @@
 
 #define SERVER_HOST       "proof-of-draw.vercel.app"
 #define SCREEN_TYPE       "tft28"            // profil serveur 240×320 RGB565 (lib/screenProfiles.ts)
-#define FIRMWARE_VERSION  "r4tft28-2.2"
+#define FIRMWARE_VERSION  "r4tft28-2.3"
 #define TOUCH_ENABLED     1                  // toucher = afficher / cacher le cartel
 #define PULL_INTERVAL     60000UL
 #define VALIDATE_INTERVAL 30000UL
@@ -649,6 +649,9 @@ static bool doPull() {
   String newBlockHash = "", newCandId = "", newFrameId = "", newFrameSource = "none";
   bool newBenchMode = false;
   int newBlockIndex = -1, pullRetryAfter = 60;
+  String cmTitle = "", cmArtist = "";                       // cartel annoncé par CE pull : appliqué seulement si le pull apporte une nouvelle image
+  int cmBlock = -1;
+  bool hasCartel = false;
 
   {
     String resp;
@@ -683,10 +686,10 @@ static bool doPull() {
 
     JsonObject cm = doc["cartelMeta"];
     if (!cm.isNull()) {
-      pendingWorkTitle  = cm["workTitle"] | "";
-      pendingArtistName = cm["drawArtistName"] | "";
-      currentBlockIndex = cm["blockIndex"] | currentBlockIndex;
-      logf("[PULL] cartel: %s / %s (bloc %d)", asciiFold(pendingWorkTitle).c_str(), asciiFold(pendingArtistName).c_str(), currentBlockIndex);
+      cmTitle  = cm["workTitle"] | "";
+      cmArtist = cm["drawArtistName"] | "";
+      cmBlock  = cm["blockIndex"] | -1;
+      hasCartel = true;
     }
     JsonObject obs = doc["pendingObservation"];
     if (!obs.isNull()) {
@@ -707,15 +710,22 @@ static bool doPull() {
   benchMode = newBenchMode;
   nextPullIntervalMs = (newFrameSource == "none" && newCandId.length() == 0) ? (unsigned long)pullRetryAfter * 1000UL : PULL_INTERVAL;
   if (newBlockHash.length() > 0 && newBlockHash != currentBlockHash) {
-    currentBlockHash = newBlockHash; currentBlockIndex = newBlockIndex;
+    currentBlockHash = newBlockHash;                         // currentBlockIndex = bloc de l'IMAGE AFFICHÉE : il ne suit pas la tête de chaîne
     saveBlockHashToEEPROM(currentBlockHash);
-    logf("[PULL] nouveau bloc #%d", currentBlockIndex);
+    logf("[PULL] nouveau bloc #%d", newBlockIndex);
   }
   if (newCandId.length() > 0) pendingCandidateId = newCandId;
 
   if (newFrameSource == "none" || newFrameId.length() == 0) { logf("[PULL] aucune frame"); return true; }
   if (newFrameId == lastFrameId) { logf("[PULL] frame déjà affichée"); return true; }
   logf("[PULL] nouvelle frame %s (%s)", newFrameId.c_str(), newFrameSource.c_str());
+  // Le cartel appartient à l'image : sur un pull sans nouvelle image, le serveur répond avec la tête de chaîne, qui n'est pas forcément
+  // l'œuvre affichée (image renvoyée depuis une galerie, par exemple). On ne l'applique donc qu'ici.
+  if (hasCartel) {
+    pendingWorkTitle = cmTitle; pendingArtistName = cmArtist;
+    if (cmBlock >= 0) currentBlockIndex = cmBlock;
+    logf("[PULL] cartel: %s / %s (bloc %d)", asciiFold(pendingWorkTitle).c_str(), asciiFold(pendingArtistName).c_str(), currentBlockIndex);
+  }
 
   doFetchFrame(newFrameId, newFrameSource);
   reportMem("après pull");

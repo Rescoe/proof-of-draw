@@ -1,7 +1,7 @@
 # Banc d'essai d'animation — TFT 2.8" tactile (v1, preuve de concept)
 
 Statut : **code complet et testé sur PC (codeur, lecteur firmware, API) — PAS encore essayé sur la carte.** Page : `/bench` (lien « 🧪 Banc d'essai »
-sur la carte de l'appareil dans Mon profil). Firmware : `r4tft28-2.2` (2.1 minimum pour le banc d'essai).
+sur la carte de l'appareil dans Mon profil). Firmware : `r4tft28-2.3` (2.1 minimum pour le banc d'essai).
 
 ## Le principe
 
@@ -85,6 +85,17 @@ Premier essai mesuré : 24 images en 2 400 ms, travail moyen 39,6 ms (max 124,8 
 - **À quoi servirait la carte SD** (non nécessaire ici) : clips > 9 Ko, persistance après redémarrage, restauration de l'œuvre à la fin de la lecture (déjà faite si la SD est présente).
 
 À re-mesurer après reflash : « travail moy » (attendu ≈ 5–10 fois plus bas), « marge min » positive, et une animation en boucle qui ne s'arrête qu'au toucher.
+
+## Correctifs du 03/10 (2e essai, firmware 2.3)
+
+- **Boucle** : l'animation s'arrêtait après 3 tours parce que la case « ∞ en boucle » n'était pas cochée (valeur par défaut = 3). Le défaut est maintenant « en boucle » ; un brouillon déjà enregistré dans le navigateur garde son ancienne valeur (cocher la case).
+- **Mesures** : le 2e essai donne travail moy 14,4 ms (contre 39,6), marge min 57 ms, 0 retard : cadence tenue. Le téléchargement (≈ 2 s pour 4,5 Ko) est dominé par la poignée de main TLS, pas par le débit.
+- **Historique** : bouton « Effacer l'historique » (`POST /api/bench/clear`, 1 commande Redis) ; seul le dernier essai est affiché en pleine opacité.
+- **Quota Redis** : la page lisait l'état (≈ 6 commandes) toutes les 2,5 s en permanence. Désormais : 2,5 s pendant 45 s après un envoi (30 s après un changement de mode), 8 s tant que le mode est actif, 20 s sinon, et AUCUNE lecture si l'onglet est caché.
+  Côté écran : poll rapide = 3 commandes / 3 s pendant 30 min au plus (≈ 1 800) ; en boucle sans fin, un contrôle toutes les 20 s.
+- **Cartel d'une image renvoyée depuis une galerie** : le firmware écrasait titre/artiste/n° de bloc à CHAQUE pull avec ceux de la tête de chaîne (le serveur n'a plus l'image après l'ACK).
+  Maintenant le cartel n'est appliqué que lorsque le pull apporte une nouvelle image ; `/api/send-to-screen` joint le n° du bloc d'origine (`blockIndex`) et `/api/pull` l'utilise pour `cartelMeta`.
+  Après un redémarrage avec carte SD, le cartel revient depuis `/pod/meta.txt`.
 
 ## Passer le banc d'essai « en réel » : faisabilité
 
