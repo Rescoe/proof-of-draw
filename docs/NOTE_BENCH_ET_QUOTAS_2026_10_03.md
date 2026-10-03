@@ -106,3 +106,47 @@ Ordre suggéré : **Q1 → Q7 → Q4 → Q3 → Q5 → Q9**, puis le reste. Q1 d
 - Plan Upstash visé et plafond acceptable (commandes/mois).
 - Latence d'affichage acceptable pour un pull « idle » plus long (Q4).
 - Faut-il garder le poll rapide du banc d'essai à 3 s (≈ 1 800 commandes / session de 30 min) ou passer à 5 s ?
+
+---
+
+## 6. Suite du 03/10 (après lecture de la console Upstash : 210 k / 500 k commandes, 165 k lectures, 45 k écritures)
+
+Le constat du porteur invalide l'estimation de la section 2 : le banc d'essai n'était **pas** le plus gros consommateur.
+
+### 6.1 Le coupable principal (trouvé dans le code, à confirmer par les journaux Vercel)
+
+La **page d'accueil** monte deux composants (`EspActivityFeed` et `GlobalTerminalPanel`) qui appelaient chacun `/api/network/activity-log` **toutes les 5 s, sans pause onglet caché ni arrêt**. Chaque appel coûtait ≈ **36 commandes** (1 `LRANGE` + candidat + votes + **30 `GET` de blocs un par un** + animations).
+
+| | Avant | Après |
+|---|---|---|
+| Appels par onglet d'accueil | 2 × 12/min | 1 requête / 30 s (onglet visible, interaction < 10 min) |
+| Commandes par appel | ≈ 36 | ≈ 6 (blocs en 1 `MGET`) |
+| Coût par onglet ouvert | **≈ 52 000 / heure** | **0 côté Redis** (cache CDN 30 s + mémo 30 s partagés par tous les visiteurs) |
+| Coût total de la route | proportionnel aux visiteurs | ≈ 720 / heure, quel que soit le nombre de visiteurs |
+
+Un seul onglet laissé ouvert 2 heures suffit à expliquer ≈ 100 k commandes. Les 100 k d'hier s'expliquent par cette route + mes essais sur `/bench`, sans qu'on puisse les départager sans les journaux.
+
+### 6.2 Autres économies faites (même commit)
+- **`/api/pull`** : 13 → **4 commandes** par pull au repos (rate limit `INCR`+`EXPIRE` en un `EVAL`, blacklist + frames + frame perso + tête de chaîne + candidat + notification + mode banc d'essai en **un `MGET`**, appareil inconnu → 404 sans autre lecture). Réponse JSON strictement inchangée.
+- **`/api/bench/poll`** (écran en mode banc d'essai) : 3 → **1 commande** (`EVAL` : verrou + lecture + présence). Les scripts Lua ont été vérifiés contre Redis avec des clés jetables, puis nettoyées.
+- **`lib/usePolling.ts`** : hook commun (pause onglet caché, arrêt après 10 min sans interaction, reprise à l'interaction) à utiliser pour TOUT nouveau polling.
+
+### 6.3 Ce qui n'est PAS encore audité (risque restant)
+`/api/ack-frame`, `/api/validate-candidate` (les écrans valident toutes les 30 s quand un candidat est en cours), `/api/draw`, `/api/blocks*`, `/api/device-activity`, les pages de profil/galerie, le pont ANA (`maybeCheckAnaFeed`), les crons. **Il faut les journaux Vercel** : nombre de requêtes par route sur 24 h (Observability → par chemin). Multiplié par le coût par appel, c'est la mesure qui manque (tâche Q1).
+
+### 6.4 Le filet existe mais n'est pas branché
+`lib/redisBudget.ts` (compteur mensuel, mode dégradé à 80 %, maintenance à 95 %) n'est utilisé que par `/api/budget` : **aucune route ne l'appelle**. Le brancher coûte lui-même 1–2 commandes par appel, donc à faire seulement sur une route à faible trafic ou avec un échantillonnage (1 appel sur 20).
+
+### 6.5 Plan d'action pour tenir le mois (250 k restants sur 28 jours ≈ 8,9 k / jour)
+
+Ordre de priorité (le plafond de 8,9 k/jour est la cible ; rappel : on était à ≈ 100 k/jour) :
+1. **Déployer ce lot** (activity-log, pull, bench) et **surveiller** la console Upstash 24 h : la consommation journalière doit tomber nettement sous 20 k.
+2. **Fournir les journaux Vercel par route** (Q1) pour attaquer le reste avec des chiffres.
+3. **Fermer les onglets de la page d'accueil et `/bench` laissés ouverts** (ils ne coûtent plus en Redis, mais c'est la bonne hygiène pendant la mesure) et **couper le mode banc d'essai** quand on ne teste pas.
+4. Si, après 24 h, la consommation dépasse encore ≈ 9 k/jour : allonger `retryAfter` des écrans au repos (Q4), puis ETag/304 (Q5), puis cache mémoire des lectures communes (Q6).
+5. **Brancher le garde-fou budget** (échantillonné) pour que le dépassement dégrade les fonctions annexes (journal, galeries) et jamais l'affichage des écrans.
+
+### 6.6 Facture : options à examiner (non décidées)
+- Rester sur le plan gratuit tant que la consommation tient ≈ 9 k/jour : coût 0 €.
+- Si on dépasse : **vérifier sur la page Pricing d'Upstash** (le tarif actuel, ce que fait le plan gratuit au plafond — blocage ou facturation — et le plan « à l'usage » vs plan fixe). Je n'ai pas ces chiffres de façon fiable : ne pas décider sur mémoire.
+- Le levier le moins cher reste de **ne pas faire la requête** : chaque commande évitée ci-dessus est de l'argent non dépensé, contrairement au plan payant qui ne fait que l'effacer.

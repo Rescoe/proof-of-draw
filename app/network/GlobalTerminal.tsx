@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState, useCallback } from "react";
+import { usePolling } from "@/lib/usePolling";
 
 type LogEventType = "BLOCK_MINED" | "VALIDATION_PENDING" | "VALIDATION_VOTE" | "ANIMATION" | "CHAIN_EMPTY";
 
@@ -19,7 +20,7 @@ type LogEvent = {
   message: string;
 };
 
-const POLL_MS = 5000;
+const POLL_MS = 30_000;   // quota Redis : l'endpoint est en cache CDN 30 s ; pas de polling onglet caché (lib/usePolling.ts)
 
 const SCREEN_COLOR: Record<string, string> = {
   eink29bwr: "#f87171",
@@ -161,11 +162,7 @@ export function GlobalTerminal() {
   const { events, connected, seenIds, fetchEvents } = useTerminalEvents();
 
   // Polling
-  useEffect(() => {
-    fetchEvents(false);
-    const id = setInterval(() => fetchEvents(paused), POLL_MS);
-    return () => clearInterval(id);
-  }, [fetchEvents, paused]);
+  usePolling(() => fetchEvents(paused), POLL_MS);
 
   // Auto-scroll vers le bas uniquement quand actif et pas en pause
   useEffect(() => {
@@ -287,11 +284,7 @@ export function GlobalTerminalPanel() {
 
   const visibleEvents = showAll ? events.slice(-200) : events.slice(-10);
 
-  useEffect(() => {
-    fetchEvents(false);
-    const id = setInterval(() => fetchEvents(paused), POLL_MS);
-    return () => clearInterval(id);
-  }, [fetchEvents, paused]);
+  usePolling(() => fetchEvents(paused), POLL_MS);
 
   useEffect(() => {
     if (!active || paused) return;

@@ -2,9 +2,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { redis } from "@/lib/redis";
 import { getDevice } from "@/lib/deviceStore";
-import { getFrameForDevice, FramePayload } from "@/lib/queue";
-import { isBlacklisted, getIP, forbidden } from "@/lib/rateLimit";
-import { getChainHead, getCurrentCandidate, popObsTask } from "@/lib/chain";
+import { frameKey, parseStoredFrame, FramePayload } from "@/lib/queue";
+import { getIP, forbidden } from "@/lib/rateLimit";
+import { parseChainHeadRaw, parseCandidateRaw, PULL_KEY_HEAD, PULL_KEY_CANDIDATE, popObsTask } from "@/lib/chain";
 import type { ChainSummary } from "@/lib/chain";
 import { maybeCheckAnaFeed } from "@/lib/anaFeed";
 import { selectDelivery, withoutScenePointer, sceneRetryAfterSec, scenePullMeta, type DeliverySelection } from "@/lib/scene/delivery";
@@ -19,11 +19,13 @@ const rlKey       = (deviceId: string) => `rl:pull:${deviceId}`;
 const personalKey = (deviceId: string) => `personal:frame:${deviceId}`;
 const blDevKey    = (deviceId: string) => `bl:dev:${deviceId}`;
 
-async function getPersonalFrame(deviceId: string) {
-  const raw = await redis.get(personalKey(deviceId));
+function parsePersonal(raw: unknown) {
   if (!raw) return null;
   try { return typeof raw === "string" ? JSON.parse(raw) : raw; } catch { return null; }
 }
+
+// QUOTA REDIS : INCR + EXPIRE en UNE commande (EVAL) au lieu de deux.
+const RL_SCRIPT = "local c=redis.call('INCR',KEYS[1]); if c==1 then redis.call('EXPIRE',KEYS[1],ARGV[1]) end; return c";
 
 function json(body: unknown, status = 200) {
   return NextResponse.json(body, { status });
@@ -59,11 +61,8 @@ export async function GET(req: NextRequest) {
         chain: null, pendingValidation: null,
       }, 400);
 
-    if (await isBlacklisted(ip, deviceId)) return forbidden("Accès refusé");
-
-    // ── Rate limit ──────────────────────────────────────────────────────────
-    const count = await redis.incr(rlKey(deviceId));
-    if (count === 1) await redis.expire(rlKey(deviceId), PULL_WINDOW_SEC);
+    // ── Rate limit (1 commande) ─────────────────────────────────────────────
+    const count = Number(await redis.eval(RL_SCRIPT, [rlKey(deviceId)], [String(PULL_WINDOW_SEC)]));
 
     if (count > PULL_MAX) {
       const ttl = await redis.ttl(rlKey(deviceId));
@@ -87,16 +86,34 @@ export async function GET(req: NextRequest) {
     // check (a multi-screen device, e.g. eink27bw + oled096, can have a
     // pending frame on either — the older of the two wins, see lib/queue.ts),
     // so device has to resolve first rather than joining the Promise.all below.
+    // Coût d'un pull au repos : 1 (rate limit) + 1 (appareil) + 1 (MGET de tout le reste) + 1 (tâche d'observation) = 4 commandes
+    // (13 avant le 03/10/2026 : blacklist ×2, INCR+EXPIRE, appareil, frames ×N, personnelle, tête, candidat, notification, mode banc d'essai).
     const device = await getDevice(deviceId);
-    const [consensusFrame, personalFrame, chainHead, candidate, ownedNotif] =
-      await Promise.all([
-        getFrameForDevice(deviceId, device?.screens ?? []),
-        getPersonalFrame(deviceId),
-        getChainHead(),
-        getCurrentCandidate(),
-        // Notification de propriété : posée par finalizeBlock quand ce device a miné
-        redis.get(`chain:notify:${deviceId}`) as Promise<string | null>,
-      ]);
+    if (!device)
+      return json({
+        error: "device inconnu",
+        frame: null, frameSource: "none",
+        frameId: null, screen: null,
+        chain: null, pendingValidation: null,
+      }, 404);
+    const screens = device.screens ?? [];
+    const raws = await redis.mget<unknown[]>(
+      `bl:ip:${ip}`, blDevKey(deviceId),
+      ...screens.map((s) => frameKey(deviceId, s)),
+      personalKey(deviceId), PULL_KEY_HEAD, PULL_KEY_CANDIDATE,
+      `chain:notify:${deviceId}`, `bench:mode:${deviceId}`,
+    );
+    if (raws[0] !== null || raws[1] !== null) return forbidden("Accès refusé");
+    const frameRaws = raws.slice(2, 2 + screens.length);
+    const rest = raws.slice(2 + screens.length);
+    // La plus ancienne frame gagne (même règle que getFrameForDevice : les écrans d'un appareil multi-écran tournent équitablement)
+    const consensusFrame = frameRaws.map(parseStoredFrame).filter((f): f is NonNullable<ReturnType<typeof parseStoredFrame>> => f !== null)
+      .reduce<ReturnType<typeof parseStoredFrame>>((oldest, f) => (oldest === null || f.storedAt < oldest.storedAt ? f : oldest), null);
+    const personalFrame = parsePersonal(rest[0]);
+    const chainHead = parseChainHeadRaw(rest[1]);
+    const candidate = parseCandidateRaw(rest[2]);
+    const ownedNotif = (rest[3] as string | null) ?? null;
+    const benchModeRaw = rest[4];
 
     // Consomme la notification (one-shot) — le device la reçoit une seule fois
     if (ownedNotif) {
@@ -114,14 +131,6 @@ export async function GET(req: NextRequest) {
           minedAt:     chainHead.minedAt,
         }
       : null;
-
-    if (!device)
-      return json({
-        error: "device inconnu",
-        frame: null, frameSource: "none",
-        frameId: null, screen: null,
-        chain: null, pendingValidation: null,
-      }, 404);
 
     // ── Pont ANA : vérification opportuniste (pas de cron) ──────────────────
     // Débattue à l'échelle du système (voir maybeCheckAnaFeed) — la plupart
@@ -245,7 +254,7 @@ export async function GET(req: NextRequest) {
 
     // ── Banc d'essai d'animation (TFT 2.8" tactile uniquement) : 1 GET, seulement pour ces appareils ──
     // Quand le propriétaire a activé le mode, on le dit à l'appareil ; il passe alors en poll rapide sur /api/bench/poll.
-    const benchMode = device.screens?.includes("tft28") ? (await redis.get(`bench:mode:${deviceId}`)) !== null : false;
+    const benchMode = device.screens?.includes("tft28") ? benchModeRaw !== null && benchModeRaw !== undefined : false;
 
     // ── Réponse ─────────────────────────────────────────────────────────────
     // Bloc `scene` : métadonnées SEULES — le binaire passe par /api/pull-frame?kind=scene.

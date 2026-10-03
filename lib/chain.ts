@@ -183,6 +183,37 @@ export async function getChainHead(): Promise<Block | null> {
   }
 }
 
+/** Lit plusieurs blocs par hash avec UNE SEULE commande Redis (MGET) ; les blocs absents ou illisibles sont ignorés. */
+export async function parseBlocks(hashes: string[]): Promise<Block[]> {
+  if (hashes.length === 0) return [];
+  const raws = await redis.mget<unknown[]>(...hashes.map(blockKey));
+  const out: Block[] = [];
+  for (const raw of raws) {
+    if (!raw) continue;
+    try { out.push(migrateBlock(typeof raw === "string" ? JSON.parse(raw) : raw)); } catch { /* bloc illisible : ignoré */ }
+  }
+  return out;
+}
+
+// ── Lecture groupée pour /api/pull (quota Redis : tout part dans UN SEUL MGET) ──────────────────────────────────────────────
+export const PULL_KEY_HEAD = KEY_HEAD;
+export const PULL_KEY_CANDIDATE = KEY_CANDIDATE;
+
+/** Tête de chaîne depuis une valeur brute déjà lue (même résultat que getChainHead). */
+export function parseChainHeadRaw(raw: unknown): Block | null {
+  if (!raw) return null;
+  try { return migrateBlock(typeof raw === "string" ? JSON.parse(raw) : (raw as Record<string, unknown>)); } catch { return null; }
+}
+
+/** Candidat courant depuis une valeur brute ; expiré → null SANS suppression (la clé a un TTL : elle disparaît seule). */
+export function parseCandidateRaw(raw: unknown): Candidate | null {
+  if (!raw) return null;
+  try {
+    const c = migrateCandidate(typeof raw === "string" ? JSON.parse(raw) : (raw as Record<string, unknown>));
+    return Date.now() > c.expiresAt ? null : c;
+  } catch { return null; }
+}
+
 export async function getChainLength(): Promise<number> {
   const v = await redis.get<string>(KEY_LENGTH);
   return v ? parseInt(v) : 0;

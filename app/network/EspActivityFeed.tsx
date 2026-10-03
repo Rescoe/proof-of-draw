@@ -11,6 +11,7 @@
 // que GlobalTerminal/GlobalTerminalPanel.
 
 import { useEffect, useRef, useState, useCallback } from "react";
+import { usePolling } from "@/lib/usePolling";
 
 type LogEventType = "BLOCK_MINED" | "VALIDATION_PENDING" | "VALIDATION_VOTE" | "CHAIN_EMPTY";
 
@@ -38,7 +39,7 @@ type EspLine = {
   text: string;
 };
 
-const POLL_MS = 5000;
+const POLL_MS = 30_000;   // quota Redis : l'endpoint est en cache CDN 30 s ; pas de polling onglet caché (lib/usePolling.ts)
 
 const TAG_COLOR: Record<string, string> = {
   PULL:       "#60a5fa",
@@ -170,11 +171,7 @@ export function EspActivityFeed() {
   const bodyRef      = useRef<HTMLDivElement>(null);
   const { lines, connected, fetchEvents } = useEspLines();
 
-  useEffect(() => {
-    fetchEvents(false);
-    const id = setInterval(() => fetchEvents(false), POLL_MS);
-    return () => clearInterval(id);
-  }, [fetchEvents]);
+  usePolling(() => fetchEvents(false), POLL_MS);
 
   useEffect(() => {
     const body = bodyRef.current;

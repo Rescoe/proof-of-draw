@@ -5,7 +5,7 @@
 
 import { NextResponse } from "next/server";
 import { redis } from "@/lib/redis";
-import { getBlockByHash, getCurrentCandidate, getVotes } from "@/lib/chain";
+import { parseBlocks, getCurrentCandidate, getVotes } from "@/lib/chain";
 import type { Block } from "@/lib/chain";
 import { recentAnimationEvents } from "@/lib/anim/store";
 
@@ -36,8 +36,33 @@ export type LogEvent = {
 
 const RECENT_MAX = 30;
 
+// QUOTA REDIS (règle primordiale) : cette route était interrogée toutes les 5 s par chaque onglet de la page d'accueil (2 composants), et
+// coûtait ≈ 36 commandes par appel (30 `GET` de blocs un par un) → ≈ 50 000 commandes/h par onglet ouvert. Désormais :
+//   • les blocs sont lus par UN SEUL `MGET` ;
+//   • la réponse est calculée au plus une fois toutes les CACHE_MS par instance serveur ET mise en cache CDN (s-maxage) : le coût Redis
+//     ne dépend plus du nombre de visiteurs ;
+//   • les clients n'interrogent plus qu'onglet visible, toutes les 30 s (lib/usePolling.ts).
+const CACHE_MS = 30_000;
+let memo: { at: number; body: { events: LogEvent[]; generatedAt: number } } | null = null;
+let inflight: Promise<{ events: LogEvent[]; generatedAt: number }> | null = null;
+
 export async function GET() {
   try {
+    if (memo && Date.now() - memo.at < CACHE_MS) return respond(memo.body);
+    if (!inflight) inflight = build().then((b) => { memo = { at: Date.now(), body: b }; return b; }).finally(() => { inflight = null; });
+    return respond(await inflight);
+  } catch (err) {
+    console.error("[/api/network/activity-log]", err);
+    return NextResponse.json({ events: [], generatedAt: Date.now() });
+  }
+}
+
+function respond(body: { events: LogEvent[]; generatedAt: number }) {
+  return NextResponse.json(body, { headers: { "Cache-Control": "public, s-maxage=30, stale-while-revalidate=60" } });
+}
+
+async function build(): Promise<{ events: LogEvent[]; generatedAt: number }> {
+  {
     const [hashes, candidate, voteMap] = await Promise.all([
       redis.lrange<string>("chain:recent", 0, RECENT_MAX - 1),
       getCurrentCandidate(),
@@ -48,13 +73,7 @@ export async function GET() {
 
     // ── Blocs récents ──────────────────────────────────────────────────────────
     if (hashes && hashes.length > 0) {
-      const blocks = (
-        await Promise.all(
-          hashes.map(async (hash: string) => {
-            try { return await getBlockByHash(hash); } catch { return null; }
-          })
-        )
-      ).filter((b): b is Block => b !== null);
+      const blocks: Block[] = await parseBlocks(hashes);   // 1 seul MGET
 
       for (const b of blocks) {
         const artist = b.drawArtistName || b.artistName || "?";
@@ -124,12 +143,6 @@ export async function GET() {
 
     events.sort((a, b) => b.ts - a.ts);
 
-    return NextResponse.json(
-      { events: events.slice(0, 50), generatedAt: Date.now() },
-      { headers: { "Cache-Control": "no-store" } }
-    );
-  } catch (err) {
-    console.error("[/api/network/activity-log]", err);
-    return NextResponse.json({ events: [], generatedAt: Date.now() });
+    return { events: events.slice(0, 50), generatedAt: Date.now() };
   }
 }

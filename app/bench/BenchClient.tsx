@@ -138,9 +138,15 @@ const TOOLS: { id: Tool; icon: string; name: string; key: string }[] = [
   { id: "rect", icon: "▭", name: "Rectangle", key: "R" }, { id: "ellipse", icon: "◯", name: "Ellipse", key: "O" }, { id: "fill", icon: "🪣", name: "Remplir", key: "G" },
 ];
 
-interface Draft { frames: string[]; delays: number[]; loops: number; fg: string; bg: string; handmade?: boolean; title?: string }
+interface Draft { frames: string[]; delays: number[]; loops: number; fg: string; bg: string; handmade?: boolean; title?: string; v?: number }
 function loadDraft(): Draft | null {
-  try { const raw = localStorage.getItem(DRAFT_KEY); return raw ? (JSON.parse(raw) as Draft) : null; } catch { return null; }
+  try {
+    const raw = localStorage.getItem(DRAFT_KEY);
+    if (!raw) return null;
+    const d = JSON.parse(raw) as Draft;
+    // Brouillons d'avant le 03/10 (sans v:2) : leur « 3 boucles » était la valeur par défaut, pas un choix → on passe en boucle sans fin.
+    return d.v === 2 ? d : { ...d, loops: 0 };
+  } catch { return null; }
 }
 const docFromDraft = (d: Draft | null): Doc => {
   const frames = d?.frames?.length ? d.frames.map(fromB64) : [blank()];
@@ -278,7 +284,7 @@ export default function BenchClient() {
   // ── Brouillon local ────────────────────────────────────────────────────────
   useEffect(() => {
     const t = setTimeout(() => {
-      try { localStorage.setItem(DRAFT_KEY, JSON.stringify({ frames: frames.map(toB64), delays, loops, fg, bg, handmade, title } satisfies Draft)); } catch { /* stockage indisponible */ }
+      try { localStorage.setItem(DRAFT_KEY, JSON.stringify({ frames: frames.map(toB64), delays, loops, fg, bg, handmade, title, v: 2 } satisfies Draft)); } catch { /* stockage indisponible */ }
     }, 400);
     return () => clearTimeout(t);
   }, [frames, delays, loops, fg, bg, handmade, title]);

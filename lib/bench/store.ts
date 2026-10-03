@@ -78,7 +78,25 @@ export async function setBenchMode(deviceId: string, on: boolean): Promise<void>
   else await redis.del(benchKeys.mode(deviceId));
 }
 
-/** 1 MGET (mode + pointeur) + 1 SET (présence) : le coût d'un poll. */
+// Poll en UNE commande (EVAL) : verrou anti-rafale + lecture (mode, pointeur, présence) + écriture de la présence. Avant : 3 commandes.
+const POLL_SCRIPT = `
+if not redis.call('SET', KEYS[1], '1', 'NX', 'EX', ARGV[2]) then return 'LOCKED' end
+local m = redis.call('MGET', KEYS[2], KEYS[3], KEYS[4])
+redis.call('SET', KEYS[4], ARGV[1], 'EX', 120)
+return m
+`;
+
+/** Poll complet en 1 commande ; `null` = trop rapide (verrou). */
+export async function benchPollFast(deviceId: string): Promise<{ mode: boolean; clip: ClipPointer | null } | null> {
+  const res = await redis.eval(POLL_SCRIPT, [benchKeys.lock("poll", deviceId), benchKeys.mode(deviceId), benchKeys.ptr(deviceId), benchKeys.seen(deviceId)], [String(Date.now()), "2"]);
+  if (res === "LOCKED" || !Array.isArray(res)) return null;
+  const [mode, ptr, seen] = res as (string | ClipPointer | null)[];
+  const on = mode !== null && mode !== undefined;
+  if ((seen === null || seen === undefined) && on) await benchLog(deviceId, "écran connecté : premier contrôle rapide reçu");
+  return { mode: on, clip: parse<ClipPointer>(ptr) };
+}
+
+/** 1 MGET (mode + pointeur) + 1 SET (présence) : le coût d'un poll (ancienne version, conservée pour les tests). */
 export async function benchPoll(deviceId: string): Promise<{ mode: boolean; clip: ClipPointer | null }> {
   const [mode, ptr, seen] = await redis.mget<(string | ClipPointer | null)[]>(benchKeys.mode(deviceId), benchKeys.ptr(deviceId), benchKeys.seen(deviceId));
   await redis.set(benchKeys.seen(deviceId), String(Date.now()), { ex: 120 });

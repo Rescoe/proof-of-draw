@@ -41,6 +41,7 @@ const FRAME_TTL = 15 * 60;
 export function frameKey(deviceId: string, screen: string) { return `frame:${deviceId}:${screen}`; }
 
 // Upstash peut retourner un objet déjà parsé OU une string JSON — on gère les deux
+export function parseStoredFrame(raw: unknown): StoredFrame | null { return parseFrame(raw); }
 function parseFrame(raw: unknown): StoredFrame | null {
   try {
     if (!raw) return null;
