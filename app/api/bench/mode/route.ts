@@ -4,6 +4,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getDevice } from "@/lib/deviceStore";
 import { sessionOwnsDevice } from "@/lib/session";
+import { benchScreenOf } from "@/lib/bench/screens";
 import { benchLog, clearBenchHistory, DEVICE_ID_REGEX, MODE_TTL_SEC, setBenchMode } from "@/lib/bench/store";
 
 export async function POST(req: NextRequest) {
@@ -13,7 +14,7 @@ export async function POST(req: NextRequest) {
   if (!DEVICE_ID_REGEX.test(deviceId)) return NextResponse.json({ error: "deviceId invalide" }, { status: 400 });
   if (!(await sessionOwnsDevice(deviceId))) return NextResponse.json({ error: "Non autorisé" }, { status: 403 });
   const device = await getDevice(deviceId);
-  if (!device?.screens.includes("tft28")) return NextResponse.json({ error: "Le banc d'essai ne concerne que le TFT 2.8\" tactile" }, { status: 400 });
+  if (!benchScreenOf(device?.screens)) return NextResponse.json({ error: "Le banc d'essai ne concerne que les écrans TFT 2.8\", TFT 1.8\" et OLED" }, { status: 400 });
   const on = body.on === true;
   if (on) await clearBenchHistory(deviceId);   // chaque session de test repart d'un historique vide (1 commande)
   await setBenchMode(deviceId, on);

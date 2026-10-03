@@ -191,3 +191,65 @@ test("EN BOUCLE (loops = 0) : le clip tourne sans fin jusqu'à l'arrêt du hook 
       assert.ok(Buffer.compare(res.screens.subarray(k * size, (k + 1) * size), expectedScreen(dec.frames[k % nFrames], dec.fg, dec.bg)) === 0, `N=${nFrames} image affichée n°${k}`);
   }
 });
+
+// ─── TFT 1.8" (ESP8266, GeoOne<48>) et OLED (playBitmap) — écrits et testés sur PC, JAMAIS essayés sur le matériel réel ────────────────
+
+function expectedScreen128(frame: Uint8Array, fg: number, bg: number): Buffer {
+  const out = Buffer.alloc(128 * 160 * 2);
+  for (let i = 0; i < 128 * 160; i++) { out[2 * i] = bg & 0xff; out[2 * i + 1] = bg >> 8; }
+  for (let sy = 0; sy < 64; sy++) for (let sx = 0; sx < 128; sx++) {
+    const c = (frame[sy * 16 + (sx >> 3)] >> (7 - (sx & 7))) & 1 ? fg : bg;
+    const o = ((48 + sy) * 128 + sx) * 2; out[o] = c & 0xff; out[o + 1] = c >> 8;
+  }
+  return out;
+}
+function playMode(mode: "play1" | "playbmp", clip: Uint8Array, maxFrames?: number) {
+  const r = spawnSync(exe, [mode, hexFile(clip), ...(maxFrames ? [String(maxFrames)] : [])], { maxBuffer: 512 * 1024 * 1024 });
+  assert.equal(r.status, 0, `harness: ${r.stderr?.toString()}`);
+  return { out: r.stdout as Buffer, err: r.stderr.toString() };
+}
+
+test("TFT 1.8\" (1:1, y = 48) : après chaque image l'écran 128×160 = l'image attendue posée à (0, 48), rien ne déborde", { skip }, () => {
+  const r = rng(91);
+  for (const [nFrames, loops] of [[1, 2], [2, 3], [6, 2], [12, 2]] as const) {
+    const frames = Array.from({ length: nFrames }, () => randFrame(r, 0.15));
+    const clip = encodeClip(mk(frames, { loops, fg: 0xffe0, bg: 0x001f }));
+    const dec = decodeClip(clip);
+    const { out, err } = playMode("play1", clip);
+    const m = /shown=(\d+) windows=\d+ overflow=(\d+) underfill=(\d+) pixels=\d+ begins=(\d+)/.exec(err)!;
+    assert.equal(+m[1], nFrames * loops); assert.equal(+m[2], 0, "pixel hors écran"); assert.equal(+m[3], 0, "fenêtre à moitié remplie");
+    assert.equal(+m[4], nFrames === 1 ? 1 : +m[1], "une transaction par image repeinte (image fixe : une seule)");
+    const size = 128 * 160 * 2;
+    for (let k = 0; k < +m[1]; k++)
+      assert.ok(Buffer.compare(out.subarray(k * size, (k + 1) * size), expectedScreen128(dec.frames[k % nFrames], dec.fg, dec.bg)) === 0, `N=${nFrames} image ${k}`);
+  }
+});
+
+test("TFT 1.8\" : pire cas (tout change) correct, et en boucle (loops = 0) correcte jusqu'à l'arrêt", { skip }, () => {
+  const r = rng(92);
+  const frames = [randFrame(r, 1), randFrame(r, 1), randFrame(r, 1)];
+  const clip = encodeClip(mk(frames, { loops: 0 }));
+  const dec = decodeClip(clip);
+  const { out, err } = playMode("play1", clip, 8);
+  assert.match(err, /shown=8 .*overflow=0 underfill=0/);
+  const size = 128 * 160 * 2;
+  for (let k = 0; k < 8; k++) assert.ok(Buffer.compare(out.subarray(k * size, (k + 1) * size), expectedScreen128(dec.frames[k % 3], dec.fg, dec.bg)) === 0, `image ${k}`);
+});
+
+test("OLED (playBitmap) : l'image présentée après chaque image = l'image attendue (octets bruts, MSB à gauche), boucles et retour à l'image 0 compris", { skip }, () => {
+  const r = rng(93);
+  for (const [nFrames, loops] of [[1, 3], [2, 2], [7, 3], [20, 2]] as const) {
+    const frames = Array.from({ length: nFrames }, () => randFrame(r, 0.2));
+    const clip = encodeClip(mk(frames, { loops }));
+    const dec = decodeClip(clip);
+    const { out, err } = playMode("playbmp", clip);
+    const m = /shown=(\d+) presents=(\d+)/.exec(err)!;
+    assert.equal(+m[1], nFrames * loops); assert.equal(+m[2], nFrames === 1 ? 1 : +m[1], "une présentation par image repeinte (image fixe : une seule)");
+    for (let k = 0; k < +m[2]; k++)
+      assert.ok(Buffer.compare(out.subarray(k * 1024, (k + 1) * 1024), Buffer.from(dec.frames[k % nFrames])) === 0, `N=${nFrames} image ${k}`);
+  }
+  const looped = encodeClip(mk([randFrame(r, 0.2), randFrame(r, 0.2)], { loops: 0 }));
+  const dl = decodeClip(looped);
+  const { out } = playMode("playbmp", looped, 9);
+  for (let k = 0; k < 9; k++) assert.ok(Buffer.compare(out.subarray(k * 1024, (k + 1) * 1024), Buffer.from(dl.frames[k % 2])) === 0, `en boucle, image ${k}`);
+});

@@ -7,6 +7,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { randomBytes } from "node:crypto";
 import { getDevice } from "@/lib/deviceStore";
 import { sessionOwnsDevice } from "@/lib/session";
+import { benchScreenOf } from "@/lib/bench/screens";
 import { CLIP, clipStats, encodeClip, validateClipInput } from "@/lib/bench/clip";
 import { benchLock, benchLog, DEVICE_ID_REGEX, storeClip, type ClipPointer } from "@/lib/bench/store";
 import { buildAnimItem, galleryRefusal, saveAnimation } from "@/lib/anim/store";
@@ -20,7 +21,7 @@ export async function POST(req: NextRequest) {
   if (!(await sessionOwnsDevice(deviceId))) return NextResponse.json({ error: "Non autorisé" }, { status: 403 });
   const device = await getDevice(deviceId);
   if (!device) return NextResponse.json({ error: "Appareil introuvable" }, { status: 404 });
-  if (!device.screens.includes("tft28")) return NextResponse.json({ error: "Le banc d'essai ne concerne que le TFT 2.8\" tactile" }, { status: 400 });
+  if (!benchScreenOf(device.screens)) return NextResponse.json({ error: "Le banc d'essai ne concerne que les écrans TFT 2.8\", TFT 1.8\" et OLED" }, { status: 400 });
 
   const rawFrames = Array.isArray(body.frames) ? body.frames : [];
   if (rawFrames.length > CLIP.MAX_FRAMES) return NextResponse.json({ error: `1 à ${CLIP.MAX_FRAMES} images` }, { status: 400 });

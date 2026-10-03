@@ -12,6 +12,7 @@ import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "r
 import { CLIP, clipPixel, clipPlayMs, clipStats, type ClipInput } from "@/lib/bench/clip";
 import type { BenchLogLine, BenchResult, ClipPointer } from "@/lib/bench/store";
 import { encodeGif } from "@/lib/bench/gif";
+import { BENCH_SCREEN_INFO, benchFirmwareOk, benchScreenOf } from "@/lib/bench/screens";
 import { blank, ellipse, flipH, flipV, floodFill, invert, line, motion, rect, setPixel, shifted, type Brush, type Frame, W, H } from "@/lib/bench/draw";
 import { histReducer, initHist, type Doc } from "@/lib/bench/history";
 
@@ -27,12 +28,6 @@ function download(name: string, data: BlobPart, type: string) {
   const url = URL.createObjectURL(new Blob([data], { type }));
   const a = document.createElement("a"); a.href = url; a.download = name; a.click();
   setTimeout(() => URL.revokeObjectURL(url), 2000);
-}
-/** Le banc d'essai exige le firmware r4tft28-2.1 ou plus : une 2.0 ignore le mode et ne fait jamais de contrôle rapide. */
-function firmwareOk(fw: string | null): boolean | null {
-  if (!fw) return null;
-  const m = /^r4tft28-(\d+)\.(\d+)/.exec(fw);
-  return m ? Number(m[1]) > 2 || (Number(m[1]) === 2 && Number(m[2]) >= 1) : false;
 }
 
 // ── Modèles de test (ne sont JAMAIS enregistrés dans la galerie) ─────────────
@@ -304,7 +299,7 @@ export default function BenchClient() {
       .then((d: { devices?: Dev[] }) => {
         if (!alive) return;
         setAllDevices(d.devices ?? []);
-        const mine = (d.devices ?? []).filter((x) => x.screens?.includes("tft28"));
+        const mine = (d.devices ?? []).filter((x) => benchScreenOf(x.screens) !== null);
         setDevices(mine);
         if (mine.length) setDeviceId((c) => c || mine[0].deviceId);
       })
@@ -365,7 +360,9 @@ export default function BenchClient() {
   const device = devices?.find((d) => d.deviceId === deviceId);
   const seen = status?.seenAgoMs ?? null;
   const connected = status?.mode === true && seen !== null && seen < 15_000;
-  const fwState = firmwareOk(status?.firmware ?? null);
+  const benchScreen = benchScreenOf(device?.screens) ?? "tft28";
+  const screenInfo = BENCH_SCREEN_INFO[benchScreen];
+  const fwState = benchFirmwareOk(benchScreen, status?.firmware ?? null);
   const authorDevice = deviceId || allDevices[0]?.deviceId || "";
 
   async function setMode(on: boolean) {
@@ -415,17 +412,17 @@ export default function BenchClient() {
 
   return (
     <div style={{ maxWidth: 760, margin: "0 auto", padding: "1.5rem 1rem 3rem" }}>
-      <h1 style={{ fontSize: "1.25rem", fontWeight: 800, margin: "0 0 0.3rem" }}>🧪 Banc d&apos;essai animation — TFT 2.8&quot; tactile <span style={{ ...label, border: "1px solid var(--border)", borderRadius: 999, padding: "0.1rem 0.5rem", verticalAlign: "middle" }}>v1 · test</span></h1>
+      <h1 style={{ fontSize: "1.25rem", fontWeight: 800, margin: "0 0 0.3rem" }}>🧪 Banc d&apos;essai animation <span style={{ ...label, border: "1px solid var(--border)", borderRadius: 999, padding: "0.1rem 0.5rem", verticalAlign: "middle" }}>v1 · test</span></h1>
       <p style={{ ...muted, marginBottom: "1rem" }}>
-        Dessinez une petite animation 128×64 (comme sur l&apos;OLED). Elle est envoyée sous forme de <strong>différences entre images</strong> et rejouée par l&apos;écran, agrandie ×1,875
-        au centre du 240×320. L&apos;écran renvoie ses mesures : on voit ainsi la vitesse réelle atteinte. Voir aussi la <a href="/gallery-anim" style={{ color: "var(--accent)" }}>galerie Animations</a>.
+        Dessinez une petite animation 128×64 (comme sur l&apos;OLED). Elle est envoyée sous forme de <strong>différences entre images</strong> et rejouée par l&apos;écran
+        ({screenInfo.geometry}). L&apos;écran renvoie ses mesures : on voit ainsi la vitesse réelle atteinte. Voir aussi la <a href="/gallery-anim" style={{ color: "var(--accent)" }}>galerie Animations</a>.
       </p>
 
       {/* 1. Appareil + mode */}
       <div style={card}>
         <div style={label}>1 · Écran cible</div>
         {devices === null ? <p style={muted}>Chargement…</p> : devices.length === 0 ? (
-          <p style={{ ...muted, color: "#fb923c", marginTop: 6 }}>Aucun TFT 2.8&quot; tactile dans votre profil. Le banc d&apos;essai ne concerne que cet écran (firmware <code>r4tft28</code>). Vous pouvez quand même dessiner, exporter en GIF et enregistrer dans la galerie.</p>
+          <p style={{ ...muted, color: "#fb923c", marginTop: 6 }}>Aucun écran compatible dans votre profil (TFT 2.8&quot; tactile, TFT 1.8&quot; ou OLED). Vous pouvez quand même dessiner, exporter en GIF et enregistrer dans la galerie.</p>
         ) : (
           <div style={{ display: "flex", gap: "0.6rem", flexWrap: "wrap", alignItems: "center", marginTop: 6 }}>
             <select value={deviceId} onChange={(e) => { setDeviceId(e.target.value); setStatus(null); }} aria-label="Appareil" style={{ ...btn, minWidth: 200 }}>
@@ -439,9 +436,15 @@ export default function BenchClient() {
         )}
         {device && fwState === false && (
           <p role="alert" style={{ ...muted, marginTop: 8, color: "#f87171", fontWeight: 600 }}>
-            ⚠ Cet écran exécute le firmware « {status?.firmware} » : il ne connaît pas le banc d&apos;essai et ne fera jamais de contrôle rapide. Reflashez <code>pod_uno_r4</code> (version r4tft28-2.1 ou plus), puis redémarrez la carte.
+            ⚠ Cet écran exécute le firmware « {status?.firmware} » : il ne connaît pas le banc d&apos;essai et ne fera jamais de contrôle rapide. Reflashez-le avec la version {screenInfo.firmware.prefix}-{screenInfo.firmware.min[0]}.{screenInfo.firmware.min[1]} ou plus (page « Apprendre »), puis redémarrez la carte.
           </p>
         )}
+        {device && !screenInfo.tested && (
+          <p role="note" style={{ ...muted, marginTop: 8, color: "#fb923c", fontWeight: 600 }}>
+            ⚠ Lecture sur {screenInfo.label} : code écrit et compilé le 03/10/2026, <strong>jamais essayé sur le matériel</strong>. Les mesures renvoyées par l&apos;écran seront les premières.
+          </p>
+        )}
+        {devices && devices.length > 0 && <p style={{ ...muted, marginTop: 8 }}>Écran : {screenInfo.label} — animation {screenInfo.geometry}.</p>}
         {device && fwState === true && <p style={{ ...muted, marginTop: 8 }}>Firmware de l&apos;écran : {status?.firmware} ✓</p>}
         <p style={{ ...muted, marginTop: 8 }}>Le mode accélère les contrôles de l&apos;écran (≈ toutes les 3 s) pendant 30 minutes, puis s&apos;éteint tout seul. {device && !device.isOnline ? "⚠ L'appareil semble hors ligne." : ""}</p>
       </div>

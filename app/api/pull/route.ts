@@ -4,6 +4,7 @@ import { redis } from "@/lib/redis";
 import { getDevice } from "@/lib/deviceStore";
 import { frameKey, parseStoredFrame, FramePayload } from "@/lib/queue";
 import { getIP, forbidden } from "@/lib/rateLimit";
+import { benchScreenOf } from "@/lib/bench/screens";
 import { parseChainHeadRaw, parseCandidateRaw, PULL_KEY_HEAD, PULL_KEY_CANDIDATE, popObsTask } from "@/lib/chain";
 import type { ChainSummary } from "@/lib/chain";
 import { maybeCheckAnaFeed } from "@/lib/anaFeed";
@@ -114,6 +115,8 @@ export async function GET(req: NextRequest) {
     const candidate = parseCandidateRaw(rest[2]);
     const ownedNotif = (rest[3] as string | null) ?? null;
     const benchModeRaw = rest[4];
+    // Mode banc d'essai actif pour un écran compatible (TFT 2.8", TFT 1.8", OLED) : annoncé à l'appareil, qui passe en contrôle rapide.
+    const benchMode = benchScreenOf(device.screens) !== null && benchModeRaw !== null && benchModeRaw !== undefined;
 
     // Consomme la notification (one-shot) — le device la reçoit une seule fois
     if (ownedNotif) {
@@ -202,7 +205,9 @@ export async function GET(req: NextRequest) {
     // ── retryAfter : hint pour les ESP afin de réduire le polling en idle ───
     const isIdle = frameSource === "none" && pendingValidation === null;
     // Appareil scene-v1 : aucun poll pendant l'animation → retryAfter = durée complète des boucles + marge (contrat §6).
-    const retryAfter = delivery.kind === "scene" ? sceneRetryAfterSec(delivery) : isIdle ? 300 : 60;
+    // Mode banc d'essai actif : l'appareil repasse au pull sous 30 s (au lieu de 300 s au repos) pour découvrir le mode rapidement.
+    const retryAfterBase = delivery.kind === "scene" ? sceneRetryAfterSec(delivery) : isIdle ? 300 : 60;
+    const retryAfter = benchMode ? Math.min(retryAfterBase, 30) : retryAfterBase;
 
     // ── Métadonnées cartel (lecture à plat, accessible sans parser frame{}) ──
     // Priorité : payload frame Redis → fallback chaîne (chain:head).
@@ -254,7 +259,6 @@ export async function GET(req: NextRequest) {
 
     // ── Banc d'essai d'animation (TFT 2.8" tactile uniquement) : 1 GET, seulement pour ces appareils ──
     // Quand le propriétaire a activé le mode, on le dit à l'appareil ; il passe alors en poll rapide sur /api/bench/poll.
-    const benchMode = device.screens?.includes("tft28") ? benchModeRaw !== null && benchModeRaw !== undefined : false;
 
     // ── Réponse ─────────────────────────────────────────────────────────────
     // Bloc `scene` : métadonnées SEULES — le binaire passe par /api/pull-frame?kind=scene.

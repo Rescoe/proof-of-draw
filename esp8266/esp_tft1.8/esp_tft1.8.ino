@@ -1,6 +1,11 @@
 // esp_tft1.8.ino
 // Proof-of-Draw — Firmware TFT 1.8" (ST7735) sur ESP8266 NodeMCU
 //
+// ⚠⚠ v2.1 (03/10/2026) — AJOUT NON TESTÉ SUR LE MATÉRIEL : lecture des animations du banc d'essai (page /bench de l'app, clips PBC1 128×64).
+//    Écrit et compilé (ESP8266 core 3.1.2), le lecteur est testé sur PC ; le réseau, la mémoire et l'affichage réel ne l'ont jamais été.
+//    Sauvegarde du firmware d'avant : firmware-backups/2026-10-03_avant-integration-animation/ (tag git firmware-avant-animations-2026-10-03).
+//    Le reste du firmware (frames, validation, scene-v1) est inchangé.
+//
 // Identique dans son fonctionnement aux firmwares e-ink :
 //   1. Génération paire de clés ED25519 V1 au premier boot → EEPROM
 //   2. Affichage onboarding QR + clés sur TFT (unique au premier boot)
@@ -58,6 +63,7 @@
 #include <EEPROM.h>
 #include <Ed25519.h>       // Bibliothèque Crypto (rhempel) — ED25519 réel
 #include "ana_scene_v1.h"  // lecteur scene-v1 (œuvres génératives animées) — testé sur PC contre le moteur de référence
+#include "pod_bench_esp.h" // banc d'essai d'animation (clips PBC1) — ⚠ NON TESTÉ sur le matériel (voir en-tête)
 
 // ─── CONFIG ────────────────────────────────────────────────────────────────
 const char* WIFI_SSID = "";
@@ -66,7 +72,7 @@ const char* WIFI_PASSWORD = "";
 
 #define SERVER_URL        "https://proof-of-draw.vercel.app"
 #define SCREEN_TYPE       "tft18"
-#define FIRMWARE_VERSION  "tft18-2.0"
+#define FIRMWARE_VERSION  "tft18-2.1"
 #define PULL_INTERVAL     60000UL   // 1 min
 #define VALIDATE_INTERVAL 30000UL   // 30s
 
@@ -1149,6 +1155,18 @@ bool doFetchScene(const String& frameId, const String& frameSource, const String
   return true;
 }
 
+// ─── BANC D'ESSAI D'ANIMATION (⚠ NON TESTÉ sur le matériel) ─────────────────────────────────────────────────────────────────────────
+// Le clip 128×64 est posé 1:1 au centre du 128×160 (y = 48). Rien n'est restauré à la fin (l'image fixe n'est pas gardée en mémoire : 40 Ko) :
+// l'écran affiche « Banc d'essai terminé » jusqu'à la prochaine image.
+static uint16_t g_benchRow[TFT_W];                   // 128 pixels = une ligne de la zone
+podbenchesp::State g_bench;
+struct BenchTftPresenter {
+  void begin(const podbench::Clip& c) { tft.fillScreen(c.bg); }
+  template <class Hook> bool play(const podbench::Clip& c, uint8_t* cur, Hook&& hook) { return podbench::play<podbench::GeoOne<48> >(c, cur, tft, g_benchRow, hook); }
+  void end() { tftStatus("Banc d'essai", "termine"); }
+};
+BenchTftPresenter g_benchPresenter;
+
 // ─── PULL ───────────────────────────────────────────────────────────────────
 bool doPull() {
   logHeapState("PULL-BEFORE");
@@ -1164,6 +1182,7 @@ bool doPull() {
   String sceneArtifactId  = "";
   size_t sceneBytes       = 0;
   String sceneHash16      = "";
+  bool   newBenchMode     = false;
 
   {
     WiFiClientSecure client;
@@ -1227,6 +1246,7 @@ bool doPull() {
     pullRetryAfter = doc["retryAfter"]  | 60;
     if (pullRetryAfter <= 0) pullRetryAfter = 60;
 
+    newBenchMode = doc["benchMode"] | false;   // le propriétaire a activé le mode banc d'essai dans l'app
     newKind = doc["kind"] | "frame";
     JsonObject sceneObj = doc["scene"];
     if (newKind == "scene" && !sceneObj.isNull()) {
@@ -1277,6 +1297,7 @@ bool doPull() {
     }
   }
   // TLS fermé
+  podbenchesp::onPull(g_bench, newBenchMode);
 
   // Adapte l'intervalle de pull selon activité serveur
   nextPullIntervalMs = (newFrameSource == "none" && newCandId.length() == 0)
@@ -1536,6 +1557,9 @@ void loop() {
       lastValidateMs = millis();
     }
   }
+
+  // Banc d'essai d'animation : ne fait rien tant que le mode n'est pas actif (⚠ non testé sur le matériel)
+  podbenchesp::service(g_bench, g_benchPresenter, String(SERVER_URL), deviceId);
 
   // Revalidation (Axe 3)
   if (pendingObsHashes.length() > 0) doObsConfirm();

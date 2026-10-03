@@ -1,6 +1,11 @@
 // esp_eink_2.7BW_OLED.ino
-// Proof-of-Draw — Firmware multiscreen v2.0
+// Proof-of-Draw — Firmware multiscreen v2.1
 // Supporte : oled096 (128×64) + eink27bw (176×264)
+//
+// ⚠⚠ v2.1 (03/10/2026) — AJOUT NON TESTÉ SUR LE MATÉRIEL : lecture des animations du banc d'essai (page /bench de l'app, clips PBC1 128×64)
+//    sur l'OLED. Écrit et compilé (ESP8266 core 3.1.2), le lecteur est testé sur PC ; le réseau, la mémoire et l'affichage I2C réel ne l'ont jamais été.
+//    Sauvegarde du firmware d'avant : firmware-backups/2026-10-03_avant-integration-animation/ (tag git firmware-avant-animations-2026-10-03).
+//    Le reste du firmware (frames OLED / e-ink, ticker, validation) est inchangé.
 //
 // IDENTIQUE au eink29BWR v2.0 dans sa logique :
 //   1. Génération paire de clés ED25519 au premier boot → EEPROM
@@ -26,13 +31,14 @@
 #include "epd2in7_V2.h"
 #include "epdif.h"
 #include <Ed25519.h>       // Bibliothèque Crypto (rhempel) — ED25519 réel
+#include "pod_bench_esp.h" // banc d'essai d'animation (clips PBC1) — ⚠ NON TESTÉ sur le matériel (voir en-tête)
 
 // ─── CONFIG ────────────────────────────────────────────────────────────────
 const char* WIFI_SSID = "";
 const char* WIFI_PASSWORD = "";
 
 #define SERVER_URL       "https://proof-of-draw.vercel.app"
-#define FIRMWARE_VERSION "multiscreen-2.0"
+#define FIRMWARE_VERSION "multiscreen-2.1"
 #define SCREEN_OLED      "oled096"
 #define SCREEN_E27       "eink27bw"
 
@@ -1336,6 +1342,50 @@ bool doFetchFrameE27(const String& frameId, const String& frameSource) {
   return true;
 }
 
+// ─── BANC D'ESSAI D'ANIMATION SUR L'OLED (⚠ NON TESTÉ sur le matériel) ───────────────────────────────────────────────────────────
+// Le clip 128×64 est joué 1:1. Chaque image = Adafruit_GFX::drawBitmap (même format : lignes de 16 octets, MSB à gauche) puis display().
+// I2C passé à 400 kHz pendant la lecture (100 kHz = ~100 ms par image), remis à 100 kHz ensuite. Le ticker est suspendu puis repris ;
+// l'artwork (oledArtBuf) est remis à l'écran à la fin.
+podbenchesp::State g_bench;
+struct BenchOledSink {
+  void present(const uint8_t* frame) {
+    oled.clearDisplay();
+    oled.drawBitmap(0, 0, frame, OLED_WIDTH, OLED_HEIGHT, SSD1306_WHITE);
+    oled.display();
+  }
+};
+struct BenchOledPresenter {
+  bool tickerWasActive = false;
+  void begin(const podbench::Clip&) {
+    tickerWasActive = oledTickActive;
+    oledTickActive = false;
+    if (lastScreenWasSPI) {                      // même bascule SPI → I2C que displayOLED()
+      SPI.endTransaction();
+      SPI.end();
+      delay(20);
+      lastScreenWasSPI = false;
+    }
+    Wire.begin(OLED_SDA, OLED_SCL);
+    Wire.setClock(400000);
+    delay(10);
+    oledReady = oled.begin(SSD1306_SWITCHCAPVCC, 0x3C);
+    if (!oledReady) Serial.println("[BENCH] OLED : init impossible");
+  }
+  template <class Hook> bool play(const podbench::Clip& c, uint8_t* cur, Hook&& hook) {
+    BenchOledSink sink;
+    return podbench::playBitmap(c, cur, sink, hook);
+  }
+  void end() {
+    Wire.setClock(100000);
+    if (oledReady) {
+      if (oledArtBuf) memcpy(oled.getBuffer(), oledArtBuf, OLED_BUF_SIZE); else oled.clearDisplay();
+      oled.display();
+    }
+    oledTickActive = tickerWasActive;
+  }
+};
+BenchOledPresenter g_benchPresenter;
+
 // ─── PULL ──────────────────────────────────────────────────────────────────
 bool doPull() {
   logHeapState("PULL-BEFORE");
@@ -1347,6 +1397,7 @@ bool doPull() {
   String newBlockHash   = "";
   int    newBlockIndex  = -1;
   int    pullRetryAfter = 60;  // valeur par défaut, remplacée par doc["retryAfter"]
+  bool   newBenchMode   = false;
 
   {
     WiFiClientSecure client;
@@ -1407,6 +1458,7 @@ bool doPull() {
     newFrameSource = doc["frameSource"] | "none";
     newFrameId     = doc["frameId"]     | "";
     newScreen      = doc["screen"]      | "";
+    newBenchMode   = doc["benchMode"]   | false;   // le propriétaire a activé le mode banc d'essai dans l'app
     pullRetryAfter = doc["retryAfter"]  | 60;
     if (pullRetryAfter <= 0) pullRetryAfter = 60;
 
@@ -1480,6 +1532,7 @@ bool doPull() {
     }
   }
   // TLS fermé
+  podbenchesp::onPull(g_bench, newBenchMode);
 
   // Ajuste l'intervalle de pull selon l'activité réseau signalée par le serveur
   if (newFrameSource == "none" && newCandId.length() == 0) {
@@ -1832,6 +1885,9 @@ void loop() {
       lastValidateMs = millis();
     }
   }
+
+  // ── Banc d'essai d'animation : ne fait rien tant que le mode n'est pas actif (⚠ non testé sur le matériel) ──
+  podbenchesp::service(g_bench, g_benchPresenter, String(SERVER_URL), deviceId);
 
   // ── Observation (revalidation blocs) ──
   // Dépend uniquement de la présence d'une tâche obs — pas de timer
