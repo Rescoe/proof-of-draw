@@ -270,6 +270,14 @@ Galerie `/gallery-anim` (animations faites à la main, `lib/anim/store.ts`, `ani
 Firmware 2.2 : pixels envoyés PAR BLOC (`fastPixels` = `SPI.transfer(buf, n)` ; `Adafruit_SPITFT::writePixels` fait 2 transferts d'octet par pixel sur la R4), une transaction SPI par image,
 métrique de retard = retard de DÉMARRAGE (+ marge min), `loops = 0` = boucle sans fin (arrêt : toucher / nouvel envoi / fin du mode / 1 h ; contrôle serveur toutes les 20 s).
 
+## Règle PRIMORDIALE — quotas Upstash Redis (écrite le 03/10/2026)
+
+Ne jamais saturer Redis. Toute route, page, cron ou firmware qui y accède doit être pensé en **commandes Redis / heure / acteur AVANT d'être codé** (écrire le coût dans le commit ou la doc).
+- Interface web : jamais de `setInterval` nu → pause si `document.hidden`, rythme réduit au repos, arrêt après inactivité, reprise sur `visibilitychange`.
+- Mode « test / accéléré » : TTL obligatoire, extinction automatique.
+- Regrouper les lectures (`MGET`), pas d'écriture de présence à chaque poll, journaux/listes en pipeline.
+- Manquement du 03/10 (page `/bench` : ≈ 8 600 commandes/h par onglet, onglet caché compris) et plan de réduction (tâches Q1–Q12) : `docs/NOTE_BENCH_ET_QUOTAS_2026_10_03.md`.
+
 ## Non-goals
 
 Ne pas faire :
