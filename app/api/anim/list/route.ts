@@ -10,5 +10,5 @@ export async function GET(req: NextRequest) {
   const limit = Math.max(1, Math.min(30, parseInt(u.searchParams.get("limit") ?? "24") || 24));
   const offset = Math.max(0, parseInt(u.searchParams.get("offset") ?? "0") || 0);
   const { items, total } = await listAnimations(limit, offset);
-  return NextResponse.json({ items, total, limit, offset }, { headers: { "Cache-Control": "public, s-maxage=10, stale-while-revalidate=60" } });
+  return NextResponse.json({ items, total, limit, offset }, { headers: { "Cache-Control": "public, s-maxage=30, stale-while-revalidate=60" } });
 }

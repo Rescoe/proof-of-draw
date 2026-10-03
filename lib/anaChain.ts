@@ -102,15 +102,24 @@ export async function getAnaBlockImage(hash: string): Promise<BlockImagePayload 
   try { return typeof raw === "string" ? JSON.parse(raw) : (raw as BlockImagePayload); } catch { return null; }
 }
 
+/** Lecture groupée (MGET) de clés ANA : 1 commande au lieu d'une par clé. */
+async function mgetAna<T>(keys: string[]): Promise<(T | null)[]> {
+  if (keys.length === 0) return [];
+  const raws = await redis.mget<unknown[]>(...keys);
+  return raws.map((raw) => {
+    if (!raw) return null;
+    try { return typeof raw === "string" ? (JSON.parse(raw) as T) : (raw as T); } catch { return null; }
+  });
+}
+
 export type AnaBlockWithImage = Block & { imagePayload: BlockImagePayload | null };
 
 export async function getRecentAnaBlocks(n: number): Promise<AnaBlockWithImage[]> {
   const hashes = await redis.lrange<string>(KEY_ANA_RECENT, 0, n - 1);
   if (!hashes || hashes.length === 0) return [];
-  const blocks = (await Promise.all(hashes.map(getAnaBlockByHash))).filter((b): b is Block => !!b);
-  return Promise.all(blocks.map(async (block) => ({
-    ...block, imagePayload: await getAnaBlockImage(block.blockHash),
-  })));
+  const blocks = (await mgetAna<Block>(hashes.map(anaBlockKey))).filter((b): b is Block => !!b);
+  const images = await mgetAna<BlockImagePayload>(blocks.map((b) => anaImageKey(b.blockHash)));
+  return blocks.map((block, i) => ({ ...block, imagePayload: images[i] }));
 }
 
 // ─── Œuvres (1 œuvre = N blocs, un par type d'écran) ─────────────────────────

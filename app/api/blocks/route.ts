@@ -4,7 +4,7 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { redis } from "@/lib/redis";
-import { getBlockByHash, getBlockImage, Block, BlockWithImage } from "@/lib/chain";
+import { parseBlocks, getBlockImages, Block, BlockWithImage } from "@/lib/chain";
 
 const RECENT_MAX = 100;
 
@@ -38,8 +38,7 @@ export async function GET(req: NextRequest) {
   }
 
   // 2. Charger tous les blocs en parallèle
-  const rawBlocks = await Promise.all(hashes.map((h) => getBlockByHash(h)));
-  let blocks = rawBlocks.filter(Boolean) as Block[];
+  let blocks = await parseBlocks(hashes);   // 1 seul MGET (avant : un GET par bloc, jusqu'à 100)
 
   // 3. Filtrer
   if (q)      blocks = blocks.filter((b) => matchesQuery(b, q));
@@ -54,19 +53,15 @@ export async function GET(req: NextRequest) {
   const paged = blocks.slice((safePage - 1) * limit, safePage * limit);
 
   // 5. Charger les images uniquement pour la page courante
-  const withImages: BlockWithImage[] = await Promise.all(
-    paged.map(async (block) => {
-      const imagePayload = await getBlockImage(block.blockHash);
-      return { ...block, imagePayload };
-    }),
-  );
+  const images = await getBlockImages(paged.map((b) => b.blockHash));   // 1 seul MGET
+  const withImages: BlockWithImage[] = paged.map((block, i) => ({ ...block, imagePayload: images[i] }));
 
   return NextResponse.json(
     { blocks: withImages, total, page: safePage, limit, pages },
     {
       headers: {
         // Cache côté CDN 10s — les blocs sont presque immuables
-        "Cache-Control": "public, s-maxage=10, stale-while-revalidate=60",
+        "Cache-Control": "public, s-maxage=30, stale-while-revalidate=120",
       },
     },
   );

@@ -19,7 +19,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { redis } from "@/lib/redis";
 import { isBlacklisted, getIP, forbidden } from "@/lib/rateLimit";
-import type { Block } from "@/lib/chain";
+import { getBlocksAligned, type Block } from "@/lib/chain";
 
 const DEVICE_ID_REGEX = /^dev_[A-Z0-9]{8}$/;
 const MAX_BLOCKS = 50;
@@ -30,18 +30,8 @@ function json(body: unknown, status = 200) {
 
 async function resolveHashes(hashes: string[]): Promise<{ blockHash: string; block: Block | null }[]> {
   if (hashes.length === 0) return [];
-  return Promise.all(
-    hashes.map(async (hash) => {
-      const raw = await redis.get(`chain:block:${hash}`);
-      if (!raw) return { blockHash: hash, block: null };
-      try {
-        const block: Block = typeof raw === "string" ? JSON.parse(raw) : raw;
-        return { blockHash: hash, block };
-      } catch {
-        return { blockHash: hash, block: null };
-      }
-    })
-  );
+  const blocks = await getBlocksAligned(hashes);   // 1 seul MGET (avant : un GET par hash, jusqu'à 150 par appel)
+  return hashes.map((blockHash, i): { blockHash: string; block: Block | null } => ({ blockHash, block: blocks[i] }));
 }
 
 export async function GET(req: NextRequest) {
@@ -74,7 +64,7 @@ export async function GET(req: NextRequest) {
       resolveHashes(ownedHashes),
     ]);
 
-    return json({
+    return NextResponse.json({
       deviceId,
       // mined  : historique permanent (ESP qui a déclenché le quorum)
       mined,
@@ -83,7 +73,7 @@ export async function GET(req: NextRequest) {
       // owned  : blocs actuellement possédés (peut changer via transfer-block)
       owned,
       total: { mined: mined.length, drawn: drawn.length, owned: owned.length },
-    });
+    }, { headers: { "Cache-Control": "public, s-maxage=30, stale-while-revalidate=120" } });   // données publiques : cache CDN, le coût Redis ne dépend plus du nombre de visiteurs
   } catch (err) {
     console.error("[blocks-by-device] error:", err);
     return json({ error: "Erreur interne" }, 500);

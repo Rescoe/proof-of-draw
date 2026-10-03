@@ -4,7 +4,7 @@
 // Appelé à la demande depuis le SidePanel quand un device est sélectionné.
 
 import { NextRequest, NextResponse } from "next/server";
-import { getBlockByHash, getBlockImage } from "@/lib/chain";
+import { getBlocksAligned, getBlockImage } from "@/lib/chain";
 import { redis } from "@/lib/redis";
 import { isBlacklisted, getIP, forbidden } from "@/lib/rateLimit";
 
@@ -31,7 +31,7 @@ export async function GET(req: NextRequest) {
     }
 
     // Fetch en parallèle puis filtre par deviceId
-    const blocks = await Promise.all(hashes.map((h) => getBlockByHash(h)));
+    const blocks = await getBlocksAligned(hashes);   // 1 seul MGET (avant : 20 GET)
     const lastBlock = blocks.find((b) => b?.deviceId === deviceId) ?? null;
 
     if (!lastBlock) {
@@ -39,7 +39,7 @@ export async function GET(req: NextRequest) {
     }
 
     const imagePayload = await getBlockImage(lastBlock.blockHash);
-    return json({ block: lastBlock, imagePayload });
+    return NextResponse.json({ block: lastBlock, imagePayload }, { headers: { "Cache-Control": "public, s-maxage=30, stale-while-revalidate=120" } });
   } catch (err) {
     console.error("[device-last-block] error:", err);
     return json({ error: "Erreur interne", block: null, imagePayload: null }, 500);

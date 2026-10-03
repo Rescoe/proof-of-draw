@@ -4,7 +4,7 @@
 
 import { NextRequest, NextResponse } from "next/server";
 
-import { getAllDevices, getDevice, toPublicDevice, toOwnedDevice } from "@/lib/deviceStore";
+import { getAllDevices, getDevicesByIds, toPublicDevice, toOwnedDevice } from "@/lib/deviceStore";
 import { getSession } from "@/lib/session";
 import { getArtistDeviceIds } from "@/lib/artistDirectory";
 
@@ -35,7 +35,7 @@ export async function GET(req: NextRequest) {
       }
 
       const owned = (
-        await Promise.all([...idSet].map((id) => getDevice(id)))
+        await getDevicesByIds([...idSet])
       )
         .filter(Boolean)
         .map((d) => toOwnedDevice(d!));

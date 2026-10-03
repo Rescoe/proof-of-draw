@@ -5,7 +5,7 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { redis } from "@/lib/redis";
-import { getBlockByHash } from "@/lib/chain";
+import { parseBlocks } from "@/lib/chain";
 import type { Block } from "@/lib/chain";
 
 export const dynamic = "force-dynamic";
@@ -40,13 +40,7 @@ export async function GET(req: NextRequest) {
       });
     }
 
-    const blocks = (
-      await Promise.all(
-        hashes.map(async (hash: string) => {
-          try { return await getBlockByHash(hash); } catch { return null; }
-        })
-      )
-    ).filter((b): b is Block => b !== null);
+    const blocks: Block[] = await parseBlocks(hashes);   // 1 seul MGET
 
     const relevant = blocks
       .filter((b) => b.deviceId === deviceId || b.validatorIds?.includes(deviceId))

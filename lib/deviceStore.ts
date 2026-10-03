@@ -223,6 +223,16 @@ export async function getDevice(deviceId: string): Promise<Device | null> {
   try { return typeof raw === "string" ? JSON.parse(raw) : raw as Device; } catch { return null; }
 }
 
+/** Plusieurs appareils en UNE commande (MGET), alignés sur `ids` (null = absent). */
+export async function getDevicesByIds(ids: string[]): Promise<(Device | null)[]> {
+  if (ids.length === 0) return [];
+  const raws = await redis.mget<unknown[]>(...ids.map(deviceKey));
+  return raws.map((raw) => {
+    if (!raw) return null;
+    try { return typeof raw === "string" ? (JSON.parse(raw) as Device) : (raw as Device); } catch { return null; }
+  });
+}
+
 export async function getDeviceByMac(mac: string): Promise<Device | null> {
   const deviceId = await redis.get<string>(macKey(mac));
   if (!deviceId) return null;

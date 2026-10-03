@@ -183,16 +183,29 @@ export async function getChainHead(): Promise<Block | null> {
   }
 }
 
-/** Lit plusieurs blocs par hash avec UNE SEULE commande Redis (MGET) ; les blocs absents ou illisibles sont ignorés. */
-export async function parseBlocks(hashes: string[]): Promise<Block[]> {
+/** Lit plusieurs blocs avec UNE SEULE commande Redis (MGET) ; résultat ALIGNÉ sur `hashes` (null = absent ou illisible). */
+export async function getBlocksAligned(hashes: string[]): Promise<(Block | null)[]> {
   if (hashes.length === 0) return [];
   const raws = await redis.mget<unknown[]>(...hashes.map(blockKey));
-  const out: Block[] = [];
-  for (const raw of raws) {
-    if (!raw) continue;
-    try { out.push(migrateBlock(typeof raw === "string" ? JSON.parse(raw) : raw)); } catch { /* bloc illisible : ignoré */ }
-  }
-  return out;
+  return raws.map((raw) => {
+    if (!raw) return null;
+    try { return migrateBlock(typeof raw === "string" ? JSON.parse(raw) : (raw as Record<string, unknown>)); } catch { return null; }
+  });
+}
+
+/** Comme getBlocksAligned, sans les absents. */
+export async function parseBlocks(hashes: string[]): Promise<Block[]> {
+  return (await getBlocksAligned(hashes)).filter((b): b is Block => b !== null);
+}
+
+/** Images de plusieurs blocs en UNE commande (MGET), alignées sur `hashes`. */
+export async function getBlockImages(hashes: string[]): Promise<(BlockImagePayload | null)[]> {
+  if (hashes.length === 0) return [];
+  const raws = await redis.mget<unknown[]>(...hashes.map(imageKey));
+  return raws.map((raw) => {
+    if (!raw) return null;
+    try { return typeof raw === "string" ? (JSON.parse(raw) as BlockImagePayload) : (raw as BlockImagePayload); } catch { return null; }
+  });
 }
 
 // ── Lecture groupée pour /api/pull (quota Redis : tout part dans UN SEUL MGET) ──────────────────────────────────────────────
@@ -598,9 +611,7 @@ async function _getRecentBlocks(n: number): Promise<BlockWithImage[]> {
   let blocks: Block[] = [];
 
   if (hashes && hashes.length > 0) {
-    blocks = (
-      await Promise.all(hashes.map((h) => getBlockByHash(h)))
-    ).filter(Boolean) as Block[];
+    blocks = await parseBlocks(hashes);
   }
 
   // Fallback : chain-walk depuis la tête (pour les blocs antérieurs à la migration)

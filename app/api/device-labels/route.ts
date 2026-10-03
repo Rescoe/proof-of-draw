@@ -5,7 +5,7 @@
 // Coût : au plus 4 GET Redis, uniquement quand quelqu'un ouvre le détail d'un bloc ; mis en cache 60 s côté CDN.
 
 import { NextRequest, NextResponse } from "next/server";
-import { getDevice } from "@/lib/deviceStore";
+import { getDevicesByIds } from "@/lib/deviceStore";
 
 const DEVICE_ID_REGEX = /^dev_[A-Z0-9]{8}$/;
 const MAX_IDS = 4;
@@ -15,7 +15,7 @@ export async function GET(req: NextRequest) {
   const ids = [...new Set(raw.split(",").map((s) => s.trim()).filter((s) => DEVICE_ID_REGEX.test(s)))].slice(0, MAX_IDS);
   if (ids.length === 0) return NextResponse.json({ labels: {} });
 
-  const devices = await Promise.all(ids.map((id) => getDevice(id).catch(() => null)));
+  const devices = await getDevicesByIds(ids).catch(() => ids.map(() => null));   // 1 MGET
   const labels: Record<string, { name: string | null; artistName: string | null; screens: string[] }> = {};
   ids.forEach((id, i) => {
     const d = devices[i];

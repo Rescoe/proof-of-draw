@@ -150,3 +150,40 @@ Ordre de priorité (le plafond de 8,9 k/jour est la cible ; rappel : on était �
 - Rester sur le plan gratuit tant que la consommation tient ≈ 9 k/jour : coût 0 €.
 - Si on dépasse : **vérifier sur la page Pricing d'Upstash** (le tarif actuel, ce que fait le plan gratuit au plafond — blocage ou facturation — et le plan « à l'usage » vs plan fixe). Je n'ai pas ces chiffres de façon fiable : ne pas décider sur mémoire.
 - Le levier le moins cher reste de **ne pas faire la requête** : chaque commande évitée ci-dessus est de l'argent non dépensé, contrairement au plan payant qui ne fait que l'effacer.
+
+---
+
+## 7. Lot du 03/10 (après-midi) — cache CDN et lectures groupées partout où c'était possible
+
+Principe, le même que pour ANA : **une donnée publique ou immuable ne doit être lue dans Redis qu'une fois par fenêtre, quel que soit le nombre de visiteurs** (cache CDN Vercel `s-maxage`, qui évite aussi l'exécution de la fonction, donc des CU) ; et **une lecture de N clés = 1 commande** (`MGET`), jamais N `GET`.
+
+### 7.1 Lectures N+1 remplacées par un seul `MGET`
+Nouveaux utilitaires : `getBlocksAligned` / `parseBlocks` / `getBlockImages` (`lib/chain.ts`), `getDevicesByIds` (`lib/deviceStore.ts`), `mgetAna` (`lib/anaChain.ts`). Équivalence vérifiée contre Redis (mêmes données qu'avec les lectures unitaires).
+
+| Route / fonction | Avant (commandes par appel) | Après |
+|---|---|---|
+| `/api/blocks` (galerie de l'accueil) | jusqu'à ≈ 100 blocs + 20 images, un par un | 3 |
+| `/api/blocks-by-device` (panneau d'un écran) | jusqu'à ≈ 150 `GET` | 7 |
+| `/api/device-last-block` | ≈ 22 | 3 |
+| `/api/network/device-activity` | ≈ 30+ | 2 |
+| `getRecentAnaBlocks` (galerie ANA) | 2 par bloc | 3 |
+| `_getRecentBlocks` (`lib/chain.ts`, blocs seulement), liste des œuvres d'un artiste (`artistDirectory`) | un `GET` par hash | 1 `MGET` |
+| `/api/devices?mine`, `/api/device-labels`, `/api/my-devices/displays` | un `GET` par appareil | 1 |
+
+### 7.2 Cache CDN ajouté ou allongé (données publiques)
+- `/api/block-actions` : 24 h (bloc immuable) · `/api/block-replay` : 1 h · `/api/rejected-draws` : 60 s
+- `/api/blocks-by-device`, `/api/device-last-block` : 30 s · `/api/blocks` : 10 → 30 s · `/api/anim/list` : 10 → 30 s
+- Déjà en place (inchangés) : `block-image` 24 h, `display-image` immuable, `displays` 20 s, `artists` 15–30 s, `device-activity` 60 s, `activity-log` 30 s, instantané réseau (`unstable_cache`).
+
+### 7.3 Pont ANA
+`maybeCheckAnaFeed` : intervalle par défaut **60 s → 300 s** (`ANA_FEED_CHECK_DEBOUNCE_SEC`). Chaque contrôle est une invocation de fonction côté ANA + un `SET` côté PoD ; le flux ANA lui-même est déjà en Data Cache (pas de requête Neon). **Si cette variable est définie dans Vercel, elle prime sur la valeur par défaut** : à vérifier.
+
+### 7.4 Leviers restants (non faits — décision ou mesure nécessaire)
+1. **Intervalle des écrans au repos** (`retryAfter` = 300 s aujourd'hui, 60 s dès qu'un candidat est en attente) : le passer à 600 s divise par deux le coût des pulls au repos, au prix d'un affichage d'une œuvre envoyée jusqu'à 10 min plus tard. *Décision du porteur.*
+2. **Pulls en 304** (le firmware envoie le dernier `blockHash` vu) : modifie les 5 firmwares. À planifier.
+3. **Journaux Vercel par route** (Q1) pour trouver ce qui reste ; je ne peux pas les lire d'ici.
+4. **Garde-fou budget** (`redisBudget`) échantillonné, pour dégrader les fonctions annexes à 80 % du quota.
+5. **Écritures (45 k sur 210 k)** : le `EVAL` du rate-limit du pull écrit à chaque pull (ça ne peut pas se supprimer sans perdre la protection) ; la présence (`lastSeen`) n'est déjà écrite que toutes les 4 min.
+
+### 7.5 Comment suivre la baisse
+Noter chaque matin dans la console Upstash : commandes des dernières 24 h, lectures, écritures. Objectif : ≤ 9 k/jour ; état de départ : ≈ 100 k/jour (02/10). Si la courbe ne tombe pas sous ≈ 20 k après 48 h, c'est qu'un consommateur non audité reste (§ 6.3) : fournir alors les journaux Vercel par route.

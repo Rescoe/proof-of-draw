@@ -25,5 +25,5 @@ export async function GET(req: NextRequest) {
   return NextResponse.json({
     replay: replay ?? [],
     podHashEnriched: block.podHashEnriched ?? null,
-  });
+  }, { headers: { "Cache-Control": "public, s-maxage=3600, stale-while-revalidate=86400" } });
 }

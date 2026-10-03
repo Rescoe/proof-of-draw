@@ -22,5 +22,5 @@ export async function GET(req: NextRequest) {
 
   if (!block) return NextResponse.json({ error: "Bloc introuvable" }, { status: 404 });
 
-  return NextResponse.json({ actions: actions ?? [], actionsHash: block.actionsHash });
+  return NextResponse.json({ actions: actions ?? [], actionsHash: block.actionsHash }, { headers: { "Cache-Control": "public, s-maxage=86400, stale-while-revalidate=604800" } });
 }

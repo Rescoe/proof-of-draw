@@ -28,5 +28,5 @@ export async function GET(_req: NextRequest) {
     }
   }
 
-  return NextResponse.json({ rejected: entries, total: entries.length });
+  return NextResponse.json({ rejected: entries, total: entries.length }, { headers: { "Cache-Control": "public, s-maxage=60, stale-while-revalidate=300" } });
 }

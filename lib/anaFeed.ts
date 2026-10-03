@@ -29,7 +29,7 @@ import type { ScenePackageProfile } from "@/lib/scene/package";
 
 const ANA_API_URL      = process.env.ANA_API_URL;
 const ANA_FEED_SECRET  = process.env.ANA_ART_FEED_SECRET;
-const CHECK_DEBOUNCE_SEC = parseInt(process.env.ANA_FEED_CHECK_DEBOUNCE_SEC ?? "60");
+const CHECK_DEBOUNCE_SEC = parseInt(process.env.ANA_FEED_CHECK_DEBOUNCE_SEC ?? "300");
 const FETCH_TIMEOUT_MS = 5000;
 
 const KEY_INGESTED   = "chain:ana:ingested";     // Set<itemId> — permanent, dedup only

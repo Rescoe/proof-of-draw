@@ -25,7 +25,7 @@ import {
   IMPLICIT_ARTIST_PREFIX, type ArtistProfile, type Device,
 } from "@/lib/deviceStore";
 import type { SessionData } from "@/lib/session";
-import { getBlockByHash, getBlockImage, type Block, type BlockImagePayload } from "@/lib/chain";
+import { getBlockByHash, getBlockImage, getBlocksAligned, type Block, type BlockImagePayload } from "@/lib/chain";
 
 const ARTISTS_ALL = "artists:all";
 const BLOCKS_MAX  = 24;
@@ -237,9 +237,10 @@ export async function getArtistBlocks(deviceIds: Set<string>, limit = BLOCKS_MAX
   const keptBy = new Map<string, string>();
   hashes.forEach((h, i) => { if (keepers[i]) keptBy.set(h, String(keepers[i])); });
 
-  const rows = await Promise.all(hashes.map(async (hash) => {
+  const loadedBlocks = await getBlocksAligned(hashes);   // 1 MGET au lieu d'un GET par hash
+  const rows = await Promise.all(hashes.map(async (hash, idx) => {
     try {
-      const b = await getBlockByHash(hash);
+      const b = loadedBlocks[idx];
       if (!b) return null;
       const isArtist = deviceIds.has(b.deviceId);
       const isMiner  = !!b.minerDeviceId && deviceIds.has(b.minerDeviceId);

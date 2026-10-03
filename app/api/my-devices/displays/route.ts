@@ -6,7 +6,7 @@
 import { NextResponse } from "next/server";
 import { redis } from "@/lib/redis";
 import { getSession } from "@/lib/session";
-import { getDevice } from "@/lib/deviceStore";
+import { getDevicesByIds } from "@/lib/deviceStore";
 import { getArtistDeviceIds } from "@/lib/artistDirectory";
 import { readShownRecords, type DisplayKV } from "@/lib/displayState";
 
@@ -19,7 +19,7 @@ export async function GET() {
     if (session.artistId) for (const id of await getArtistDeviceIds(session.artistId)) ids.add(id);
     if (ids.size === 0) return NextResponse.json({ displays: {} }, { headers: { "Cache-Control": "private, no-store" } });
 
-    const devices = (await Promise.all([...ids].map((id) => getDevice(id)))).filter((d): d is NonNullable<typeof d> => !!d);
+    const devices = (await getDevicesByIds([...ids])).filter((d): d is NonNullable<typeof d> => !!d);
     const pairs = devices.flatMap((d) => d.screens.map((screen) => ({ deviceId: d.deviceId, screen })));
     const displays = await readShownRecords(redis as unknown as DisplayKV, pairs);
     return NextResponse.json({ displays }, { headers: { "Cache-Control": "private, no-store" } });
