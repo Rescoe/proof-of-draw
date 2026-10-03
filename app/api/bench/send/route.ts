@@ -58,6 +58,6 @@ export async function POST(req: NextRequest) {
     if (refusal) gallery = { refused: refusal };
     else gallery = await saveAnimation(buildAnimItem(input, { title: (g as { title?: unknown }).title, author: device.artistName, deviceId }));
   }
-  await benchLog(deviceId, `clip ${ptr.clipId} ENVOYÉ : ${bin.length} octets, ${frames.length} images, ${input.loops} boucle(s)${gallery && "id" in gallery ? (gallery.duplicate ? " · déjà dans la galerie" : " · enregistré dans la galerie") : ""}`);
+  await benchLog(deviceId, `clip ${ptr.clipId} ENVOYÉ : ${bin.length} octets, ${frames.length} images, ${input.loops === 0 ? "en boucle (∞)" : `${input.loops} boucle(s)`}${gallery && "id" in gallery ? (gallery.duplicate ? " · déjà dans la galerie" : " · enregistré dans la galerie") : ""}`);
   return NextResponse.json({ ok: true, ...ptr, stats, ...(gallery ? { gallery } : {}) });
 }

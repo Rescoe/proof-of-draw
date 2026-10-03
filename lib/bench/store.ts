@@ -53,8 +53,9 @@ export interface BenchResult {
   elapsedMs: number;       // durée mesurée
   avgWorkUs: number;       // temps moyen pour appliquer + peindre une image
   maxWorkUs: number;
-  overruns: number;        // images arrivées en retard sur l'horloge prévue
-  maxLateMs: number;
+  overruns: number;        // images dont la peinture a DÉMARRÉ en retard (> 5 ms) sur l'horloge prévue
+  maxLateMs: number;       // plus grand retard de démarrage
+  minSlackMs?: number;     // plus petite marge entre la fin de la peinture et l'image suivante (négatif = débordement) ; absent sur le firmware < 2.2
   downloadMs: number;
   bytes: number;
   heapFree: number;
@@ -135,6 +136,7 @@ export function sanitizeResult(b: Record<string, unknown>): BenchResult | null {
     frames: clamp(b.frames, 0, 100_000), expectedMs: clamp(b.expectedMs, 0, 3_600_000), elapsedMs: clamp(b.elapsedMs, 0, 3_600_000),
     avgWorkUs: clamp(b.avgWorkUs, 0, 60_000_000), maxWorkUs: clamp(b.maxWorkUs, 0, 60_000_000), overruns: clamp(b.overruns, 0, 100_000),
     maxLateMs: clamp(b.maxLateMs, 0, 3_600_000), downloadMs: clamp(b.downloadMs, 0, 3_600_000), bytes: clamp(b.bytes, 0, 70_000),
+    ...(b.minSlackMs !== undefined ? { minSlackMs: clamp(b.minSlackMs, -3_600_000, 3_600_000) } : {}),
     heapFree: clamp(b.heapFree, 0, 40_000), stopped: b.stopped === true,
     ...(typeof b.error === "string" ? { error: b.error.slice(0, 80) } : {}),
   };

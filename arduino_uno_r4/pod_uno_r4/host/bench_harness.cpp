@@ -1,7 +1,7 @@
 // bench_harness.cpp — banc d'essai PC de pod_bench.h (PAS du firmware : compilé seulement par tests/podBenchR4.test.ts).
 //
 //   bench_harness parse <clip.hex>            → "OK frames loops fg bg" | "ERR NOM"
-//   bench_harness play  <clip.hex>            → écran 240×320 RGB565 LE (fond = couleur « éteint ») après CHAQUE image affichée, sur stdout ;
+//   bench_harness play  <clip.hex> [max]      → écran 240×320 RGB565 LE (fond = couleur « éteint ») après CHAQUE image affichée, sur stdout ;
 //                                               sur stderr : « shown=N windows=N overflow=N underfill=N pixels=N »
 //   bench_harness validate_batch <lignes.txt> → un clip hexa par ligne ; une réponse par ligne : "OK" | "ERR NOM"
 // Faux ILI9341 : fenêtre d'adresse + curseur qui avance en lignes, pixels reçus en RGB565 BIG-endian (comme Adafruit_ILI9341::writePixels(…, true)).
@@ -23,10 +23,10 @@ struct FakeTft {
   std::vector<uint16_t> screen = std::vector<uint16_t>((size_t)SCR_W * SCR_H, 0);
   int wx = 0, wy = 0, ww = 0, wh = 0, cx = 0, cy = 0;
   bool open = false;
-  long windows = 0, overflow = 0, underfill = 0, pixels = 0;
+  long windows = 0, overflow = 0, underfill = 0, pixels = 0, begins = 0;
 
   void closeWindow() { if (open && !(cx == 0 && cy == wh)) underfill++; open = false; }
-  void startWrite() {}
+  void startWrite() { begins++; }                 // transactions SPI ouvertes (une par image affichée attendue)
   void endWrite() { closeWindow(); }
   void setAddrWindow(int x, int y, int w, int h) {
     closeWindow();
@@ -99,8 +99,9 @@ int main(int argc, char** argv) {
     FakeTft tft; tft.fill(c.bg);
     static uint16_t rowBuf[240];
     uint32_t shown = 0;
-    play(c, scratch.data(), tft, rowBuf, [&](uint32_t, uint16_t) { tft.dump(); shown++; return true; });
-    fprintf(stderr, "shown=%u windows=%ld overflow=%ld underfill=%ld pixels=%ld\n", shown, tft.windows, tft.overflow, tft.underfill, tft.pixels);
+    const uint32_t maxShown = argc > 3 ? (uint32_t)atoi(argv[3]) : 0xFFFFFFFFu;   // clip en boucle (loops = 0) : on s'arrête après max images
+    play(c, scratch.data(), tft, rowBuf, [&](uint32_t, uint16_t) { tft.dump(); shown++; return shown < maxShown; });
+    fprintf(stderr, "shown=%u windows=%ld overflow=%ld underfill=%ld pixels=%ld begins=%ld\n", shown, tft.windows, tft.overflow, tft.underfill, tft.pixels, tft.begins);
     return 0;
   }
   return 2;

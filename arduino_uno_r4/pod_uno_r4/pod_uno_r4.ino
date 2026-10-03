@@ -50,7 +50,7 @@
 
 #define SERVER_HOST       "proof-of-draw.vercel.app"
 #define SCREEN_TYPE       "tft28"            // profil serveur 240×320 RGB565 (lib/screenProfiles.ts)
-#define FIRMWARE_VERSION  "r4tft28-2.1"
+#define FIRMWARE_VERSION  "r4tft28-2.2"
 #define TOUCH_ENABLED     1                  // toucher = afficher / cacher le cartel
 #define PULL_INTERVAL     60000UL
 #define VALIDATE_INTERVAL 30000UL
@@ -147,6 +147,7 @@ static bool g_quietHttp = false;                  // pas de ligne [HTTP] pour ch
 
 static char     g_body[3072];                   // corps JSON des réponses
 static uint16_t g_row[SCR_W];                   // une ligne d'image (octets little-endian reçus, puis big-endian pour le bus)
+static void fastPixels(const uint16_t* colors, uint32_t len);   // envoi d'un bloc de pixels par le cœur SPI (défini avec le banc d'essai)
 
 // ─── LOG ───────────────────────────────────────────────────────────────────
 static void logf(const char* fmt, ...) {
@@ -346,7 +347,7 @@ static void tftStatus(const String& line1, const String& line2 = "", uint16_t bg
 static void pushRow(int y) {
   tft.startWrite();
   tft.setAddrWindow(0, y, SCR_W, 1);
-  tft.writePixels(g_row, SCR_W, true, true);
+  fastPixels(g_row, SCR_W);                  // envoi par bloc (voir « BANC D'ESSAI » plus bas) au lieu de deux appels SPI par pixel
   tft.endWrite();
 }
 static void swapRowBytes() {
@@ -756,13 +757,32 @@ static bool doValidate() {
 }
 
 // ─── BANC D'ESSAI D'ANIMATION ───────────────────────────────────────────────
+// Envoi des pixels PAR BLOCS. Adafruit_SPITFT::writePixels envoie, sur la R4, chaque pixel par deux appels SPI.transfer(octet) séparés (≈ 4,3 µs par
+// pixel mesuré au banc d'essai). Le cœur R4 sait envoyer un bloc en mots de 32 bits : on l'appelle directement. transfer(buf, n) écrase le tampon
+// avec la réception, d'où la copie dans g_tx32 (alignée 32 bits). La fenêtre d'adressage reste posée par la bibliothèque (DC déjà haut après RAMWR).
+static uint32_t g_tx32[SCR_W / 2];                  // 480 o : une ligne de 240 pixels RGB565
+static void fastPixels(const uint16_t* colors, uint32_t len) {
+  if (!len || len > (uint32_t)SCR_W) return;
+  const uint32_t bytes = len * 2;
+  memcpy(g_tx32, colors, bytes);
+  SPI.transfer((void*)g_tx32, bytes);
+}
+/** Même interface que Adafruit_ILI9341 pour pod_bench.h, mais writePixels passe par fastPixels. */
+struct FastTft {
+  void startWrite() { tft.startWrite(); }
+  void endWrite() { tft.endWrite(); }
+  void setAddrWindow(int x, int y, int w, int h) { tft.setAddrWindow(x, y, w, h); }
+  void writePixels(uint16_t* c, uint32_t len, bool, bool) { fastPixels(c, len); }
+};
+
 static void postBenchResult(const String& clipId, uint32_t frames, unsigned long expectedMs, unsigned long elapsedMs, unsigned long workSumUs,
-                            unsigned long workMaxUs, uint32_t overruns, unsigned long maxLateMs, unsigned long downloadMs, size_t bytes,
-                            bool stopped, const char* error) {
+                            unsigned long workMaxUs, uint32_t overruns, unsigned long maxLateMs, long minSlackMs, unsigned long downloadMs,
+                            size_t bytes, bool stopped, const char* error) {
   String body = "{\"deviceId\":\"" + deviceId + "\",\"clipId\":\"" + clipId + "\",\"frames\":" + String(frames)
               + ",\"expectedMs\":" + String(expectedMs) + ",\"elapsedMs\":" + String(elapsedMs)
               + ",\"avgWorkUs\":" + String(frames ? workSumUs / frames : 0UL) + ",\"maxWorkUs\":" + String(workMaxUs)
-              + ",\"overruns\":" + String(overruns) + ",\"maxLateMs\":" + String(maxLateMs) + ",\"downloadMs\":" + String(downloadMs)
+              + ",\"overruns\":" + String(overruns) + ",\"maxLateMs\":" + String(maxLateMs) + ",\"minSlackMs\":" + String(minSlackMs)
+              + ",\"downloadMs\":" + String(downloadMs)
               + ",\"bytes\":" + String((unsigned long)bytes) + ",\"heapFree\":" + String((unsigned long)freeHeapBytes())
               + ",\"stopped\":" + (stopped ? "true" : "false");
   if (error) body += String(",\"error\":\"") + error + "\"";
@@ -771,13 +791,34 @@ static void postBenchResult(const String& clipId, uint32_t frames, unsigned long
   httpCall("POST", "/api/bench/result", &body, resp);
 }
 
+/** Un contrôle rapide : mode actif ? quel clip ? Retourne 1 = lu, 0 = échec réseau/lecture (429 compris). */
+static int benchPollOnce(bool& mode, String& clipId, size_t& bytes) {
+  String resp;
+  g_quietHttp = true;
+  const int code = httpCall("GET", "/api/bench/poll?deviceId=" + deviceId, nullptr, resp);
+  g_quietHttp = false;
+  if (code == 429) return 0;
+  if (code != 200) { logf("[BENCH] poll en erreur (%d)", code); return 0; }
+  JSON_DOC(doc, 384);
+  if (deserializeJson(doc, resp)) return 0;
+  mode = doc["mode"] | false;
+  JsonObject c = doc["clip"];
+  clipId = ""; bytes = 0;
+  if (!c.isNull()) { clipId = c["clipId"] | ""; bytes = (size_t)(c["bytes"] | 0); }
+  return 1;
+}
+
+enum BenchStop : uint8_t { BS_DONE = 0, BS_TOUCH, BS_CHECK, BS_CAP };
+#define BENCH_LOOP_CHECK_MS 20000UL                 // clip en boucle : on vérifie auprès du serveur toutes les 20 s (l'animation se fige ~2 s)
+#define BENCH_LOOP_MAX_MS   (60UL * 60UL * 1000UL)  // et on s'arrête de toute façon au bout d'une heure
+
 /** Télécharge le clip (TLS fermé ensuite), le valide entièrement, le joue en mesurant, renvoie les mesures, puis remet l'œuvre (carte SD). */
 static void playBenchClip(const String& clipId, size_t announced) {
   logf("[BENCH] clip %s : %u octets annoncés", clipId.c_str(), (unsigned)announced);
   lastBenchClipId = clipId;                                   // jamais rejoué en boucle, même en cas d'échec
   if (announced < (size_t)(BENCH_HDR + 5 + BENCH_FRAME) || announced > BENCH_MAX_CLIP) {
     logf("[BENCH] taille refusée (%u)", (unsigned)announced);
-    postBenchResult(clipId, 0, 0, 0, 0, 0, 0, 0, 0, announced, false, "taille refusee");
+    postBenchResult(clipId, 0, 0, 0, 0, 0, 0, 0, 0, 0, announced, false, "taille refusee");
     return;
   }
   uint8_t* clip = (uint8_t*)malloc(announced);
@@ -785,7 +826,7 @@ static void playBenchClip(const String& clipId, size_t announced) {
   if (!clip || !cur) {
     free(clip); free(cur);
     logf("[BENCH] mémoire insuffisante");
-    postBenchResult(clipId, 0, 0, 0, 0, 0, 0, 0, 0, announced, false, "memoire");
+    postBenchResult(clipId, 0, 0, 0, 0, 0, 0, 0, 0, 0, announced, false, "memoire");
     return;
   }
 
@@ -804,39 +845,61 @@ static void playBenchClip(const String& clipId, size_t announced) {
   if (!got || perr != podbench::OK) {
     logf("[BENCH] clip refusé (%s)", got ? podbench::errName(perr) : "téléchargement incomplet");
     free(clip); free(cur);
-    postBenchResult(clipId, 0, 0, 0, 0, 0, 0, 0, downloadMs, announced, false, got ? "clip invalide" : "telechargement");
+    postBenchResult(clipId, 0, 0, 0, 0, 0, 0, 0, 0, downloadMs, announced, false, got ? "clip invalide" : "telechargement");
     return;
   }
-  logf("[BENCH] reçu en %lu ms — %u images x %u boucle(s), lecture", downloadMs, (unsigned)pc.frames, (unsigned)pc.loops);
+  const bool infinite = (pc.loops == 0);
+  logf("[BENCH] reçu en %lu ms — %u images, %s, lecture", downloadMs, (unsigned)pc.frames, infinite ? "EN BOUCLE (toucher = arrêt)" : (String((unsigned)pc.loops) + " boucle(s)").c_str());
 
   tft.setRotation(0);
   tft.fillScreen(pc.bg);
   cartelVisible = false;                                      // l'écran est désormais celui du banc d'essai
+  FastTft ft;
   uint32_t frames = 0, overruns = 0;
-  unsigned long workSum = 0, workMax = 0, maxLate = 0, expectedMs = 0, lastTouchChk = millis();
+  unsigned long workSum = 0, workMax = 0, maxLate = 0, expectedMs = 0, elapsedMs = 0, lastTouchChk = millis();
+  long minSlack = 0x7FFFFFFF;
   bool stopped = false;
-  const unsigned long t0 = millis();
-  unsigned long target = t0;                                  // instant où l'image courante DOIT apparaître
-  unsigned long workStartUs = micros();
-  const bool completed = podbench::play(pc, cur, tft, g_row, [&](uint32_t k, uint16_t delayMs) -> bool {
-    const unsigned long workUs = micros() - workStartUs;       // appliquer la différence + peindre
-    if (k > 0) { const long late = (long)(millis() - target); if (late > 5) { overruns++; if ((unsigned long)late > maxLate) maxLate = (unsigned long)late; } }
-    workSum += workUs; if (workUs > workMax) workMax = workUs;
-    frames++; expectedMs += delayMs;
-    target += delayMs;                                         // horloge ABSOLUE : pas de dérive cumulée
-    while ((long)(millis() - target) < 0) {
-      if (touchOk && millis() - lastTouchChk > 200UL) { lastTouchChk = millis(); if (ts.touched()) { drainTouch(); stopped = true; return false; } }
-      delay(1);
-    }
-    workStartUs = micros();
-    return true;
-  });
-  (void)completed;
-  const unsigned long elapsed = millis() - t0;
-  logf("[BENCH] lecture %s : %lu images en %lu ms (prévu %lu) — travail moy %lu us, max %lu us, retards %lu (max %lu ms)",
-       stopped ? "INTERROMPUE" : "terminée", (unsigned long)frames, elapsed, expectedMs, frames ? workSum / frames : 0UL, workMax, (unsigned long)overruns, maxLate);
+  const unsigned long tStart = millis();
+  unsigned long lastCheck = tStart;
+  BenchStop why = BS_DONE;
+  for (;;) {
+    const unsigned long segStart = millis();
+    unsigned long target = segStart;                          // instant où l'image courante DOIT commencer à apparaître
+    unsigned long startedMs = segStart;                       // instant où sa peinture a réellement commencé
+    unsigned long workStartUs = micros();
+    why = BS_DONE;
+    podbench::play(pc, cur, ft, g_row, [&](uint32_t, uint16_t delayMs) -> bool {
+      const unsigned long workUs = micros() - workStartUs;     // appliquer la différence + peindre
+      const long late = (long)(startedMs - target);            // RETARD DE DÉMARRAGE : > 0 seulement si l'image précédente a débordé sur son délai
+      if (late > 5) { overruns++; if ((unsigned long)late > maxLate) maxLate = (unsigned long)late; }
+      workSum += workUs; if (workUs > workMax) workMax = workUs;
+      frames++; expectedMs += delayMs;
+      target += delayMs;                                       // horloge ABSOLUE : pas de dérive cumulée
+      const long slack = (long)(target - millis());            // marge restante avant l'image suivante (négative = en retard)
+      if (slack < minSlack) minSlack = slack;
+      while ((long)(millis() - target) < 0) {
+        if (touchOk && millis() - lastTouchChk > 200UL) { lastTouchChk = millis(); if (ts.touched()) { drainTouch(); stopped = true; why = BS_TOUCH; return false; } }
+        delay(1);
+      }
+      if (infinite && millis() - lastCheck >= BENCH_LOOP_CHECK_MS) { why = BS_CHECK; return false; }
+      if (infinite && millis() - tStart > BENCH_LOOP_MAX_MS) { why = BS_CAP; return false; }
+      startedMs = millis(); workStartUs = micros();
+      return true;
+    });
+    elapsedMs += millis() - segStart;
+    if (why != BS_CHECK) break;
+    // Clip en boucle : le serveur veut-il toujours CE clip ? (un nouvel envoi ou l'arrêt du mode interrompt la boucle)
+    bool mode = true; String id; size_t b = 0;
+    const int ok = benchPollOnce(mode, id, b);
+    lastCheck = millis();
+    if (ok && !mode) { benchMode = false; logf("[BENCH] mode terminé côté serveur : fin de la boucle"); break; }
+    if (ok && id.length() > 0 && id != clipId) { logf("[BENCH] nouveau clip %s : fin de la boucle", id.c_str()); break; }
+  }
+  logf("[BENCH] lecture %s : %lu images en %lu ms (prévu %lu) — travail moy %lu us, max %lu us, retards de démarrage %lu (max %lu ms), marge min %ld ms",
+       why == BS_TOUCH ? "INTERROMPUE (toucher)" : "terminée", (unsigned long)frames, elapsedMs, expectedMs, frames ? workSum / frames : 0UL, workMax,
+       (unsigned long)overruns, maxLate, minSlack == 0x7FFFFFFF ? 0L : minSlack);
   free(clip); free(cur);                                      // libérés AVANT d'ouvrir une connexion TLS pour les mesures
-  postBenchResult(clipId, frames, expectedMs, elapsed, workSum, workMax, overruns, maxLate, downloadMs, announced, stopped, nullptr);
+  postBenchResult(clipId, frames, expectedMs, elapsedMs, workSum, workMax, overruns, maxLate, minSlack == 0x7FFFFFFF ? 0L : minSlack, downloadMs, announced, stopped, nullptr);
   if (sdFrameValid) {                                         // l'œuvre revient depuis la carte SD
     const unsigned long tr = millis();
     if (restoreRows(0, SCR_H)) logf("[BENCH] œuvre remise en place depuis la carte SD en %lu ms", millis() - tr);
@@ -844,19 +907,9 @@ static void playBenchClip(const String& clipId, size_t announced) {
 }
 
 static void doBenchPoll() {
-  String resp;
-  g_quietHttp = true;
-  const int code = httpCall("GET", "/api/bench/poll?deviceId=" + deviceId, nullptr, resp);
-  g_quietHttp = false;
-  if (code == 429) return;
-  if (code != 200) { logf("[BENCH] poll en erreur (%d)", code); return; }
-  JSON_DOC(doc, 384);
-  if (deserializeJson(doc, resp)) return;
-  if (!(doc["mode"] | false)) { benchMode = false; logf("[BENCH] mode terminé côté serveur"); return; }
-  JsonObject c = doc["clip"];
-  if (c.isNull()) return;
-  const String id = c["clipId"] | "";
-  const size_t bytes = (size_t)(c["bytes"] | 0);
+  bool mode = false; String id; size_t bytes = 0;
+  if (!benchPollOnce(mode, id, bytes)) return;
+  if (!mode) { benchMode = false; logf("[BENCH] mode terminé côté serveur"); return; }
   if (id.length() > 0 && id != lastBenchClipId) playBenchClip(id, bytes);
 }
 

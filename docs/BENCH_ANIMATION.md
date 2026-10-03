@@ -1,7 +1,7 @@
 # Banc d'essai d'animation — TFT 2.8" tactile (v1, preuve de concept)
 
 Statut : **code complet et testé sur PC (codeur, lecteur firmware, API) — PAS encore essayé sur la carte.** Page : `/bench` (lien « 🧪 Banc d'essai »
-sur la carte de l'appareil dans Mon profil). Firmware : `r4tft28-2.1`.
+sur la carte de l'appareil dans Mon profil). Firmware : `r4tft28-2.2` (2.1 minimum pour le banc d'essai).
 
 ## Le principe
 
@@ -44,7 +44,7 @@ Un octet source = 8 pixels = **exactement 15 pixels** à l'écran (×15/8) : pas
 ```
 [BENCH] mode banc d'essai ACTIVÉ par l'app …
 [BENCH] reçu en … ms — N images x L boucle(s)
-[BENCH] lecture terminée : … images en … ms (prévu …) — travail moy … us, max … us, retards …
+[BENCH] lecture terminée : … images en … ms (prévu …) — travail moy … us, max … us, retards de démarrage …, marge min …
 ```
 et la carte « Mesures » de la page. Questions auxquelles ça répond : **débit réel du Wi-Fi** (Ko/s), **temps de peinture par octet modifié**, **images/s maximales**
 (pire cas = plein écran clignotant), **marge de tas** pendant la lecture.
@@ -68,6 +68,23 @@ et la carte « Mesures » de la page. Questions auxquelles ça répond : **débi
 - **Images** : ＋ ⎘ ✕, reculer / avancer dans la timeline, ← → pour naviguer, espace pour lire ; **inverser le sens**, **aller-retour**.
 - **Transformer** : inverser, effacer, miroir, retourner, décaler (1–16 px, bouclé). **Mouvement** : génère N images en décalant l'image courante de (dx, dy) à chaque image.
 - Les primitives (`lib/bench/draw.ts`) sont **pures** (copie sur écriture : l'historique ne copie que des références) et testées : `tests/benchDraw.test.ts`, `tests/benchHistory.test.ts`.
+
+## Performance et boucle sans fin (firmware 2.2, 03/10)
+
+Premier essai mesuré : 24 images en 2 400 ms, travail moyen 39,6 ms (max 124,8 ms), « 23 en retard », téléchargement 1,96 s. Diagnostic :
+
+- **Ce n'est ni le tampon, ni l'absence de carte SD.** Le clip est entièrement en RAM pendant la lecture ; la SD n'y change rien.
+- **Cause réelle du temps de travail** : `Adafruit_SPITFT::writePixels` envoie, sur la R4, chaque pixel par **deux appels `SPI.transfer(octet)`** séparés (≈ 4,3 µs/pixel).
+  Le firmware 2.2 appelle directement le transfert **par bloc** du cœur R4 (`SPI.transfer(buf, n)`, mots de 32 bits) pour les images du banc d'essai et pour `pushRow`/`restoreRows`
+  (dessin plein écran, restauration depuis la SD), et ouvre **une seule transaction SPI par image affichée** (au lieu d'une par segment).
+- **Les « retards » étaient un artefact de mesure** : le retard était calculé en fin de peinture contre l'instant prévu de DÉBUT, donc le temps de travail comptait comme du retard.
+  La cadence de 10 images/s était en réalité tenue. Désormais : **retard de démarrage** = début réel de la peinture − début prévu (seuil 5 ms) et **marge min** =
+  plus petite durée restante entre la fin de la peinture et l'image suivante (négative = débordement). La capacité ≈ 1 / travail moyen est affichée.
+- **Boucle sans fin** : case « ∞ en boucle » (`loops = 0` dans le clip). La lecture dure jusqu'à un **toucher**, un **nouvel envoi**, la fin du mode banc d'essai ou **1 h**.
+  Toutes les 20 s l'écran fait un contrôle rapide du serveur (l'animation se fige ~1–2 s) ; un nouveau clip ou la fin du mode interrompt la boucle.
+- **À quoi servirait la carte SD** (non nécessaire ici) : clips > 9 Ko, persistance après redémarrage, restauration de l'œuvre à la fin de la lecture (déjà faite si la SD est présente).
+
+À re-mesurer après reflash : « travail moy » (attendu ≈ 5–10 fois plus bas), « marge min » positive, et une animation en boucle qui ne s'arrête qu'au toucher.
 
 ## Passer le banc d'essai « en réel » : faisabilité
 

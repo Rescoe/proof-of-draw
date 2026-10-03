@@ -340,7 +340,7 @@ export default function BenchClient() {
       if (fr.some((f) => f.length !== CLIP.FRAME_BYTES)) throw new Error("images invalides");
       setPlaying(false);
       dispatch({ type: "commit", fn: () => ({ frames: fr, delays: fr.map((_, i) => Math.max(20, Math.min(2550, Number(j.delays?.[i]) || 100))), cur: 0, handmade: true }) });
-      setLoops(Math.max(1, Math.min(CLIP.MAX_LOOPS, Number(j.loops) || 1))); setFg(/^#[0-9a-f]{6}$/i.test(j.fg) ? j.fg : "#00ff88"); setBg(/^#[0-9a-f]{6}$/i.test(j.bg) ? j.bg : "#000000");
+      setLoops(j.loops === 0 ? 0 : Math.max(1, Math.min(CLIP.MAX_LOOPS, Number(j.loops) || 1))); setFg(/^#[0-9a-f]{6}$/i.test(j.fg) ? j.fg : "#00ff88"); setBg(/^#[0-9a-f]{6}$/i.test(j.bg) ? j.bg : "#000000");
       setTitle(String(j.title ?? "")); setMsg({ ok: true, text: "Projet importé (vous pouvez annuler avec Ctrl+Z)." });
     } catch (e) { setMsg({ ok: false, text: `Import impossible : ${e instanceof Error ? e.message : "fichier illisible"}` }); }
   };
@@ -528,9 +528,13 @@ export default function BenchClient() {
             <button type="button" style={{ ...btn, marginTop: 4 }} onClick={() => edit((d) => ({ ...d, delays: d.delays.map(() => d.delays[d.cur] ?? 100) }))}>Appliquer à toutes</button>
           </div>
           <div>
-            <div style={label}>Boucles : {loops}</div>
-            <input type="range" min={1} max={30} value={loops} onChange={(e) => setLoops(Number(e.target.value))} style={{ width: "100%" }} aria-label="Boucles" />
-            <p style={muted}>Durée de lecture ≈ {(playMs / 1000).toFixed(1)} s</p>
+            <div style={label}>Boucles : {loops === 0 ? "∞" : loops}</div>
+            <input type="range" min={1} max={30} value={Math.max(1, loops)} disabled={loops === 0} onChange={(e) => setLoops(Number(e.target.value))} style={{ width: "100%" }} aria-label="Boucles" />
+            <label style={{ display: "flex", gap: 6, alignItems: "center", fontSize: "0.78rem", marginTop: 4 }}>
+              <input type="checkbox" checked={loops === 0} onChange={(e) => setLoops(e.target.checked ? 0 : 3)} />
+              ∞ en boucle (jusqu&apos;au toucher ou au prochain envoi)
+            </label>
+            <p style={muted}>{loops === 0 ? `Un tour ≈ ${(playMs / 1000).toFixed(1)} s` : `Durée de lecture ≈ ${(playMs / 1000).toFixed(1)} s`}</p>
           </div>
           <div>
             <div style={label}>Couleurs (allumé / fond)</div>
@@ -613,11 +617,13 @@ function ResultRow({ r }: { r: BenchResult }) {
   const ok = !r.error && r.overruns === 0;
   return (
     <div style={{ padding: "0.5rem 0.7rem", borderRadius: 8, border: `1px solid ${r.error ? "rgba(248,113,113,0.4)" : ok ? "rgba(74,222,128,0.3)" : "rgba(251,146,60,0.4)"}`, background: "var(--bg)", fontSize: "0.78rem", lineHeight: 1.5 }}>
-      <strong style={{ color: r.error ? "#f87171" : ok ? "#4ade80" : "#fb923c" }}>{r.error ? `✗ ${r.error}` : ok ? "✓ cadence tenue" : `⚠ ${r.overruns} image(s) en retard`}</strong>{" "}
+      <strong style={{ color: r.error ? "#f87171" : ok ? "#4ade80" : "#fb923c" }}>{r.error ? `✗ ${r.error}` : ok ? "✓ cadence tenue" : `⚠ ${r.overruns} image(s) démarrée(s) en retard`}</strong>{" "}
       <span style={{ color: "var(--text3)" }}>clip {r.clipId} · {new Date(r.at).toLocaleTimeString()}{r.stopped ? " · interrompu au toucher" : ""}</span>
       <div style={{ color: "var(--text2)" }}>
         {r.frames} images en {secs.toFixed(2)} s (prévu {(r.expectedMs / 1000).toFixed(2)} s) → <strong>{fps.toFixed(1)} images/s</strong> ·
-        travail par image : moy. {(r.avgWorkUs / 1000).toFixed(1)} ms, max {(r.maxWorkUs / 1000).toFixed(1)} ms · retard max {r.maxLateMs} ms ·
+        travail par image : moy. {(r.avgWorkUs / 1000).toFixed(1)} ms, max {(r.maxWorkUs / 1000).toFixed(1)} ms
+        {r.avgWorkUs > 0 ? ` (capacité ≈ ${Math.floor(1_000_000 / r.avgWorkUs)} images/s)` : ""} · retard de démarrage max {r.maxLateMs} ms
+        {r.minSlackMs !== undefined ? ` · marge min ${r.minSlackMs} ms` : ""} ·
         téléchargement {(r.downloadMs / 1000).toFixed(2)} s ({r.bytes} o{r.downloadMs > 0 ? `, ≈ ${(r.bytes / (r.downloadMs / 1000) / 1000).toFixed(0)} Ko/s` : ""}) · tas libre {(r.heapFree / 1000).toFixed(1)} Ko
       </div>
     </div>

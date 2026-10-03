@@ -7,7 +7,7 @@
 //
 // Format binaire « PBC1 » (little-endian) — MÊME contrat que arduino_uno_r4/pod_uno_r4/pod_bench.h (testé octet pour octet) :
 //   En-tête 20 o : 0..3 "PBC1" · 4 version (1) · 5 largeur (128) · 6 hauteur (64) · 7 drapeaux (0)
-//                  8..9 N images (1..64) · 10 boucles (1..100) · 11 réservé (0) · 12..13 couleur « allumé » RGB565 · 14..15 couleur « éteint » RGB565
+//                  8..9 N images (1..64) · 10 boucles (0..100 ; 0 = EN BOUCLE jusqu'à un toucher ou au prochain envoi) · 11 réservé (0) · 12..13 couleur « allumé » RGB565 · 14..15 couleur « éteint » RGB565
 //                  16..17 T transitions (= N si N > 1, sinon 0) · 18..19 taille du corps
 //   Corps : étape 0 = u8 délai (×10 ms) + 1024 o de l'image 0 (lignes de 16 octets, MSB = pixel de gauche)
 //           puis T transitions : u8 délai (×10 ms) · u16 nbRuns · nbRuns × ( u16 décalage · u8 longueur 1..255 · octets )
@@ -53,8 +53,9 @@ export interface DecodedClip extends ClipInput {
 
 const delayUnits = (ms: number) => Math.max(2, Math.min(255, Math.round(ms / 10)));
 
+/** Durée de lecture ; `loops = 0` (en boucle) : la durée d'UN tour. */
 export function clipPlayMs(delaysMs: number[], loops: number): number {
-  return delaysMs.reduce((a, d) => a + delayUnits(d) * 10, 0) * loops;
+  return delaysMs.reduce((a, d) => a + delayUnits(d) * 10, 0) * Math.max(1, loops);
 }
 
 /** Contrôles communs (serveur ET interface) : retourne un message d'erreur lisible, ou null si le clip est acceptable. */
@@ -63,7 +64,7 @@ export function validateClipInput(input: ClipInput): string | null {
   if (n < 1 || n > CLIP.MAX_FRAMES) return `1 à ${CLIP.MAX_FRAMES} images (reçu ${n})`;
   if (input.delaysMs.length !== n) return "un délai par image est requis";
   for (const f of input.frames) if (!(f instanceof Uint8Array) || f.length !== CLIP.FRAME_BYTES) return `chaque image doit faire ${CLIP.FRAME_BYTES} octets`;
-  if (!Number.isInteger(input.loops) || input.loops < 1 || input.loops > CLIP.MAX_LOOPS) return `boucles : 1 à ${CLIP.MAX_LOOPS}`;
+  if (!Number.isInteger(input.loops) || input.loops < 0 || input.loops > CLIP.MAX_LOOPS) return `boucles : 0 (en boucle) à ${CLIP.MAX_LOOPS}`;
   for (const c of [input.fg, input.bg]) if (!Number.isInteger(c) || c < 0 || c > 0xffff) return "couleur RGB565 invalide";
   if (input.delaysMs.some((d) => !Number.isFinite(d))) return "délai invalide";
   if (clipPlayMs(input.delaysMs, input.loops) > CLIP.MAX_PLAY_MS) return `durée totale > ${CLIP.MAX_PLAY_MS / 1000} s`;
@@ -141,7 +142,7 @@ export function decodeClip(bin: Uint8Array): DecodedClip {
   if (bin[4] !== CLIP.VERSION) fail("version");
   if (bin[5] !== CLIP.W || bin[6] !== CLIP.H || bin[7] !== 0 || bin[11] !== 0) fail("dimensions / drapeaux");
   const n = dv.getUint16(8, true), loops = bin[10], transitions = dv.getUint16(16, true), bodyBytes = dv.getUint16(18, true);
-  if (n < 1 || n > CLIP.MAX_FRAMES || loops < 1 || loops > CLIP.MAX_LOOPS) fail("compteurs");
+  if (n < 1 || n > CLIP.MAX_FRAMES || loops > CLIP.MAX_LOOPS) fail("compteurs");
   if (transitions !== (n > 1 ? n : 0)) fail("transitions");
   if (CLIP.HEADER_BYTES + bodyBytes + 4 !== bin.length) fail("taille");
   if (dv.getUint32(CLIP.HEADER_BYTES + bodyBytes, true) !== crc32(bin.subarray(0, CLIP.HEADER_BYTES + bodyBytes))) fail("CRC");

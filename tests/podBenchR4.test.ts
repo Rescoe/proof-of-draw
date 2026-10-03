@@ -54,12 +54,12 @@ function expectedScreen(frame: Uint8Array, fg: number, bg: number): Buffer {
   return out;
 }
 
-function play(clip: Uint8Array) {
-  const r = spawnSync(exe, ["play", hexFile(clip)], { maxBuffer: 512 * 1024 * 1024 });
+function play(clip: Uint8Array, maxFrames?: number) {
+  const r = spawnSync(exe, ["play", hexFile(clip), ...(maxFrames ? [String(maxFrames)] : [])], { maxBuffer: 512 * 1024 * 1024 });
   assert.equal(r.status, 0, `harness: ${r.stderr?.toString()}`);
-  const m = /shown=(\d+) windows=(\d+) overflow=(\d+) underfill=(\d+) pixels=(\d+)/.exec(r.stderr.toString());
+  const m = /shown=(\d+) windows=(\d+) overflow=(\d+) underfill=(\d+) pixels=(\d+) begins=(\d+)/.exec(r.stderr.toString());
   assert.ok(m, "statistiques absentes");
-  return { screens: r.stdout as Buffer, shown: +m[1], windows: +m[2], overflow: +m[3], underfill: +m[4], pixels: +m[5] };
+  return { screens: r.stdout as Buffer, shown: +m[1], windows: +m[2], overflow: +m[3], underfill: +m[4], pixels: +m[5], begins: +m[6] };
 }
 
 test("le zoom ×15/8 est exact : 8 pixels source = 15 pixels, 128 colonnes = 240, 64 lignes = 120", () => {
@@ -165,4 +165,29 @@ test("DIFFÉRENTIEL : sur ~2 000 clips mutés (CRC re-signé), le firmware accep
     assert.equal(fwOk, expected[i], `clip muté n°${i} : firmware=${out[i]} décodeur TS=${expected[i] ? "OK" : "refus"}`);
   }
   assert.ok(accepted > 20 && accepted < out.length - 20, `jeu de mutations peu discriminant (${accepted} acceptés sur ${out.length})`);
+});
+
+test("TRANSACTIONS : une seule transaction SPI par image affichée (et non une par fenêtre) — c'était un coût majeur sur la R4", { skip }, () => {
+  const r = rng(21);
+  const frames = Array.from({ length: 6 }, () => randFrame(r, 0.15));
+  const res = play(encodeClip(mk(frames, { loops: 2 })));
+  assert.equal(res.begins, res.shown, `${res.begins} transactions pour ${res.shown} images`);
+  assert.ok(res.windows > res.shown * 4, "alors qu'il y a bien beaucoup plus de fenêtres d'adressage que d'images");
+});
+
+test("EN BOUCLE (loops = 0) : le clip tourne sans fin jusqu'à l'arrêt du hook ; chaque image affichée reste correcte, retour à l'image 0 compris", { skip }, () => {
+  const r = rng(33);
+  for (const nFrames of [1, 3, 5]) {
+    const frames = Array.from({ length: nFrames }, () => randFrame(r, 0.1));
+    const clip = encodeClip(mk(frames, { loops: 0 }));
+    const dec = decodeClip(clip);
+    assert.equal(dec.loops, 0);
+    const wanted = nFrames * 3 + 2;                         // plus de deux tours complets : le retour à l'image 0 est exercé plusieurs fois
+    const res = play(clip, wanted);
+    assert.equal(res.shown, wanted, `N=${nFrames} : le hook arrête la lecture`);
+    assert.equal(res.overflow, 0); assert.equal(res.underfill, 0);
+    const size = 240 * 320 * 2;
+    for (let k = 0; k < res.shown; k++)
+      assert.ok(Buffer.compare(res.screens.subarray(k * size, (k + 1) * size), expectedScreen(dec.frames[k % nFrames], dec.fg, dec.bg)) === 0, `N=${nFrames} image affichée n°${k}`);
+  }
 });

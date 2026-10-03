@@ -76,7 +76,7 @@ inline Err parse(const uint8_t* p, size_t n, Clip& c, uint8_t* scratch) {
   if (p[5] != W || p[6] != H || p[7] != 0 || p[11] != 0) return ERR_GEOM;
   const uint16_t frames = rd16(p + 8), trans = rd16(p + 16), body = rd16(p + 18);
   const uint8_t loops = p[10];
-  if (frames < 1 || frames > MAX_FRAMES || loops < 1 || loops > MAX_LOOPS) return ERR_COUNTS;
+  if (frames < 1 || frames > MAX_FRAMES || loops > MAX_LOOPS) return ERR_COUNTS;      // loops = 0 : en boucle jusqu'à ce que le hook s'arrête
   if (trans != (frames > 1 ? frames : 0)) return ERR_COUNTS;
   if ((size_t)HEADER_BYTES + body + 4 != n) return ERR_SIZE;
   if (rd32(p + HEADER_BYTES + body) != crc32(p, (size_t)HEADER_BYTES + body)) return ERR_CRC;
@@ -106,7 +106,10 @@ inline Err parse(const uint8_t* p, size_t n, Clip& c, uint8_t* scratch) {
 inline int ux(int sx) { return (sx * 15) / 8; }   // colonne destination du pixel source sx (début)
 inline int uy(int sy) { return (sy * 15) / 8; }
 
-/** Peint `len` octets consécutifs (8 px chacun) de la ligne source y, à partir de l'octet b0 : fenêtre de 15·len × (1 ou 2) pixels. rowBuf ≥ 240 pixels. */
+/**
+ * Peint `len` octets consécutifs (8 px chacun) de la ligne source y, à partir de l'octet b0 : fenêtre de 15·len × (1 ou 2) pixels. rowBuf ≥ 240 pixels.
+ * L'appelant a ouvert UNE transaction (startWrite) pour toute la transition : une transaction par segment coûtait cher sur la R4.
+ */
 template <class Tft>
 inline void paintSegment(Tft& tft, const uint8_t* cur, int y, int b0, int len, uint16_t fg, uint16_t bg, uint16_t* rowBuf) {
   uint8_t* d = (uint8_t*)rowBuf;
@@ -121,15 +124,15 @@ inline void paintSegment(Tft& tft, const uint8_t* cur, int y, int b0, int len, u
     }
   }
   const int h = uy(y + 1) - uy(y), wpx = 15 * len;
-  tft.startWrite();
   tft.setAddrWindow(ux(b0 * 8), REG_Y + uy(y), wpx, h);
   for (int k = 0; k < h; k++) tft.writePixels(rowBuf, wpx, true, true);   // bigEndian = true : octets déjà dans l'ordre du bus
-  tft.endWrite();
 }
 
 template <class Tft>
 inline void paintFull(Tft& tft, const uint8_t* cur, uint16_t fg, uint16_t bg, uint16_t* rowBuf) {
+  tft.startWrite();
   for (int y = 0; y < H; y++) paintSegment(tft, cur, y, 0, ROW_BYTES, fg, bg, rowBuf);
+  tft.endWrite();
 }
 
 /** Applique une transition à `cur` ET repeint les seuls octets modifiés ; retourne la suite. (Le clip a été validé par parse().) */
@@ -138,6 +141,7 @@ inline const uint8_t* applyTransition(Tft& tft, const uint8_t* p, uint8_t* cur, 
   *delay = p[0];
   const uint16_t runs = rd16(p + 1);
   p += 3;
+  tft.startWrite();                              // UNE transaction SPI pour toute la transition
   for (uint16_t r = 0; r < runs; r++) {
     int off = rd16(p), len = p[2];
     p += 3;
@@ -150,6 +154,7 @@ inline const uint8_t* applyTransition(Tft& tft, const uint8_t* p, uint8_t* cur, 
       off += seg; len -= seg;
     }
   }
+  tft.endWrite();
   return p;
 }
 
@@ -164,12 +169,12 @@ inline bool play(const Clip& c, uint8_t* cur, Tft& tft, uint16_t* rowBuf, Hook&&
   paintFull(tft, cur, c.fg, c.bg, rowBuf);
   uint32_t shown = 0;
   if (!hook(shown++, (uint16_t)c.delay0 * 10)) return false;
-  if (c.frames == 1) {                          // image fixe : on la garde le temps de `loops` délais
-    for (int l = 1; l < c.loops; l++) if (!hook(shown++, (uint16_t)c.delay0 * 10)) return false;
+  if (c.frames == 1) {                          // image fixe : on la garde le temps de `loops` délais (loops = 0 : jusqu'à l'arrêt du hook)
+    for (int l = 1; c.loops == 0 || l < c.loops; l++) if (!hook(shown++, (uint16_t)c.delay0 * 10)) return false;
     return true;
   }
   const uint8_t* wrap = nullptr;
-  for (int l = 0; l < c.loops; l++) {
+  for (int l = 0; c.loops == 0 || l < c.loops; l++) {
     uint8_t d = 0;
     if (l > 0) {                                // retour à l'image 0 (dernière transition du clip)
       applyTransition(tft, wrap, cur, c.fg, c.bg, rowBuf, &d);

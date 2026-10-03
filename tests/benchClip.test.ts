@@ -77,10 +77,12 @@ test("validation : bornes des images, délais, boucles, durée, couleurs", () =>
   assert.match(validateClipInput(mk(Array.from({ length: 65 }, () => f)))!, /images/);
   assert.match(validateClipInput(mk([new Uint8Array(10)]))!, /1024/);
   assert.match(validateClipInput({ ...mk([f]), delaysMs: [] })!, /délai/);
-  assert.match(validateClipInput(mk([f], { loops: 0 }))!, /boucles/);
+  assert.equal(validateClipInput(mk([f], { loops: 0 })), null, "loops = 0 : en boucle");
+  assert.match(validateClipInput(mk([f], { loops: -1 }))!, /boucles/);
   assert.match(validateClipInput(mk([f], { loops: 101 }))!, /boucles/);
   assert.match(validateClipInput(mk([f], { fg: 70000 }))!, /couleur/);
   assert.match(validateClipInput(mk([f], { delaysMs: [2550], loops: 100 }))!, /durée/);
   assert.equal(clipPlayMs([100, 200], 3), 900);
   assert.equal(clipPlayMs([1], 1), 20);      // plancher 20 ms
+  assert.equal(clipPlayMs([100, 200], 0), 300, "en boucle : la durée d'un tour");
 });

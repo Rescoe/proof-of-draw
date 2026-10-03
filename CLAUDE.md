@@ -267,6 +267,8 @@ Page `/bench` (lien sur la carte de l'appareil) : animation 128×64 1 bit → cl
 (Redis `bench:*`, TTL courts) → firmware `pod_bench.h` (repeint les seuls octets modifiés, ×15/8, mesures renvoyées). `/api/pull` ajoute `benchMode` pour un tft28 quand le mode est actif.
 Détails, format et mesures à rapporter : `docs/BENCH_ANIMATION.md`. Tests : `benchClip`, `podBenchR4` (g++ + validation différentielle).
 Galerie `/gallery-anim` (animations faites à la main, `lib/anim/store.ts`, `anim:*`), export GIF (`lib/bench/gif.ts`), journal par appareil (`bench:log:*`), alerte si le firmware enregistré est < r4tft28-2.1.
+Firmware 2.2 : pixels envoyés PAR BLOC (`fastPixels` = `SPI.transfer(buf, n)` ; `Adafruit_SPITFT::writePixels` fait 2 transferts d'octet par pixel sur la R4), une transaction SPI par image,
+métrique de retard = retard de DÉMARRAGE (+ marge min), `loops = 0` = boucle sans fin (arrêt : toucher / nouvel envoi / fin du mode / 1 h ; contrôle serveur toutes les 20 s).
 
 ## Non-goals
 
