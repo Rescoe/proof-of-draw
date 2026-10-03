@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-require-imports */
 // scripts/sync-bench-header.js — copie les en-têtes partagés du banc d'essai dans chaque dossier de firmware (un dossier de firmware est AUTONOME :
 // il est zippé tel quel par /api/esp-firmware et ouvert seul dans l'IDE Arduino). `node scripts/sync-bench-header.js` ; tests/benchHeaderCopies.test.ts
 // échoue si une copie diverge de son original.

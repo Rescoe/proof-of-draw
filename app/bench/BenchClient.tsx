@@ -16,7 +16,9 @@ import { BENCH_SCREEN_INFO, benchFirmwareOk, benchScreenOf } from "@/lib/bench/s
 import { blank, ellipse, flipH, flipV, floodFill, invert, line, motion, rect, setPixel, shifted, type Brush, type Frame, W, H } from "@/lib/bench/draw";
 import { histReducer, initHist, type Doc } from "@/lib/bench/history";
 
-const DRAFT_KEY = "pod-bench-draft-v1";
+const DRAFT_KEYS = { bench: "pod-bench-draft-v1", studio: "pod-anim-studio-draft-v1" } as const;
+/** « bench » : banc d'essai (modèles de test, mesures, journal). « studio » : atelier de création d'animation (même éditeur, sans les outils de mesure). */
+export type BenchVariant = keyof typeof DRAFT_KEYS;
 const ASSUMED_LINK_BYTES_PER_SEC = 45_000;   // ESTIMATION d'affichage uniquement : la vraie valeur vient des mesures de l'appareil
 
 // ── Utilitaires ──────────────────────────────────────────────────────────────
@@ -134,9 +136,9 @@ const TOOLS: { id: Tool; icon: string; name: string; key: string }[] = [
 ];
 
 interface Draft { frames: string[]; delays: number[]; loops: number; fg: string; bg: string; handmade?: boolean; title?: string; v?: number }
-function loadDraft(): Draft | null {
+function loadDraft(variant: BenchVariant): Draft | null {
   try {
-    const raw = localStorage.getItem(DRAFT_KEY);
+    const raw = localStorage.getItem(DRAFT_KEYS[variant]);
     if (!raw) return null;
     const d = JSON.parse(raw) as Draft;
     // Brouillons d'avant le 03/10 (sans v:2) : leur « 3 boucles » était la valeur par défaut, pas un choix → on passe en boucle sans fin.
@@ -149,8 +151,9 @@ const docFromDraft = (d: Draft | null): Doc => {
   return { frames, delays, cur: 0, handmade: d?.handmade ?? true };
 };
 
-export default function BenchClient() {
-  const [draft] = useState(loadDraft);
+export default function BenchClient({ variant = "bench" }: { variant?: BenchVariant } = {}) {
+  const isStudio = variant === "studio";
+  const [draft] = useState(() => loadDraft(variant));
   const [hist, dispatch] = useReducer(histReducer, draft, (d) => initHist(docFromDraft(d)));
   const { frames, delays, cur: idx } = hist.doc;
   const n = frames.length;
@@ -279,7 +282,7 @@ export default function BenchClient() {
   // ── Brouillon local ────────────────────────────────────────────────────────
   useEffect(() => {
     const t = setTimeout(() => {
-      try { localStorage.setItem(DRAFT_KEY, JSON.stringify({ frames: frames.map(toB64), delays, loops, fg, bg, handmade, title, v: 2 } satisfies Draft)); } catch { /* stockage indisponible */ }
+      try { localStorage.setItem(DRAFT_KEYS[variant], JSON.stringify({ frames: frames.map(toB64), delays, loops, fg, bg, handmade, title, v: 2 } satisfies Draft)); } catch { /* stockage indisponible */ }
     }, 400);
     return () => clearTimeout(t);
   }, [frames, delays, loops, fg, bg, handmade, title]);
@@ -412,15 +415,23 @@ export default function BenchClient() {
 
   return (
     <div style={{ maxWidth: 760, margin: "0 auto", padding: "1.5rem 1rem 3rem" }}>
-      <h1 style={{ fontSize: "1.25rem", fontWeight: 800, margin: "0 0 0.3rem" }}>🧪 Banc d&apos;essai animation <span style={{ ...label, border: "1px solid var(--border)", borderRadius: 999, padding: "0.1rem 0.5rem", verticalAlign: "middle" }}>v1 · test</span></h1>
-      <p style={{ ...muted, marginBottom: "1rem" }}>
-        Dessinez une petite animation 128×64 (comme sur l&apos;OLED). Elle est envoyée sous forme de <strong>différences entre images</strong> et rejouée par l&apos;écran
-        ({screenInfo.geometry}). L&apos;écran renvoie ses mesures : on voit ainsi la vitesse réelle atteinte. Voir aussi la <a href="/gallery-anim" style={{ color: "var(--accent)" }}>galerie Animations</a>.
-      </p>
+      <h1 style={{ fontSize: "1.25rem", fontWeight: 800, margin: "0 0 0.3rem" }}>{isStudio ? "🎞 Atelier d'animation" : "🧪 Banc d'essai animation"} <span style={{ ...label, border: "1px solid var(--border)", borderRadius: 999, padding: "0.1rem 0.5rem", verticalAlign: "middle" }}>{isStudio ? "qualité OLED 128×64" : "v1 · test"}</span></h1>
+      {isStudio ? (
+        <p style={{ ...muted, marginBottom: "1rem" }}>
+          Créez une animation 128×64 en noir et blanc, image par image — la qualité d&apos;un écran OLED. Exportez-la en <strong>GIF</strong>, publiez-la dans la
+          <a href="/gallery-anim" style={{ color: "var(--accent)" }}> galerie Animations</a> ou envoyez-la sur votre écran compatible
+          (TFT 2.8&quot; tactile validé ; TFT 1.8&quot; et OLED : lecture écrite mais pas encore essayée sur le matériel). Pour mesurer la vitesse réelle d&apos;un écran, utilisez le <a href="/bench" style={{ color: "var(--accent)" }}>banc d&apos;essai</a>.
+        </p>
+      ) : (
+        <p style={{ ...muted, marginBottom: "1rem" }}>
+          Dessinez une petite animation 128×64 (comme sur l&apos;OLED). Elle est envoyée sous forme de <strong>différences entre images</strong> et rejouée par l&apos;écran
+          ({screenInfo.geometry}). L&apos;écran renvoie ses mesures : on voit ainsi la vitesse réelle atteinte. Voir aussi la <a href="/gallery-anim" style={{ color: "var(--accent)" }}>galerie Animations</a> et l&apos;<a href="/animer" style={{ color: "var(--accent)" }}>atelier d&apos;animation</a>.
+        </p>
+      )}
 
       {/* 1. Appareil + mode */}
       <div style={card}>
-        <div style={label}>1 · Écran cible</div>
+        <div style={label}>1 · {isStudio ? "Mon écran (facultatif)" : "Écran cible"}</div>
         {devices === null ? <p style={muted}>Chargement…</p> : devices.length === 0 ? (
           <p style={{ ...muted, color: "#fb923c", marginTop: 6 }}>Aucun écran compatible dans votre profil (TFT 2.8&quot; tactile, TFT 1.8&quot; ou OLED). Vous pouvez quand même dessiner, exporter en GIF et enregistrer dans la galerie.</p>
         ) : (
@@ -575,21 +586,21 @@ export default function BenchClient() {
 
       {/* 3. Modèles */}
       <div style={card}>
-        <div style={label}>3 · Modèles de test (remplacent l&apos;animation — annulable)</div>
+        <div style={label}>3 · {isStudio ? "Modèles pour démarrer" : "Modèles de test"} (remplacent l&apos;animation — annulable)</div>
         <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 6, alignItems: "center" }}>
           <button type="button" style={btn} onClick={() => loadAnim(presetBall(), true)}>🏀 Balle</button>
           <button type="button" style={btn} onClick={() => loadAnim(presetWave(), true)}>〰 Vague</button>
-          <button type="button" style={btn} onClick={() => loadAnim(presetNoise(), true)}>▒ Bruit léger</button>
-          <button type="button" style={btn} onClick={() => loadAnim(presetFlash(), true)}>⚡ Plein écran clignotant (pire cas)</button>
+          {!isStudio && <button type="button" style={btn} onClick={() => loadAnim(presetNoise(), true)}>▒ Bruit léger</button>}
+          {!isStudio && <button type="button" style={btn} onClick={() => loadAnim(presetFlash(), true)}>⚡ Plein écran clignotant (pire cas)</button>}
           <input value={text} onChange={(e) => setText(e.target.value.slice(0, 24))} aria-label="Texte défilant" style={{ ...btn, width: 110 }} />
           <button type="button" style={btn} onClick={() => loadAnim(presetText(text), true)}>🔤 Texte défilant</button>
         </div>
-        <p style={{ ...muted, marginTop: 6 }}>Le « plein écran clignotant » change tous les pixels à chaque image : c&apos;est la limite de vitesse de l&apos;écran. Baissez le délai (20 ms minimum) pour la trouver. Un modèle devient « fait à la main » dès que vous le modifiez.</p>
+        <p style={{ ...muted, marginTop: 6 }}>{isStudio ? "" : "Le « plein écran clignotant » change tous les pixels à chaque image : c'est la limite de vitesse de l'écran. Baissez le délai (20 ms minimum) pour la trouver. "}Un modèle devient « fait à la main » dès que vous le modifiez.</p>
       </div>
 
       {/* 4. Envoi + mesures */}
       <div style={card}>
-        <div style={label}>4 · Envoyer et mesurer</div>
+        <div style={label}>4 · {isStudio ? "Enregistrer, exporter, envoyer" : "Envoyer et mesurer"}</div>
         {stats ? (
           <div style={{ display: "flex", gap: "1.2rem", flexWrap: "wrap", margin: "0.5rem 0" }}>
             <div><div style={{ fontWeight: 800, fontSize: "1.05rem", color: sizeColor }}>{stats.bytes} o</div><div style={muted}>clip (max {CLIP.MAX_CLIP_BYTES})</div></div>
@@ -606,7 +617,7 @@ export default function BenchClient() {
           </label>
         </div>
         <button type="button" onClick={send} disabled={busy || !deviceId || !stats || !stats.fitsDevice} style={{ ...btnOn, padding: "0.55rem 1.2rem", fontWeight: 700, opacity: busy || !deviceId || !stats?.fitsDevice ? 0.5 : 1 }}>
-          {busy ? "Envoi…" : "📺 Envoyer au TFT 2.8\""}
+          {busy ? "Envoi…" : isStudio ? "📺 Envoyer à mon écran" : `📺 Envoyer à l'écran (${screenInfo.label})`}
         </button>
         <div style={{ display: "inline-flex", gap: 6, flexWrap: "wrap", marginLeft: 8, verticalAlign: "middle" }}>
           <button type="button" style={btn} onClick={exportGif} disabled={!stats} title="GIF animé ×4 (couleurs de l'écran)">⬇ GIF</button>
@@ -616,6 +627,7 @@ export default function BenchClient() {
         </div>
         {msg && <p role="status" style={{ ...muted, color: msg.ok ? "#4ade80" : "#f87171", marginTop: 8 }}>{msg.text}</p>}
 
+        {!isStudio && <>
         <div style={{ ...label, marginTop: "1rem", display: "flex", gap: 10, alignItems: "center" }}>
           Mesures renvoyées par l&apos;écran
           {status && (status.results.length > 0 || status.log.length > 0) && <button type="button" style={{ ...btn, padding: "2px 8px", fontSize: "0.7rem" }} onClick={clearHistory} title="Efface les mesures et le journal de cet écran">Effacer l&apos;historique</button>}
@@ -625,18 +637,19 @@ export default function BenchClient() {
             {status.results.map((r, i) => <ResultRow key={`${r.clipId}-${r.at}`} r={r} latest={i === 0} />)}
           </div>
         )}
+        </>}
       </div>
 
-      <div style={card}>
+      {!isStudio && <div style={card}>
         <div style={label}>Journal du banc d&apos;essai</div>
         {!status || status.log.length === 0 ? <p style={{ ...muted, marginTop: 4 }}>Rien pour l&apos;instant. Chaque étape y apparaît : mode activé, clip envoyé, écran connecté, clip téléchargé, lecture terminée.</p> : (
           <ul style={{ listStyle: "none", margin: "6px 0 0", padding: 0, fontFamily: "JetBrains Mono, monospace", fontSize: "0.72rem", lineHeight: 1.7, color: "var(--text2)" }}>
             {status.log.map((l, i) => <li key={`${l.t}-${i}`}><span style={{ color: "var(--text3)" }}>{new Date(l.t).toLocaleTimeString()}</span> {l.text}</li>)}
           </ul>
         )}
-      </div>
+      </div>}
 
-      <p style={muted}>Brouillon enregistré dans ce navigateur. Les clips envoyés expirent au bout d&apos;1 h. Un toucher sur l&apos;écran interrompt la lecture.</p>
+      <p style={muted}>Brouillon enregistré dans ce navigateur. Les clips envoyés expirent au bout d&apos;1 h. Un toucher sur l&apos;écran (TFT 2.8&quot;) interrompt la lecture.</p>
     </div>
   );
 }
