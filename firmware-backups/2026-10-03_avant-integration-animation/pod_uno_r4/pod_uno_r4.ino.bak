@@ -1,0 +1,1033 @@
+// pod_uno_r4.ino
+// Proof-of-Draw — Firmware UNO R4 WiFi + shield « 2.8" TFT Touch » (ILI9341 240×320 + STMPE610 + microSD)
+//
+// Même protocole que les firmwares ESP8266 (register → pull → image → ACK, validation Ed25519, observation, blocs possédés),
+// porté sur l'UNO R4 WiFi :
+//   • le Wi-Fi/TLS passe par le coprocesseur ESP32-S3 (WiFiSSLClient) : plus de BearSSL dans la RAM du microcontrôleur ;
+//   • l'appareil se déclare « tft28 » (240×320 RGB565, 153 600 o) : l'œuvre occupe TOUT l'écran. Pas de scene-v1 sur cet écran :
+//     une œuvre ANA arrive comme image fixe (son aperçu), comme sur les écrans e-ink ;
+//   • tactile (STMPE610) : un toucher AFFICHE ou CACHE le cartel — bande haute « RESCOE · #bloc », bande basse « titre · artiste » —
+//     par-dessus l'œuvre en plein écran ;
+//   • microSD : la dernière image y est gardée (/pod/frame.bin). Elle sert à cacher le cartel (on redessine les deux bandes depuis la
+//     carte, sans re-télécharger) et à réafficher l'œuvre au redémarrage. Sans carte : l'œuvre reste en plein écran, sans cartel.
+//
+// Câblage : le shield s'enfiche tel quel sur l'UNO R4 WiFi (TFT CS 10 / DC 9, tactile CS 8, microSD CS 4).
+// Bibliothèques : Adafruit ILI9341, Adafruit GFX, Adafruit BusIO, Adafruit STMPE610, ArduinoJson (≥ 6, testé 7.4), QRCode, Crypto, SD.
+// Carte : « Arduino UNO R4 WiFi ». Moniteur série : 115200.
+//
+// ⚠ Débit : la liaison RA4M1 ↔ ESP32-S3 est à 115200 bauds → une image complète (153 600 o) met une vingtaine de secondes à arriver
+//   (elle se dessine de haut en bas pendant ce temps). Les temps réels sont affichés au Serial ([FRAME]).
+// ⚠ TLS : le coprocesseur vérifie le certificat avec son lot de certificats racine. Si « connexion TLS impossible » s'affiche,
+//   mettre à jour le firmware du module Wi-Fi (IDE → Outils → Updater le firmware) et/ou ajouter le certificat racine du serveur.
+
+#include <Arduino.h>
+#include <malloc.h>
+#include <stdarg.h>
+#include <WiFiS3.h>
+#include <SPI.h>
+#include <SD.h>
+#include <EEPROM.h>
+#include <ArduinoJson.h>
+#include <Adafruit_GFX.h>
+#include <Adafruit_ILI9341.h>
+#include <Adafruit_STMPE610.h>
+#include <qrcode.h>
+#include <Ed25519.h>
+#include <SHA256.h>
+#include "pod_http.h"
+#include "pod_bench.h"
+
+// ─── CONFIG ────────────────────────────────────────────────────────────────
+// Wi-Fi : copier secrets.h.example en secrets.h (ignoré par git) puis renseigner SSID / mot de passe (2,4 GHz).
+#if __has_include("secrets.h")
+  #include "secrets.h"
+  const char* WIFI_SSID     = SECRET_WIFI_SSID;
+  const char* WIFI_PASSWORD = SECRET_WIFI_PASSWORD;
+#else
+  const char* WIFI_SSID     = "";            // ← créer secrets.h (voir secrets.h.example)
+  const char* WIFI_PASSWORD = "";
+#endif
+
+#define SERVER_HOST       "proof-of-draw.vercel.app"
+#define SCREEN_TYPE       "tft28"            // profil serveur 240×320 RGB565 (lib/screenProfiles.ts)
+#define FIRMWARE_VERSION  "r4tft28-2.3"
+#define TOUCH_ENABLED     1                  // toucher = afficher / cacher le cartel
+#define PULL_INTERVAL     60000UL
+#define VALIDATE_INTERVAL 30000UL
+#define HTTP_TIMEOUT_MS   20000UL
+
+// Banc d'essai d'animation (voir docs/BENCH_ANIMATION.md) : le propriétaire l'active depuis l'app ; l'appareil le découvre dans /api/pull
+// ("benchMode") puis interroge /api/bench/poll toutes les 3 s pendant au plus 31 min.
+#define BENCH_POLL_MS      3000UL
+#define BENCH_MODE_MAX_MS  (31UL * 60UL * 1000UL)
+#define BENCH_MAX_CLIP     9216        // octets : le clip + la copie 1 Ko de l'image courante vivent dans le tas pendant la lecture
+#define BENCH_FRAME        1024        // = podbench::FRAME_BYTES (les macros FRAME_BYTES / ROW_BYTES de ce sketch masquent les constantes de pod_bench.h)
+#define BENCH_HDR          20          // = podbench::HEADER_BYTES
+static_assert(podbench::W * podbench::H / 8 == BENCH_FRAME && podbench::HEADER_BYTES == BENCH_HDR, "pod_bench.h : constantes désynchronisées");
+
+// ─── PINS (shield Adafruit 2.8" TFT Touch) ─────────────────────────────────
+#define TFT_CS    10
+#define TFT_DC    9
+#define STMPE_CS  8
+#define SD_CS     4
+
+// ─── GÉOMÉTRIE : écran 240×320 portrait, l'œuvre en occupe la totalité ─────
+#define SCR_W         240
+#define SCR_H         320
+#define ROW_BYTES     (SCR_W * 2)                 // 480
+#define FRAME_BYTES   (SCR_W * SCR_H * 2)         // 153 600
+#define BAND_TOP_H    40                          // cartel haut : y 0..39
+#define BAND_BOT_Y    272                         // cartel bas : y 272..319 (48 px)
+#define BAND_BOT_H    (SCR_H - BAND_BOT_Y)
+
+// Couleurs RGB565
+#define C_BLACK  0x0000
+#define C_WHITE  0xFFFF
+#define C_NAVY   0x08C5
+#define C_GOLD   0xFEA0
+#define C_DARK   0x10C4
+#define C_GREY   0x7BEF
+#define C_RED    0xF800
+
+// ─── EEPROM (flash de données de la R4 : 8 Ko, pas de commit) — même carte mémoire que les firmwares ESP ─────────────
+#define EEPROM_PRIVKEY_OFF     0
+#define EEPROM_BLOCKHASH_OFF   32
+#define EEPROM_FLAG_OFF        64
+#define EEPROM_PUBKEY_OFF      65
+#define KEY_GENERATED_FLAG     0xED
+#define EEPROM_ONBOARDING_OFF  97
+#define ONBOARDING_SHOWN_FLAG  0x01
+#define EEPROM_OWNED_HEAD_OFF  98
+#define EEPROM_OWNED_COUNT_OFF 99
+#define EEPROM_OWNED_SLOTS_OFF 100
+#define OWNED_SLOTS_MAX        10
+#define OWNED_HASH_LEN         32
+
+// ─── microSD : dernière image + son cartel ─────────────────────────────────
+#define SD_DIR    "/pod"
+#define SD_FRAME  "/pod/frame.bin"                // 153 600 o RGB565 little-endian, tel que reçu du serveur
+#define SD_META   "/pod/meta.txt"                 // 4 lignes : frameId, n° de bloc, titre, artiste (écrit APRÈS l'image complète)
+
+#if ARDUINOJSON_VERSION_MAJOR >= 7
+  #define JSON_DOC(name, cap) JsonDocument name
+#else
+  #define JSON_DOC(name, cap) DynamicJsonDocument name(cap)
+#endif
+
+// ─── OBJETS ────────────────────────────────────────────────────────────────
+Adafruit_ILI9341  tft(TFT_CS, TFT_DC);
+Adafruit_STMPE610 ts(STMPE_CS);
+bool touchOk = false;
+bool sdOk = false;                                // carte lisible
+bool sdFrameValid = false;                        // /pod/frame.bin complet = l'image affichée → cartel masquable
+bool cartelVisible = false;                       // les bandes sont dessinées par-dessus l'œuvre
+const char* sdWhy = "SD absente";                 // raison affichée dans le cartel quand il ne peut pas être masqué ("" = tout va bien)
+
+// ─── ÉTAT ──────────────────────────────────────────────────────────────────
+String deviceId, pairCode;
+bool   registered = false, paired = false;
+String lastFrameId = "";
+bool   lastFrameWasConsensus = false;
+
+uint8_t privateKey[32], publicKey[32];
+bool    keysLoaded = false;
+
+String currentBlockHash = "";
+int    currentBlockIndex = -1;
+String pendingCandidateId = "";
+unsigned long lastPullMs = 0, lastValidateMs = 0, nextPullIntervalMs = PULL_INTERVAL;
+
+String pendingWorkTitle = "", pendingArtistName = "";
+String pendingObsHashes = "", pendingObsTarget = "";
+
+bool benchMode = false;                           // mode banc d'essai actif (annoncé par /api/pull)
+unsigned long benchModeSince = 0, lastBenchPollMs = 0;
+String lastBenchClipId = "";
+static bool g_quietHttp = false;                  // pas de ligne [HTTP] pour chaque poll réussi (toutes les 3 s)
+
+static char     g_body[3072];                   // corps JSON des réponses
+static uint16_t g_row[SCR_W];                   // une ligne d'image (octets little-endian reçus, puis big-endian pour le bus)
+static void fastPixels(const uint16_t* colors, uint32_t len);   // envoi d'un bloc de pixels par le cœur SPI (défini avec le banc d'essai)
+
+// ─── LOG ───────────────────────────────────────────────────────────────────
+static void logf(const char* fmt, ...) {
+  static char b[256];                       // statique : la pile du cœur R4 ne fait que 1 Ko
+  va_list ap; va_start(ap, fmt); vsnprintf(b, sizeof(b), fmt, ap); va_end(ap);
+  Serial.println(b);
+}
+
+// ─── MÉMOIRE : 32 Ko de RAM, PILE PRINCIPALE DE 1 Ko SEULEMENT (cœur Arduino R4, BSP_CFG_STACK_MAIN_BYTES = 0x400) ─────────
+// Le cœur désactive la protection de pile (MSPLIM = 0) : une pile qui dépasse 1 Ko descend dans le HAUT du tas (zone libre tant que
+// le tas est peu rempli). Ed25519 a besoin d'environ 1,7 Ko : ça tient parce que le tas est presque vide à ce moment-là.
+// Règle de ce firmware : aucun gros bloc ni gros tableau local (tampons statiques). Les diagnostics [MEM] affichent le tas libre et
+// la profondeur de pile atteinte : à relever au premier essai.
+extern "C" char* sbrk(int incr);
+extern char __HeapLimit;                    // symbole de l'éditeur de liens : fin du tas = bas de la pile principale
+static const uint32_t STACK_PAINT_BYTES = 2048;
+static uint32_t freeHeapBytes() {
+  struct mallinfo mi = mallinfo();
+  return (uint32_t)mi.fordblks + (uint32_t)(&__HeapLimit - (char*)sbrk(0));
+}
+static void paintStack() { for (volatile uint8_t* p = (volatile uint8_t*)&__HeapLimit - STACK_PAINT_BYTES; p < (volatile uint8_t*)&__HeapLimit; p++) *p = 0xA5; }
+/** Profondeur de pile maximale atteinte depuis paintStack() : 1 Ko de pile propre + ce qui a débordé dans le haut du tas. */
+static uint32_t stackDepthBytes() {
+  const uint8_t* lo = (const uint8_t*)&__HeapLimit - STACK_PAINT_BYTES;
+  const uint8_t* p = lo;
+  while (p < (const uint8_t*)&__HeapLimit && *p == 0xA5) p++;
+  return 1024 + (uint32_t)((const uint8_t*)&__HeapLimit - p);
+}
+static void reportMem(const char* tag) { logf("[MEM] %s: tas libre %lu o, pile max ~%lu o", tag, (unsigned long)freeHeapBytes(), (unsigned long)stackDepthBytes()); }
+
+// ─── Texte : ASCII seulement (police 5×7 de GFX) — replie les accents UTF-8 ─────────────────
+static String asciiFold(const String& in) {
+  static const char* L1 = "AAAAAAACEEEEIIIIDNOOOOO*OUUUUYTsaaaaaaaceeeeiiiidnooooo/ouuuuyty";   // U+00C0..U+00FF
+  String out; out.reserve(in.length());
+  for (unsigned i = 0; i < in.length(); i++) {
+    const uint8_t c = (uint8_t)in[i];
+    if (c < 0x80) { out += (char)(c >= 32 && c < 127 ? c : ' '); continue; }
+    if (c == 0xC3 && i + 1 < in.length()) { const uint8_t d = (uint8_t)in[++i]; out += (d >= 0x80 && d < 0xC0) ? L1[d - 0x80] : '?'; continue; }
+    if (c >= 0xC0) { out += '?'; while (i + 1 < in.length() && ((uint8_t)in[i + 1] & 0xC0) == 0x80) i++; }
+  }
+  return out;
+}
+
+// ─── EEPROM ────────────────────────────────────────────────────────────────
+static String bytesToHex(const uint8_t* buf, size_t len) {
+  String hex; hex.reserve(len * 2);
+  for (size_t i = 0; i < len; i++) { if (buf[i] < 16) hex += "0"; hex += String(buf[i], HEX); }
+  return hex;
+}
+static bool keysAlreadyGenerated()   { return EEPROM.read(EEPROM_FLAG_OFF) == KEY_GENERATED_FLAG; }
+static bool onboardingAlreadyShown() { return EEPROM.read(EEPROM_ONBOARDING_OFF) == ONBOARDING_SHOWN_FLAG; }
+static void setOnboardingShown()     { EEPROM.update(EEPROM_ONBOARDING_OFF, ONBOARDING_SHOWN_FLAG); }
+
+static void saveKeysToEEPROM() {
+  for (int i = 0; i < 32; i++) EEPROM.update(EEPROM_PRIVKEY_OFF + i, privateKey[i]);
+  for (int i = 0; i < 32; i++) EEPROM.update(EEPROM_PUBKEY_OFF + i, publicKey[i]);
+  EEPROM.update(EEPROM_FLAG_OFF, KEY_GENERATED_FLAG);
+}
+static void loadKeysFromEEPROM() {
+  for (int i = 0; i < 32; i++) privateKey[i] = EEPROM.read(EEPROM_PRIVKEY_OFF + i);
+  for (int i = 0; i < 32; i++) publicKey[i]  = EEPROM.read(EEPROM_PUBKEY_OFF + i);
+  uint8_t derived[32];
+  Ed25519::derivePublicKey(derived, privateKey);
+  if (memcmp(derived, publicKey, 32) != 0) {   // écriture interrompue entre clé privée et publique
+    logf("[KEYS] Clé publique incohérente -> recalcul depuis la clé privée");
+    memcpy(publicKey, derived, 32);
+    for (int i = 0; i < 32; i++) EEPROM.update(EEPROM_PUBKEY_OFF + i, publicKey[i]);
+  }
+  keysLoaded = true;
+}
+static void saveBlockHashToEEPROM(const String& hash) {
+  String h = hash.length() >= 32 ? hash.substring(0, 32) : hash;
+  while (h.length() < 32) h += ' ';
+  for (int i = 0; i < 32; i++) EEPROM.update(EEPROM_BLOCKHASH_OFF + i, (uint8_t)h[i]);
+}
+static String loadBlockHashFromEEPROM() {
+  String hash = "";
+  for (int i = 0; i < 32; i++) { char c = (char)EEPROM.read(EEPROM_BLOCKHASH_OFF + i); if (c == ' ' || c == '\0') break; hash += c; }
+  return hash;
+}
+
+// Anneau des blocs possédés (10 × 32 caractères), identique aux autres firmwares
+static void saveOwnedBlockHash(const String& fullHash) {
+  if (fullHash.length() < 16) return;
+  String h = fullHash.length() >= OWNED_HASH_LEN ? fullHash.substring(0, OWNED_HASH_LEN) : fullHash;
+  while ((int)h.length() < OWNED_HASH_LEN) h += ' ';
+  uint8_t head = EEPROM.read(EEPROM_OWNED_HEAD_OFF), count = EEPROM.read(EEPROM_OWNED_COUNT_OFF);
+  if (head >= OWNED_SLOTS_MAX) head = 0;
+  if (count > OWNED_SLOTS_MAX) count = 0;
+  for (uint8_t i = 0; i < count; i++) {
+    const uint8_t slot = (head - count + i + OWNED_SLOTS_MAX) % OWNED_SLOTS_MAX;
+    const int off = EEPROM_OWNED_SLOTS_OFF + slot * OWNED_HASH_LEN;
+    bool match = true;
+    for (int j = 0; j < OWNED_HASH_LEN && match; j++) if ((char)EEPROM.read(off + j) != h[j]) match = false;
+    if (match) { logf("[OWNED] déjà présent"); return; }
+  }
+  const int slotOff = EEPROM_OWNED_SLOTS_OFF + head * OWNED_HASH_LEN;
+  for (int i = 0; i < OWNED_HASH_LEN; i++) EEPROM.update(slotOff + i, (uint8_t)h[i]);
+  head = (head + 1) % OWNED_SLOTS_MAX;
+  count = (count + 1 > OWNED_SLOTS_MAX) ? OWNED_SLOTS_MAX : count + 1;
+  EEPROM.update(EEPROM_OWNED_HEAD_OFF, head);
+  EEPROM.update(EEPROM_OWNED_COUNT_OFF, count);
+  logf("[OWNED] %s... (%u/%u)", h.substring(0, 8).c_str(), count, OWNED_SLOTS_MAX);
+}
+static String loadOwnedHashesJson() {
+  uint8_t head = EEPROM.read(EEPROM_OWNED_HEAD_OFF), count = EEPROM.read(EEPROM_OWNED_COUNT_OFF);
+  if (head >= OWNED_SLOTS_MAX) head = 0;
+  if (count > OWNED_SLOTS_MAX) count = 0;
+  if (count == 0) return "[]";
+  String json = "["; bool first = true;
+  for (uint8_t i = 0; i < count; i++) {
+    const uint8_t slot = (head - 1 - i + OWNED_SLOTS_MAX) % OWNED_SLOTS_MAX;
+    const int off = EEPROM_OWNED_SLOTS_OFF + slot * OWNED_HASH_LEN;
+    String h = "";
+    for (int j = 0; j < OWNED_HASH_LEN; j++) { char c = (char)EEPROM.read(off + j); if (c == ' ' || c == '\0') break; h += c; }
+    if (h.length() >= 8) { if (!first) json += ","; json += "\"" + h + "\""; first = false; }
+  }
+  return json + "]";
+}
+
+// ─── Clés Ed25519 ──────────────────────────────────────────────────────────
+// Entropie : bruit des entrées analogiques flottantes + gigue d'horloge + MAC + RSSI, condensés par SHA-256.
+// (Même niveau que les firmwares ESP : suffisant pour identifier un écran, PAS un générateur certifié.)
+static void gatherEntropy(uint8_t out[32]) {
+  SHA256 h; h.reset();
+  uint8_t mac[6] = {0}; WiFi.macAddress(mac); h.update(mac, 6);
+  const int32_t rssi = WiFi.RSSI(); h.update(&rssi, sizeof(rssi));
+  for (int i = 0; i < 384; i++) {
+    const uint16_t v = (uint16_t)analogRead(A0 + (i % 6));
+    const uint32_t m = micros();
+    h.update(&v, sizeof(v)); h.update(&m, sizeof(m));
+    delayMicroseconds(29 + (v & 15));
+  }
+  h.finalize(out, 32);
+}
+static void generateKeys() {
+  logf("[KEYS] Génération de la paire Ed25519...");
+  gatherEntropy(privateKey);
+  Ed25519::derivePublicKey(publicKey, privateKey);
+  keysLoaded = true;
+  saveKeysToEEPROM();
+  logf("[KEYS] PubKey: %s", bytesToHex(publicKey, 32).c_str());
+}
+static String signED25519(const String& candidateId, float score) {
+  const int m = (int)(score * 1000.0f + 0.5f);               // « 0.543 » : 3 décimales, comme toFixed(3) côté serveur
+  char scoreStr[12]; snprintf(scoreStr, sizeof(scoreStr), "%d.%03d", m / 1000, m % 1000);
+  const String message = deviceId + ":" + candidateId + ":" + scoreStr;
+  uint8_t sig[64];
+  Ed25519::sign(sig, privateKey, publicKey, (const uint8_t*)message.c_str(), message.length());
+  return bytesToHex(sig, 64);
+}
+
+// ─── HTTP (WiFiSSLClient + pod_http.h) ─────────────────────────────────────
+struct Conn {
+  WiFiSSLClient client;
+  podhttp::Reader<WiFiSSLClient> rd;
+  explicit Conn(uint32_t timeoutMs) : rd(client, timeoutMs) {}
+  /** Connecte, envoie la requête, lit les en-têtes. Retourne le code HTTP, -2 = connexion TLS impossible, -1 = réponse illisible. */
+  int request(const char* method, const String& path, const String* body) {
+    if (!client.connect(SERVER_HOST, 443)) return -2;
+    String req = String(method) + " " + path + " HTTP/1.1\r\nHost: " SERVER_HOST "\r\nUser-Agent: pod-r4/" FIRMWARE_VERSION "\r\nAccept: */*\r\nConnection: close\r\n";
+    if (body) req += "Content-Type: application/json\r\nContent-Length: " + String(body->length()) + "\r\n";
+    req += "\r\n";
+    if (body) req += *body;
+    client.print(req);
+    return rd.readHeaders();
+  }
+};
+
+/** Appel JSON : retourne le code HTTP (>0) et le corps dans resp ; <0 = échec réseau/lecture/corps incomplet. */
+static int httpCall(const char* method, const String& path, const String* body, String& resp) {
+  resp = "";
+  Conn c(HTTP_TIMEOUT_MS);
+  const int code = c.request(method, path, body);
+  if (!(g_quietHttp && code == 200)) logf("[HTTP %s] %s -> %d", method, path.length() > 60 ? (path.substring(0, 60) + "...").c_str() : path.c_str(), code);
+  if (code < 0) { if (code == -2) logf("[HTTP] connexion TLS impossible (voir l'en-tête du sketch)"); return code; }
+  size_t len = 0;
+  const bool complete = c.rd.readBodyString(g_body, sizeof(g_body), &len);
+  c.client.stop();
+  if (!complete) { logf("[HTTP] corps incomplet ou > %u octets", (unsigned)sizeof(g_body) - 1); return -3; }
+  resp = String(g_body);
+  return code;
+}
+
+// ─── Affichage ─────────────────────────────────────────────────────────────
+static void tftStatus(const String& line1, const String& line2 = "", uint16_t bg = C_NAVY) {
+  tft.setRotation(0);
+  tft.fillScreen(bg);
+  tft.fillRect(0, 0, SCR_W, 28, C_DARK);
+  tft.drawFastHLine(0, 28, SCR_W, C_GOLD);
+  tft.setTextSize(2); tft.setTextColor(C_GOLD, C_DARK); tft.setCursor(8, 7); tft.print("RESCOE");
+  tft.setTextColor(C_WHITE, bg); tft.setCursor(8, 140); tft.print(asciiFold(line1));
+  if (line2.length()) { tft.setTextSize(1); tft.setTextColor(C_GREY, bg); tft.setCursor(8, 168); tft.print(asciiFold(line2)); }
+}
+
+/** Pousse g_row (déjà en octets BIG-endian) sur la ligne y : fenêtre d'une ligne, puis 240 pixels. */
+static void pushRow(int y) {
+  tft.startWrite();
+  tft.setAddrWindow(0, y, SCR_W, 1);
+  fastPixels(g_row, SCR_W);                  // envoi par bloc (voir « BANC D'ESSAI » plus bas) au lieu de deux appels SPI par pixel
+  tft.endWrite();
+}
+static void swapRowBytes() {
+  uint8_t* b = (uint8_t*)g_row;
+  for (int i = 0; i < ROW_BYTES; i += 2) { const uint8_t t = b[i]; b[i] = b[i + 1]; b[i + 1] = t; }
+}
+
+/** Cartel PAR-DESSUS l'œuvre : « RESCOE #bloc » en haut, titre + artiste en bas. Redessiné à chaque toucher « afficher ». */
+static void drawCartel() {
+  tft.fillRect(0, 0, SCR_W, BAND_TOP_H - 1, C_DARK);
+  tft.drawFastHLine(0, BAND_TOP_H - 1, SCR_W, C_GOLD);
+  tft.setTextSize(2); tft.setTextColor(C_GOLD, C_DARK); tft.setCursor(8, 12); tft.print("RESCOE");
+  if (currentBlockIndex >= 0) {
+    const String blk = "#" + String(currentBlockIndex);
+    tft.setTextColor(C_GREY, C_DARK); tft.setCursor(SCR_W - 8 - (int)blk.length() * 12, 12); tft.print(blk);
+  }
+  tft.fillRect(0, BAND_BOT_Y + 1, SCR_W, BAND_BOT_H - 1, C_DARK);
+  tft.drawFastHLine(0, BAND_BOT_Y, SCR_W, C_GOLD);
+  String title = asciiFold(pendingWorkTitle), artist = asciiFold(pendingArtistName);
+  if (title.length() == 0) title = "Proof-of-Draw";
+  if (title.length() > 19) title = title.substring(0, 19);
+  if (artist.length() > 26) artist = artist.substring(0, 26);
+  tft.setTextSize(2); tft.setTextColor(C_WHITE, C_DARK); tft.setCursor(8, BAND_BOT_Y + 8); tft.print(title);
+  if (artist.length()) { tft.setTextSize(1); tft.setTextColor(C_GREY, C_DARK); tft.setCursor(8, BAND_BOT_Y + 32); tft.print(artist); }
+  // Pastille d'état de la carte SD (bas droite) : « SD ok » = le cartel pourra être masqué ; sinon la raison, en rouge
+  const String badge = sdFrameValid ? String("SD ok") : String(sdWhy);
+  tft.setTextSize(1); tft.setTextColor(sdFrameValid ? C_GREY : C_RED, C_DARK);
+  tft.setCursor(SCR_W - 8 - (int)badge.length() * 6, BAND_BOT_Y + 32); tft.print(badge);
+}
+
+// ─── microSD ───────────────────────────────────────────────────────────────
+static void initSD() {
+  digitalWrite(TFT_CS, HIGH); digitalWrite(STMPE_CS, HIGH);
+  for (int attempt = 0; attempt < 3 && !sdOk; attempt++) { sdOk = SD.begin(SD_CS); if (!sdOk) delay(250); }   // certaines cartes ne répondent qu'au 2e essai
+  if (sdOk && !SD.exists(SD_DIR)) SD.mkdir(SD_DIR);
+  sdWhy = sdOk ? "SD sans image" : "SD absente";
+  logf("[SD] %s", sdOk ? "carte lisible (cache de l'image + cartel masquable)" : "carte absente, non formatée FAT/FAT32 ou illisible -> œuvre en plein écran SANS cartel masquable");
+}
+
+/** Redessine les lignes y0..y0+n-1 depuis /pod/frame.bin (lues séquentiellement, converties LE -> BE). */
+static bool restoreRows(int y0, int n) {
+  File f = SD.open(SD_FRAME, FILE_READ);
+  if (!f) return false;
+  if (f.size() != (unsigned long)FRAME_BYTES) { f.close(); return false; }
+  bool ok = f.seek((uint32_t)y0 * ROW_BYTES);
+  for (int i = 0; ok && i < n; i++) {
+    ok = f.read((uint8_t*)g_row, ROW_BYTES) == ROW_BYTES;
+    if (!ok) break;
+    swapRowBytes();
+    pushRow(y0 + i);
+  }
+  f.close();
+  return ok;
+}
+
+static void saveMeta(const String& frameId) {
+  if (!sdOk) return;
+  if (SD.exists(SD_META)) SD.remove(SD_META);
+  File f = SD.open(SD_META, FILE_WRITE);
+  if (!f) return;
+  f.println(frameId);
+  f.println(currentBlockIndex);
+  f.println(pendingWorkTitle);
+  f.println(pendingArtistName);
+  f.close();
+}
+
+/** Au démarrage : réaffiche la dernière œuvre depuis la carte (sans attendre le réseau) et retrouve son cartel. */
+static void restoreLastFrame() {
+  if (!sdOk || !SD.exists(SD_META) || !SD.exists(SD_FRAME)) return;
+  File m = SD.open(SD_META, FILE_READ);
+  if (!m) return;
+  String id = m.readStringUntil('\n'); id.trim();
+  String blk = m.readStringUntil('\n'); blk.trim();
+  String title = m.readStringUntil('\n'); title.trim();
+  String artist = m.readStringUntil('\n'); artist.trim();
+  m.close();
+  if (id.length() == 0) return;
+  const unsigned long t0 = millis();
+  if (!restoreRows(0, SCR_H)) { logf("[SD] image enregistrée illisible"); return; }
+  lastFrameId = id; currentBlockIndex = blk.toInt(); pendingWorkTitle = title; pendingArtistName = artist;
+  sdFrameValid = true; cartelVisible = false;
+  logf("[SD] dernière œuvre réaffichée en %lu ms (frameId=%s)", millis() - t0, id.c_str());
+}
+
+// ─── Image : flux 153 600 o RGB565 little-endian, ligne par ligne, plein écran ──
+/** Lit 320 lignes, les range sur la carte (si présente) ET les affiche au fur et à mesure. true = image complète. */
+static bool streamFrame(podhttp::Reader<WiFiSSLClient>& rd) {
+  bool ok = true;
+  File f;
+  bool saving = false;
+  if (sdOk) {
+    if (SD.exists(SD_FRAME)) SD.remove(SD_FRAME);
+    f = SD.open(SD_FRAME, FILE_WRITE);
+    saving = (bool)f;
+    if (!saving) { sdWhy = "SD ouverture"; logf("[SD] impossible d'ouvrir %s en écriture", SD_FRAME); }
+  } else logf("[SD] pas de carte : l'image ne sera pas conservée");
+  uint8_t* raw = (uint8_t*)g_row;
+  for (int y = 0; y < SCR_H; y++) {
+    if (rd.readBody(raw, ROW_BYTES) != (size_t)ROW_BYTES) { logf("[FRAME] ligne %d incomplète", y); ok = false; break; }
+    if (saving && f.write(raw, ROW_BYTES) != (size_t)ROW_BYTES) { saving = false; sdWhy = "SD ecriture"; logf("[SD] écriture interrompue ligne %d (carte pleine / protégée ?)", y); }
+    swapRowBytes();                                          // LE serveur -> BE bus SPI
+    pushRow(y);
+    if ((y % 80) == 79) logf("[FRAME] %d/%d lignes", y + 1, SCR_H);
+  }
+  if (f) f.close();
+  sdFrameValid = ok && saving;                               // copie complète : le cartel pourra être masqué
+  if (sdFrameValid) sdWhy = "";
+  if (sdOk && !sdFrameValid && SD.exists(SD_FRAME)) SD.remove(SD_FRAME);
+  return ok;
+}
+
+static bool ackFrame(const String& frameId) {
+  if (frameId.length() == 0) return false;
+  const String body = "{\"deviceId\":\"" + deviceId + "\",\"frameId\":\"" + frameId + "\"}";
+  String resp;
+  const bool ok = httpCall("POST", "/api/ack-frame", &body, resp) == 200;
+  logf("[ACK] %s -> %s", frameId.c_str(), ok ? "OK" : "FAIL");
+  return ok;
+}
+
+static bool doFetchFrame(const String& frameId, const String& frameSource) {
+  const unsigned long t0 = millis();
+  bool shown = false, noFrame = false;
+  {
+    Conn c(HTTP_TIMEOUT_MS);
+    const int code = c.request("GET", "/api/pull-frame?deviceId=" + deviceId + "&screen=" SCREEN_TYPE "&fmt=bin", nullptr);
+    logf("[HTTP GET] /api/pull-frame -> %d (contenu %ld)", code, c.rd.contentLength());
+    if (code == 404) noFrame = true;
+    else if (code == 200 && (c.rd.contentLength() < 0 || c.rd.contentLength() == FRAME_BYTES)) {
+      cartelVisible = false;                                 // une nouvelle image remplace tout, cartel compris
+      shown = streamFrame(c.rd) && c.rd.complete();
+    } else if (code == 200) {
+      logf("[FRAME] taille annoncée %ld != %d (le serveur sert-il bien tft28 ?)", c.rd.contentLength(), FRAME_BYTES);
+    }
+    c.client.stop();
+  }
+  if (noFrame) { logf("[FRAME] pas de frame disponible"); return true; }
+  if (!shown) { logf("[FRAME] image incomplète — pas d'ACK, nouvel essai au prochain pull"); sdFrameValid = false; return false; }
+  lastFrameId = frameId;
+  lastFrameWasConsensus = (frameSource == "consensus");
+  pendingCandidateId = "";
+  if (sdFrameValid) saveMeta(frameId);
+  logf("[FRAME] OK en %lu ms (frameId=%s source=%s, cache SD: %s)", millis() - t0, frameId.c_str(), frameSource.c_str(), sdFrameValid ? "oui" : "non");
+  ackFrame(frameId);
+  return true;
+}
+
+// ─── Tactile : un toucher affiche / cache le cartel ────────────────────────
+static void drainTouch() {
+  while (!ts.bufferEmpty()) ts.getPoint();
+  ts.writeRegister8(STMPE_INT_STA, 0xFF);
+}
+static void toggleCartel() {
+  if (lastFrameId.length() == 0) return;                     // rien d'affiché : rien à habiller
+  // Sans carte SD le cartel s'AFFICHE quand même, mais ne peut pas être masqué (la R4 n'a pas la RAM pour garder les pixels qu'il
+  // recouvre) : il reste jusqu'à la prochaine image. La pastille rouge « SD absente » le dit à l'écran ; avec une carte, tout est automatique.
+  if (!cartelVisible) {
+    drawCartel();
+    cartelVisible = true;
+    logf("[TOUCH] cartel affiché");
+    return;
+  }
+  // Masquer : on redessine les deux bandes depuis la copie sur la carte (pas de re-téléchargement)
+  if (!sdFrameValid && sdOk && SD.exists(SD_FRAME)) {        // l'indicateur a pu être perdu : on revalide d'après la taille du fichier
+    File chk = SD.open(SD_FRAME, FILE_READ);
+    if (chk) { sdFrameValid = (chk.size() == (unsigned long)FRAME_BYTES); chk.close(); if (sdFrameValid) sdWhy = ""; }
+  }
+  if (!sdFrameValid) {
+    logf("[TOUCH] cartel NON masquable : %s (voir les lignes [SD] ci-dessus)", sdWhy);
+    drawCartel();                                            // rafraîchit la pastille rouge pour montrer pourquoi
+    return;
+  }
+  const unsigned long t0 = millis();
+  if (restoreRows(0, BAND_TOP_H) && restoreRows(BAND_BOT_Y, BAND_BOT_H)) { cartelVisible = false; logf("[TOUCH] cartel masqué en %lu ms", millis() - t0); }
+  else { sdFrameValid = false; sdWhy = "SD lecture"; logf("[TOUCH] lecture de /pod/frame.bin impossible : cartel conservé"); drawCartel(); }
+}
+static void serviceTouch() {
+  if (!touchOk || !ts.touched()) return;
+  const unsigned long t0 = millis();
+  while (ts.touched() && millis() - t0 < 1500UL) { delay(5); }   // attend le relâchement (anti-rebond)
+  drainTouch();
+  delay(120);
+  toggleCartel();
+  drainTouch();
+}
+static bool waitTapOrTimeout(unsigned long ms) {   // pour l'écran des clés : touché = continuer
+  const unsigned long t0 = millis();
+  while (millis() - t0 < ms) { if (touchOk && ts.touched()) { drainTouch(); return true; } delay(50); }
+  return false;
+}
+
+// ─── Onboarding ────────────────────────────────────────────────────────────
+static void displayKeyMaterialOnce() {
+  const String pubHex = bytesToHex(publicKey, 32), privHex = bytesToHex(privateKey, 32);
+  logf("[KEYS] PubKey: %s", pubHex.c_str());   // la clé privée n'est JAMAIS écrite au Serial
+  tft.setRotation(0);
+  tft.fillScreen(C_WHITE);
+  tft.setTextColor(C_BLACK, C_WHITE); tft.setTextSize(2); tft.setCursor(8, 6); tft.print("PROOF-OF-DRAW");
+  tft.drawFastHLine(0, 28, SCR_W, C_BLACK);
+  tft.setTextSize(1);
+  tft.setCursor(8, 40); tft.print("CLE PUBLIQUE :");
+  for (int l = 0; l < 2; l++) { tft.setCursor(8, 54 + l * 12); tft.print(pubHex.substring(l * 32, l * 32 + 32)); }
+  tft.setTextColor(C_RED, C_WHITE);
+  tft.setCursor(8, 100); tft.print("CLE PRIVEE (UNE SEULE FOIS) :");
+  for (int l = 0; l < 2; l++) { tft.setCursor(8, 114 + l * 12); tft.print(privHex.substring(l * 32, l * 32 + 32)); }
+  tft.setTextColor(C_BLACK, C_WHITE);
+  tft.setCursor(8, 160); tft.print("Notez la cle privee MAINTENANT.");
+  tft.setCursor(8, 176); tft.print("Touchez l'ecran pour continuer");
+  tft.setCursor(8, 188); tft.print("(sinon suite automatique dans 60 s).");
+  logf("[KEYS] Clés affichées — 60 s (ou toucher)");
+  waitTapOrTimeout(60000UL);
+}
+
+static void displayOnboardingTFT(const String& onboardUrl, const String& code, const String& macStr) {
+  tft.setRotation(0);
+  tft.fillScreen(C_NAVY);
+  tft.fillRect(0, 0, SCR_W, 28, C_DARK);
+  tft.drawFastHLine(0, 28, SCR_W, C_GOLD);
+  tft.setTextSize(2); tft.setTextColor(C_GOLD, C_DARK); tft.setCursor(8, 7); tft.print("RESCOE");
+  tft.setTextSize(1); tft.setTextColor(C_GREY, C_DARK); tft.setCursor(110, 12); tft.print("proof-of-draw");
+
+  QRCode qr; uint8_t qrData[qrcode_getBufferSize(7)];
+  memset(qrData, 0, sizeof(qrData));
+  int res = -1;
+  for (int ver = 3; ver <= 7 && res < 0; ver++) res = qrcode_initText(&qr, qrData, ver, ECC_LOW, onboardUrl.c_str());
+  if (res >= 0) {
+    int scale = 190 / qr.size; if (scale < 1) scale = 1;
+    const int px = qr.size * scale, x0 = (SCR_W - px) / 2, y0 = 40;
+    tft.fillRect(x0 - 6, y0 - 6, px + 12, px + 12, C_WHITE);
+    for (int qy = 0; qy < qr.size; qy++) for (int qx = 0; qx < qr.size; qx++)
+      tft.fillRect(x0 + qx * scale, y0 + qy * scale, scale, scale, qrcode_getModule(&qr, qx, qy) ? C_BLACK : C_WHITE);
+  } else {
+    tft.setTextSize(1); tft.setTextColor(C_WHITE, C_NAVY); tft.setCursor(8, 50); tft.print("Ouvrez : " + onboardUrl.substring(0, 28));
+  }
+  const int cs = ((int)code.length() * 24 <= 224) ? 4 : 3;
+  tft.setTextSize(cs); tft.setTextColor(C_GOLD, C_NAVY);
+  int cx = (SCR_W - (int)code.length() * 6 * cs) / 2; if (cx < 0) cx = 0;
+  tft.setCursor(cx, 252); tft.print(code);
+  String m = macStr; m.replace(":", ""); m.toUpperCase();
+  tft.setTextSize(1); tft.setTextColor(C_GREY, C_NAVY); tft.setCursor(8, 300); tft.print("MAC:" + m);
+  tft.setCursor(8, 288); tft.print("Scannez le QR ou entrez le code sur le site");
+}
+
+// ─── OBS-CONFIRM ───────────────────────────────────────────────────────────
+static bool doObsConfirm() {
+  if (pendingObsHashes.length() == 0) return true;
+  String body = "{\"deviceId\":\"" + deviceId + "\",\"blockHashes\":" + pendingObsHashes;
+  if (pendingObsTarget.length() == 64) body += ",\"targetBlockHash\":\"" + pendingObsTarget + "\"";
+  body += "}";
+  String resp;
+  const bool ok = httpCall("POST", "/api/obs-confirm", &body, resp) == 200;
+  logf("[OBS-CONFIRM] ok=%d", ok);
+  pendingObsHashes = ""; pendingObsTarget = "";
+  return ok;
+}
+
+// ─── REGISTER ──────────────────────────────────────────────────────────────
+static String macString() {
+  uint8_t m[6] = {0}; WiFi.macAddress(m);
+  char b[18]; snprintf(b, sizeof(b), "%02x:%02x:%02x:%02x:%02x:%02x", m[0], m[1], m[2], m[3], m[4], m[5]);
+  return String(b);
+}
+
+static bool doRegister() {
+  const String mac = macString();
+  // Pas de « sceneCapability » : cet écran n'est pas un lecteur de scènes, le serveur lui sert toujours une image fixe.
+  const String body = "{\"mac\":\"" + mac + "\",\"screens\":[\"" SCREEN_TYPE "\"],"
+                      "\"firmware\":\"" FIRMWARE_VERSION "\","
+                      "\"publicKey\":\"" + (keysLoaded ? bytesToHex(publicKey, 32) : String("")) + "\","
+                      "\"ownedHashes\":" + loadOwnedHashesJson() + "}";
+  String resp;
+  if (httpCall("POST", "/api/register", &body, resp) != 200) {
+    tftStatus("Register echoue", "Nouvel essai dans 5 s...", C_RED);
+    return false;
+  }
+  JSON_DOC(doc, 768);
+  if (deserializeJson(doc, resp)) { logf("[REGISTER] JSON illisible"); return false; }
+  deviceId   = doc["deviceId"].as<String>();
+  pairCode   = doc["pairCode"].as<String>();
+  paired     = doc["paired"] | false;
+  registered = true;
+  logf("[REGISTER] deviceId=%s paired=%s", deviceId.c_str(), paired ? "oui" : "non");
+
+  if (!paired && !onboardingAlreadyShown()) {
+    displayKeyMaterialOnce();
+    displayOnboardingTFT(String("https://" SERVER_HOST "/onboard?code=") + pairCode, pairCode, mac);
+    setOnboardingShown();
+  } else if (!paired) {
+    displayOnboardingTFT(String("https://" SERVER_HOST "/onboard?code=") + pairCode, pairCode, mac);
+  } else {
+    tftStatus("Connecte", deviceId);
+  }
+  return true;
+}
+
+// ─── PULL ──────────────────────────────────────────────────────────────────
+static bool doPull() {
+  String newBlockHash = "", newCandId = "", newFrameId = "", newFrameSource = "none";
+  bool newBenchMode = false;
+  int newBlockIndex = -1, pullRetryAfter = 60;
+  String cmTitle = "", cmArtist = "";                       // cartel annoncé par CE pull : appliqué seulement si le pull apporte une nouvelle image
+  int cmBlock = -1;
+  bool hasCartel = false;
+
+  {
+    String resp;
+    const int code = httpCall("GET", "/api/pull?deviceId=" + deviceId, nullptr, resp);
+    if (code == 429) {
+      int retrySec = 60;
+      JSON_DOC(rate, 256);
+      if (deserializeJson(rate, resp) == DeserializationError::Ok) retrySec = max(1, (int)(rate["retryAfter"] | 60));
+      unsigned long retryMs = (unsigned long)retrySec * 1000UL;
+      if (retryMs > PULL_INTERVAL) retryMs = PULL_INTERVAL;
+      lastPullMs = millis() - (PULL_INTERVAL - retryMs);
+      logf("[PULL] 429 retryAfter=%ds", retrySec);
+      return true;
+    }
+    if (code != 200) { logf("[PULL] erreur HTTP %d", code); return false; }
+
+    JSON_DOC(doc, 2048);
+    const DeserializationError err = deserializeJson(doc, resp);
+    if (err) { logf("[PULL] JSON: %s", err.c_str()); return false; }
+
+    JsonObject chain = doc["chain"];
+    if (!chain.isNull()) { newBlockHash = chain["blockHash"] | ""; newBlockIndex = chain["blockIndex"] | -1; }
+    JsonObject pend = doc["pendingValidation"];
+    if (!pend.isNull()) newCandId = pend["candidateId"] | "";
+
+    newFrameSource = doc["frameSource"] | "none";
+    newFrameId     = doc["frameId"] | "";
+    pullRetryAfter = doc["retryAfter"] | 60;
+    newBenchMode = doc["benchMode"] | false;
+    if (pullRetryAfter <= 0) pullRetryAfter = 60;
+    if (newFrameId.length() == 0) { JsonObject fo = doc["frame"]; if (!fo.isNull()) newFrameId = fo["frameId"] | ""; }
+
+    JsonObject cm = doc["cartelMeta"];
+    if (!cm.isNull()) {
+      cmTitle  = cm["workTitle"] | "";
+      cmArtist = cm["drawArtistName"] | "";
+      cmBlock  = cm["blockIndex"] | -1;
+      hasCartel = true;
+    }
+    JsonObject obs = doc["pendingObservation"];
+    if (!obs.isNull()) {
+      JsonArray hArr = obs["blockHashes"].as<JsonArray>();
+      if (hArr.size() > 0) {
+        String arr = "[";
+        for (size_t i = 0; i < hArr.size(); i++) { if (i) arr += ","; arr += "\""; arr += hArr[i].as<String>(); arr += "\""; }
+        pendingObsHashes = arr + "]";
+        pendingObsTarget = obs["targetBlockHash"] | "";
+      }
+    }
+    const char* owned = doc["ownedBlock"] | "";
+    if (strlen(owned) >= 16) saveOwnedBlockHash(String(owned));
+  }
+
+  if (newBenchMode && !benchMode) { benchModeSince = millis(); lastBenchPollMs = 0; logf("[BENCH] mode banc d'essai ACTIVÉ par l'app (poll toutes les %lu s)", BENCH_POLL_MS / 1000UL); }
+  if (!newBenchMode && benchMode) logf("[BENCH] mode banc d'essai désactivé");
+  benchMode = newBenchMode;
+  nextPullIntervalMs = (newFrameSource == "none" && newCandId.length() == 0) ? (unsigned long)pullRetryAfter * 1000UL : PULL_INTERVAL;
+  if (newBlockHash.length() > 0 && newBlockHash != currentBlockHash) {
+    currentBlockHash = newBlockHash;                         // currentBlockIndex = bloc de l'IMAGE AFFICHÉE : il ne suit pas la tête de chaîne
+    saveBlockHashToEEPROM(currentBlockHash);
+    logf("[PULL] nouveau bloc #%d", newBlockIndex);
+  }
+  if (newCandId.length() > 0) pendingCandidateId = newCandId;
+
+  if (newFrameSource == "none" || newFrameId.length() == 0) { logf("[PULL] aucune frame"); return true; }
+  if (newFrameId == lastFrameId) { logf("[PULL] frame déjà affichée"); return true; }
+  logf("[PULL] nouvelle frame %s (%s)", newFrameId.c_str(), newFrameSource.c_str());
+  // Le cartel appartient à l'image : sur un pull sans nouvelle image, le serveur répond avec la tête de chaîne, qui n'est pas forcément
+  // l'œuvre affichée (image renvoyée depuis une galerie, par exemple). On ne l'applique donc qu'ici.
+  if (hasCartel) {
+    pendingWorkTitle = cmTitle; pendingArtistName = cmArtist;
+    if (cmBlock >= 0) currentBlockIndex = cmBlock;
+    logf("[PULL] cartel: %s / %s (bloc %d)", asciiFold(pendingWorkTitle).c_str(), asciiFold(pendingArtistName).c_str(), currentBlockIndex);
+  }
+
+  doFetchFrame(newFrameId, newFrameSource);
+  reportMem("après pull");
+  return true;
+}
+
+// ─── VALIDATION ────────────────────────────────────────────────────────────
+static bool doValidate() {
+  if (pendingCandidateId.length() == 0) return false;
+  String resp;
+  if (httpCall("GET", "/api/validate-candidate?deviceId=" + deviceId, nullptr, resp) != 200 || resp.length() == 0) { pendingCandidateId = ""; return false; }
+  JSON_DOC(doc, 512);
+  if (deserializeJson(doc, resp)) { pendingCandidateId = ""; return false; }
+  if ((doc["alreadyVoted"] | false) || doc["candidate"].isNull()) { pendingCandidateId = ""; return false; }
+  JsonObject cand = doc["candidate"];
+  const String candidateId = cand["candidateId"] | "";
+  if (candidateId.length() == 0) { pendingCandidateId = ""; return false; }
+  const float score = cand["score_server"] | 0.5f;
+
+  const String signature = signED25519(candidateId, score);
+  const int m = (int)(score * 1000.0f + 0.5f);
+  char sc[12]; snprintf(sc, sizeof(sc), "%d.%03d", m / 1000, m % 1000);
+  const String body = String("{\"deviceId\":\"") + deviceId + "\",\"candidateId\":\"" + candidateId + "\","
+                      "\"entropy\":" + sc + ",\"transitions\":" + sc + ",\"rle\":" + sc + ",\"score\":" + sc + ","
+                      "\"signature\":\"" + signature + "\"}";
+  pendingCandidateId = "";
+
+  String vResp;
+  const int vCode = httpCall("POST", "/api/validation-result", &body, vResp);
+  bool blockMined = false;
+  if (vCode == 200) {
+    logf("[VALIDATE] vote OK");
+    if (vResp.indexOf("\"blockMined\":true") >= 0) { logf("[VALIDATE] BLOC MINÉ"); blockMined = true; }
+  } else {
+    logf("[VALIDATE] vote refusé (%d)", vCode);
+    if (vResp.indexOf("Signature") >= 0) { logf("[VALIDATE] resynchronisation de la clé publique (re-register)"); doRegister(); }
+  }
+  return blockMined;
+}
+
+// ─── BANC D'ESSAI D'ANIMATION ───────────────────────────────────────────────
+// Envoi des pixels PAR BLOCS. Adafruit_SPITFT::writePixels envoie, sur la R4, chaque pixel par deux appels SPI.transfer(octet) séparés (≈ 4,3 µs par
+// pixel mesuré au banc d'essai). Le cœur R4 sait envoyer un bloc en mots de 32 bits : on l'appelle directement. transfer(buf, n) écrase le tampon
+// avec la réception, d'où la copie dans g_tx32 (alignée 32 bits). La fenêtre d'adressage reste posée par la bibliothèque (DC déjà haut après RAMWR).
+static uint32_t g_tx32[SCR_W / 2];                  // 480 o : une ligne de 240 pixels RGB565
+static void fastPixels(const uint16_t* colors, uint32_t len) {
+  if (!len || len > (uint32_t)SCR_W) return;
+  const uint32_t bytes = len * 2;
+  memcpy(g_tx32, colors, bytes);
+  SPI.transfer((void*)g_tx32, bytes);
+}
+/** Même interface que Adafruit_ILI9341 pour pod_bench.h, mais writePixels passe par fastPixels. */
+struct FastTft {
+  void startWrite() { tft.startWrite(); }
+  void endWrite() { tft.endWrite(); }
+  void setAddrWindow(int x, int y, int w, int h) { tft.setAddrWindow(x, y, w, h); }
+  void writePixels(uint16_t* c, uint32_t len, bool, bool) { fastPixels(c, len); }
+};
+
+static void postBenchResult(const String& clipId, uint32_t frames, unsigned long expectedMs, unsigned long elapsedMs, unsigned long workSumUs,
+                            unsigned long workMaxUs, uint32_t overruns, unsigned long maxLateMs, long minSlackMs, unsigned long downloadMs,
+                            size_t bytes, bool stopped, const char* error) {
+  String body = "{\"deviceId\":\"" + deviceId + "\",\"clipId\":\"" + clipId + "\",\"frames\":" + String(frames)
+              + ",\"expectedMs\":" + String(expectedMs) + ",\"elapsedMs\":" + String(elapsedMs)
+              + ",\"avgWorkUs\":" + String(frames ? workSumUs / frames : 0UL) + ",\"maxWorkUs\":" + String(workMaxUs)
+              + ",\"overruns\":" + String(overruns) + ",\"maxLateMs\":" + String(maxLateMs) + ",\"minSlackMs\":" + String(minSlackMs)
+              + ",\"downloadMs\":" + String(downloadMs)
+              + ",\"bytes\":" + String((unsigned long)bytes) + ",\"heapFree\":" + String((unsigned long)freeHeapBytes())
+              + ",\"stopped\":" + (stopped ? "true" : "false");
+  if (error) body += String(",\"error\":\"") + error + "\"";
+  body += "}";
+  String resp;
+  httpCall("POST", "/api/bench/result", &body, resp);
+}
+
+/** Un contrôle rapide : mode actif ? quel clip ? Retourne 1 = lu, 0 = échec réseau/lecture (429 compris). */
+static int benchPollOnce(bool& mode, String& clipId, size_t& bytes) {
+  String resp;
+  g_quietHttp = true;
+  const int code = httpCall("GET", "/api/bench/poll?deviceId=" + deviceId, nullptr, resp);
+  g_quietHttp = false;
+  if (code == 429) return 0;
+  if (code != 200) { logf("[BENCH] poll en erreur (%d)", code); return 0; }
+  JSON_DOC(doc, 384);
+  if (deserializeJson(doc, resp)) return 0;
+  mode = doc["mode"] | false;
+  JsonObject c = doc["clip"];
+  clipId = ""; bytes = 0;
+  if (!c.isNull()) { clipId = c["clipId"] | ""; bytes = (size_t)(c["bytes"] | 0); }
+  return 1;
+}
+
+enum BenchStop : uint8_t { BS_DONE = 0, BS_TOUCH, BS_CHECK, BS_CAP };
+#define BENCH_LOOP_CHECK_MS 20000UL                 // clip en boucle : on vérifie auprès du serveur toutes les 20 s (l'animation se fige ~2 s)
+#define BENCH_LOOP_MAX_MS   (60UL * 60UL * 1000UL)  // et on s'arrête de toute façon au bout d'une heure
+
+/** Télécharge le clip (TLS fermé ensuite), le valide entièrement, le joue en mesurant, renvoie les mesures, puis remet l'œuvre (carte SD). */
+static void playBenchClip(const String& clipId, size_t announced) {
+  logf("[BENCH] clip %s : %u octets annoncés", clipId.c_str(), (unsigned)announced);
+  lastBenchClipId = clipId;                                   // jamais rejoué en boucle, même en cas d'échec
+  if (announced < (size_t)(BENCH_HDR + 5 + BENCH_FRAME) || announced > BENCH_MAX_CLIP) {
+    logf("[BENCH] taille refusée (%u)", (unsigned)announced);
+    postBenchResult(clipId, 0, 0, 0, 0, 0, 0, 0, 0, 0, announced, false, "taille refusee");
+    return;
+  }
+  uint8_t* clip = (uint8_t*)malloc(announced);
+  uint8_t* cur = (uint8_t*)malloc(BENCH_FRAME);
+  if (!clip || !cur) {
+    free(clip); free(cur);
+    logf("[BENCH] mémoire insuffisante");
+    postBenchResult(clipId, 0, 0, 0, 0, 0, 0, 0, 0, 0, announced, false, "memoire");
+    return;
+  }
+
+  const unsigned long tDl = millis();
+  bool got = false;
+  {
+    Conn c(HTTP_TIMEOUT_MS);
+    const int code = c.request("GET", "/api/bench/clip?deviceId=" + deviceId + "&clipId=" + clipId, nullptr);
+    if (code == 200 && (c.rd.contentLength() < 0 || (size_t)c.rd.contentLength() == announced))
+      got = c.rd.readBody(clip, announced) == announced && c.rd.complete();
+    c.client.stop();
+  }
+  const unsigned long downloadMs = millis() - tDl;
+  podbench::Clip pc;
+  podbench::Err perr = got ? podbench::parse(clip, announced, pc, cur) : podbench::ERR_SIZE;
+  if (!got || perr != podbench::OK) {
+    logf("[BENCH] clip refusé (%s)", got ? podbench::errName(perr) : "téléchargement incomplet");
+    free(clip); free(cur);
+    postBenchResult(clipId, 0, 0, 0, 0, 0, 0, 0, 0, downloadMs, announced, false, got ? "clip invalide" : "telechargement");
+    return;
+  }
+  const bool infinite = (pc.loops == 0);
+  logf("[BENCH] reçu en %lu ms — %u images, %s, lecture", downloadMs, (unsigned)pc.frames, infinite ? "EN BOUCLE (toucher = arrêt)" : (String((unsigned)pc.loops) + " boucle(s)").c_str());
+
+  tft.setRotation(0);
+  tft.fillScreen(pc.bg);
+  cartelVisible = false;                                      // l'écran est désormais celui du banc d'essai
+  FastTft ft;
+  uint32_t frames = 0, overruns = 0;
+  unsigned long workSum = 0, workMax = 0, maxLate = 0, expectedMs = 0, elapsedMs = 0, lastTouchChk = millis();
+  long minSlack = 0x7FFFFFFF;
+  bool stopped = false;
+  const unsigned long tStart = millis();
+  unsigned long lastCheck = tStart;
+  BenchStop why = BS_DONE;
+  for (;;) {
+    const unsigned long segStart = millis();
+    unsigned long target = segStart;                          // instant où l'image courante DOIT commencer à apparaître
+    unsigned long startedMs = segStart;                       // instant où sa peinture a réellement commencé
+    unsigned long workStartUs = micros();
+    why = BS_DONE;
+    podbench::play(pc, cur, ft, g_row, [&](uint32_t, uint16_t delayMs) -> bool {
+      const unsigned long workUs = micros() - workStartUs;     // appliquer la différence + peindre
+      const long late = (long)(startedMs - target);            // RETARD DE DÉMARRAGE : > 0 seulement si l'image précédente a débordé sur son délai
+      if (late > 5) { overruns++; if ((unsigned long)late > maxLate) maxLate = (unsigned long)late; }
+      workSum += workUs; if (workUs > workMax) workMax = workUs;
+      frames++; expectedMs += delayMs;
+      target += delayMs;                                       // horloge ABSOLUE : pas de dérive cumulée
+      const long slack = (long)(target - millis());            // marge restante avant l'image suivante (négative = en retard)
+      if (slack < minSlack) minSlack = slack;
+      while ((long)(millis() - target) < 0) {
+        if (touchOk && millis() - lastTouchChk > 200UL) { lastTouchChk = millis(); if (ts.touched()) { drainTouch(); stopped = true; why = BS_TOUCH; return false; } }
+        delay(1);
+      }
+      if (infinite && millis() - lastCheck >= BENCH_LOOP_CHECK_MS) { why = BS_CHECK; return false; }
+      if (infinite && millis() - tStart > BENCH_LOOP_MAX_MS) { why = BS_CAP; return false; }
+      startedMs = millis(); workStartUs = micros();
+      return true;
+    });
+    elapsedMs += millis() - segStart;
+    if (why != BS_CHECK) break;
+    // Clip en boucle : le serveur veut-il toujours CE clip ? (un nouvel envoi ou l'arrêt du mode interrompt la boucle)
+    bool mode = true; String id; size_t b = 0;
+    const int ok = benchPollOnce(mode, id, b);
+    lastCheck = millis();
+    if (ok && !mode) { benchMode = false; logf("[BENCH] mode terminé côté serveur : fin de la boucle"); break; }
+    if (ok && id.length() > 0 && id != clipId) { logf("[BENCH] nouveau clip %s : fin de la boucle", id.c_str()); break; }
+  }
+  logf("[BENCH] lecture %s : %lu images en %lu ms (prévu %lu) — travail moy %lu us, max %lu us, retards de démarrage %lu (max %lu ms), marge min %ld ms",
+       why == BS_TOUCH ? "INTERROMPUE (toucher)" : "terminée", (unsigned long)frames, elapsedMs, expectedMs, frames ? workSum / frames : 0UL, workMax,
+       (unsigned long)overruns, maxLate, minSlack == 0x7FFFFFFF ? 0L : minSlack);
+  free(clip); free(cur);                                      // libérés AVANT d'ouvrir une connexion TLS pour les mesures
+  postBenchResult(clipId, frames, expectedMs, elapsedMs, workSum, workMax, overruns, maxLate, minSlack == 0x7FFFFFFF ? 0L : minSlack, downloadMs, announced, stopped, nullptr);
+  if (sdFrameValid) {                                         // l'œuvre revient depuis la carte SD
+    const unsigned long tr = millis();
+    if (restoreRows(0, SCR_H)) logf("[BENCH] œuvre remise en place depuis la carte SD en %lu ms", millis() - tr);
+  }
+}
+
+static void doBenchPoll() {
+  bool mode = false; String id; size_t bytes = 0;
+  if (!benchPollOnce(mode, id, bytes)) return;
+  if (!mode) { benchMode = false; logf("[BENCH] mode terminé côté serveur"); return; }
+  if (id.length() > 0 && id != lastBenchClipId) playBenchClip(id, bytes);
+}
+
+// ─── AUTO-TEST Ed25519 (au boot) : prouve que signature + vérification passent dans 1 Ko de pile + marge du tas ────────────
+static void selfTestEd25519() {
+  static const char msg[] = "pod-r4-selftest";
+  uint8_t sig[64];
+  unsigned long t = millis();
+  Ed25519::sign(sig, privateKey, publicKey, msg, strlen(msg));
+  const unsigned long tSign = millis() - t;
+  t = millis();
+  const bool ok = Ed25519::verify(sig, publicKey, msg, strlen(msg));
+  const unsigned long tVerify = millis() - t;
+  logf("[SELFTEST] Ed25519 signature %lu ms, vérification %lu ms -> %s", tSign, tVerify, ok ? "OK" : "ECHEC");
+  reportMem("après Ed25519");
+}
+
+// ─── SETUP / LOOP ──────────────────────────────────────────────────────────
+void setup() {
+  paintStack();                                         // avant tout : permet de mesurer la profondeur de pile
+  Serial.begin(115200);
+  while (!Serial && millis() < 2500) {}
+  logf("\n[BOOT] Proof-of-Draw UNO R4 WiFi + TFT 2.8\" tactile — %s", FIRMWARE_VERSION);
+  reportMem("boot");
+
+  pinMode(TFT_CS, OUTPUT);   digitalWrite(TFT_CS, HIGH);
+  pinMode(STMPE_CS, OUTPUT); digitalWrite(STMPE_CS, HIGH);
+  pinMode(SD_CS, OUTPUT);    digitalWrite(SD_CS, HIGH);
+
+  tft.begin();
+  tft.setRotation(0);
+#if TOUCH_ENABLED
+  touchOk = ts.begin();
+  logf("[TOUCH] STMPE610 %s", touchOk ? "détecté (toucher = afficher / cacher le cartel)" : "NON détecté (toucher désactivé)");
+#else
+  logf("[TOUCH] désactivé (TOUCH_ENABLED 0)");
+#endif
+  tftStatus("Proof-of-Draw", "Connexion WiFi...");
+  initSD();
+
+  if (WiFi.status() == WL_NO_MODULE) { tftStatus("Module WiFi absent", "", C_RED); while (true) delay(1000); }
+  logf("[WIFI] firmware du module: %s", WiFi.firmwareVersion());
+  int tries = 0;
+  while (WiFi.status() != WL_CONNECTED && tries++ < 4) {
+    WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+    for (int i = 0; i < 20 && WiFi.status() != WL_CONNECTED; i++) delay(500);
+  }
+  if (WiFi.status() != WL_CONNECTED) { logf("[WIFI] échec"); tftStatus("WiFi FAIL", "Redemarrage...", C_RED); delay(3000); NVIC_SystemReset(); }
+  logf("[WIFI] IP: %s", WiFi.localIP().toString().c_str());
+  tftStatus("WiFi OK", WiFi.localIP().toString());
+
+  if (!keysAlreadyGenerated()) generateKeys();
+  else { loadKeysFromEEPROM(); logf("[KEYS] clés chargées: %s", bytesToHex(publicKey, 32).c_str()); }
+  selfTestEd25519();
+
+  currentBlockHash = loadBlockHashFromEEPROM();
+  {
+    bool ok = currentBlockHash.length() >= 8;
+    for (unsigned i = 0; i < currentBlockHash.length() && ok; i++) { const char c = currentBlockHash[i]; ok = (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F'); }
+    if (!ok) currentBlockHash = "";
+  }
+
+  while (!registered) { if (doRegister()) break; delay(5000); }
+  if (paired) {
+    restoreLastFrame();                                 // la dernière œuvre revient tout de suite depuis la carte SD
+    logf("[BOOT] premier pull immédiat");
+    doPull();
+  }
+  lastPullMs = millis(); lastValidateMs = millis();
+  logf("[BOOT] prêt — pull toutes les %lu s", PULL_INTERVAL / 1000UL);
+}
+
+void loop() {
+  const unsigned long now = millis();
+
+  if (!registered) { if (!doRegister()) { delay(5000); return; } }
+
+  if (!paired) {
+    if (now - lastPullMs >= 60000UL) {
+      const bool wasPaired = paired;
+      doRegister();
+      lastPullMs = millis();
+      if (!wasPaired && paired) { logf("[PAIRING] appairé -> redémarrage"); delay(1000); NVIC_SystemReset(); }
+    }
+    delay(250);
+    return;
+  }
+
+  serviceTouch();
+
+  if (benchMode) {
+    if (millis() - benchModeSince > BENCH_MODE_MAX_MS) { benchMode = false; logf("[BENCH] mode expiré (31 min)"); }
+    else if (millis() - lastBenchPollMs >= BENCH_POLL_MS) { lastBenchPollMs = millis(); doBenchPoll(); }
+  }
+
+  if (now - lastPullMs >= nextPullIntervalMs) {
+    const String prevCand = pendingCandidateId;
+    doPull();
+    lastPullMs = millis();
+    if (pendingCandidateId.length() > 0 && pendingCandidateId != prevCand) lastValidateMs = millis();
+  }
+
+  if (pendingObsHashes.length() > 0) doObsConfirm();
+
+  if (pendingCandidateId.length() > 0 && millis() - lastValidateMs >= VALIDATE_INTERVAL) {
+    const bool mined = doValidate();
+    lastValidateMs = millis();
+    if (mined) { delay(2000); doPull(); lastPullMs = millis(); }
+  }
+  delay(40);
+}
