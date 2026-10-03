@@ -59,6 +59,16 @@ et la carte « Mesures » de la page. Questions auxquelles ça répond : **débi
   (balle, vague, bruit… : un modèle chargé n'est « fait à la main » qu'une fois modifié). Dédoublonnage par empreinte du clip, 200 au plus. Chaque carte rejoue l'animation, exporte le GIF
   ou la rouvre dans le banc d'essai. Les dernières animations apparaissent aussi dans le **journal global** de l'accueil (étiquette `ANIM`).
 
+## Éditeur d'animation (refonte du 03/10)
+
+- **Annuler / rétablir** (↶ ↷, Ctrl+Z, Ctrl+Maj+Z / Ctrl+Y) : 100 pas. Un trait = un pas ; ajouter / supprimer / déplacer une image, charger un modèle, importer, générer un mouvement = un pas chacun.
+  Annuler ramène aussi sur l'image modifiée et restaure l'état « fait à la main / modèle de test ». Réducteur pur : `lib/bench/history.ts`.
+- **Outils** : crayon (P), gomme (E, ou clic droit), ligne (L), rectangle (R), ellipse (O) — contour ou plein —, remplissage (G) ; pinceau 1–8 px, carré ou rond ([ ]).
+- **Aides** : onion skin précédente (orange) et suivante (bleu), grille d'octets (8 px = l'unité de coût d'une différence), coût en octets de chaque image, coordonnées sous le curseur.
+- **Images** : ＋ ⎘ ✕, reculer / avancer dans la timeline, ← → pour naviguer, espace pour lire ; **inverser le sens**, **aller-retour**.
+- **Transformer** : inverser, effacer, miroir, retourner, décaler (1–16 px, bouclé). **Mouvement** : génère N images en décalant l'image courante de (dx, dy) à chaque image.
+- Les primitives (`lib/bench/draw.ts`) sont **pures** (copie sur écriture : l'historique ne copie que des références) et testées : `tests/benchDraw.test.ts`, `tests/benchHistory.test.ts`.
+
 ## Passer le banc d'essai « en réel » : faisabilité
 
 | Niveau | Contenu | État |
