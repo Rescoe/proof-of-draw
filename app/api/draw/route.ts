@@ -12,6 +12,9 @@ import { getCurrentCandidate } from "@/lib/chain";
 import { enqueueDraw, getQueueLength, DRAW_QUEUE_MAX } from "@/lib/drawQueue";
 import { SCREEN_IDS, isDualBuffer, maxBufferBase64Length } from "@/lib/screenProfiles";
 import { broadcastDirect } from "@/lib/broadcast";
+import { BENCH_SCREENS } from "@/lib/bench/screens";
+import { CLIP } from "@/lib/bench/clip";
+import { buildAnimSubmission, type AnimScreen } from "@/lib/anim/block";
 
 const DRAW_WINDOW_SEC = parseInt(process.env.DRAW_WINDOW_SEC ?? "900");
 const ABUSE_STRIKES   = parseInt(process.env.DRAW_LIMIT_PER_ROUND ?? "3");
@@ -69,7 +72,10 @@ export async function POST(req: NextRequest) {
   const { deviceId, screen, black, red, buffer } = body as Record<string, string>;
   const actions        = Array.isArray(body.actions)      ? body.actions      : [];
   const replayEvents   = Array.isArray(body.replayEvents) ? body.replayEvents : [];
-  const drawScore      = typeof body.drawScore      === "number" ? body.drawScore      : null;
+  let   drawScore: number | null = typeof body.drawScore === "number" ? body.drawScore : null;
+  // Animation : même porte d'entrée qu'un dessin (auth, verrou 15 min, strikes, file d'attente, consensus). Le client envoie les images
+  // brutes ; le serveur encode le clip et en dérive scores, empreintes et affiche (lib/anim/block.ts) — jamais l'inverse.
+  const animIn = body.anim && typeof body.anim === "object" && !Array.isArray(body.anim) ? (body.anim as Record<string, unknown>) : null;
   const workTitle      = typeof body.workTitle      === "string" ? body.workTitle.trim().slice(0, 80)  : undefined;
   const drawArtistName = typeof body.drawArtistName === "string" ? body.drawArtistName.trim().slice(0, 40) : undefined;
   const importWarning  = typeof body.importWarning  === "string" ? body.importWarning  : undefined;
@@ -95,6 +101,7 @@ export async function POST(req: NextRequest) {
   }
 
   const hasPayload =
+    !!animIn ||
     (isDualBuffer(screen) && black && red) ||
     (!isDualBuffer(screen) && buffer);
   if (!hasPayload) {
@@ -133,6 +140,27 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Non autorisé" }, { status: 403 });
   }
 
+  // ── Animation : encodage et dérivation côté serveur (après l'auth : jamais de calcul pour un inconnu) ──────────────
+  let animClip: string | undefined;
+  let posterBuffer: string | undefined;
+  if (animIn) {
+    if (!(BENCH_SCREENS as string[]).includes(screen)) {
+      return NextResponse.json({ error: "Cet écran ne joue pas d'animation (TFT 2.8\", TFT 1.8\" ou OLED)" }, { status: 400 });
+    }
+    const rawFrames = Array.isArray(animIn.frames) ? animIn.frames : [];
+    if (rawFrames.length > CLIP.MAX_FRAMES) return NextResponse.json({ error: `1 à ${CLIP.MAX_FRAMES} images` }, { status: 400 });
+    try {
+      const sub = buildAnimSubmission({
+        frames: rawFrames.map((f) => new Uint8Array(Buffer.from(String(f), "base64"))),
+        delaysMs: Array.isArray(animIn.delaysMs) ? animIn.delaysMs.map(Number) : [],
+        loops: Number(animIn.loops), fg: Number(animIn.fg), bg: Number(animIn.bg),
+      }, screen as AnimScreen);
+      animClip = sub.part.clip; posterBuffer = sub.posterBuffer; drawScore = sub.drawScore;
+    } catch (e) {
+      return NextResponse.json({ error: e instanceof Error ? e.message : "Animation invalide" }, { status: 400 });
+    }
+  }
+
   // ── Limite de débit (draw:lock par device) ──────────────────────────────────
   const acquired = await redis.set(lockKey(deviceId), "1", { nx: true, ex: DRAW_WINDOW_SEC });
   if (!acquired) {
@@ -163,7 +191,7 @@ export async function POST(req: NextRequest) {
   // ── BYPASS direct ───────────────────────────────────────────────────────────
   if (BYPASS_VALIDATION) {
     const payload: Record<string, string> =
-      isDualBuffer(screen) ? { black: black!, red: red! } : { buffer: buffer! };
+      isDualBuffer(screen) ? { black: black!, red: red! } : { buffer: (posterBuffer ?? buffer)! };
     await broadcastDirect(screen, payload, deviceId, frameMeta);
     await incrementFramesSent(deviceId); // compte uniquement les envois réels
     return NextResponse.json({ ok: true, nextDrawIn: DRAW_WINDOW_SEC, validation: "bypassed" });
@@ -193,7 +221,7 @@ export async function POST(req: NextRequest) {
   // Si un candidat est déjà en cours de validation → mettre en file d'attente
   if (existingCandidate) {
     const queueEntry = {
-      deviceId, screen, black, red, buffer,
+      deviceId, screen, black, red, buffer: animClip ? undefined : buffer, animClip,
       actions, replayEvents, drawScore, workTitle, drawArtistName, importWarning,
       submittedAt: Date.now(),
       frameMeta,
@@ -221,7 +249,7 @@ export async function POST(req: NextRequest) {
   // ── Aucun candidat actif → soumettre directement ───────────────────────────
   try {
     const candidateBody = {
-      deviceId, screen, black, red, buffer,
+      deviceId, screen, black, red, buffer: animClip ? undefined : buffer, animClip,
       actions, replayEvents, drawScore, workTitle, drawArtistName, importWarning,
     };
     const submitUrl    = new URL("/api/submit-candidate", getBaseUrl(req)).toString();
@@ -271,7 +299,7 @@ export async function POST(req: NextRequest) {
 
     // Fallback direct si le serveur interne est indisponible
     const payload: Record<string, string> =
-      isDualBuffer(screen) ? { black: black!, red: red! } : { buffer: buffer! };
+      isDualBuffer(screen) ? { black: black!, red: red! } : { buffer: (posterBuffer ?? buffer)! };
     await broadcastDirect(screen, payload, deviceId, frameMeta);
     return NextResponse.json({
       ok:         true,

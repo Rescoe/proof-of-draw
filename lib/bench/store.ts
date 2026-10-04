@@ -73,8 +73,8 @@ export async function benchLock(kind: string, deviceId: string, sec: number): Pr
   return !!(await redis.set(benchKeys.lock(kind, deviceId), "1", { nx: true, ex: sec }));
 }
 
-export async function setBenchMode(deviceId: string, on: boolean): Promise<void> {
-  if (on) await redis.set(benchKeys.mode(deviceId), "1", { ex: MODE_TTL_SEC });
+export async function setBenchMode(deviceId: string, on: boolean, ttlSec: number = MODE_TTL_SEC): Promise<void> {
+  if (on) await redis.set(benchKeys.mode(deviceId), "1", { ex: ttlSec });
   else await redis.del(benchKeys.mode(deviceId));
 }
 

@@ -7,10 +7,8 @@ import { usePathname } from "next/navigation";
 const links = [
   { href: "/",         label: "Accueil" },
   { href: "/draw",     label: "Dessiner" },
-  { href: "/animer",   label: "Animer" },
   { href: "/gallery",  label: "Explorer" },
   { href: "/gallery-ana", label: "Agents IA" },
-  { href: "/gallery-anim", label: "Animations" },
   { href: "/artists",  label: "Artistes" },
   { href: "/learn",    label: "Apprendre" },
   { href: "/profile",  label: "Mon profil" },

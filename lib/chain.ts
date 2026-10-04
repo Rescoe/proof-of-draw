@@ -77,6 +77,13 @@ export interface Block {
   // Redis totalement séparé (chain:ana:*) ; ce champ est une étiquette pour
   // l'UI, pas un filtre nécessaire à leur isolement.
   source?: "human" | "ana-agent";
+
+  // ── Animation (03/10/2026) ──────────────────────────────────────────────────
+  // Une animation suit le MÊME pipeline qu'un dessin (candidat → votes signés → bloc). `imageHash` = racine de l'animation (SHA-256 de
+  // l'empreinte de chaque image + délais + boucles + couleurs) : le hash du bloc couvre donc chaque image. Le clip et les empreintes
+  // d'images vivent dans `chain:anim:{hash}` (permanent) ; `imagePayload` est l'affiche (image fixe) au format de l'écran.
+  kind?: "animation";
+  anim?: import("@/lib/anim/block").AnimBlockMeta;
 }
 
 export interface BlockImagePayload {
@@ -111,6 +118,10 @@ export interface Candidate {
   replayEvents?: import("@/lib/types/actions").ReplayEvent[];
   podHashEnriched?: string;
   podGeometry?: ReplayAnalysis; // Métriques géométriques et temporelles (preuve de dessin)
+
+  // ── Animation : le clip, les empreintes et les scores PAR IMAGE ; `score` = leur moyenne, `imageHash` = leur racine ─────────
+  kind?: "animation";
+  anim?: import("@/lib/anim/block").AnimCandidatePart;
 }
 
 export interface ValidationVote {
@@ -140,6 +151,7 @@ const blockKey   = (hash: string) => `chain:block:${hash}`;
 const imageKey   = (hash: string) => `chain:image:${hash}`;
 const actionsKey = (hash: string) => `chain:actions:${hash}`;
 const replayKey  = (hash: string) => `chain:replay:${hash}`;
+const animKey    = (hash: string) => `chain:anim:${hash}`;
 const KEY_OBS_QUEUE = "chain:obs:queue";
 
 const GENESIS_HASH      = "0".repeat(64);
@@ -404,6 +416,8 @@ export async function finalizeBlock(
     validatorIds: votes.map((v) => v.deviceId).sort(),
     score:       finalScore,
     minedAt,
+    // Animation uniquement (clé absente pour un dessin : le hash d'un dessin ne change pas). Redondant avec imageHash, mais explicite.
+    animRoot:    candidate.anim?.root,
   });
 
   const blockHash = await sha256Hex(canonical);
@@ -467,6 +481,9 @@ export async function finalizeBlock(
     // Axe 4
     podHashEnriched: candidate.podHashEnriched,
     podGeometry:     candidate.podGeometry,
+    ...(candidate.anim
+      ? { kind: "animation" as const, anim: { frames: candidate.anim.frames, loops: candidate.anim.loops, playMs: candidate.anim.playMs, bytes: candidate.anim.bytes, root: candidate.anim.root } }
+      : {}),
   };
 
   // Image à conserver de manière permanente
@@ -503,6 +520,14 @@ export async function finalizeBlock(
       redis.lpush(`chain:device:${candidate.deviceId}:drawn`, blockHash),
       redis.ltrim(`chain:device:${candidate.deviceId}:drawn`, 0, 99),
     );
+  }
+
+  // Animation : clip + empreintes + scores par image, permanents (≤ 25 Ko), à côté de l'affiche
+  if (candidate.anim) {
+    const a = candidate.anim;
+    writes.push(redis.set(animKey(blockHash), JSON.stringify({
+      v: 1, clip: a.clip, frameHashes: a.frameHashes, frameScores: a.frameScores, root: a.root, fg: a.fg, bg: a.bg, loops: a.loops, posterIndex: a.posterIndex,
+    } satisfies import("@/lib/anim/block").AnimBlockDoc)));
   }
 
   // Axe 4 : stocker les events de replay (optionnel, peut être absent)
@@ -648,6 +673,17 @@ export const getRecentBlocksCached = unstable_cache(
 );
 
 // ─── Données de replay et actions ────────────────────────────────────────────
+
+/** Document d'animation d'un bloc (clip + empreintes + scores par image), ou null pour un dessin. */
+export async function getBlockAnim(hash: string): Promise<import("@/lib/anim/block").AnimBlockDoc | null> {
+  const raw = await redis.get(animKey(hash));
+  if (!raw) return null;
+  try {
+    return typeof raw === "string" ? JSON.parse(raw) : (raw as import("@/lib/anim/block").AnimBlockDoc);
+  } catch {
+    return null;
+  }
+}
 
 export async function getBlockActions(hash: string): Promise<import("@/lib/types/actions").ActionEvent[] | null> {
   const raw = await redis.get(actionsKey(hash));

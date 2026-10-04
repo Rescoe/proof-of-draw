@@ -30,6 +30,7 @@ import { isBlacklisted, getIP, forbidden } from "@/lib/rateLimit";
 import { verifyEd25519 } from "@/lib/ed25519";
 import { dequeueNextDraw } from "@/lib/drawQueue";
 import { invalidateThresholdsCache } from "@/lib/adaptiveValidation";
+import { deliverAnimation } from "@/lib/anim/deliver";
 
 const DEVICE_ID_REGEX = /^dev_[A-Z0-9]{8}$/;
 const BLACKLIST_TTL = parseInt(process.env.BLACKLIST_TTL_SECONDS ?? "604800");
@@ -145,6 +146,11 @@ export async function POST(req: NextRequest) {
       const block = await finalizeBlock(candidate, allVotes, frameId, vote.deviceId);
 
       await broadcastValidatedFrame(candidate.poolScreen, candidate.payload, frameId, block.displayTime, block.blockIndex, candidate.artistName);
+      // Animation : l'affiche (image fixe) vient d'être diffusée comme pour un dessin ; les écrans capables reçoivent en plus le clip à jouer.
+      if (candidate.anim) {
+        const served = await deliverAnimation(candidate.poolScreen, new Uint8Array(Buffer.from(candidate.anim.clip, "base64")), candidate.anim, block.displayTime);
+        console.log(`[validation-result] animation bloc #${block.blockIndex} : clip livré à ${served} écran(s)`);
+      }
       await clearCandidate();
       // Invalider le cache Next.js → la BlockGallery se rechargera immédiatement
       revalidatePath("/", "page");

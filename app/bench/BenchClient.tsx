@@ -182,8 +182,6 @@ export default function BenchClient({ variant = "bench" }: { variant?: BenchVari
   // L'état vit dans le document : annuler le chargement d'un modèle le restaure.
   const handmade = hist.doc.handmade !== false;
   const [title, setTitle] = useState(draft?.title ?? "");
-  const [toGallery, setToGallery] = useState(true);
-  const [allDevices, setAllDevices] = useState<Dev[]>([]);
   const [devices, setDevices] = useState<Dev[] | null>(null);
   const [deviceId, setDeviceId] = useState("");
   const [status, setStatus] = useState<Status | null>(null);
@@ -301,10 +299,10 @@ export default function BenchClient({ variant = "bench" }: { variant?: BenchVari
       .then((r) => (r.ok ? r.json() : { devices: [] }))
       .then((d: { devices?: Dev[] }) => {
         if (!alive) return;
-        setAllDevices(d.devices ?? []);
         const mine = (d.devices ?? []).filter((x) => benchScreenOf(x.screens) !== null);
         setDevices(mine);
-        if (mine.length) setDeviceId((c) => c || mine[0].deviceId);
+        const wanted = new URLSearchParams(window.location.search).get("device");   // lien « 🎞 Animer » du profil
+        if (mine.length) setDeviceId((c) => c || (mine.find((x) => x.deviceId === wanted) ?? mine[0]).deviceId);
       })
       .catch(() => { if (alive) setDevices([]); });
     return () => { alive = false; };
@@ -323,7 +321,7 @@ export default function BenchClient({ variant = "bench" }: { variant?: BenchVari
     } catch { /* réseau : on réessaie au prochain tour */ }
   }, [deviceId]);
   useEffect(() => {
-    if (!deviceId) return;
+    if (!deviceId || isStudio) return;   // l'atelier ne fait pas de mesures : aucune lecture d'état (quota Redis)
     let stopped = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
     const schedule = () => {
@@ -363,10 +361,11 @@ export default function BenchClient({ variant = "bench" }: { variant?: BenchVari
   const device = devices?.find((d) => d.deviceId === deviceId);
   const seen = status?.seenAgoMs ?? null;
   const connected = status?.mode === true && seen !== null && seen < 15_000;
-  const benchScreen = benchScreenOf(device?.screens) ?? "tft28";
+  // Atelier : l'écran demandé par le lien du profil (`?screen=`) s'il joue des clips, sinon le premier écran compatible de l'appareil.
+  const wantedScreen = typeof window !== "undefined" ? new URLSearchParams(window.location.search).get("screen") : null;
+  const benchScreen = (isStudio && wantedScreen && device?.screens.includes(wantedScreen) ? benchScreenOf([wantedScreen]) : null) ?? benchScreenOf(device?.screens) ?? "tft28";
   const screenInfo = BENCH_SCREEN_INFO[benchScreen];
   const fwState = benchFirmwareOk(benchScreen, status?.firmware ?? null);
-  const authorDevice = deviceId || allDevices[0]?.deviceId || "";
 
   async function setMode(on: boolean) {
     setMsg(null);
@@ -386,25 +385,26 @@ export default function BenchClient({ variant = "bench" }: { variant?: BenchVari
     try {
       const r = await fetch("/api/bench/send", {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ deviceId, frames: frames.map(toB64), delaysMs: input.delaysMs, loops, fg: input.fg, bg: input.bg, ...(handmade && toGallery ? { gallery: { title: title.trim() || "Sans titre" } } : {}) }),
+        body: JSON.stringify({ deviceId, frames: frames.map(toB64), delaysMs: input.delaysMs, loops, fg: input.fg, bg: input.bg }),
       });
       const d = await r.json().catch(() => ({}));
-      const g = d.gallery as { id?: string; duplicate?: boolean; refused?: string } | undefined;
-      const galleryText = !g ? "" : g.id ? (g.duplicate ? " Déjà présente dans la galerie Animations." : " Enregistrée dans la galerie Animations.") : ` Pas ajoutée à la galerie : ${g.refused}.`;
-      setMsg(r.ok ? { ok: true, text: `Envoyé : clip ${d.clipId} (${d.bytes} octets). ${status?.mode ? "L'écran le joue dans quelques secondes." : "Activez le mode banc d'essai pour que l'écran le récupère vite."}${galleryText}` } : { ok: false, text: d.error ?? "Envoi impossible" });
+      setMsg(r.ok ? { ok: true, text: `Envoyé : clip ${d.clipId} (${d.bytes} octets). ${status?.mode ? "L'écran le joue dans quelques secondes." : "Activez le mode banc d'essai pour que l'écran le récupère vite."}` } : { ok: false, text: d.error ?? "Envoi impossible" });
       refreshStatus();
     } catch { setMsg({ ok: false, text: "Erreur réseau" }); }
     finally { setBusy(false); }
   }
-  async function saveOnly() {
+  /** Atelier : l'animation entre dans le MÊME circuit qu'un dessin (/api/draw → candidat → votes signés des ESP → bloc → galerie). */
+  async function submitToNetwork() {
     setBusy(true); setMsg(null);
     try {
-      const r = await fetch("/api/anim/save", {
+      const r = await fetch("/api/draw", {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ deviceId: authorDevice, title: title.trim() || "Sans titre", frames: frames.map(toB64), delaysMs: input.delaysMs, loops, fg: input.fg, bg: input.bg }),
+        body: JSON.stringify({ deviceId, screen: benchScreen, workTitle: title.trim() || "Sans titre", anim: { frames: frames.map(toB64), delaysMs: input.delaysMs, loops, fg: input.fg, bg: input.bg } }),
       });
       const d = await r.json().catch(() => ({}));
-      setMsg(r.ok ? { ok: true, text: d.duplicate ? "Cette animation est déjà dans la galerie." : "Enregistrée dans la galerie Animations." } : { ok: false, text: d.error ?? "Enregistrement impossible" });
+      if (!r.ok) { setMsg({ ok: false, text: d.message ?? d.error ?? "Soumission impossible" }); return; }
+      const how = d.validation === "queued" ? `En file d'attente (position ${d.queuePosition}). ` : d.validation === "pending" ? `Score ${Number(d.score ?? 0).toFixed(3)} · à valider par ${d.poolSize ?? 0} ESP. ` : "";
+      setMsg({ ok: true, text: `Animation soumise au réseau. ${how}Elle apparaîtra dans la galerie (filtre « Animations ») une fois le bloc miné.` });
     } catch { setMsg({ ok: false, text: "Erreur réseau" }); }
     finally { setBusy(false); }
   }
@@ -418,19 +418,39 @@ export default function BenchClient({ variant = "bench" }: { variant?: BenchVari
       <h1 style={{ fontSize: "1.25rem", fontWeight: 800, margin: "0 0 0.3rem" }}>{isStudio ? "🎞 Atelier d'animation" : "🧪 Banc d'essai animation"} <span style={{ ...label, border: "1px solid var(--border)", borderRadius: 999, padding: "0.1rem 0.5rem", verticalAlign: "middle" }}>{isStudio ? "qualité OLED 128×64" : "v1 · test"}</span></h1>
       {isStudio ? (
         <p style={{ ...muted, marginBottom: "1rem" }}>
-          Créez une animation 128×64 en noir et blanc, image par image — la qualité d&apos;un écran OLED. Exportez-la en <strong>GIF</strong>, publiez-la dans la
-          <a href="/gallery-anim" style={{ color: "var(--accent)" }}> galerie Animations</a> ou envoyez-la sur votre écran compatible
-          (TFT 2.8&quot; tactile validé ; TFT 1.8&quot; et OLED : lecture écrite mais pas encore essayée sur le matériel). Pour mesurer la vitesse réelle d&apos;un écran, utilisez le <a href="/bench" style={{ color: "var(--accent)" }}>banc d&apos;essai</a>.
+          Créez une animation 128×64, image par image. Soumise au réseau, elle suit <strong>le même circuit qu&apos;un dessin</strong> : chaque image est
+          empreinte et notée, les ESP la valident et la signent, puis elle est minée en bloc et rejoint la <a href="/gallery?type=animation" style={{ color: "var(--accent)" }}>galerie</a> (filtre « Animations »).
+          Vous pouvez aussi l&apos;exporter en <strong>GIF</strong>.
         </p>
       ) : (
         <p style={{ ...muted, marginBottom: "1rem" }}>
           Dessinez une petite animation 128×64 (comme sur l&apos;OLED). Elle est envoyée sous forme de <strong>différences entre images</strong> et rejouée par l&apos;écran
-          ({screenInfo.geometry}). L&apos;écran renvoie ses mesures : on voit ainsi la vitesse réelle atteinte. Voir aussi la <a href="/gallery-anim" style={{ color: "var(--accent)" }}>galerie Animations</a> et l&apos;<a href="/animer" style={{ color: "var(--accent)" }}>atelier d&apos;animation</a>.
+          ({screenInfo.geometry}). L&apos;écran renvoie ses mesures : on voit ainsi la vitesse réelle atteinte. L&apos;<a href="/profile" style={{ color: "var(--accent)" }}>atelier d&apos;animation</a> (bouton « 🎞 Animer » de Mon profil) soumet les animations au réseau.
         </p>
       )}
 
       {/* 1. Appareil + mode */}
-      <div style={card}>
+      {isStudio && (
+        <div style={card}>
+          <div style={label}>1 · Mon écran</div>
+          {devices === null ? <p style={muted}>Chargement…</p> : devices.length === 0 ? (
+            <p style={{ ...muted, color: "#fb923c", marginTop: 6 }}>
+              Aucun écran qui joue des animations dans votre profil (TFT 2.8&quot; tactile, TFT 1.8&quot; ou OLED). Le bouton « 🎞 Animer » de <a href="/profile" style={{ color: "var(--accent)" }}>Mon profil</a> n&apos;apparaît que sur ces écrans.
+              Vous pouvez quand même dessiner et exporter en GIF.
+            </p>
+          ) : (
+            <div style={{ display: "flex", gap: "0.6rem", flexWrap: "wrap", alignItems: "center", marginTop: 6 }}>
+              {devices.length > 1 ? (
+                <select value={deviceId} onChange={(e) => setDeviceId(e.target.value)} aria-label="Appareil" style={{ ...btn, minWidth: 200 }}>
+                  {devices.map((d) => <option key={d.deviceId} value={d.deviceId}>{d.deviceName || d.artistName || d.deviceId}</option>)}
+                </select>
+              ) : <strong style={{ fontSize: "0.9rem" }}>{device?.deviceName || device?.artistName || deviceId}</strong>}
+              <span style={muted}>{screenInfo.label} — animation {screenInfo.geometry}</span>
+            </div>
+          )}
+        </div>
+      )}
+      {!isStudio && <div style={card}>
         <div style={label}>1 · {isStudio ? "Mon écran (facultatif)" : "Écran cible"}</div>
         {devices === null ? <p style={muted}>Chargement…</p> : devices.length === 0 ? (
           <p style={{ ...muted, color: "#fb923c", marginTop: 6 }}>Aucun écran compatible dans votre profil (TFT 2.8&quot; tactile, TFT 1.8&quot; ou OLED). Vous pouvez quand même dessiner, exporter en GIF et enregistrer dans la galerie.</p>
@@ -458,7 +478,7 @@ export default function BenchClient({ variant = "bench" }: { variant?: BenchVari
         {devices && devices.length > 0 && <p style={{ ...muted, marginTop: 8 }}>Écran : {screenInfo.label} — animation {screenInfo.geometry}.</p>}
         {device && fwState === true && <p style={{ ...muted, marginTop: 8 }}>Firmware de l&apos;écran : {status?.firmware} ✓</p>}
         <p style={{ ...muted, marginTop: 8 }}>Le mode accélère les contrôles de l&apos;écran (≈ toutes les 3 s) pendant 30 minutes, puis s&apos;éteint tout seul. {device && !device.isOnline ? "⚠ L'appareil semble hors ligne." : ""}</p>
-      </div>
+      </div>}
 
       {/* 2. Éditeur */}
       <div style={card}>
@@ -600,7 +620,7 @@ export default function BenchClient({ variant = "bench" }: { variant?: BenchVari
 
       {/* 4. Envoi + mesures */}
       <div style={card}>
-        <div style={label}>4 · {isStudio ? "Enregistrer, exporter, envoyer" : "Envoyer et mesurer"}</div>
+        <div style={label}>4 · {isStudio ? "Soumettre au réseau, exporter" : "Envoyer et mesurer"}</div>
         {stats ? (
           <div style={{ display: "flex", gap: "1.2rem", flexWrap: "wrap", margin: "0.5rem 0" }}>
             <div><div style={{ fontWeight: 800, fontSize: "1.05rem", color: sizeColor }}>{stats.bytes} o</div><div style={muted}>clip (max {CLIP.MAX_CLIP_BYTES})</div></div>
@@ -611,19 +631,17 @@ export default function BenchClient({ variant = "bench" }: { variant?: BenchVari
         {stats && !stats.fitsDevice && <p role="alert" style={{ ...muted, color: "#f87171" }}>Trop gros pour l&apos;appareil : moins d&apos;images, ou moins de pixels qui changent entre deux images.</p>}
         <div style={{ display: "flex", gap: "0.6rem", flexWrap: "wrap", alignItems: "center", margin: "0.4rem 0 0.7rem" }}>
           <input value={title} onChange={(e) => setTitle(e.target.value.slice(0, 60))} placeholder="Titre de l'animation" aria-label="Titre de l'animation" style={{ ...btn, minWidth: 220, flex: "1 1 220px" }} />
-          <label style={{ ...muted, display: "inline-flex", gap: 6, alignItems: "center", opacity: handmade ? 1 : 0.55 }} title={handmade ? "" : "Un modèle de test n'est jamais enregistré dans la galerie : modifiez-le pour en faire votre animation."}>
-            <input type="checkbox" checked={handmade && toGallery} disabled={!handmade} onChange={(e) => setToGallery(e.target.checked)} /> aussi dans la galerie <a href="/gallery-anim" style={{ color: "var(--accent)" }}>Animations</a>
-            {!handmade && " (modèle de test : non)"}
-          </label>
         </div>
-        <button type="button" onClick={send} disabled={busy || !deviceId || !stats || !stats.fitsDevice} style={{ ...btnOn, padding: "0.55rem 1.2rem", fontWeight: 700, opacity: busy || !deviceId || !stats?.fitsDevice ? 0.5 : 1 }}>
-          {busy ? "Envoi…" : isStudio ? "📺 Envoyer à mon écran" : `📺 Envoyer à l'écran (${screenInfo.label})`}
+        {isStudio && !handmade && <p style={{ ...muted, marginBottom: 6 }}>Un modèle de départ ne peut pas être soumis tel quel : modifiez-le pour en faire votre animation.</p>}
+        <button type="button" onClick={isStudio ? submitToNetwork : send}
+          disabled={busy || !deviceId || !stats || !stats.fitsDevice || (isStudio && !handmade)}
+          style={{ ...btnOn, padding: "0.55rem 1.2rem", fontWeight: 700, opacity: busy || !deviceId || !stats?.fitsDevice || (isStudio && !handmade) ? 0.5 : 1 }}>
+          {busy ? (isStudio ? "Soumission…" : "Envoi…") : isStudio ? "🚀 Soumettre au réseau" : `📺 Envoyer à l'écran (${screenInfo.label})`}
         </button>
         <div style={{ display: "inline-flex", gap: 6, flexWrap: "wrap", marginLeft: 8, verticalAlign: "middle" }}>
           <button type="button" style={btn} onClick={exportGif} disabled={!stats} title="GIF animé ×4 (couleurs de l'écran)">⬇ GIF</button>
           <button type="button" style={btn} onClick={exportProject} title="Projet modifiable (.json)">⬇ Projet</button>
           <label style={{ ...btn, cursor: "pointer" }} title="Recharger un projet .json">⬆ Importer<input type="file" accept=".json,application/json" hidden onChange={(e) => { importProject(e.target.files?.[0]); e.target.value = ""; }} /></label>
-          <button type="button" style={btn} onClick={saveOnly} disabled={busy || !handmade || !authorDevice || !stats} title={handmade ? "Enregistrer dans la galerie sans l'envoyer à l'écran" : "Un modèle de test n'est pas enregistrable"}>💾 Galerie seule</button>
         </div>
         {msg && <p role="status" style={{ ...muted, color: msg.ok ? "#4ade80" : "#f87171", marginTop: 8 }}>{msg.text}</p>}
 
@@ -649,7 +667,7 @@ export default function BenchClient({ variant = "bench" }: { variant?: BenchVari
         )}
       </div>}
 
-      <p style={muted}>Brouillon enregistré dans ce navigateur. Les clips envoyés expirent au bout d&apos;1 h. Un toucher sur l&apos;écran (TFT 2.8&quot;) interrompt la lecture.</p>
+      <p style={muted}>Brouillon enregistré dans ce navigateur.{isStudio ? " Une seule soumission par appareil toutes les 15 minutes, comme pour un dessin." : " Les clips envoyés expirent au bout d'1 h. Un toucher sur l'écran (TFT 2.8\") interrompt la lecture."}</p>
     </div>
   );
 }

@@ -7,6 +7,7 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import type { BlockWithImage } from "@/lib/chain";
 import { BlockFrameCanvas } from "./BlockFrameCanvas";
+import { AnimBlockPlayer } from "./AnimBlockPlayer";
 import { SendToScreen } from "./SendToScreen";
 import type { ActionEvent, ReplayEvent } from "@/lib/types/actions";
 import { floodFill, drawLine, drawRect, drawEllipse } from "@/lib/canvasPrimitives";
@@ -125,7 +126,9 @@ function TabDetails({ block }: { block: BlockWithImage }) {
 
   return (
     <div className="bd-details">
-      {block.imagePayload && (
+      {block.kind === "animation" ? (
+        <div className="bd-preview"><AnimBlockPlayer blockHash={block.blockHash} /></div>
+      ) : block.imagePayload && (
         <div className="bd-preview">
           <BlockFrameCanvas
             payload={block.imagePayload}

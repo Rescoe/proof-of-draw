@@ -28,6 +28,7 @@ export async function GET(req: NextRequest) {
   const url    = new URL(req.url);
   const q      = url.searchParams.get("q")?.trim() ?? "";
   const screen = url.searchParams.get("screen")?.trim() ?? "";
+  const kind   = url.searchParams.get("kind")?.trim() ?? "";   // "animation" | "draw" | "" (tout)
   const page   = Math.max(1, parseInt(url.searchParams.get("page") ?? "1"));
   const limit  = Math.min(100, Math.max(1, parseInt(url.searchParams.get("limit") ?? "20")));
 
@@ -43,6 +44,8 @@ export async function GET(req: NextRequest) {
   // 3. Filtrer
   if (q)      blocks = blocks.filter((b) => matchesQuery(b, q));
   if (screen) blocks = blocks.filter((b) => b.poolScreen === screen);
+  if (kind === "animation") blocks = blocks.filter((b) => b.kind === "animation");
+  if (kind === "draw")      blocks = blocks.filter((b) => b.kind !== "animation");
 
   // 4. Trier par blockIndex décroissant (le plus récent en premier)
   blocks.sort((a, b) => b.blockIndex - a.blockIndex);

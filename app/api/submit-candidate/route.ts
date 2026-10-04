@@ -18,6 +18,8 @@ import {
 import { setCandidate, getCurrentCandidate, Candidate } from "@/lib/chain";
 import { getEffectiveThresholds } from "@/lib/adaptiveValidation";
 import type { ActionEvent, ReplayEvent } from "@/lib/types/actions";
+import { BENCH_SCREENS } from "@/lib/bench/screens";
+import { buildAnimSubmissionFromClip, type AnimScreen, type AnimSubmission } from "@/lib/anim/block";
 
 const INTERNAL_SECRET  = process.env.INTERNAL_API_SECRET ?? "";
 
@@ -40,7 +42,8 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "JSON invalide" }, { status: 400 });
   }
 
-  const { deviceId, screen, black, red, buffer } = body as Record<string, string>;
+  const { deviceId, screen, black, red, buffer: bodyBuffer } = body as Record<string, string>;
+  const animClip = typeof body.animClip === "string" ? body.animClip : undefined;
   const actions      = Array.isArray(body.actions)      ? (body.actions      as ActionEvent[])  : [];
   const replayEvents = Array.isArray(body.replayEvents) ? (body.replayEvents as ReplayEvent[])  : [];
   const drawScore    = typeof body.drawScore === "number" ? body.drawScore : 0;
@@ -55,6 +58,15 @@ export async function POST(req: NextRequest) {
   if (!device) {
     return NextResponse.json({ error: "Device introuvable" }, { status: 404 });
   }
+
+  // ── Animation : TOUT est dérivé du clip (images → empreintes, scores par image, racine, affiche). Rien n'est cru sur parole. ──
+  let animSub: AnimSubmission | null = null;
+  if (animClip) {
+    if (!(BENCH_SCREENS as string[]).includes(screen)) return NextResponse.json({ error: "Cet écran ne joue pas d'animation" }, { status: 400 });
+    try { animSub = buildAnimSubmissionFromClip(new Uint8Array(Buffer.from(animClip, "base64")), screen as AnimScreen); }
+    catch (e) { return NextResponse.json({ error: e instanceof Error ? e.message : "Animation invalide" }, { status: 400 }); }
+  }
+  const buffer = animSub ? animSub.posterBuffer : bodyBuffer;
 
   let pixels: Uint8Array;
 
@@ -96,7 +108,8 @@ export async function POST(req: NextRequest) {
 
   // ── Métriques visuelles + seuils adaptatifs ──────────────────────────────────
   // Calculés en parallèle : metrics depuis les pixels, thresholds depuis l'historique Redis.
-  const metrics = computeComplexity(pixels, W, H);
+  // Animation : métriques = moyenne des métriques de chaque image (le score que les ESP signent est la moyenne des scores d'images).
+  const metrics = animSub ? animSub.metrics : computeComplexity(pixels, W, H);
 
   // ── Analyse géométrique et temporelle du replay ──────────────────────────────
   const [podGeometry, thresholds] = await Promise.all([
@@ -156,7 +169,7 @@ export async function POST(req: NextRequest) {
 
   // Calculer les hashes (actions + enrichissement replay)
   const [imageHash, actionsHash] = await Promise.all([
-    hashDrawing(screen, black, red, buffer),
+    animSub ? Promise.resolve(animSub.part.root) : hashDrawing(screen, black, red, buffer),
     hashActions(actions),
   ]);
 
@@ -196,7 +209,8 @@ export async function POST(req: NextRequest) {
       : { screen: screen as string, buffer: buffer! } as import("@/lib/queue").FramePayload,
     imageHash,
     actionsHash,
-    drawScore,
+    drawScore: animSub ? animSub.drawScore : drawScore,
+    ...(animSub ? { kind: "animation" as const, anim: animSub.part } : {}),
     actionSequence: actions,
     replayEvents:   replayEvents.length > 0 ? replayEvents : undefined,
     podHashEnriched: podEnrichedHash,

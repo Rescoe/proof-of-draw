@@ -4,7 +4,7 @@
 //
 // Avant : chaque appareil étalait ~10 blocs (stats, sécurité, prêt public, ANA, conversion, transfert, suppression…) et un bouton par écran.
 // Maintenant : une carte compacte par appareil (nom, état, écrans, pastilles de réglages) avec
-//   • UN bouton « ✏️ Dessiner » — si l'appareil a plusieurs écrans, un petit menu permet de choisir lequel ;
+//   • UN bouton « ✏️ Dessiner » (+ « 🎞 Animer » pour les écrans qui jouent un clip : TFT 2.8", TFT 1.8", OLED) — si l'appareil a plusieurs écrans, un petit menu permet de choisir lequel ;
 //   • UN bouton « ⚙ Gérer » qui ouvre un panneau à sous-menus : Réglages · Accès · Blocs · Zone sensible (un seul panneau ouvert à la fois) ;
 //   • une suppression protégée : il faut RETAPER le nom de l'appareil (lib/deviceDeleteGuard.ts).
 
@@ -12,6 +12,7 @@ import { useEffect, useRef, useState } from "react";
 import type { OwnedDevice } from "@/lib/deviceStore";
 import { SCREEN_PROFILES } from "@/lib/screenProfiles";
 import { deleteConfirmWord, deleteConfirmed } from "@/lib/deviceDeleteGuard";
+import { BENCH_SCREENS } from "@/lib/bench/screens";
 import { InlineEdit } from "./InlineEdit";
 import { GiveDeviceModal } from "./GiveDeviceModal";
 
@@ -96,8 +97,13 @@ function SettingRow({ title, desc, children }: { title: string; desc: string; ch
 
 // ── Menu « Dessiner » : un bouton, un choix d'écran si plusieurs ─────────────
 
-function DrawMenu({ d }: { d: OwnedDevice }) {
+/** Un bouton ; si l'appareil a plusieurs écrans concernés, un petit menu pour choisir lequel. « Dessiner » = tous les écrans, « Animer » = ceux qui jouent un clip. */
+function DrawMenu({ d, mode = "draw" }: { d: OwnedDevice; mode?: "draw" | "animate" }) {
   const [open, setOpen] = useState(false);
+  const animate = mode === "animate";
+  const screens = animate ? BENCH_SCREENS.filter((s) => d.screens.includes(s)) : d.screens;
+  const hrefOf = (sid: string) => (animate ? `/animer?device=${d.deviceId}&screen=${sid}` : `/draw/${d.deviceId}/${sid}`);
+  const text = animate ? "🎞 Animer" : "✏️ Dessiner";
   const ref = useRef<HTMLDivElement>(null);
   useEffect(() => {
     if (!open) return;
@@ -111,20 +117,20 @@ function DrawMenu({ d }: { d: OwnedDevice }) {
     padding: "0.45rem 0.95rem", borderRadius: 7, background: "var(--accent)", color: "#fff", textDecoration: "none",
     fontWeight: 600, fontSize: "0.82rem", whiteSpace: "nowrap", border: "none", cursor: "pointer", display: "inline-block",
   };
-  if (d.screens.length === 0) return null;
-  if (d.screens.length === 1) return <a href={`/draw/${d.deviceId}/${d.screens[0]}`} style={primary}>✏️ Dessiner</a>;
+  if (screens.length === 0) return null;
+  if (screens.length === 1) return <a href={hrefOf(screens[0])} style={primary}>{text}</a>;
 
   return (
     <div ref={ref} style={{ position: "relative" }}>
-      <button type="button" onClick={() => setOpen((v) => !v)} aria-haspopup="menu" aria-expanded={open} style={primary}>✏️ Dessiner ▾</button>
+      <button type="button" onClick={() => setOpen((v) => !v)} aria-haspopup="menu" aria-expanded={open} style={primary}>{text} ▾</button>
       {open && (
         <div role="menu" style={{
           position: "absolute", right: 0, top: "calc(100% + 4px)", zIndex: 20, minWidth: 210, padding: 4,
           borderRadius: 8, border: "1px solid var(--border)", background: "var(--bg2)", boxShadow: "0 8px 24px rgba(0,0,0,0.35)",
         }}>
-          <div style={{ ...label, padding: "0.35rem 0.6rem" }}>Dessiner pour…</div>
-          {d.screens.map((sid) => (
-            <a key={sid} role="menuitem" href={`/draw/${d.deviceId}/${sid}`} style={{
+          <div style={{ ...label, padding: "0.35rem 0.6rem" }}>{animate ? "Animer pour…" : "Dessiner pour…"}</div>
+          {screens.map((sid) => (
+            <a key={sid} role="menuitem" href={hrefOf(sid)} style={{
               display: "flex", justifyContent: "space-between", gap: "1rem", padding: "0.5rem 0.6rem", borderRadius: 6,
               color: "var(--text)", textDecoration: "none", fontSize: "0.82rem",
             }}>
@@ -413,6 +419,7 @@ function DeviceCard({ d, open, onToggle, onRenamed, profile, children }: {
         </div>
         <div className="dev-actions" style={{ display: "flex", gap: "0.4rem", flexShrink: 0 }}>
           <DrawMenu d={d} />
+          <DrawMenu d={d} mode="animate" />
           {d.screens.includes("tft28") && <a href="/bench" title="Banc d'essai d'animation (test)" style={{ ...ghostBtn, textDecoration: "none", display: "inline-flex", alignItems: "center" }}>🧪 Banc d&apos;essai</a>}
           <button
             type="button" onClick={onToggle} aria-expanded={open}

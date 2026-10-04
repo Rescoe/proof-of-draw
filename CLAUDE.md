@@ -266,7 +266,7 @@ Vue réseau : icône dédiée (tablette portrait) + turquoise. Tests : `podHttpR
 Page `/bench` (lien sur la carte de l'appareil) : animation 128×64 1 bit → clip « PBC1 » en DIFFÉRENCES (`lib/bench/clip.ts`, plafond 9 Ko) → `/api/bench/{send,mode,poll,clip,result,status}`
 (Redis `bench:*`, TTL courts) → firmware `pod_bench.h` (repeint les seuls octets modifiés, ×15/8, mesures renvoyées). `/api/pull` ajoute `benchMode` pour un tft28 quand le mode est actif.
 Détails, format et mesures à rapporter : `docs/BENCH_ANIMATION.md`. Tests : `benchClip`, `podBenchR4` (g++ + validation différentielle).
-Galerie `/gallery-anim` (animations faites à la main, `lib/anim/store.ts`, `anim:*`), export GIF (`lib/bench/gif.ts`), journal par appareil (`bench:log:*`), alerte si le firmware enregistré est < r4tft28-2.1.
+Ancienne galerie `/gallery-anim` (`anim:*`) : redirigée vers la galerie principale (voir « Animations = blocs du consensus »). Export GIF (`lib/bench/gif.ts`), journal par appareil (`bench:log:*`), alerte si le firmware enregistré est < r4tft28-2.1.
 Firmware 2.2 : pixels envoyés PAR BLOC (`fastPixels` = `SPI.transfer(buf, n)` ; `Adafruit_SPITFT::writePixels` fait 2 transferts d'octet par pixel sur la R4), une transaction SPI par image,
 métrique de retard = retard de DÉMARRAGE (+ marge min), `loops = 0` = boucle sans fin (arrêt : toucher / nouvel envoi / fin du mode / 1 h ; contrôle serveur toutes les 20 s).
 
@@ -275,6 +275,14 @@ métrique de retard = retard de DÉMARRAGE (+ marge min), `loops = 0` = boucle s
 Écrans compatibles du banc d'essai : `lib/bench/screens.ts` (`tft28` validé ; `tft18` et `oled096` ⚠ non testés sur le matériel). Atelier ouvert à tous : `/animer`. Lecteur de clips `pod_bench.h` et réseau ESP `pod_bench_esp.h`
 existent en COPIES IDENTIQUES par dossier de firmware : après toute modification de l'original, `node scripts/sync-bench-header.js` (test `benchHeaderCopies`). **Avant de modifier un `.ino`, le sauvegarder dans `firmware-backups/<date>/`.**
 Tout code non testé sur le matériel porte un avertissement (en-tête, doc, interface). Plan : `docs/PLAN_ANIMATIONS_ET_PORTS_R4.md`.
+
+## Animations = blocs du consensus (04/10/2026)
+
+Une animation suit le MÊME pipeline qu'un dessin : `/animer` (bouton « 🎞 Animer » de Mon profil, écrans tft28/tft18/oled096) → `POST /api/draw { anim }` →
+`submit-candidate` (`animClip`) → votes signés → bloc `kind:"animation"` → galerie principale (filtre Tout/Dessins/Animations, `/gallery?type=animation`).
+Le serveur dérive TOUT du clip PBC1 (`lib/anim/block.ts`, pur et testé) : empreinte + score de chaque image, score candidat = moyenne, `imageHash` = racine des empreintes,
+affiche (image fixe diffusée à tous les écrans). Clip et empreintes dans `chain:anim:{hash}`. Livraison du clip aux écrans par le canal du banc d'essai (`lib/anim/deliver.ts`, ≤ 10 min).
+Plus aucune publication sans consensus : `/api/anim/save` et l'option `gallery` de `/api/bench/send` sont supprimés. Détails, coûts Redis, limites : `docs/ANIMATIONS_PIPELINE.md`.
 
 ## Règle PRIMORDIALE — quotas Upstash Redis (écrite le 03/10/2026)
 

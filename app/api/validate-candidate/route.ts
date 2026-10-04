@@ -94,6 +94,9 @@ export async function GET(req: NextRequest) {
       score_server: candidate.score,
       poolScreen:   candidate.poolScreen, // info : type d'écran du dessin candidat
       expiresIn,
+      // Animation : le score à signer est la moyenne des scores de ses N images (recalculable depuis le bloc). Deux champs de plus
+      // seulement pour une animation (≈ 35 octets) : un dessin reçoit exactement la même réponse qu'avant.
+      ...(candidate.kind === "animation" && candidate.anim ? { kind: "animation", frames: candidate.anim.frames } : {}),
     },
   });
 }

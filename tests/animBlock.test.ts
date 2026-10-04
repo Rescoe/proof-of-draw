@@ -1,0 +1,107 @@
+import test from "node:test";
+import assert from "node:assert/strict";
+import { CLIP, decodeClip, type ClipInput } from "../lib/bench/clip";
+import { animBlockDoc, animRefusal, buildAnimSubmission, buildAnimSubmissionFromClip, posterFor, verifyAnimDoc } from "../lib/anim/block";
+import { canPlay } from "../lib/anim/deliver";
+
+const frame = (fill: (f: Uint8Array) => void) => { const f = new Uint8Array(CLIP.FRAME_BYTES); fill(f); return f; };
+const mk = (frames: Uint8Array[], extra: Partial<ClipInput> = {}): ClipInput => ({ frames, delaysMs: frames.map(() => 100), loops: 2, fg: 0x07e0, bg: 0x0000, ...extra });
+const ball = (x: number) => frame((f) => { for (let y = 28; y < 36; y++) f[y * 16 + (x >> 3)] |= 0x80 >> (x & 7); });
+const input = () => mk([ball(10), ball(40), ball(70), ball(100)]);
+
+test("animation : une empreinte et un score PAR IMAGE, score = moyenne, racine déterministe", () => {
+  const a = buildAnimSubmission(input(), "tft28"), b = buildAnimSubmission(input(), "tft28");
+  assert.equal(a.part.frames, 4);
+  assert.equal(a.part.frameHashes.length, 4);
+  assert.equal(a.part.frameScores.length, 4);
+  assert.ok(a.part.frameHashes.every((h) => /^[a-f0-9]{64}$/.test(h)));
+  assert.equal(new Set(a.part.frameHashes).size, 4, "4 images différentes = 4 empreintes différentes");
+  assert.equal(a.part.root, b.part.root, "même animation = même racine");
+  assert.match(a.part.root, /^[a-f0-9]{64}$/);
+  const mean = a.part.frameScores.reduce((s, v) => s + v, 0) / 4;
+  assert.ok(Math.abs(a.metrics.score - mean) < 0.0002, `score ${a.metrics.score} ≈ moyenne ${mean}`);
+  assert.ok(a.metrics.score > 0 && a.metrics.score <= 1);
+  assert.equal(a.drawScore, 3, "3 transitions différentes");
+});
+
+test("racine : toute modification d'une image, d'un délai, des boucles ou des couleurs la change", () => {
+  const base = buildAnimSubmission(input(), "tft28").part.root;
+  const mod = (f: (i: ClipInput) => void) => { const i = input(); f(i); return buildAnimSubmission(i, "tft28").part.root; };
+  assert.notEqual(mod((i) => { i.frames[2][0] ^= 0x01; }), base, "un pixel d'une image");
+  assert.notEqual(mod((i) => { i.delaysMs[1] = 200; }), base, "un délai");
+  assert.notEqual(mod((i) => { i.loops = 3; }), base, "les boucles");
+  assert.notEqual(mod((i) => { i.fg = 0xf800; }), base, "la couleur");
+  assert.equal(mod(() => {}), base);
+});
+
+test("la racine ne dépend pas de l'écran (l'animation est la même), l'affiche si", () => {
+  const a = buildAnimSubmission(input(), "tft28"), b = buildAnimSubmission(input(), "oled096");
+  assert.equal(a.part.root, b.part.root);
+  assert.notEqual(a.posterBuffer, b.posterBuffer);
+});
+
+test("rejouable : le clip du candidat redonne exactement les mêmes empreintes, scores et racine", () => {
+  const a = buildAnimSubmission(input(), "tft18");
+  const again = buildAnimSubmissionFromClip(new Uint8Array(Buffer.from(a.part.clip, "base64")), "tft18");
+  assert.deepEqual(again.part, a.part);
+  assert.equal(again.posterBuffer, a.posterBuffer);
+  const dec = decodeClip(a.bin);
+  assert.equal(dec.frames.length, 4);
+  assert.ok(dec.frames.every((f, i) => f.every((v, k) => v === input().frames[i][k])));
+});
+
+test("un clip altéré est refusé (CRC) : aucune dérivation sur un clip douteux", () => {
+  const a = buildAnimSubmission(input(), "tft28");
+  const bin = new Uint8Array(Buffer.from(a.part.clip, "base64"));
+  bin[40] ^= 0xff;
+  assert.throws(() => buildAnimSubmissionFromClip(bin, "tft28"), /invalide/);
+});
+
+test("refus : une image, images identiques, rien de dessiné, clip trop gros", () => {
+  assert.match(animRefusal(mk([ball(10)]))!, /2 images/);
+  assert.match(animRefusal(mk([ball(10), ball(10)]))!, /identiques/);
+  assert.throws(() => buildAnimSubmission(mk([ball(10)]), "tft28"), /2 images/);
+  const noise = (seed: number) => frame((f) => { let s = seed; for (let i = 0; i < f.length; i++) { s = (s * 1664525 + 1013904223) >>> 0; f[i] = s >>> 24; } });
+  assert.throws(() => buildAnimSubmission(mk(Array.from({ length: 12 }, (_, i) => noise(i + 1))), "tft28"), /trop gros/);
+});
+
+test("affiche : format de chaque écran, image au meilleur score, pixel au bon endroit", () => {
+  const f = ball(10);
+  const oled = Buffer.from(posterFor(f, "oled096", 0xffff, 0), "base64");
+  assert.equal(oled.length, 1024);
+  assert.equal(oled[(30 >> 3) * 128 + 10] & (1 << (30 & 7)), 1 << (30 & 7), "pixel (10,30) allumé, page-major");
+  assert.equal(oled[0], 0);
+
+  const t18 = Buffer.from(posterFor(f, "tft18", 0x07e0, 0x0000), "base64");
+  assert.equal(t18.length, 128 * 160 * 2);
+  const o18 = ((48 + 30) * 128 + 10) * 2;                    // clip 1:1 centré verticalement : 48 px de marge
+  assert.equal(t18.readUInt16LE(o18), 0x07e0);
+  assert.equal(t18.readUInt16LE(0), 0x0000, "marge = couleur de fond");
+
+  const t28 = Buffer.from(posterFor(f, "tft28", 0x07e0, 0x0000), "base64");
+  assert.equal(t28.length, 240 * 320 * 2);
+  assert.equal(t28.readUInt16LE(((100 + 56) * 240 + 20) * 2), 0x07e0, "×1,875 : (10,30) ↔ ≈ (19..20, 56) dans la zone de 120 lignes");
+  assert.equal(t28.readUInt16LE(0), 0x0000);
+
+  const heavy = frame((g) => { for (let i = 0; i < g.length; i += 2) g[i] = 0xaa; });   // beaucoup de transitions
+  const sub = buildAnimSubmission(mk([ball(10), heavy, ball(70)]), "oled096");
+  assert.equal(sub.part.posterIndex, sub.part.frameScores.indexOf(Math.max(...sub.part.frameScores)));
+});
+
+test("vérification publique d'un bloc : document intact = cohérent, document modifié = détecté", () => {
+  const sub = buildAnimSubmission(input(), "tft28");
+  const doc = animBlockDoc(sub.part);
+  assert.equal(verifyAnimDoc(doc, "tft28"), null);
+  assert.match(verifyAnimDoc({ ...doc, frameScores: doc.frameScores.map((s) => s + 0.01) }, "tft28")!, /scores/);
+  assert.match(verifyAnimDoc({ ...doc, frameHashes: [...doc.frameHashes].reverse() }, "tft28")!, /empreintes/);
+  assert.match(verifyAnimDoc({ ...doc, root: "0".repeat(64) }, "tft28")!, /racine/);
+});
+
+test("livraison : seuls les écrans à clip, au firmware compatible ou inconnu, jouent l'animation", () => {
+  assert.equal(canPlay({ screens: ["tft28"], firmware: "r4tft28-2.3" }, "tft28"), true);
+  assert.equal(canPlay({ screens: ["tft28"], firmware: "r4tft28-2.0" }, "tft28"), false, "firmware trop ancien : ignore le mode");
+  assert.equal(canPlay({ screens: ["tft28"] }, "tft28"), true, "version inconnue : on tente");
+  assert.equal(canPlay({ screens: ["eink29bwr"], firmware: "r4eink29-1.0" }, "eink29bwr"), false, "e-ink : jamais d'animation");
+  assert.equal(canPlay({ screens: ["tft18"], firmware: "tft18-2.1" }, "tft28"), false, "l'appareil n'a pas cet écran");
+  assert.equal(canPlay(null, "tft28"), false);
+});

@@ -95,6 +95,7 @@ function BlockCard({ block, onClick }: { block: BlockWithImage; onClick: () => v
         <div className="gc-card__artist">{artistLabel}</div>
         <div className="gc-card__chips">
           <span className="gc-chip">{SCREEN_LABELS[block.poolScreen] ?? block.poolScreen}</span>
+          {block.kind === "animation" && <span className="gc-chip gc-chip--replay" title="Animation validée image par image">🎞 Animation{block.anim ? ` · ${block.anim.frames} img` : ""}</span>}
           <span className="gc-chip">{block.validatorIds.length} valid.</span>
           {block.drawScore > 0 && <span className="gc-chip gc-chip--score">PoD {block.drawScore}</span>}
           {block.obsConfirmed && <span className="gc-chip gc-chip--obs">obs ✓</span>}
@@ -141,6 +142,7 @@ export function GalleryClient() {
   const [tab, setTab]     = useState<Tab>("blocks");
   const [query, setQuery] = useState("");
   const [screen, setScreen] = useState("");
+  const [kind, setKind]   = useState("");   // "" (tout) | "draw" (dessins) | "animation"
   const [page, setPage]   = useState(1);
   const LIMIT = 20;
 
@@ -156,12 +158,13 @@ export function GalleryClient() {
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // ── Fetch blocks ──────────────────────────────────────────────────────────
-  const fetchBlocks = useCallback(async (q: string, sc: string, pg: number) => {
+  const fetchBlocks = useCallback(async (q: string, sc: string, pg: number, kd: string) => {
     setLoading(true);
     try {
       const params = new URLSearchParams({
         q: q.trim(),
         screen: sc,
+        kind: kd,
         page: String(pg),
         limit: String(LIMIT),
       });
@@ -194,17 +197,23 @@ export function GalleryClient() {
   }, []);
 
   // Initial load
-  useEffect(() => { fetchBlocks("", "", 1); }, [fetchBlocks]);
+  useEffect(() => { fetchBlocks("", "", 1, ""); }, [fetchBlocks]);
+
+  // Lien « /gallery?type=animation » (ancienne galerie Animations, profil, atelier) : ouvre directement le bon filtre
+  useEffect(() => {
+    const t = new URLSearchParams(window.location.search).get("type");
+    if (t === "animation" || t === "draw") setKind(t);
+  }, []);
 
   // Debounced query
   useEffect(() => {
     if (debounceRef.current) clearTimeout(debounceRef.current);
     debounceRef.current = setTimeout(() => {
       setPage(1);
-      fetchBlocks(query, screen, 1);
+      fetchBlocks(query, screen, 1, kind);
     }, 350);
     return () => { if (debounceRef.current) clearTimeout(debounceRef.current); };
-  }, [query, screen, fetchBlocks]);
+  }, [query, screen, kind, fetchBlocks]);
 
   useEffect(() => {
     if (tab === "rejected" && rejected === null) fetchRejected();
@@ -212,7 +221,7 @@ export function GalleryClient() {
 
   const handlePageChange = (p: number) => {
     setPage(p);
-    fetchBlocks(query, screen, p);
+    fetchBlocks(query, screen, p, kind);
     window.scrollTo({ top: 0, behavior: "smooth" });
   };
 
@@ -278,7 +287,22 @@ export function GalleryClient() {
               <option value="eink29bwr">E-Ink 2.9" BWR</option>
               <option value="eink27bw">E-Ink 2.7" BW</option>
               <option value="oled096">OLED 0.96"</option>
+              <option value="tft18">TFT 1.8" RGB</option>
+              <option value="tft28">TFT 2.8" tactile</option>
             </select>
+          </div>
+
+          {/* Nature : dessins et animations suivent le même consensus et vivent dans la même galerie */}
+          <div role="group" aria-label="Type de bloc" style={{ display: "flex", gap: 6, margin: "0.2rem 0 0.8rem", flexWrap: "wrap" }}>
+            {([["", "Tout"], ["draw", "✏️ Dessins"], ["animation", "🎞 Animations"]] as const).map(([v, text]) => (
+              <button
+                key={v || "all"} type="button" onClick={() => setKind(v)} aria-pressed={kind === v}
+                className="gc-page-btn"
+                style={kind === v ? { borderColor: "var(--accent)", color: "var(--accent)", background: "rgba(124,107,255,0.1)" } : undefined}
+              >
+                {text}
+              </button>
+            ))}
           </div>
 
           {/* Stats */}
@@ -287,6 +311,7 @@ export function GalleryClient() {
               {data.total} bloc{data.total !== 1 ? "s" : ""}
               {query && ` correspondant à « ${query} »`}
               {screen && ` · ${SCREEN_LABELS[screen] ?? screen}`}
+              {kind === "animation" && " · animations"}{kind === "draw" && " · dessins"}
               {data.pages > 1 && ` · page ${data.page}/${data.pages}`}
             </div>
           )}

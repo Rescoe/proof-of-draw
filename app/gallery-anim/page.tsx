@@ -1,9 +1,8 @@
-// app/gallery-anim/page.tsx — galerie « Animations » (faites à la main dans le banc d'essai).
+// app/gallery-anim/page.tsx — ancienne galerie « Animations » : les animations sont maintenant des BLOCS de la galerie principale
+// (même consensus qu'un dessin). On garde l'adresse pour les anciens liens.
 
-import AnimGalleryClient from "./AnimGalleryClient";
-
-export const metadata = { title: "Animations — Proof-of-Draw" };
+import { redirect } from "next/navigation";
 
 export default function GalleryAnimPage() {
-  return <AnimGalleryClient />;
+  redirect("/gallery?type=animation");
 }
