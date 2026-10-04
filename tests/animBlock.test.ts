@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { CLIP, decodeClip, encodeClip, type ClipInput } from "../lib/bench/clip";
+import { animTargets } from "../lib/anim/targets";
 import { animCapable, animPointerOfBlock, animPullMeta, readAnimPointer, supportsAnimPointer, withoutAnimPointer } from "../lib/anim/pointer";
 import { animBlockDoc, animRefusal, buildAnimSubmission, buildAnimSubmissionFromClip, posterFor, verifyAnimDoc } from "../lib/anim/block";
 
@@ -156,4 +157,28 @@ test("galerie → écran : le pointeur d'un bloc d'animation suit l'image renvoy
   const personal = { screen: "oled096", anim: { hash: blockHash, bytes: 3000, frames: 8 } };
   assert.deepEqual(animPullMeta({ screens: ["oled096", "eink27bw"], firmware: "multiscreen-2.2" }, "oled096", personal), { hash: blockHash, bytes: 3000, frames: 8 });
   assert.equal(animPullMeta({ screens: ["oled096", "eink27bw"], firmware: "multiscreen-2.1" }, "oled096", personal), undefined);
+});
+
+test("diffusion : une animation validée va à TOUS les écrans dynamiques capables, quel que soit l'écran d'origine, sans opt-in — jamais d'e-ink ni de firmware ancien", () => {
+  const devices: Record<string, { screens: string[]; firmware?: string }> = {
+    r4tft: { screens: ["tft28"], firmware: "r4tft28-2.4" },
+    r4old: { screens: ["tft28"], firmware: "r4tft28-2.3" },
+    tft18: { screens: ["tft18"], firmware: "tft18-2.2" },
+    tft18old: { screens: ["tft18"], firmware: "tft18-2.1" },
+    multi: { screens: ["eink27bw", "oled096"], firmware: "multiscreen-2.2" },
+    multiOld: { screens: ["eink27bw", "oled096"], firmware: "multiscreen-2.1" },
+    eink29: { screens: ["eink29bwr"], firmware: "r4eink29-1.0" },
+    unknown: { screens: ["tft18"] },
+    banned: { screens: ["oled096"], firmware: "multiscreen-2.2" },
+  };
+  const pools = {
+    tft28: ["r4tft", "r4old"], tft18: ["tft18", "tft18old", "unknown"], oled096: ["multi", "multiOld", "banned", "multi"],
+    eink27bw: ["multi", "multiOld"], eink29bwr: ["eink29"],
+  };
+  const t = animTargets(pools, (id) => id === "banned", (id) => devices[id] ?? null);
+  const key = (x: { deviceId: string; screen: string }) => `${x.deviceId}:${x.screen}`;
+  assert.deepEqual(t.map(key).sort(), ["multi:oled096", "r4tft:tft28", "tft18:tft18"]);
+  assert.ok(!t.some((x) => x.screen === "eink27bw" || x.screen === "eink29bwr"), "pas d'e-ink, même sur l'appareil multi-écrans");
+  assert.equal(t.filter((x) => x.deviceId === "multi").length, 1, "doublon dans une pool : une seule cible");
+  assert.deepEqual(animTargets({}, () => false, () => null), []);
 });

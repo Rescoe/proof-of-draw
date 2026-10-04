@@ -14,11 +14,13 @@ import { NextRequest, NextResponse } from "next/server";
 import { redis } from "@/lib/redis";
 import { getSession } from "@/lib/session";
 import { getDevice, getDeviceIdsByArtist } from "@/lib/deviceStore";
-import { getBlockByHash, getBlockImage } from "@/lib/chain";
+import { getBlockByHash, getBlockImage, getBlockAnim } from "@/lib/chain";
 import { getAnaBlockByHash, getAnaBlockImage, getRecentAnaWorks, anaGroupKey } from "@/lib/anaChain";
 import { convertPayload } from "@/lib/screenConvert";
 import { isValidScreenId } from "@/lib/screenProfiles";
 import { animCapable, animPointerOfBlock, type AnimPointer } from "@/lib/anim/pointer";
+import { decodeClip } from "@/lib/bench/clip";
+import { posterFor, type AnimScreen } from "@/lib/anim/block";
 import { getIP, isBlacklisted, forbidden } from "@/lib/rateLimit";
 
 const DEVICE_ID_REGEX = /^dev_[A-Z0-9]{8}$/;
@@ -73,12 +75,19 @@ export async function POST(req: NextRequest) {
     drawArtistName = block.drawArtistName ?? block.artistName;
     blockIndex = block.blockIndex;
     if (block.kind === "animation") {
-      // Une animation ne s'affiche que sur un écran du MÊME type dont le firmware (version déclarée) la joue : jamais convertie, jamais en image fixe ailleurs.
-      if (block.poolScreen !== screen || !animCapable(device, screen)) {
+      // Le clip est le même pour tous les écrans dynamiques : il se réaffiche sur n'importe lequel de TES écrans dont le firmware (version déclarée) lit les
+      // animations (TFT 2.8", TFT 1.8", OLED) — l'affiche est rendue pour CET écran depuis le clip. Jamais sur un e-ink ni sur un firmware ancien.
+      if (!animCapable(device, screen)) {
         return NextResponse.json({
-          error: `Cette animation est faite pour l'écran ${block.poolScreen} : elle ne peut être réaffichée que sur un écran de ce type dont le firmware lit les animations (voir Mon profil).`,
+          error: "Une animation ne se réaffiche que sur un écran TFT 2.8\", TFT 1.8\" ou OLED dont le firmware lit les animations (voir Mon profil).",
         }, { status: 422 });
       }
+      const doc = await getBlockAnim(blockHash);
+      if (!doc) return NextResponse.json({ error: "Clip d'animation introuvable" }, { status: 404 });
+      try {
+        const clip = decodeClip(new Uint8Array(Buffer.from(doc.clip, "base64")));
+        image = { screen, buffer: posterFor(clip.frames[doc.posterIndex] ?? clip.frames[0], screen as AnimScreen, clip.fg, clip.bg) };
+      } catch { return NextResponse.json({ error: "Clip d'animation illisible" }, { status: 422 }); }
       animPtr = animPointerOfBlock(block);
     }
   } else {

@@ -26,8 +26,8 @@ Statut : **serveur et interface testés sur PC (248 tests, `tsc`) — chaîne co
         → ESP : /api/pull (inchangé) → /api/validate-candidate (+ kind, frames si animation) → vote signé Ed25519 sur « deviceId:candidateId:score »
         → quorum → finalizeBlock : bloc {kind:"animation", anim:{frames,loops,playMs,bytes,root}} ; le hash du bloc couvre la racine
                    chain:anim:{hash} (permanent) = clip + empreintes + scores par image
-        → broadcast de l'AFFICHE + pointeur anim UNIQUEMENT aux écrans natifs dont le firmware déclaré lit les animations (lib/anim/pointer.ts) ;
-          jamais de conversion vers d'autres écrans (un TFT 1.8" qui a opté pour les conversions ne reçoit pas l'animation d'un TFT 2.8")
+        → lib/anim/broadcast.ts : à TOUS les écrans dynamiques (TFT 2.8", TFT 1.8", OLED) dont le firmware déclaré lit les animations (lib/anim/targets.ts) :
+          affiche rendue à la géométrie de CHAQUE écran depuis le clip + pointeur anim. Quel que soit l'écran pour lequel l'animation a été faite, sans opt-in.
 ```
 
 ### Ce que « les ESP valident image par image » veut dire ici
@@ -54,7 +54,9 @@ Sans carte SD : l'affiche reste à l'écran, pas d'animation (le clip n'est pas 
 Chaque appareil envoie sa version à `/api/register` à chaque démarrage (`firmware`, ex. `multiscreen-2.2`). La table `ANIM_POINTER_FIRMWARE` (`lib/anim/pointer.ts`) dit quel
 firmware lit les animations : **tft28 : r4tft28-2.4 · tft18 : tft18-2.2 · oled096 : multiscreen-2.2**. Conséquences :
 - un écran dont le firmware est plus ancien, inconnu, ou d'un autre type (e-ink, 2.9" BWR…) **ne reçoit rien** d'une animation : ni pointeur, ni affiche, ni conversion ;
-- les écrans qui ont opté pour la réception de dessins d'autres écrans (`acceptsConvertedScreens`) n'en reçoivent pas non plus : une animation n'est jamais convertie ;
+- **le clip (128×64, 1 bit) est le même pour les trois écrans dynamiques** : une animation validée est diffusée automatiquement à tous ceux dont le firmware est à jour, quel que soit
+  l'écran d'origine, sans avoir à activer la réception de conversions ; **jamais** vers un e-ink (même sur l'appareil e-ink + OLED : seul l'OLED anime) ;
+- « Afficher sur mon écran » (galerie) sur un bloc d'animation ne propose que ces écrans capables, et rend l'affiche pour l'écran choisi depuis le clip ;
 - `/api/draw { anim }` refuse la soumission si l'appareil de l'auteur n'a pas le bon firmware pour l'écran choisi ; le bouton « 🎞 Animer » du profil l'indique
   (« firmware à mettre à jour ») ; la version affichée est celle du dernier démarrage de la carte.
 - L'ancien canal (mode banc d'essai + `deliverAnimation`, 10 min, ≈ 200 commandes) n'est plus utilisé pour les blocs d'animation (`lib/anim/deliver.ts` supprimé) ; le banc
@@ -97,7 +99,7 @@ Relevé sur le diff des commits d'animation (`git diff 1856414..HEAD`, toutes le
 | Où | Ajout | Fréquence |
 |---|---|---|
 | `finalizeBlock` | 1 `SET chain:anim:{hash}` | une fois par **bloc d'animation** |
-| `validation-result` (minage) | 1 `MGET` des appareils de la pool (filtre « firmware capable ») | une fois par bloc d'animation ; en échange, plus aucune conversion ni écriture vers les autres écrans |
+| `broadcastAnimation` (minage) | 3 `SMEMBERS` (pools TFT 2.8" / TFT 1.8" / OLED) + 2 `MGET` (bannis, appareils) + 1 `SET` par écran cible | une fois par bloc d'animation (un dessin : 1 `SMEMBERS` + 1 `MGET` + 1 `SET` par écran de sa pool + les conversions) |
 | `/api/block-clip` | 1 `GET chain:anim:{hash}` | **au plus une fois par région CDN** (réponse publique, immuable, `s-maxage` 1 an) |
 | `/api/block-anim` (galerie) | 1 `GET` | idem, CDN 24 h |
 | `/api/pull`, `/api/validate-candidate`, ACK, atelier, profil | **0** | — (le pointeur est dans le pull existant ; plus de sondage `bench:status`, plus de poll rapide) |

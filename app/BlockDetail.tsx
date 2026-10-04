@@ -138,7 +138,7 @@ function TabDetails({ block }: { block: BlockWithImage }) {
           />
         </div>
       )}
-      {block.imagePayload && <SendToScreen source="human" blockHash={block.blockHash} animScreen={block.kind === "animation" ? block.poolScreen : undefined} />}
+      {block.imagePayload && <SendToScreen source="human" blockHash={block.blockHash} animation={block.kind === "animation"} />}
 
       <div className="bd-meta-grid">
         <MetaRow label="Bloc"       value={`#${block.blockIndex}`} accent />
