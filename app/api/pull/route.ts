@@ -261,7 +261,8 @@ export async function GET(req: NextRequest) {
 
     // Animation validée (bloc `kind:"animation"`) : pointeur vers le clip, SEULEMENT pour un écran dont le firmware le lit (r4tft28-2.4+).
     // L'écran télécharge le clip une fois (/api/block-clip), le range sur sa carte SD et le joue en boucle : plus aucun poll rapide.
-    const animPointer = frameSource === "consensus" ? animPullMeta(device, screen, consensusFrame?.payload as Record<string, unknown> | undefined) : undefined;
+    // (aussi pour une image renvoyée depuis la galerie : « Afficher sur mon écran » sur un bloc d'animation pose le même pointeur)
+    const animPointer = animPullMeta(device, screen, (frameSource === "consensus" ? consensusFrame?.payload : frameSource === "personal" ? personalFrame?.payload : undefined) as Record<string, unknown> | undefined);
 
     // ── Banc d'essai d'animation (TFT 2.8" tactile uniquement) : 1 GET, seulement pour ces appareils ──
     // Quand le propriétaire a activé le mode, on le dit à l'appareil ; il passe alors en poll rapide sur /api/bench/poll.

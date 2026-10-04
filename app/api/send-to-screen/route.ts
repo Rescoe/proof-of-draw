@@ -18,6 +18,7 @@ import { getBlockByHash, getBlockImage } from "@/lib/chain";
 import { getAnaBlockByHash, getAnaBlockImage, getRecentAnaWorks, anaGroupKey } from "@/lib/anaChain";
 import { convertPayload } from "@/lib/screenConvert";
 import { isValidScreenId } from "@/lib/screenProfiles";
+import { animCapable, animPointerOfBlock, type AnimPointer } from "@/lib/anim/pointer";
 import { getIP, isBlacklisted, forbidden } from "@/lib/rateLimit";
 
 const DEVICE_ID_REGEX = /^dev_[A-Z0-9]{8}$/;
@@ -62,6 +63,7 @@ export async function POST(req: NextRequest) {
   let workTitle: string | undefined;
   let drawArtistName: string | undefined;
   let blockIndex: number | undefined;     // n° du bloc d'origine : le cartel de l'écran doit afficher CELUI-LÀ, pas la tête de chaîne
+  let animPtr: AnimPointer | null = null; // bloc d'ANIMATION : l'écran rapatrie le clip et le joue en boucle
 
   if (source === "human") {
     const [block, img] = await Promise.all([getBlockByHash(blockHash), getBlockImage(blockHash)]);
@@ -70,6 +72,15 @@ export async function POST(req: NextRequest) {
     workTitle = block.workTitle;
     drawArtistName = block.drawArtistName ?? block.artistName;
     blockIndex = block.blockIndex;
+    if (block.kind === "animation") {
+      // Une animation ne s'affiche que sur un écran du MÊME type dont le firmware (version déclarée) la joue : jamais convertie, jamais en image fixe ailleurs.
+      if (block.poolScreen !== screen || !animCapable(device, screen)) {
+        return NextResponse.json({
+          error: `Cette animation est faite pour l'écran ${block.poolScreen} : elle ne peut être réaffichée que sur un écran de ce type dont le firmware lit les animations (voir Mon profil).`,
+        }, { status: 422 });
+      }
+      animPtr = animPointerOfBlock(block);
+    }
   } else {
     const block = await getAnaBlockByHash(blockHash);
     if (!block) return NextResponse.json({ error: "Bloc introuvable" }, { status: 404 });
@@ -103,7 +114,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Trop d'envois (10/heure max par écran)" }, { status: 429 });
 
   const stored = JSON.stringify({
-    payload: { ...payload, screen, ...(workTitle ? { workTitle } : {}), ...(drawArtistName ? { drawArtistName } : {}), ...(typeof blockIndex === "number" ? { blockIndex } : {}) },
+    payload: { ...payload, screen, ...(animPtr ? { anim: animPtr } : {}), ...(workTitle ? { workTitle } : {}), ...(drawArtistName ? { drawArtistName } : {}), ...(typeof blockIndex === "number" ? { blockIndex } : {}) },
     frameId:   crypto.randomUUID(),
     createdAt: Date.now(),
     personal:  true,

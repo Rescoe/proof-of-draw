@@ -51,6 +51,12 @@ export function readAnimPointer(payload: Record<string, unknown> | null | undefi
   return { hash: a.hash, bytes: a.bytes as number, frames: a.frames as number };
 }
 
+/** Pointeur d'un bloc d'animation (pour le réafficher depuis la galerie) ; null si le bloc n'est pas une animation. */
+export function animPointerOfBlock(block: { blockHash: string; kind?: string; anim?: { bytes: number; frames: number } | null }): AnimPointer | null {
+  if (block.kind !== "animation" || !block.anim) return null;
+  return readAnimPointer({ anim: { hash: block.blockHash, bytes: block.anim.bytes, frames: block.anim.frames } });
+}
+
 /** Retire le pointeur d'un payload : le JSON léger de /api/pull ne doit JAMAIS grossir pour un firmware qui ne le demande pas. */
 export function withoutAnimPointer(meta: Record<string, unknown>): Record<string, unknown> {
   const { anim: _anim, ...rest } = meta;

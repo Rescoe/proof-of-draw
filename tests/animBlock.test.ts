@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { CLIP, decodeClip, encodeClip, type ClipInput } from "../lib/bench/clip";
-import { animCapable, animPullMeta, readAnimPointer, supportsAnimPointer, withoutAnimPointer } from "../lib/anim/pointer";
+import { animCapable, animPointerOfBlock, animPullMeta, readAnimPointer, supportsAnimPointer, withoutAnimPointer } from "../lib/anim/pointer";
 import { animBlockDoc, animRefusal, buildAnimSubmission, buildAnimSubmissionFromClip, posterFor, verifyAnimDoc } from "../lib/anim/block";
 
 const frame = (fill: (f: Uint8Array) => void) => { const f = new Uint8Array(CLIP.FRAME_BYTES); fill(f); return f; };
@@ -145,4 +145,15 @@ test("pointeur d'animation : annoncé seulement au firmware qui sait le lire, va
   assert.equal(animPullMeta({ screens: ["tft28"], firmware: "r4tft28-2.4" }, "oled096", payload), undefined);
   assert.equal("anim" in withoutAnimPointer({ ...payload, workTitle: "x" }), false);
   assert.equal(withoutAnimPointer({ ...payload, workTitle: "x" }).workTitle, "x");
+});
+
+test("galerie → écran : le pointeur d'un bloc d'animation suit l'image renvoyée (sinon l'écran n'a que l'affiche)", () => {
+  const blockHash = "b".repeat(64);
+  assert.deepEqual(animPointerOfBlock({ blockHash, kind: "animation", anim: { bytes: 3000, frames: 8 } }), { hash: blockHash, bytes: 3000, frames: 8 });
+  assert.equal(animPointerOfBlock({ blockHash }), null, "un dessin n'a pas de pointeur");
+  assert.equal(animPointerOfBlock({ blockHash, kind: "animation" }), null);
+  // image personnelle (send-to-screen) : le pull annonce le pointeur comme pour une frame de consensus
+  const personal = { screen: "oled096", anim: { hash: blockHash, bytes: 3000, frames: 8 } };
+  assert.deepEqual(animPullMeta({ screens: ["oled096", "eink27bw"], firmware: "multiscreen-2.2" }, "oled096", personal), { hash: blockHash, bytes: 3000, frames: 8 });
+  assert.equal(animPullMeta({ screens: ["oled096", "eink27bw"], firmware: "multiscreen-2.1" }, "oled096", personal), undefined);
 });

@@ -8,11 +8,13 @@
 import { useEffect, useState } from "react";
 import { SCREEN_PROFILES } from "@/lib/screenProfiles";
 import type { OwnedDevice } from "@/lib/deviceStore";
+import { animCapable } from "@/lib/anim/pointer";
 
 const screenName = (id: string) =>
   (SCREEN_PROFILES as Record<string, { name: string }>)[id]?.name ?? id;
 
-export function SendToScreen({ source, blockHash }: { source: "human" | "ana"; blockHash: string }) {
+/** `animScreen` : le bloc est une ANIMATION faite pour cet écran → seuls les écrans de ce type dont le firmware la joue sont proposés. */
+export function SendToScreen({ source, blockHash, animScreen }: { source: "human" | "ana"; blockHash: string; animScreen?: string }) {
   const [devices, setDevices] = useState<OwnedDevice[] | null>(null);
   const [choice, setChoice]   = useState("");   // "deviceId|screen"
   const [busy, setBusy]       = useState(false);
@@ -28,7 +30,7 @@ export function SendToScreen({ source, blockHash }: { source: "human" | "ana"; b
   }, []);
 
   const options = (devices ?? []).flatMap((d) =>
-    d.screens.map((sc) => ({
+    d.screens.filter((sc) => !animScreen || (sc === animScreen && animCapable(d, sc))).map((sc) => ({
       value: `${d.deviceId}|${sc}`,
       label: `${d.deviceName || d.artistName || d.deviceId} — ${screenName(sc)}`,
     })));
@@ -56,6 +58,9 @@ export function SendToScreen({ source, blockHash }: { source: "human" | "ana"; b
   }
 
   if (devices === null) return null;
+  if (options.length === 0 && animScreen) {
+    return <div className="sts sts--muted">Cette animation se joue sur un écran {screenName(animScreen)} dont le firmware lit les animations : aucun de vos écrans ne convient pour l’instant (voir Mon profil).</div>;
+  }
   if (options.length === 0) {
     return <div className="sts sts--muted">Aucun écran associé à cette session — connectez un ESP pour pouvoir y réafficher ce dessin.</div>;
   }
