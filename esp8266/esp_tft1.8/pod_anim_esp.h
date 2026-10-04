@@ -73,6 +73,7 @@ inline void forget(State& st) {
 inline void onPull(State& st, const char* hash, size_t bytes) {
   st.pendingHash = (hash && strlen(hash) == 64) ? String(hash) : String("");
   st.pendingBytes = st.pendingHash.length() ? bytes : 0;
+  if (st.pendingHash.length()) Serial.printf("[ANIM] pointeur reçu : bloc %s…, %u o (animation active : %s)\n", st.pendingHash.substring(0, 12).c_str(), (unsigned)bytes, st.on ? "oui" : "non");
 }
 
 /** Télécharge le clip dans `buf` (announced octets exactement) depuis /api/block-clip. TLS fermé au retour. */
@@ -110,7 +111,10 @@ inline bool acquire(State& st, const String& serverUrl) {
   if (st.on && st.hash == st.pendingHash) return true;                 // déjà en flash
   const size_t n = st.pendingBytes;
   if (n < (size_t)(podbench::HEADER_BYTES + 5 + podbench::FRAME_BYTES) || n > MAX_CLIP) { Serial.printf("[ANIM] taille refusée (%u)\n", (unsigned)n); return false; }
-  if (ESP.getMaxFreeBlockSize() < MIN_TLS_BLOCK) { Serial.printf("[ANIM] mémoire insuffisante (bloc libre %u)\n", (unsigned)ESP.getMaxFreeBlockSize()); return false; }
+  // Le clip (n) + sa copie de travail (1 Ko) restent alloués pendant que la connexion TLS (BearSSL, ≈ 16 Ko d'un seul bloc) s'ouvre : il faut les deux.
+  const uint32_t needDl = (uint32_t)n + podbench::FRAME_BYTES + MIN_TLS_BLOCK;
+  Serial.printf("[ANIM] acquisition du clip : %u o, plus gros bloc libre %u (besoin %u), flash %s\n", (unsigned)n, (unsigned)ESP.getMaxFreeBlockSize(), (unsigned)needDl, st.fsOk ? "LittleFS" : "absente");
+  if (ESP.getMaxFreeBlockSize() < needDl) { Serial.println("[ANIM] mémoire insuffisante pour télécharger le clip maintenant : réessai au prochain pull"); return false; }
   uint8_t* clip = (uint8_t*)malloc(n);
   uint8_t* cur = (uint8_t*)malloc(podbench::FRAME_BYTES);
   if (!clip || !cur) { free(clip); free(cur); Serial.println("[ANIM] malloc impossible"); return false; }
@@ -152,8 +156,8 @@ inline bool run(State& st, Presenter& P, const String& serverUrl, unsigned long 
   const size_t n = st.bytes;
   if (n < (size_t)(podbench::HEADER_BYTES + 5 + podbench::FRAME_BYTES) || n > MAX_CLIP) { Serial.println("[ANIM] taille de clip invalide"); st.on = false; return false; }
   const uint32_t need = (uint32_t)n + podbench::FRAME_BYTES + 2048;
-  if (ESP.getMaxFreeBlockSize() < need || (!st.fsOk && ESP.getMaxFreeBlockSize() < MIN_TLS_BLOCK)) {
-    Serial.printf("[ANIM] mémoire trop juste pour la lecture (bloc libre %u)\n", (unsigned)ESP.getMaxFreeBlockSize());
+  if (ESP.getMaxFreeBlockSize() < need || (!st.fsOk && ESP.getMaxFreeBlockSize() < need + MIN_TLS_BLOCK)) {
+    Serial.printf("[ANIM] mémoire trop juste pour la lecture (bloc libre %u, besoin %u)\n", (unsigned)ESP.getMaxFreeBlockSize(), (unsigned)(st.fsOk ? need : need + MIN_TLS_BLOCK));
     delay(500);                                                        // pas d'abandon définitif : la mémoire se libère entre deux tâches
     return true;
   }
@@ -176,6 +180,7 @@ inline bool run(State& st, Presenter& P, const String& serverUrl, unsigned long 
     st.on = false;
     return false;
   }
+  Serial.printf("[ANIM] lecture : %u images, %lu ms avant la prochaine tâche réseau, %s\n", (unsigned)pc.frames, budgetMs, pc.loops == 0 ? "en boucle" : "boucles finies");
   P.begin(pc);
   const unsigned long tEnd = millis() + budgetMs;
   unsigned long target = millis();
