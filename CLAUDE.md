@@ -281,7 +281,8 @@ Tout code non testé sur le matériel porte un avertissement (en-tête, doc, int
 Une animation suit le MÊME pipeline qu'un dessin : `/animer` (bouton « 🎞 Animer » de Mon profil, écrans tft28/tft18/oled096) → `POST /api/draw { anim }` →
 `submit-candidate` (`animClip`) → votes signés → bloc `kind:"animation"` → galerie principale (filtre Tout/Dessins/Animations, `/gallery?type=animation`).
 Le serveur dérive TOUT du clip PBC1 (`lib/anim/block.ts`, pur et testé) : empreinte + score de chaque image, score candidat = moyenne, `imageHash` = racine des empreintes,
-affiche (image fixe diffusée à tous les écrans). Clip et empreintes dans `chain:anim:{hash}`. Livraison du clip aux écrans par le canal du banc d'essai (`lib/anim/deliver.ts`, ≤ 10 min).
+affiche (image fixe diffusée à tous les écrans). Clip et empreintes dans `chain:anim:{hash}`. Lecture : boucle INFINIE (`loops = 0` imposé par le serveur). TFT 2.8" `r4tft28-2.4` : pointeur `anim` dans /api/pull -> clip (`/api/block-clip`, CDN) rangé sur la microSD et joué
+sans aucune requête (0 commande Redis de plus qu'une image fixe). Autres écrans : repli sur le canal du banc d'essai (`lib/anim/deliver.ts`, ≤ 10 min, ≈ 200 commandes/écran).
 Plus aucune publication sans consensus : `/api/anim/save` et l'option `gallery` de `/api/bench/send` sont supprimés. Détails, coûts Redis, limites : `docs/ANIMATIONS_PIPELINE.md`.
 
 ## Règle PRIMORDIALE — quotas Upstash Redis (écrite le 03/10/2026)

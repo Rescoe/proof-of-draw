@@ -9,6 +9,7 @@ import { parseChainHeadRaw, parseCandidateRaw, PULL_KEY_HEAD, PULL_KEY_CANDIDATE
 import type { ChainSummary } from "@/lib/chain";
 import { maybeCheckAnaFeed } from "@/lib/anaFeed";
 import { selectDelivery, withoutScenePointer, sceneRetryAfterSec, scenePullMeta, type DeliverySelection } from "@/lib/scene/delivery";
+import { animPullMeta, withoutAnimPointer } from "@/lib/anim/pointer";
 
 const DEVICE_ID_REGEX = /^dev_[A-Z0-9]{8}$/;
 // 5 pulls/min — compatible avec PULL_INTERVAL=60s + VALIDATE_INTERVAL=30s du firmware
@@ -45,7 +46,8 @@ function payloadMeta(payload: FramePayload): Record<string, unknown> {
   // "screen" est intentionnellement conservé.
   // Le pointeur scene-v1 est retiré : le JSON léger ne doit JAMAIS grossir pour un firmware qui ne l'a pas demandé
   // (DynamicJsonDocument de 512–1024 octets côté ESP) ; un appareil scene-v1 le reçoit dans le bloc `scene` dédié.
-  return withoutScenePointer(rest);
+  // Pointeur d'animation : retiré de la même façon — il est annoncé dans le bloc `anim` de la réponse, et seulement aux firmwares qui le lisent.
+  return withoutAnimPointer(withoutScenePointer(rest));
 }
 
 export async function GET(req: NextRequest) {
@@ -257,6 +259,10 @@ export async function GET(req: NextRequest) {
       }
     }
 
+    // Animation validée (bloc `kind:"animation"`) : pointeur vers le clip, SEULEMENT pour un écran dont le firmware le lit (r4tft28-2.4+).
+    // L'écran télécharge le clip une fois (/api/block-clip), le range sur sa carte SD et le joue en boucle : plus aucun poll rapide.
+    const animPointer = frameSource === "consensus" ? animPullMeta(device, screen, consensusFrame?.payload as Record<string, unknown> | undefined) : undefined;
+
     // ── Banc d'essai d'animation (TFT 2.8" tactile uniquement) : 1 GET, seulement pour ces appareils ──
     // Quand le propriétaire a activé le mode, on le dit à l'appareil ; il passe alors en poll rapide sur /api/bench/poll.
 
@@ -272,6 +278,7 @@ export async function GET(req: NextRequest) {
       // reçoit exactement la même réponse qu'avant (zéro octet ajouté — son JSON est dimensionné au plus juste).
       ...(device.sceneCapability?.sceneV1 ? { kind: delivery.kind } : {}),
       ...(sceneMeta ? { scene: sceneMeta } : {}),
+      ...(animPointer ? { anim: animPointer } : {}),
 
       // Métadonnées lues directement à la racine par le firmware — évite
       // le parsing imbriqué dans frame{} et fonctionne quel que soit le chemin

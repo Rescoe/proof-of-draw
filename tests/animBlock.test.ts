@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { CLIP, decodeClip, type ClipInput } from "../lib/bench/clip";
+import { CLIP, decodeClip, encodeClip, type ClipInput } from "../lib/bench/clip";
+import { animPullMeta, readAnimPointer, supportsAnimPointer, withoutAnimPointer } from "../lib/anim/pointer";
 import { animBlockDoc, animRefusal, buildAnimSubmission, buildAnimSubmissionFromClip, posterFor, verifyAnimDoc } from "../lib/anim/block";
 import { canPlay } from "../lib/anim/deliver";
 
@@ -24,12 +25,11 @@ test("animation : une empreinte et un score PAR IMAGE, score = moyenne, racine d
   assert.equal(a.drawScore, 3, "3 transitions différentes");
 });
 
-test("racine : toute modification d'une image, d'un délai, des boucles ou des couleurs la change", () => {
+test("racine : toute modification d'une image, d'un délai ou des couleurs la change (les boucles : voir le test dédié)", () => {
   const base = buildAnimSubmission(input(), "tft28").part.root;
   const mod = (f: (i: ClipInput) => void) => { const i = input(); f(i); return buildAnimSubmission(i, "tft28").part.root; };
   assert.notEqual(mod((i) => { i.frames[2][0] ^= 0x01; }), base, "un pixel d'une image");
   assert.notEqual(mod((i) => { i.delaysMs[1] = 200; }), base, "un délai");
-  assert.notEqual(mod((i) => { i.loops = 3; }), base, "les boucles");
   assert.notEqual(mod((i) => { i.fg = 0xf800; }), base, "la couleur");
   assert.equal(mod(() => {}), base);
 });
@@ -99,9 +99,46 @@ test("vérification publique d'un bloc : document intact = cohérent, document m
 
 test("livraison : seuls les écrans à clip, au firmware compatible ou inconnu, jouent l'animation", () => {
   assert.equal(canPlay({ screens: ["tft28"], firmware: "r4tft28-2.3" }, "tft28"), true);
+  assert.equal(canPlay({ screens: ["tft28"], firmware: "r4tft28-2.4" }, "tft28"), false, "r4tft28-2.4+ : pointeur dans /api/pull, plus de mode rapide");
   assert.equal(canPlay({ screens: ["tft28"], firmware: "r4tft28-2.0" }, "tft28"), false, "firmware trop ancien : ignore le mode");
   assert.equal(canPlay({ screens: ["tft28"] }, "tft28"), true, "version inconnue : on tente");
   assert.equal(canPlay({ screens: ["eink29bwr"], firmware: "r4eink29-1.0" }, "eink29bwr"), false, "e-ink : jamais d'animation");
   assert.equal(canPlay({ screens: ["tft18"], firmware: "tft18-2.1" }, "tft28"), false, "l'appareil n'a pas cet écran");
   assert.equal(canPlay(null, "tft28"), false);
+});
+
+test("une animation de bloc tourne TOUJOURS en boucle : le nombre de boucles de l'auteur est ignoré", () => {
+  const a = buildAnimSubmission(input(), "tft28");           // l'entrée demande 2 boucles
+  assert.equal(a.part.loops, 0);
+  assert.equal(decodeClip(a.bin).loops, 0);
+  const b = buildAnimSubmission(mk([ball(10), ball(40), ball(70), ball(100)], { loops: 7 }), "tft28");
+  assert.equal(a.part.root, b.part.root, "2 ou 7 boucles demandées : même animation, même racine");
+  // un clip déjà encodé avec des boucles (ancien format) reste lisible et distinct
+  const fin = buildAnimSubmissionFromClip(encodeClip(input()), "tft28").part;
+  assert.equal(fin.loops, 2);
+  assert.notEqual(fin.root, a.part.root);
+});
+
+test("pointeur d'animation : annoncé seulement au firmware qui sait le lire, validé strictement", () => {
+  assert.equal(supportsAnimPointer(["tft28"], "r4tft28-2.4"), true);
+  assert.equal(supportsAnimPointer(["tft28"], "r4tft28-2.10"), true);
+  assert.equal(supportsAnimPointer(["tft28"], "r4tft28-3.0"), true);
+  assert.equal(supportsAnimPointer(["tft28"], "r4tft28-2.3"), false);
+  assert.equal(supportsAnimPointer(["tft28"], undefined), false, "version inconnue : pas de pointeur");
+  assert.equal(supportsAnimPointer(["tft18"], "tft18-2.9"), false, "ESP8266 : canal du banc d'essai");
+  assert.equal(supportsAnimPointer(["eink29bwr"], "r4eink29-1.0"), false);
+
+  const hash = "a".repeat(64);
+  const payload = { screen: "tft28", anim: { hash, bytes: 4000, frames: 12 } };
+  assert.deepEqual(readAnimPointer(payload), { hash, bytes: 4000, frames: 12 });
+  assert.equal(readAnimPointer({ anim: { hash: "xyz", bytes: 1, frames: 1 } }), null);
+  assert.equal(readAnimPointer({ anim: { hash, bytes: "4000", frames: 1 } }), null);
+  assert.equal(readAnimPointer({ screen: "tft28" }), null);
+  assert.equal(readAnimPointer(null), null);
+
+  assert.deepEqual(animPullMeta({ screens: ["tft28"], firmware: "r4tft28-2.4" }, "tft28", payload), { hash, bytes: 4000, frames: 12 });
+  assert.equal(animPullMeta({ screens: ["tft28"], firmware: "r4tft28-2.3" }, "tft28", payload), undefined, "ancien firmware : réponse inchangée");
+  assert.equal(animPullMeta({ screens: ["tft28"], firmware: "r4tft28-2.4" }, "oled096", payload), undefined);
+  assert.equal("anim" in withoutAnimPointer({ ...payload, workTitle: "x" }), false);
+  assert.equal(withoutAnimPointer({ ...payload, workTitle: "x" }).workTitle, "x");
 });

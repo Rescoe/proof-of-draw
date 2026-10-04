@@ -5,6 +5,9 @@
 //   • les écrans à firmware compatible reçoivent EN PLUS le clip (bench:clip / bench:ptr) et un « mode rapide » de durée limitée :
 //     /api/pull leur annonce benchMode, ils interrogent /api/bench/poll, téléchargent le clip et le jouent (en boucle si loops = 0).
 //
+// Les écrans à lecteur sur microSD (lib/anim/pointer.ts, r4tft28-2.4+) NE passent PAS par ici : ils reçoivent un pointeur dans /api/pull et jouent en
+// boucle sans plus rien demander. Ce canal ne sert plus qu'aux firmwares ESP8266 (TFT 1.8", OLED) et aux anciennes versions du R4.
+//
 // COÛT REDIS (règle primordiale du dépôt) : par bloc d'animation, 2 lectures groupées (membres de la pool, bannis) + 1 MGET (appareils)
 // + 3 écritures par écran récepteur. Côté écran : 1 commande par contrôle rapide (≈ toutes les 3 s) pendant la durée du mode, plafonnée par
 // ANIM_PLAY_MAX_SEC (10 min par défaut) → ≈ 200 commandes par écran et par animation. Extinction automatique (TTL).
@@ -15,6 +18,7 @@ import { redis } from "@/lib/redis";
 import { benchFirmwareOk, benchScreenOf, BENCH_SCREENS } from "@/lib/bench/screens";
 import { CLIP_TTL_SEC, storeClip, setBenchMode, type ClipPointer } from "@/lib/bench/store";
 import type { AnimCandidatePart } from "@/lib/anim/block";
+import { supportsAnimPointer } from "@/lib/anim/pointer";
 
 export const ANIM_PLAY_MAX_SEC = parseInt(process.env.ANIM_PLAY_MAX_SEC ?? "600");
 
@@ -27,6 +31,8 @@ const parse = (raw: unknown): DeviceLite | null => {
 /** Un écran de la pool peut-il jouer ce clip ? (écran du banc d'essai + firmware assez récent ou inconnu) */
 export function canPlay(device: DeviceLite | null, poolScreen: string): boolean {
   if (!device || !device.screens?.includes(poolScreen)) return false;
+  // Firmware à lecteur sur carte SD (pointeur `anim` dans /api/pull) : il télécharge le clip lui-même, sans mode rapide ni poll → rien à poser ici.
+  if (supportsAnimPointer(device.screens, device.firmware)) return false;
   if (!(BENCH_SCREENS as string[]).includes(poolScreen) || benchScreenOf([poolScreen]) !== poolScreen) return false;
   return benchFirmwareOk(poolScreen as (typeof BENCH_SCREENS)[number], device.firmware) !== false;
 }

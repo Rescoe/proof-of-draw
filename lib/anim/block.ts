@@ -134,7 +134,9 @@ export function buildAnimSubmissionFromClip(bin: Uint8Array, screen: AnimScreen)
 }
 
 /** Depuis les images brutes envoyées par l'interface (le serveur ENCODE : l'interface n'est jamais la source de vérité). */
-export function buildAnimSubmission(input: ClipInput, screen: AnimScreen): AnimSubmission & { bin: Uint8Array } {
+export function buildAnimSubmission(rawInput: ClipInput, screen: AnimScreen): AnimSubmission & { bin: Uint8Array } {
+  // Une animation de bloc tourne TOUJOURS en boucle (loops = 0) : le choix de l'auteur sur le nombre de boucles est ignoré, c'est le serveur qui décide.
+  const input: ClipInput = { ...rawInput, loops: 0 };
   const invalid = validateClipInput(input) ?? animRefusal(input);
   if (invalid) throw new Error(invalid);
   const bin = encodeClip(input);

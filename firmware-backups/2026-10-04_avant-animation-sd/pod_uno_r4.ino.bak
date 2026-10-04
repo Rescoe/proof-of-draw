@@ -50,7 +50,7 @@
 
 #define SERVER_HOST       "proof-of-draw.vercel.app"
 #define SCREEN_TYPE       "tft28"            // profil serveur 240×320 RGB565 (lib/screenProfiles.ts)
-#define FIRMWARE_VERSION  "r4tft28-2.4"
+#define FIRMWARE_VERSION  "r4tft28-2.3"
 #define TOUCH_ENABLED     1                  // toucher = afficher / cacher le cartel
 #define PULL_INTERVAL     60000UL
 #define VALIDATE_INTERVAL 30000UL
@@ -107,8 +107,6 @@ static_assert(podbench::W * podbench::H / 8 == BENCH_FRAME && podbench::HEADER_B
 #define SD_DIR    "/pod"
 #define SD_FRAME  "/pod/frame.bin"                // 153 600 o RGB565 little-endian, tel que reçu du serveur
 #define SD_META   "/pod/meta.txt"                 // 4 lignes : frameId, n° de bloc, titre, artiste (écrit APRÈS l'image complète)
-#define SD_ANIM   "/pod/anim.bin"                 // clip PBC1 de l'animation affichée (≤ 9 216 o), joué en boucle sans rien demander au serveur
-#define SD_ANIM_META "/pod/anim.txt"              // 2 lignes : hash du bloc, frameId de l'affiche (écrit APRÈS le clip complet)
 
 #if ARDUINOJSON_VERSION_MAJOR >= 7
   #define JSON_DOC(name, cap) JsonDocument name
@@ -146,17 +144,6 @@ bool benchMode = false;                           // mode banc d'essai actif (an
 unsigned long benchModeSince = 0, lastBenchPollMs = 0;
 String lastBenchClipId = "";
 static bool g_quietHttp = false;                  // pas de ligne [HTTP] pour chaque poll réussi (toutes les 3 s)
-
-// Animation RÉSIDENTE (r4tft28-2.4) : /api/pull annonce un pointeur `anim` (hash du bloc) ; le clip est téléchargé UNE fois (/api/block-clip, mis en
-// cache par le CDN), rangé sur la carte microSD, puis joué EN BOUCLE sans AUCUNE requête (coût Redis nul entre deux pulls). L'affiche (image fixe) reste
-// la repli : toucher = pause + cartel, re-toucher (ou 60 s) = reprise. Redémarrage : l'animation reprend depuis la carte.
-enum AnimEnd : uint8_t { AE_TIME = 0, AE_TOUCH, AE_ERROR };   // déclaré ici : les prototypes que l'IDE génère passent AVANT le reste du code
-bool   animOn = false;                            // un clip est sur la carte et correspond à l'œuvre affichée
-bool   animPaused = false;                        // en pause (toucher) : l'affiche et le cartel sont à l'écran
-unsigned long animPausedSince = 0;
-String animHash = "";                             // bloc dont le clip est sur la carte
-String pendingAnimHash = "";                      // pointeur reçu par le dernier pull
-size_t pendingAnimBytes = 0;
 
 static char     g_body[3072];                   // corps JSON des réponses
 static uint16_t g_row[SCR_W];                   // une ligne d'image (octets little-endian reçus, puis big-endian pour le bus)
@@ -428,7 +415,6 @@ static void saveMeta(const String& frameId) {
   f.close();
 }
 
-static void animLoadMarker();
 /** Au démarrage : réaffiche la dernière œuvre depuis la carte (sans attendre le réseau) et retrouve son cartel. */
 static void restoreLastFrame() {
   if (!sdOk || !SD.exists(SD_META) || !SD.exists(SD_FRAME)) return;
@@ -445,7 +431,6 @@ static void restoreLastFrame() {
   lastFrameId = id; currentBlockIndex = blk.toInt(); pendingWorkTitle = title; pendingArtistName = artist;
   sdFrameValid = true; cartelVisible = false;
   logf("[SD] dernière œuvre réaffichée en %lu ms (frameId=%s)", millis() - t0, id.c_str());
-  animLoadMarker();                                          // c'était une animation ? elle reprend depuis la carte
 }
 
 // ─── Image : flux 153 600 o RGB565 little-endian, ligne par ligne, plein écran ──
@@ -537,10 +522,7 @@ static void toggleCartel() {
     return;
   }
   const unsigned long t0 = millis();
-  if (restoreRows(0, BAND_TOP_H) && restoreRows(BAND_BOT_Y, BAND_BOT_H)) {
-    cartelVisible = false; logf("[TOUCH] cartel masqué en %lu ms", millis() - t0);
-    if (animOn && animPaused) { animPaused = false; logf("[ANIM] reprise"); }
-  }
+  if (restoreRows(0, BAND_TOP_H) && restoreRows(BAND_BOT_Y, BAND_BOT_H)) { cartelVisible = false; logf("[TOUCH] cartel masqué en %lu ms", millis() - t0); }
   else { sdFrameValid = false; sdWhy = "SD lecture"; logf("[TOUCH] lecture de /pod/frame.bin impossible : cartel conservé"); drawCartel(); }
 }
 static void serviceTouch() {
@@ -663,8 +645,6 @@ static bool doRegister() {
 }
 
 // ─── PULL ──────────────────────────────────────────────────────────────────
-static void maybeFetchAnim(const String& frameId);
-static void animForget();
 static bool doPull() {
   String newBlockHash = "", newCandId = "", newFrameId = "", newFrameSource = "none";
   bool newBenchMode = false;
@@ -701,9 +681,6 @@ static bool doPull() {
     newFrameId     = doc["frameId"] | "";
     pullRetryAfter = doc["retryAfter"] | 60;
     newBenchMode = doc["benchMode"] | false;
-    pendingAnimHash = ""; pendingAnimBytes = 0;
-    JsonObject an = doc["anim"];                                // pointeur d'animation (écran à firmware >= 2.4 seulement)
-    if (!an.isNull()) { pendingAnimHash = an["hash"] | ""; pendingAnimBytes = (size_t)(an["bytes"] | 0); }
     if (pullRetryAfter <= 0) pullRetryAfter = 60;
     if (newFrameId.length() == 0) { JsonObject fo = doc["frame"]; if (!fo.isNull()) newFrameId = fo["frameId"] | ""; }
 
@@ -740,7 +717,7 @@ static bool doPull() {
   if (newCandId.length() > 0) pendingCandidateId = newCandId;
 
   if (newFrameSource == "none" || newFrameId.length() == 0) { logf("[PULL] aucune frame"); return true; }
-  if (newFrameId == lastFrameId) { logf("[PULL] frame déjà affichée"); maybeFetchAnim(newFrameId); return true; }
+  if (newFrameId == lastFrameId) { logf("[PULL] frame déjà affichée"); return true; }
   logf("[PULL] nouvelle frame %s (%s)", newFrameId.c_str(), newFrameSource.c_str());
   // Le cartel appartient à l'image : sur un pull sans nouvelle image, le serveur répond avec la tête de chaîne, qui n'est pas forcément
   // l'œuvre affichée (image renvoyée depuis une galerie, par exemple). On ne l'applique donc qu'ici.
@@ -750,11 +727,7 @@ static bool doPull() {
     logf("[PULL] cartel: %s / %s (bloc %d)", asciiFold(pendingWorkTitle).c_str(), asciiFold(pendingArtistName).c_str(), currentBlockIndex);
   }
 
-  const bool fetched = doFetchFrame(newFrameId, newFrameSource) && lastFrameId == newFrameId;
-  if (fetched) {
-    if (pendingAnimHash.length() == 64) maybeFetchAnim(newFrameId);   // l'affiche est à l'écran : on rapatrie le clip sur la carte
-    else animForget();                                                // nouvelle image fixe : l'animation précédente s'arrête
-  }
+  doFetchFrame(newFrameId, newFrameSource);
   reportMem("après pull");
   return true;
 }
@@ -950,127 +923,6 @@ static void doBenchPoll() {
   if (id.length() > 0 && id != lastBenchClipId) playBenchClip(id, bytes);
 }
 
-// ─── Animation résidente : clip sur la microSD, lecture en boucle ───────────
-/** L'œuvre affichée n'est plus une animation : on oublie le clip (et le marqueur) pour qu'un redémarrage n'affiche pas l'ancienne. */
-static void animForget() {
-  if (animOn) logf("[ANIM] arrêt : nouvelle image fixe");
-  animOn = false; animPaused = false; animHash = "";
-  if (!sdOk) return;
-  if (SD.exists(SD_ANIM_META)) SD.remove(SD_ANIM_META);
-  if (SD.exists(SD_ANIM)) SD.remove(SD_ANIM);
-}
-
-/** Au démarrage : si la carte porte le clip de l'œuvre qui vient d'être réaffichée, l'animation reprend. */
-static void animLoadMarker() {
-  if (!sdOk || !SD.exists(SD_ANIM_META) || !SD.exists(SD_ANIM)) return;
-  File m = SD.open(SD_ANIM_META, FILE_READ);
-  if (!m) return;
-  String hash = m.readStringUntil('\n'); hash.trim();
-  String fid = m.readStringUntil('\n'); fid.trim();
-  m.close();
-  if (hash.length() != 64 || fid != lastFrameId) { logf("[ANIM] clip de la carte ne correspond pas à l'œuvre : ignoré"); return; }
-  animOn = true; animPaused = false; animHash = hash;
-  logf("[ANIM] clip trouvé sur la carte (bloc %s…) : lecture en boucle", hash.substring(0, 12).c_str());
-}
-
-/** Télécharge le clip du bloc (TLS fermé ensuite), le valide ENTIÈREMENT, le range sur la carte puis marque l'animation comme active. */
-static bool fetchAnimToSd(const String& hash, size_t announced) {
-  if (!sdOk) { logf("[ANIM] pas de carte SD : animation non lue (l'affiche reste à l'écran)"); return false; }
-  if (announced < (size_t)(BENCH_HDR + 5 + BENCH_FRAME) || announced > BENCH_MAX_CLIP) { logf("[ANIM] taille refusée (%u)", (unsigned)announced); return false; }
-  uint8_t* clip = (uint8_t*)malloc(announced);
-  uint8_t* cur = (uint8_t*)malloc(BENCH_FRAME);
-  if (!clip || !cur) { free(clip); free(cur); logf("[ANIM] mémoire insuffisante"); return false; }
-  const unsigned long t0 = millis();
-  bool got = false;
-  {
-    Conn c(HTTP_TIMEOUT_MS);
-    const int code = c.request("GET", "/api/block-clip?hash=" + hash, nullptr);
-    logf("[HTTP GET] /api/block-clip -> %d (contenu %ld)", code, c.rd.contentLength());
-    if (code == 200 && (c.rd.contentLength() < 0 || (size_t)c.rd.contentLength() == announced))
-      got = c.rd.readBody(clip, announced) == announced && c.rd.complete();
-    c.client.stop();
-  }
-  podbench::Clip pc;
-  const podbench::Err perr = got ? podbench::parse(clip, announced, pc, cur) : podbench::ERR_SIZE;
-  free(cur);
-  if (!got || perr != podbench::OK) {
-    logf("[ANIM] clip refusé (%s)", got ? podbench::errName(perr) : "téléchargement incomplet");
-    free(clip);
-    return false;
-  }
-  // Rangement : clip COMPLET d'abord, marqueur ensuite (un arrêt en cours d'écriture ne laisse jamais un clip à moitié « actif »)
-  if (SD.exists(SD_ANIM_META)) SD.remove(SD_ANIM_META);
-  if (SD.exists(SD_ANIM)) SD.remove(SD_ANIM);
-  bool saved = false;
-  File f = SD.open(SD_ANIM, FILE_WRITE);
-  if (f) { saved = f.write(clip, announced) == announced; f.close(); }
-  free(clip);
-  if (!saved) { logf("[ANIM] écriture du clip sur la carte impossible"); if (SD.exists(SD_ANIM)) SD.remove(SD_ANIM); return false; }
-  File m = SD.open(SD_ANIM_META, FILE_WRITE);
-  if (m) { m.println(hash); m.println(lastFrameId); m.close(); }
-  animOn = true; animPaused = false; animHash = hash;
-  logf("[ANIM] clip reçu en %lu ms, %u images, rangé sur la carte (%u o) : lecture en boucle", millis() - t0, (unsigned)pc.frames, (unsigned)announced);
-  return true;
-}
-
-static void maybeFetchAnim(const String& frameId) {
-  if (pendingAnimHash.length() != 64) return;
-  if (animOn && animHash == pendingAnimHash) return;         // déjà sur la carte
-  if (frameId != lastFrameId) return;                        // l'affiche doit être ce qui est à l'écran
-  fetchAnimToSd(pendingAnimHash, pendingAnimBytes);
-}
-
-/** Joue le clip de la carte EN BOUCLE pendant au plus `budgetMs` (le temps avant la prochaine tâche réseau), puis rend la main. */
-static AnimEnd runResidentAnim(unsigned long budgetMs) {
-  File f = SD.open(SD_ANIM, FILE_READ);
-  if (!f) { logf("[ANIM] clip illisible"); return AE_ERROR; }
-  const size_t n = f.size();
-  if (n < (size_t)(BENCH_HDR + 5 + BENCH_FRAME) || n > BENCH_MAX_CLIP) { f.close(); logf("[ANIM] taille de clip invalide (%u)", (unsigned)n); return AE_ERROR; }
-  uint8_t* clip = (uint8_t*)malloc(n);
-  uint8_t* cur = (uint8_t*)malloc(BENCH_FRAME);
-  if (!clip || !cur) { free(clip); free(cur); f.close(); logf("[ANIM] mémoire insuffisante pour la lecture"); return AE_ERROR; }
-  const bool rd = f.read(clip, n) == (int)n;
-  f.close();
-  podbench::Clip pc;
-  const podbench::Err perr = rd ? podbench::parse(clip, n, pc, cur) : podbench::ERR_SIZE;
-  if (!rd || perr != podbench::OK) { free(clip); free(cur); logf("[ANIM] clip de la carte refusé (%s)", rd ? podbench::errName(perr) : "lecture"); return AE_ERROR; }
-
-  tft.setRotation(0);
-  tft.fillScreen(pc.bg);
-  cartelVisible = false;
-  FastTft ft;
-  const unsigned long tEnd = millis() + budgetMs;
-  unsigned long target = millis(), lastTouchChk = millis();
-  AnimEnd why = AE_TIME;
-  podbench::play(pc, cur, ft, g_row, [&](uint32_t, uint16_t delayMs) -> bool {
-    target += delayMs;                                        // horloge ABSOLUE : pas de dérive cumulée
-    while ((long)(millis() - target) < 0) {
-      if (touchOk && millis() - lastTouchChk > 200UL) { lastTouchChk = millis(); if (ts.touched()) { drainTouch(); why = AE_TOUCH; return false; } }
-      if ((long)(millis() - tEnd) >= 0) return false;
-      delay(1);
-    }
-    return (long)(millis() - tEnd) < 0;
-  });
-  free(clip); free(cur);
-  return why;
-}
-
-/** Un toucher pendant l'animation : pause sur l'affiche, avec le cartel. */
-static void onAnimTouch() {
-  animPaused = true; animPausedSince = millis();
-  if (!(sdFrameValid && restoreRows(0, SCR_H))) tft.fillScreen(C_BLACK);
-  drawCartel(); cartelVisible = true;
-  logf("[ANIM] pause (toucher) : re-toucher ou attendre 60 s pour reprendre");
-}
-
-/** Temps avant la prochaine tâche réseau (pull, vote, ré-validation) : l'animation ne la retarde jamais. */
-static unsigned long msUntilNextTask() {
-  long r = (long)(lastPullMs + nextPullIntervalMs - millis());
-  if (pendingCandidateId.length() > 0) { const long v = (long)(lastValidateMs + VALIDATE_INTERVAL - millis()); if (v < r) r = v; }
-  if (pendingObsHashes.length() > 0) r = 0;
-  return r < 0 ? 0UL : (unsigned long)r;
-}
-
 // ─── AUTO-TEST Ed25519 (au boot) : prouve que signature + vérification passent dans 1 Ko de pile + marge du tas ────────────
 static void selfTestEd25519() {
   static const char msg[] = "pod-r4-selftest";
@@ -1157,18 +1009,6 @@ void loop() {
   }
 
   serviceTouch();
-
-  // Animation résidente : lue depuis la carte, en boucle, entre deux tâches réseau (jamais de requête pour elle)
-  if (animOn && animPaused && millis() - animPausedSince > 60000UL) { animPaused = false; logf("[ANIM] reprise (60 s)"); }
-  if (animOn && !animPaused && !benchMode) {
-    const unsigned long budget = msUntilNextTask();
-    if (budget > 400UL) {
-      const AnimEnd e = runResidentAnim(budget);
-      if (e == AE_TOUCH) onAnimTouch();
-      else if (e == AE_ERROR) { animOn = false; logf("[ANIM] lecture impossible : animation abandonnée (l'affiche reste)"); if (sdFrameValid) restoreRows(0, SCR_H); }
-      return;                                                 // `now` est périmé : on repart d'une horloge fraîche
-    }
-  }
 
   if (benchMode) {
     if (millis() - benchModeSince > BENCH_MODE_MAX_MS) { benchMode = false; logf("[BENCH] mode expiré (31 min)"); }

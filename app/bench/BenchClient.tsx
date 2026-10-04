@@ -399,7 +399,7 @@ export default function BenchClient({ variant = "bench" }: { variant?: BenchVari
     try {
       const r = await fetch("/api/draw", {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ deviceId, screen: benchScreen, workTitle: title.trim() || "Sans titre", anim: { frames: frames.map(toB64), delaysMs: input.delaysMs, loops, fg: input.fg, bg: input.bg } }),
+        body: JSON.stringify({ deviceId, screen: benchScreen, workTitle: title.trim() || "Sans titre", anim: { frames: frames.map(toB64), delaysMs: input.delaysMs, loops: 0, fg: input.fg, bg: input.bg } }),
       });
       const d = await r.json().catch(() => ({}));
       if (!r.ok) { setMsg({ ok: false, text: d.message ?? d.error ?? "Soumission impossible" }); return; }
@@ -584,6 +584,12 @@ export default function BenchClient({ variant = "bench" }: { variant?: BenchVari
             />
             <button type="button" style={{ ...btn, marginTop: 4 }} onClick={() => edit((d) => ({ ...d, delays: d.delays.map(() => d.delays[d.cur] ?? 100) }))}>Appliquer à toutes</button>
           </div>
+          {isStudio ? (
+            <div>
+              <div style={label}>Lecture</div>
+              <p style={{ ...muted, marginTop: 4 }}>∞ en boucle, toujours. Un tour ≈ {(clipPlayMs(input.delaysMs, 1) / 1000).toFixed(1)} s. Sur l&apos;écran, un toucher met l&apos;animation en pause (cartel), un second la relance.</p>
+            </div>
+          ) : (
           <div>
             <div style={label}>Boucles : {loops === 0 ? "∞" : loops}</div>
             <input type="range" min={1} max={30} value={Math.max(1, loops)} disabled={loops === 0} onChange={(e) => setLoops(Number(e.target.value))} style={{ width: "100%" }} aria-label="Boucles" />
@@ -593,6 +599,7 @@ export default function BenchClient({ variant = "bench" }: { variant?: BenchVari
             </label>
             <p style={muted}>{loops === 0 ? `Un tour ≈ ${(playMs / 1000).toFixed(1)} s` : `Durée de lecture ≈ ${(playMs / 1000).toFixed(1)} s`}</p>
           </div>
+          )}
           <div>
             <div style={label}>Couleurs (allumé / fond)</div>
             <div style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 4 }}>

@@ -76,3 +76,18 @@ reconverties : renvoyer le dessin depuis « Afficher sur mon écran » après le
 - `tests/podHttpR4.test.ts` : `pod_http.h` rejoué sur des réponses fragmentées à l'octet (Content-Length, chunked, tronqué, illisible…).
 - `tests/canvasToScreen.test.ts` : encodage `tft28` RGB565 octet pour octet (formule indépendante) ; `tests/screenConvert.test.ts` : aller-retour
   et conversions entre tous les écrans, `tft28` inclus.
+
+## Animations sur la carte SD (r4tft28-2.4, 04/10/2026 — compilé, PAS encore flashé)
+
+Une animation validée (bloc `kind:"animation"`) arrive comme une œuvre normale (l'affiche) **plus** un pointeur `anim` dans `/api/pull`. Le firmware télécharge le clip
+(`/api/block-clip`, ≤ 9 Ko), le valide, l'écrit sur la carte (`/pod/anim.bin` + `/pod/anim.txt`) puis le joue **en boucle sans aucune requête** : la lecture s'arrête
+juste avant chaque tâche réseau (pull, vote), puis reprend. Toucher = pause sur l'affiche avec le cartel ; re-toucher (ou 60 s) = reprise. Après un redémarrage, l'animation
+reprend depuis la carte ; une nouvelle image fixe efface le clip. **Sans carte SD : affiche seule.** Sauvegarde de la version 2.3 : `firmware-backups/2026-10-04_avant-animation-sd/`.
+
+À me rapporter au premier essai (Serial 115200) :
+```
+[ANIM] clip reçu en … ms, N images, rangé sur la carte (… o) : lecture en boucle
+[ANIM] pause (toucher) …  /  [ANIM] reprise
+[BOOT] … [ANIM] clip trouvé sur la carte (bloc …) : lecture en boucle      ← après un redémarrage
+```
+Visuel : l'animation tourne sans fin, se fige ~1-2 s toutes les 5 min (le pull), un toucher la met en pause.

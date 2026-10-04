@@ -31,12 +31,13 @@ import { verifyEd25519 } from "@/lib/ed25519";
 import { dequeueNextDraw } from "@/lib/drawQueue";
 import { invalidateThresholdsCache } from "@/lib/adaptiveValidation";
 import { deliverAnimation } from "@/lib/anim/deliver";
+import type { AnimPointer } from "@/lib/anim/pointer";
 
 const DEVICE_ID_REGEX = /^dev_[A-Z0-9]{8}$/;
 const BLACKLIST_TTL = parseInt(process.env.BLACKLIST_TTL_SECONDS ?? "604800");
 const FRAME_TTL_SEC = parseInt(process.env.DRAW_WINDOW_SEC ?? "900");
 
-async function broadcastValidatedFrame(poolScreen: string, payload: Record<string, unknown>, frameId: string, displayTime: number, blockIndex: number, artistName: string): Promise<void> {
+async function broadcastValidatedFrame(poolScreen: string, payload: Record<string, unknown>, frameId: string, displayTime: number, blockIndex: number, artistName: string, animPointer?: AnimPointer): Promise<void> {
   const _block = { index: blockIndex, artistName, displayTime, frameId, minedAt: Date.now() };
   const ttl = Math.max(900, Math.min(displayTime, 7200));
 
@@ -53,6 +54,8 @@ async function broadcastValidatedFrame(poolScreen: string, payload: Record<strin
   const enrichedPayload = {
     ...payload,
     _block,
+    // Animation : pointeur vers le clip du bloc, uniquement sur les frames des écrans NATIFS (jamais dans les conversions vers d'autres écrans)
+    ...(animPointer ? { anim: animPointer } : {}),
   };
 
   const stored = JSON.stringify({ payload: enrichedPayload, frameId, createdAt: Date.now(), sourceDeviceId: "consensus" });
@@ -145,7 +148,8 @@ export async function POST(req: NextRequest) {
       // vote.deviceId = l'ESP dont le vote vient d'atteindre le quorum → premier mineur
       const block = await finalizeBlock(candidate, allVotes, frameId, vote.deviceId);
 
-      await broadcastValidatedFrame(candidate.poolScreen, candidate.payload, frameId, block.displayTime, block.blockIndex, candidate.artistName);
+      const animPointer: AnimPointer | undefined = candidate.anim ? { hash: block.blockHash, bytes: candidate.anim.bytes, frames: candidate.anim.frames } : undefined;
+      await broadcastValidatedFrame(candidate.poolScreen, candidate.payload, frameId, block.displayTime, block.blockIndex, candidate.artistName, animPointer);
       // Animation : l'affiche (image fixe) vient d'être diffusée comme pour un dessin ; les écrans capables reçoivent en plus le clip à jouer.
       if (candidate.anim) {
         const served = await deliverAnimation(candidate.poolScreen, new Uint8Array(Buffer.from(candidate.anim.clip, "base64")), candidate.anim, block.displayTime);
