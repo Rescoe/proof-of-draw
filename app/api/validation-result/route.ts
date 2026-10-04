@@ -30,8 +30,7 @@ import { isBlacklisted, getIP, forbidden } from "@/lib/rateLimit";
 import { verifyEd25519 } from "@/lib/ed25519";
 import { dequeueNextDraw } from "@/lib/drawQueue";
 import { invalidateThresholdsCache } from "@/lib/adaptiveValidation";
-import { deliverAnimation } from "@/lib/anim/deliver";
-import type { AnimPointer } from "@/lib/anim/pointer";
+import { animCapable, type AnimPointer } from "@/lib/anim/pointer";
 
 const DEVICE_ID_REGEX = /^dev_[A-Z0-9]{8}$/;
 const BLACKLIST_TTL = parseInt(process.env.BLACKLIST_TTL_SECONDS ?? "604800");
@@ -43,13 +42,24 @@ async function broadcastValidatedFrame(poolScreen: string, payload: Record<strin
 
   // Écrans d'autres types ayant opté pour la conversion : indépendant du pool natif
   // (peut y avoir des récepteurs même si la pool de ce type d'écran est vide).
-  await broadcastConverted(poolScreen, payload, { frameId, extra: { _block }, ttlSec: ttl, sourceDeviceId: "consensus" });
+  // ANIMATION : jamais convertie. Une animation n'est diffusée qu'aux écrans qui la jouent réellement (firmware à jour, même type d'écran) ; un
+  // TFT 1.8" qui a opté pour les conversions ne reçoit donc pas l'affiche d'une animation faite pour un TFT 2.8".
+  if (!animPointer) await broadcastConverted(poolScreen, payload, { frameId, extra: { _block }, ttlSec: ttl, sourceDeviceId: "consensus" });
 
   const members = (await redis.smembers(`pool:screen:${poolScreen}`)) as string[];
   if (!members || members.length === 0) return;
 
   const banValues = await redis.mget<(string | null)[]>(...members.map((dId) => `bl:dev:${dId}`));
-  const eligible = members.filter((_, i) => !banValues[i]);
+  let eligible = members.filter((_, i) => !banValues[i]);
+  if (animPointer) {
+    // Animation : seuls les écrans de la pool dont le firmware (version déclarée à l'enregistrement) sait la jouer. 1 MGET pour toute la pool.
+    const devs = await redis.mget<unknown[]>(...eligible.map((dId) => `device:${dId}`));
+    eligible = eligible.filter((_, i) => {
+      try { const d = typeof devs[i] === "string" ? JSON.parse(devs[i] as string) : devs[i]; return animCapable(d as { screens?: string[]; firmware?: string }, poolScreen); } catch { return false; }
+    });
+    console.log(`[validation-result] animation : ${eligible.length} écran(s) capable(s) sur ${members.length} dans la pool ${poolScreen}`);
+    if (eligible.length === 0) return;
+  }
 
   const enrichedPayload = {
     ...payload,
@@ -150,11 +160,6 @@ export async function POST(req: NextRequest) {
 
       const animPointer: AnimPointer | undefined = candidate.anim ? { hash: block.blockHash, bytes: candidate.anim.bytes, frames: candidate.anim.frames } : undefined;
       await broadcastValidatedFrame(candidate.poolScreen, candidate.payload, frameId, block.displayTime, block.blockIndex, candidate.artistName, animPointer);
-      // Animation : l'affiche (image fixe) vient d'être diffusée comme pour un dessin ; les écrans capables reçoivent en plus le clip à jouer.
-      if (candidate.anim) {
-        const served = await deliverAnimation(candidate.poolScreen, new Uint8Array(Buffer.from(candidate.anim.clip, "base64")), candidate.anim, block.displayTime);
-        console.log(`[validation-result] animation bloc #${block.blockIndex} : clip livré à ${served} écran(s)`);
-      }
       await clearCandidate();
       // Invalider le cache Next.js → la BlockGallery se rechargera immédiatement
       revalidatePath("/", "page");

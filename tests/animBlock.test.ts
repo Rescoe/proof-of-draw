@@ -1,9 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { CLIP, decodeClip, encodeClip, type ClipInput } from "../lib/bench/clip";
-import { animPullMeta, readAnimPointer, supportsAnimPointer, withoutAnimPointer } from "../lib/anim/pointer";
+import { animCapable, animPullMeta, readAnimPointer, supportsAnimPointer, withoutAnimPointer } from "../lib/anim/pointer";
 import { animBlockDoc, animRefusal, buildAnimSubmission, buildAnimSubmissionFromClip, posterFor, verifyAnimDoc } from "../lib/anim/block";
-import { canPlay } from "../lib/anim/deliver";
 
 const frame = (fill: (f: Uint8Array) => void) => { const f = new Uint8Array(CLIP.FRAME_BYTES); fill(f); return f; };
 const mk = (frames: Uint8Array[], extra: Partial<ClipInput> = {}): ClipInput => ({ frames, delaysMs: frames.map(() => 100), loops: 2, fg: 0x07e0, bg: 0x0000, ...extra });
@@ -97,14 +96,18 @@ test("vérification publique d'un bloc : document intact = cohérent, document m
   assert.match(verifyAnimDoc({ ...doc, root: "0".repeat(64) }, "tft28")!, /racine/);
 });
 
-test("livraison : seuls les écrans à clip, au firmware compatible ou inconnu, jouent l'animation", () => {
-  assert.equal(canPlay({ screens: ["tft28"], firmware: "r4tft28-2.3" }, "tft28"), true);
-  assert.equal(canPlay({ screens: ["tft28"], firmware: "r4tft28-2.4" }, "tft28"), false, "r4tft28-2.4+ : pointeur dans /api/pull, plus de mode rapide");
-  assert.equal(canPlay({ screens: ["tft28"], firmware: "r4tft28-2.0" }, "tft28"), false, "firmware trop ancien : ignore le mode");
-  assert.equal(canPlay({ screens: ["tft28"] }, "tft28"), true, "version inconnue : on tente");
-  assert.equal(canPlay({ screens: ["eink29bwr"], firmware: "r4eink29-1.0" }, "eink29bwr"), false, "e-ink : jamais d'animation");
-  assert.equal(canPlay({ screens: ["tft18"], firmware: "tft18-2.1" }, "tft28"), false, "l'appareil n'a pas cet écran");
-  assert.equal(canPlay(null, "tft28"), false);
+test("capacité : seul un écran dont le firmware (déclaré) lit les animations en reçoit — jamais d'e-ink, jamais de version inconnue", () => {
+  assert.equal(animCapable({ screens: ["tft28"], firmware: "r4tft28-2.4" }, "tft28"), true);
+  assert.equal(animCapable({ screens: ["tft28"], firmware: "r4tft28-2.3" }, "tft28"), false, "R4 trop ancien");
+  assert.equal(animCapable({ screens: ["tft28"] }, "tft28"), false, "version inconnue : pas d'animation");
+  assert.equal(animCapable({ screens: ["oled096", "eink27bw"], firmware: "multiscreen-2.2" }, "oled096"), true, "multiscreen e-ink + OLED");
+  assert.equal(animCapable({ screens: ["oled096", "eink27bw"], firmware: "multiscreen-2.1" }, "oled096"), false, "2.1 = banc d'essai seulement");
+  assert.equal(animCapable({ screens: ["oled096", "eink27bw"], firmware: "multiscreen-2.2" }, "eink27bw"), false, "l'e-ink du même appareil n'anime pas");
+  assert.equal(animCapable({ screens: ["tft18"], firmware: "tft18-2.2" }, "tft18"), true);
+  assert.equal(animCapable({ screens: ["tft18"], firmware: "tft18-2.1" }, "tft18"), false);
+  assert.equal(animCapable({ screens: ["tft18"], firmware: "tft18-2.2" }, "tft28"), false, "l'appareil n'a pas cet écran");
+  assert.equal(animCapable({ screens: ["eink29bwr"], firmware: "r4eink29-1.0" }, "eink29bwr"), false);
+  assert.equal(animCapable(null, "tft28"), false);
 });
 
 test("une animation de bloc tourne TOUJOURS en boucle : le nombre de boucles de l'auteur est ignoré", () => {
@@ -125,7 +128,8 @@ test("pointeur d'animation : annoncé seulement au firmware qui sait le lire, va
   assert.equal(supportsAnimPointer(["tft28"], "r4tft28-3.0"), true);
   assert.equal(supportsAnimPointer(["tft28"], "r4tft28-2.3"), false);
   assert.equal(supportsAnimPointer(["tft28"], undefined), false, "version inconnue : pas de pointeur");
-  assert.equal(supportsAnimPointer(["tft18"], "tft18-2.9"), false, "ESP8266 : canal du banc d'essai");
+  assert.equal(supportsAnimPointer(["tft18"], "tft18-2.9"), true);
+  assert.equal(supportsAnimPointer(["tft18"], "tft18-2.1"), false);
   assert.equal(supportsAnimPointer(["eink29bwr"], "r4eink29-1.0"), false);
 
   const hash = "a".repeat(64);

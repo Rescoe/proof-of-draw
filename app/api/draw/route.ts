@@ -15,6 +15,7 @@ import { broadcastDirect } from "@/lib/broadcast";
 import { BENCH_SCREENS } from "@/lib/bench/screens";
 import { CLIP } from "@/lib/bench/clip";
 import { buildAnimSubmission, type AnimScreen } from "@/lib/anim/block";
+import { animCapable, ANIM_POINTER_FIRMWARE } from "@/lib/anim/pointer";
 
 const DRAW_WINDOW_SEC = parseInt(process.env.DRAW_WINDOW_SEC ?? "900");
 const ABUSE_STRIKES   = parseInt(process.env.DRAW_LIMIT_PER_ROUND ?? "3");
@@ -146,6 +147,11 @@ export async function POST(req: NextRequest) {
   if (animIn) {
     if (!(BENCH_SCREENS as string[]).includes(screen)) {
       return NextResponse.json({ error: "Cet écran ne joue pas d'animation (TFT 2.8\", TFT 1.8\" ou OLED)" }, { status: 400 });
+    }
+    // La version du firmware est celle que l'appareil a déclarée à son dernier démarrage : un écran dont le code est trop ancien ne soumet pas d'animation.
+    if (!animCapable(device, screen)) {
+      const req = ANIM_POINTER_FIRMWARE[screen];
+      return NextResponse.json({ error: `Le firmware de cet écran (${device?.firmware ?? "inconnu"}) ne lit pas encore les animations : téléversez ${req.prefix}-${req.min[0]}.${req.min[1]} ou plus, puis redémarrez la carte.` }, { status: 400 });
     }
     const rawFrames = Array.isArray(animIn.frames) ? animIn.frames : [];
     if (rawFrames.length > CLIP.MAX_FRAMES) return NextResponse.json({ error: `1 à ${CLIP.MAX_FRAMES} images` }, { status: 400 });

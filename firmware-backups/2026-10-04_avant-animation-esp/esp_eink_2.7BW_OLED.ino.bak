@@ -1,13 +1,6 @@
 // esp_eink_2.7BW_OLED.ino
-// Proof-of-Draw — Firmware multiscreen v2.2
+// Proof-of-Draw — Firmware multiscreen v2.1
 // Supporte : oled096 (128×64) + eink27bw (176×264)
-//
-// ⚠⚠ v2.2 (04/10/2026) — AJOUT NON TESTÉ SUR LE MATÉRIEL : ANIMATION EN BOUCLE sur l'OLED (blocs d'animation du consensus).
-//    /api/pull annonce un pointeur `anim` (seulement à un firmware >= multiscreen-2.2 : la version est envoyée à /api/register) ; l'affiche s'affiche d'abord
-//    (ticker compris), puis le clip (≤ 9 Ko, /api/block-clip) est téléchargé, validé et rangé en flash (LittleFS) et joué EN BOUCLE sans AUCUNE requête
-//    entre deux tâches réseau (pull, vote). Une nouvelle image fixe OLED l'arrête. L'e-ink 2.7" n'anime pas. Détails : esp8266/_shared/pod_anim_esp.h.
-//    IDE : Outils → Flash Size → un réglage AVEC système de fichiers (ex. « 4MB (FS:2MB OTA:~1019KB) »), sinon le clip est retéléchargé avant chaque lecture.
-//    Sauvegarde du firmware d'avant : firmware-backups/2026-10-04_avant-animation-esp/ (tag git firmware-avant-animation-esp-2026-10-04).
 //
 // ⚠⚠ v2.1 (03/10/2026) — AJOUT NON TESTÉ SUR LE MATÉRIEL : lecture des animations du banc d'essai (page /bench de l'app, clips PBC1 128×64)
 //    sur l'OLED. Écrit et compilé (ESP8266 core 3.1.2), le lecteur est testé sur PC ; le réseau, la mémoire et l'affichage I2C réel ne l'ont jamais été.
@@ -39,14 +32,13 @@
 #include "epdif.h"
 #include <Ed25519.h>       // Bibliothèque Crypto (rhempel) — ED25519 réel
 #include "pod_bench_esp.h" // banc d'essai d'animation (clips PBC1) — ⚠ NON TESTÉ sur le matériel (voir en-tête)
-#include "pod_anim_esp.h"  // animation résidente en boucle (blocs d'animation) — ⚠ NON TESTÉ sur le matériel (voir en-tête)
 
 // ─── CONFIG ────────────────────────────────────────────────────────────────
 const char* WIFI_SSID = "";
 const char* WIFI_PASSWORD = "";
 
 #define SERVER_URL       "https://proof-of-draw.vercel.app"
-#define FIRMWARE_VERSION "multiscreen-2.2"
+#define FIRMWARE_VERSION "multiscreen-2.1"
 #define SCREEN_OLED      "oled096"
 #define SCREEN_E27       "eink27bw"
 
@@ -1364,7 +1356,6 @@ struct BenchOledSink {
 };
 struct BenchOledPresenter {
   bool tickerWasActive = false;
-  bool resident = false;                         // animation de bloc en boucle : le ticker (titre défilant) reste éteint, l'animation prend l'écran
   void begin(const podbench::Clip&) {
     tickerWasActive = oledTickActive;
     oledTickActive = false;
@@ -1390,20 +1381,10 @@ struct BenchOledPresenter {
       if (oledArtBuf) memcpy(oled.getBuffer(), oledArtBuf, OLED_BUF_SIZE); else oled.clearDisplay();
       oled.display();
     }
-    oledTickActive = resident ? false : tickerWasActive;
+    oledTickActive = tickerWasActive;
   }
 };
 BenchOledPresenter g_benchPresenter;
-BenchOledPresenter g_animPresenter;              // même écran, mode « résident » (g_animPresenter.resident = true dans setup())
-podanimesp::State g_anim;                        // animation de bloc active (clip en flash), voir pod_anim_esp.h
-
-/** Temps avant la prochaine tâche réseau (pull, vote, ré-validation) : l'animation ne la retarde jamais. */
-unsigned long msUntilNextTask() {
-  long r = (long)(lastPullMs + nextPullIntervalMs - millis());
-  if (pendingCandidateId.length() > 0) { const long v = (long)(lastValidateMs + VALIDATE_INTERVAL - millis()); if (v < r) r = v; }
-  if (pendingObsHashes.length() > 0) r = 0;
-  return podanimesp::budgetFromDue(r);
-}
 
 // ─── PULL ──────────────────────────────────────────────────────────────────
 bool doPull() {
@@ -1417,8 +1398,6 @@ bool doPull() {
   int    newBlockIndex  = -1;
   int    pullRetryAfter = 60;  // valeur par défaut, remplacée par doc["retryAfter"]
   bool   newBenchMode   = false;
-  String newAnimHash    = "";                 // pointeur d'animation (firmware >= 2.2 seulement)
-  size_t newAnimBytes   = 0;
 
   {
     WiFiClientSecure client;
@@ -1480,10 +1459,6 @@ bool doPull() {
     newFrameId     = doc["frameId"]     | "";
     newScreen      = doc["screen"]      | "";
     newBenchMode   = doc["benchMode"]   | false;   // le propriétaire a activé le mode banc d'essai dans l'app
-    {
-      JsonObject an = doc["anim"];
-      if (!an.isNull()) { newAnimHash = an["hash"] | ""; newAnimBytes = (size_t)(an["bytes"] | 0); }
-    }
     pullRetryAfter = doc["retryAfter"]  | 60;
     if (pullRetryAfter <= 0) pullRetryAfter = 60;
 
@@ -1558,7 +1533,6 @@ bool doPull() {
   }
   // TLS fermé
   podbenchesp::onPull(g_bench, newBenchMode);
-  podanimesp::onPull(g_anim, newAnimHash.c_str(), newAnimBytes);
 
   // Ajuste l'intervalle de pull selon l'activité réseau signalée par le serveur
   if (newFrameSource == "none" && newCandId.length() == 0) {
@@ -1595,7 +1569,6 @@ bool doPull() {
   // ── Frame déjà affichée ──
   if (newFrameId == lastFrameId) {
     Serial.println("[PULL] Frame déjà affichée");
-    if (newScreen == SCREEN_OLED && g_anim.pendingHash.length() == 64 && podanimesp::acquire(g_anim, String(SERVER_URL))) oledTickActive = false;
     return true;
   }
 
@@ -1603,12 +1576,7 @@ bool doPull() {
   if (newScreen == SCREEN_OLED) {
     Serial.printf("[PULL] Nouvelle frame OLED frameId=%s source=%s → fetch\n",
                   newFrameId.c_str(), newFrameSource.c_str());
-    const bool shownOLED = doFetchFrameOLED(newFrameId, newFrameSource) && lastFrameId == newFrameId;
-    if (shownOLED) {
-      // L'affiche est à l'écran : une animation de bloc → on rapatrie le clip et on la joue en boucle ; une image fixe → l'animation précédente s'arrête.
-      if (g_anim.pendingHash.length() == 64) { if (podanimesp::acquire(g_anim, String(SERVER_URL))) oledTickActive = false; }
-      else podanimesp::forget(g_anim);
-    }
+    doFetchFrameOLED(newFrameId, newFrameSource);
     return true;
   }
 
@@ -1866,10 +1834,6 @@ void setup() {
       }
     }
 
-    g_animPresenter.resident = true;
-    podanimesp::begin(g_anim);                      // flash LittleFS : une animation rangée reprend (le ticker reste éteint)
-    if (g_anim.on) oledTickActive = false;
-
     Serial.println("[BOOT] Premier pull immédiat...");
     doPull();
   }
@@ -1920,12 +1884,6 @@ void loop() {
       Serial.println("[LOOP] Nouveau candidat, reset timer validation");
       lastValidateMs = millis();
     }
-  }
-
-  // ── Animation de bloc : jouée EN BOUCLE entre deux tâches réseau, sans aucune requête (⚠ non testé sur le matériel) ──
-  if (g_anim.on && !g_bench.mode) {
-    const unsigned long budget = msUntilNextTask();
-    if (budget > 1500UL) { podanimesp::run(g_anim, g_animPresenter, String(SERVER_URL), budget); return; }   // `now` est périmé : on repart d'une horloge fraîche
   }
 
   // ── Banc d'essai d'animation : ne fait rien tant que le mode n'est pas actif (⚠ non testé sur le matériel) ──

@@ -11,10 +11,24 @@ export interface AnimPointer {
   frames: number;
 }
 
-/** Firmware minimal par écran pour comprendre `anim` dans /api/pull. tft28 : lecteur sur microSD (r4tft28-2.4). */
+/**
+ * Firmware minimal par écran pour comprendre `anim` dans /api/pull = écran qui possède une lecture d'animation FONCTIONNELLE.
+ * La version vient de l'appareil lui-même (champ `firmware` de /api/register, renvoyé à chaque démarrage) : c'est la seule source de vérité.
+ *   tft28   R4 + TFT 2.8"        r4tft28-2.4    clip rangé sur la microSD
+ *   tft18   ESP8266 + TFT 1.8"   tft18-2.2      clip rangé en flash (LittleFS) ou retéléchargé
+ *   oled096 ESP8266 + OLED       multiscreen-2.2 idem (carte e-ink 2.7" + OLED)
+ * Un écran dont le firmware est plus ancien, ou inconnu, ne reçoit JAMAIS d'animation (ni l'affiche, ni conversion) : voir validation-result.
+ */
 export const ANIM_POINTER_FIRMWARE: Record<string, { prefix: string; min: [number, number] }> = {
   tft28: { prefix: "r4tft28", min: [2, 4] },
+  tft18: { prefix: "tft18", min: [2, 2] },
+  oled096: { prefix: "multiscreen", min: [2, 2] },
 };
+
+/** Cet appareil sait-il jouer une animation sur CET écran ? */
+export function animCapable(device: { screens?: readonly string[]; firmware?: string | null } | null | undefined, screen: string): boolean {
+  return !!device && !!device.screens?.includes(screen) && supportsAnimPointer([screen], device.firmware);
+}
 
 export function supportsAnimPointer(screens: readonly string[] | undefined | null, firmware: string | null | undefined): boolean {
   if (!screens || !firmware) return false;

@@ -1,13 +1,6 @@
 // esp_tft1.8.ino
 // Proof-of-Draw — Firmware TFT 1.8" (ST7735) sur ESP8266 NodeMCU
 //
-// ⚠⚠ v2.2 (04/10/2026) — AJOUT NON TESTÉ SUR LE MATÉRIEL : ANIMATION EN BOUCLE (blocs d'animation du consensus).
-//    /api/pull annonce un pointeur `anim` (seulement à un firmware >= tft18-2.2 : la version est envoyée à /api/register) ; l'affiche s'affiche d'abord,
-//    puis le clip (≤ 9 Ko, /api/block-clip) est téléchargé, validé, rangé en flash (LittleFS) et joué EN BOUCLE (1:1 au centre du 128×160) sans AUCUNE
-//    requête entre deux tâches réseau (pull, vote). Une nouvelle image fixe l'arrête. Détails : esp8266/_shared/pod_anim_esp.h.
-//    IDE : Outils → Flash Size → un réglage AVEC système de fichiers (ex. « 4MB (FS:2MB OTA:~1019KB) »), sinon le clip est retéléchargé avant chaque lecture.
-//    Sauvegarde du firmware d'avant : firmware-backups/2026-10-04_avant-animation-esp/ (tag git firmware-avant-animation-esp-2026-10-04).
-//
 // ⚠⚠ v2.1 (03/10/2026) — AJOUT NON TESTÉ SUR LE MATÉRIEL : lecture des animations du banc d'essai (page /bench de l'app, clips PBC1 128×64).
 //    Écrit et compilé (ESP8266 core 3.1.2), le lecteur est testé sur PC ; le réseau, la mémoire et l'affichage réel ne l'ont jamais été.
 //    Sauvegarde du firmware d'avant : firmware-backups/2026-10-03_avant-integration-animation/ (tag git firmware-avant-animations-2026-10-03).
@@ -71,7 +64,6 @@
 #include <Ed25519.h>       // Bibliothèque Crypto (rhempel) — ED25519 réel
 #include "ana_scene_v1.h"  // lecteur scene-v1 (œuvres génératives animées) — testé sur PC contre le moteur de référence
 #include "pod_bench_esp.h" // banc d'essai d'animation (clips PBC1) — ⚠ NON TESTÉ sur le matériel (voir en-tête)
-#include "pod_anim_esp.h"  // animation résidente en boucle (blocs d'animation) — ⚠ NON TESTÉ sur le matériel (voir en-tête)
 
 // ─── CONFIG ────────────────────────────────────────────────────────────────
 const char* WIFI_SSID = "";
@@ -80,7 +72,7 @@ const char* WIFI_PASSWORD = "";
 
 #define SERVER_URL        "https://proof-of-draw.vercel.app"
 #define SCREEN_TYPE       "tft18"
-#define FIRMWARE_VERSION  "tft18-2.2"
+#define FIRMWARE_VERSION  "tft18-2.1"
 #define PULL_INTERVAL     60000UL   // 1 min
 #define VALIDATE_INTERVAL 30000UL   // 30s
 
@@ -1169,22 +1161,11 @@ bool doFetchScene(const String& frameId, const String& frameSource, const String
 static uint16_t g_benchRow[TFT_W];                   // 128 pixels = une ligne de la zone
 podbenchesp::State g_bench;
 struct BenchTftPresenter {
-  bool resident = false;                             // animation de bloc en boucle : on garde la dernière image entre deux tâches réseau
   void begin(const podbench::Clip& c) { tft.fillScreen(c.bg); }
   template <class Hook> bool play(const podbench::Clip& c, uint8_t* cur, Hook&& hook) { return podbench::play<podbench::GeoOne<48> >(c, cur, tft, g_benchRow, hook); }
-  void end() { if (!resident) tftStatus("Banc d'essai", "termine"); }
+  void end() { tftStatus("Banc d'essai", "termine"); }
 };
 BenchTftPresenter g_benchPresenter;
-BenchTftPresenter g_animPresenter;                   // même écran, mode « résident » (g_animPresenter.resident = true dans setup())
-podanimesp::State g_anim;                            // animation de bloc active (clip en flash), voir pod_anim_esp.h
-
-/** Temps avant la prochaine tâche réseau (pull, vote, ré-validation) : l'animation ne la retarde jamais. */
-unsigned long msUntilNextTask() {
-  long r = (long)(lastPullMs + nextPullIntervalMs - millis());
-  if (pendingCandidateId.length() > 0) { const long v = (long)(lastValidateMs + VALIDATE_INTERVAL - millis()); if (v < r) r = v; }
-  if (pendingObsHashes.length() > 0) r = 0;
-  return podanimesp::budgetFromDue(r);
-}
 
 // ─── PULL ───────────────────────────────────────────────────────────────────
 bool doPull() {
@@ -1202,8 +1183,6 @@ bool doPull() {
   size_t sceneBytes       = 0;
   String sceneHash16      = "";
   bool   newBenchMode     = false;
-  String newAnimHash      = "";                // pointeur d'animation (firmware >= 2.2 seulement)
-  size_t newAnimBytes     = 0;
 
   {
     WiFiClientSecure client;
@@ -1268,10 +1247,6 @@ bool doPull() {
     if (pullRetryAfter <= 0) pullRetryAfter = 60;
 
     newBenchMode = doc["benchMode"] | false;   // le propriétaire a activé le mode banc d'essai dans l'app
-    {
-      JsonObject an = doc["anim"];
-      if (!an.isNull()) { newAnimHash = an["hash"] | ""; newAnimBytes = (size_t)(an["bytes"] | 0); }
-    }
     newKind = doc["kind"] | "frame";
     JsonObject sceneObj = doc["scene"];
     if (newKind == "scene" && !sceneObj.isNull()) {
@@ -1323,7 +1298,6 @@ bool doPull() {
   }
   // TLS fermé
   podbenchesp::onPull(g_bench, newBenchMode);
-  podanimesp::onPull(g_anim, newAnimHash.c_str(), newAnimBytes);
 
   // Adapte l'intervalle de pull selon activité serveur
   nextPullIntervalMs = (newFrameSource == "none" && newCandId.length() == 0)
@@ -1352,7 +1326,6 @@ bool doPull() {
 
   if (newFrameId == lastFrameId) {
     Serial.println("[PULL] Frame déjà affichée");
-    if (g_anim.pendingHash.length() == 64) podanimesp::acquire(g_anim, String(SERVER_URL));
     return true;
   }
 
@@ -1360,13 +1333,7 @@ bool doPull() {
                 newFrameId.c_str(), newFrameSource.c_str());
 
   if (newKind == "scene") doFetchScene(newFrameId, newFrameSource, sceneArtifactId, sceneBytes, sceneHash16);
-  else {
-    const bool shown = doFetchFrame(newFrameId, newFrameSource) && lastFrameId == newFrameId;
-    // L'affiche est à l'écran : une animation de bloc → on rapatrie le clip et on la joue en boucle ; une image fixe → l'animation précédente s'arrête.
-    if (shown) { if (g_anim.pendingHash.length() == 64) podanimesp::acquire(g_anim, String(SERVER_URL)); else podanimesp::forget(g_anim); }
-    return true;
-  }
-  if (g_anim.on) podanimesp::forget(g_anim);        // une scène ANA remplace l'animation de bloc
+  else                    doFetchFrame(newFrameId, newFrameSource);
   return true;
 }
 
@@ -1546,8 +1513,6 @@ void setup() {
   }
 
   if (paired) {
-    g_animPresenter.resident = true;
-    podanimesp::begin(g_anim);                      // flash LittleFS : une animation rangée reprend
     Serial.println("[BOOT] Premier pull immédiat...");
     doPull();
   }
@@ -1591,12 +1556,6 @@ void loop() {
       Serial.println("[LOOP] Nouveau candidat — reset timer validation");
       lastValidateMs = millis();
     }
-  }
-
-  // Animation de bloc : jouée EN BOUCLE entre deux tâches réseau, sans aucune requête (⚠ non testé sur le matériel)
-  if (g_anim.on && !g_bench.mode) {
-    const unsigned long budget = msUntilNextTask();
-    if (budget > 1500UL) { podanimesp::run(g_anim, g_animPresenter, String(SERVER_URL), budget); return; }   // `now` est périmé : on repart d'une horloge fraîche
   }
 
   // Banc d'essai d'animation : ne fait rien tant que le mode n'est pas actif (⚠ non testé sur le matériel)

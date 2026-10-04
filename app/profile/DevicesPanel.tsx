@@ -13,6 +13,7 @@ import type { OwnedDevice } from "@/lib/deviceStore";
 import { SCREEN_PROFILES } from "@/lib/screenProfiles";
 import { deleteConfirmWord, deleteConfirmed } from "@/lib/deviceDeleteGuard";
 import { BENCH_SCREENS } from "@/lib/bench/screens";
+import { animCapable, ANIM_POINTER_FIRMWARE } from "@/lib/anim/pointer";
 import { InlineEdit } from "./InlineEdit";
 import { GiveDeviceModal } from "./GiveDeviceModal";
 
@@ -101,7 +102,9 @@ function SettingRow({ title, desc, children }: { title: string; desc: string; ch
 function DrawMenu({ d, mode = "draw" }: { d: OwnedDevice; mode?: "draw" | "animate" }) {
   const [open, setOpen] = useState(false);
   const animate = mode === "animate";
-  const screens = animate ? BENCH_SCREENS.filter((s) => d.screens.includes(s)) : d.screens;
+  // « Animer » : seulement les écrans dont le firmware (version déclarée par l'appareil) sait jouer une animation.
+  const animScreens = BENCH_SCREENS.filter((s) => d.screens.includes(s));
+  const screens = animate ? animScreens.filter((s) => animCapable(d, s)) : d.screens;
   const hrefOf = (sid: string) => (animate ? `/animer?device=${d.deviceId}&screen=${sid}` : `/draw/${d.deviceId}/${sid}`);
   const text = animate ? "🎞 Animer" : "✏️ Dessiner";
   const ref = useRef<HTMLDivElement>(null);
@@ -117,6 +120,15 @@ function DrawMenu({ d, mode = "draw" }: { d: OwnedDevice; mode?: "draw" | "anima
     padding: "0.45rem 0.95rem", borderRadius: 7, background: "var(--accent)", color: "#fff", textDecoration: "none",
     fontWeight: 600, fontSize: "0.82rem", whiteSpace: "nowrap", border: "none", cursor: "pointer", display: "inline-block",
   };
+  if (animate && screens.length === 0 && animScreens.length > 0) {
+    const need = animScreens.map((s) => `${ANIM_POINTER_FIRMWARE[s].prefix}-${ANIM_POINTER_FIRMWARE[s].min.join(".")}`).join(" ou ");
+    return (
+      <span title={`Firmware actuel : ${d.firmware ?? "inconnu"}. Téléversez ${need} (ou plus) puis redémarrez la carte : la version est annoncée au serveur à chaque démarrage.`}
+        style={{ padding: "0.45rem 0.8rem", borderRadius: 7, border: "1px dashed var(--border)", color: "var(--text3)", fontSize: "0.78rem", whiteSpace: "nowrap", cursor: "help" }}>
+        🎞 Animer · firmware à mettre à jour
+      </span>
+    );
+  }
   if (screens.length === 0) return null;
   if (screens.length === 1) return <a href={hrefOf(screens[0])} style={primary}>{text}</a>;
 

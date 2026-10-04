@@ -282,7 +282,8 @@ Une animation suit le MÊME pipeline qu'un dessin : `/animer` (bouton « 🎞 An
 `submit-candidate` (`animClip`) → votes signés → bloc `kind:"animation"` → galerie principale (filtre Tout/Dessins/Animations, `/gallery?type=animation`).
 Le serveur dérive TOUT du clip PBC1 (`lib/anim/block.ts`, pur et testé) : empreinte + score de chaque image, score candidat = moyenne, `imageHash` = racine des empreintes,
 affiche (image fixe diffusée à tous les écrans). Clip et empreintes dans `chain:anim:{hash}`. Lecture : boucle INFINIE (`loops = 0` imposé par le serveur). TFT 2.8" `r4tft28-2.4` : pointeur `anim` dans /api/pull -> clip (`/api/block-clip`, CDN) rangé sur la microSD et joué
-sans aucune requête (0 commande Redis de plus qu'une image fixe). Autres écrans : repli sur le canal du banc d'essai (`lib/anim/deliver.ts`, ≤ 10 min, ≈ 200 commandes/écran).
+sans aucune requête (0 commande Redis de plus qu'une image fixe). ESP8266 (multiscreen-2.2 OLED, tft18-2.2) : même principe, clip en flash LittleFS (`esp8266/_shared/pod_anim_esp.h`).
+**Seuls les écrans dont le firmware DÉCLARÉ (version envoyée à /api/register) lit les animations en reçoivent** (`ANIM_POINTER_FIRMWARE`, `lib/anim/pointer.ts`) ; une animation n'est JAMAIS convertie vers d'autres écrans.
 Plus aucune publication sans consensus : `/api/anim/save` et l'option `gallery` de `/api/bench/send` sont supprimés. Détails, coûts Redis, limites : `docs/ANIMATIONS_PIPELINE.md`.
 
 ## Règle PRIMORDIALE — quotas Upstash Redis (écrite le 03/10/2026)
