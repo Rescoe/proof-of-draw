@@ -20,6 +20,8 @@ export interface InstallProfile {
   shortDescription: string;
   wiring: WiringSpec[];
   optionalWiring?: WiringSpec;
+  /** Version du firmware qui sait jouer les animations (blocs d'animation), pour les écrans concernés. Voir lib/anim/pointer.ts. */
+  animationFirmware?: string;
   specificLibraries: LibraryRequirement[];
   accent: string;
 }
@@ -82,6 +84,7 @@ export const INSTALL_PROFILES: Record<InstallProfileId, InstallProfile> = {
     firmwareFolder: "esp_eink_2.7BW_OLED",
     moduleReference: "Waveshare 2.7inch e-Paper V2 + OLED SSD1306 I²C",
     shortDescription: "Double écran : l’e-ink affiche l’œuvre et l’OLED présente les informations réseau.",
+    animationFirmware: "multiscreen-2.2",
     wiring: [WIRING.eink27bw, WIRING.oled],
     specificLibraries: [
       {
@@ -108,6 +111,7 @@ export const INSTALL_PROFILES: Record<InstallProfileId, InstallProfile> = {
     shortDescription: "Écran couleur à rafraîchissement rapide. Le lecteur de carte SD reste facultatif.",
     wiring: [WIRING.tft18],
     optionalWiring: WIRING.tftSd,
+    animationFirmware: "tft18-2.2",
     specificLibraries: [
       {
         name: "Adafruit GFX Library",

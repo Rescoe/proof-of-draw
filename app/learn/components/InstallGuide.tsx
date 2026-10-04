@@ -306,6 +306,24 @@ const char* WIFI_PASSWORD = "Mot de passe de votre Wi-Fi";
                 Attendez le message <Code>Leaving... Hard resetting via RTS pin...</Code>. Il indique que le téléversement est terminé ;
                 le NodeMCU redémarre alors automatiquement.
               </p>
+              {selected.animationFirmware ? (
+                <Disclosure title="Facultatif — animations : réglage « Flash Size » (garde l’animation après un redémarrage)">
+                  <p>
+                    Ce firmware (<Code>{selected.animationFirmware}</Code>) joue les <strong>animations</strong> du réseau en boucle. Le clip (moins de 10 Ko) est rangé dans la mémoire flash de la carte :
+                    l’animation reprend toute seule après une coupure de courant. Pour cela, avant de téléverser, ouvrez
+                    <MenuPath steps={["Outils", "Flash Size"]} /> et choisissez une ligne qui contient <Code>FS</Code>, par exemple <Code>4MB (FS:2MB OTA:~1019KB)</Code>.
+                  </p>
+                  <p>
+                    <strong>Ce réglage est facultatif.</strong> Sans lui, tout fonctionne : l’animation est simplement retéléchargée depuis un cache public avant chaque lecture
+                    (aucun coût pour le serveur de données) et ne reprend pas toute seule après un redémarrage. Le Moniteur série indique le cas rencontré :
+                    <Code> [ANIM] flash LittleFS : disponible</Code> ou <Code>ABSENTE</Code>.
+                  </p>
+                  <p>
+                    Une animation n’est reçue que si la version du firmware est <Code>{selected.animationFirmware}</Code> ou plus récente : la carte l’annonce au serveur à chaque démarrage,
+                    et Mon profil affiche « firmware à mettre à jour » tant qu’elle est plus ancienne.
+                  </p>
+                </Disclosure>
+              ) : null}
             </div>
           </div>
         </div>

@@ -90,3 +90,24 @@ avant chaque lecture (aucun coût Redis). L'e-ink 2.7" du multiscreen n'anime pa
 - R4 qui vérifie le clip lui-même (empreintes image par image) avant de le ranger.
 - Garde anti-automatisation propre aux animations (un dessin a l'analyse du rythme des traits ; ici seul le verrou de 15 min et le refus des animations vides/identiques s'appliquent).
 - Aperçu animé dans les cartes de la galerie (aujourd'hui : affiche + pastille « 🎞 Animation », lecture dans le détail du bloc).
+
+## Audit du coût Redis (04/10/2026) — ce que les animations ajoutent, ligne par ligne
+Relevé sur le diff des commits d'animation (`git diff 1856414..HEAD`, toutes les lignes qui touchent Redis) :
+
+| Où | Ajout | Fréquence |
+|---|---|---|
+| `finalizeBlock` | 1 `SET chain:anim:{hash}` | une fois par **bloc d'animation** |
+| `validation-result` (minage) | 1 `MGET` des appareils de la pool (filtre « firmware capable ») | une fois par bloc d'animation ; en échange, plus aucune conversion ni écriture vers les autres écrans |
+| `/api/block-clip` | 1 `GET chain:anim:{hash}` | **au plus une fois par région CDN** (réponse publique, immuable, `s-maxage` 1 an) |
+| `/api/block-anim` (galerie) | 1 `GET` | idem, CDN 24 h |
+| `/api/pull`, `/api/validate-candidate`, ACK, atelier, profil | **0** | — (le pointeur est dans le pull existant ; plus de sondage `bench:status`, plus de poll rapide) |
+
+Lecture sur l'écran : **0 commande** (boucle locale). Écran **sans** partition flash (réglage Flash Size facultatif) : le clip est retéléchargé avant chaque lecture depuis le CDN
+(≈ toutes les 1 à 5 min), donc **0 commande Redis** dans le cas normal ; pire cas = un `GET` par expiration du cache CDN, jamais par écran.
+Hors animation, inchangé : un pull au repos = 4 commandes toutes les 300 s.
+Le candidat en cours (`candidate:current`, lu par chaque pull) grossit de ≈ 20 Ko pour une animation (clip + empreintes) : c'est du volume, pas des commandes, et un dessin TFT 2.8" y met déjà 205 Ko.
+
+## Réglage « Flash Size » (ESP8266) : pourquoi on ne peut pas le prérégler
+Une option de carte de l'IDE Arduino ne se pose pas depuis le code d'un sketch. Un fichier `sketch.yaml` (`default_fqbn`) est lu par `arduino-cli` mais pas de façon fiable par l'IDE, et forcerait
+une carte (NodeMCU) à ceux qui en ont une autre : il n'est donc pas fourni. Le firmware **ne dépend pas** du réglage : il détecte au démarrage (`[ANIM] flash LittleFS : disponible / ABSENTE`) et bascule seul sur
+le retéléchargement depuis le CDN. Le réglage est documenté comme **facultatif** dans « Apprendre » (étape 6, écrans `tft18` et `eink27bw + OLED`).
