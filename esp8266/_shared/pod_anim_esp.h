@@ -29,6 +29,7 @@ static const size_t   MAX_CLIP       = 9216;     // même plafond que le serveur
 static const uint32_t MIN_TLS_BLOCK  = 17000;    // plus gros bloc libre pour télécharger : clip 9 Ko + copie 1 Ko + TLS BearSSL
 static const char*    FILE_CLIP      = "/anim.bin";
 static const char*    FILE_META      = "/anim.txt";   // 2 lignes : hash du bloc, taille
+static const char*    FILE_TMP       = "/anim.tmp";   // téléchargement en cours (renommé en /anim.bin une fois validé)
 
 struct State {
   bool   fsOk = false;        // partition LittleFS utilisable
@@ -42,6 +43,7 @@ struct State {
 /** Au démarrage : monte la flash et retrouve une animation éventuelle (elle reprend). */
 inline void begin(State& st) {
   st.fsOk = LittleFS.begin();
+  if (st.fsOk && LittleFS.exists(FILE_TMP)) LittleFS.remove(FILE_TMP);   // téléchargement interrompu par une coupure
   Serial.printf("[ANIM] flash LittleFS : %s\n", st.fsOk ? "disponible (le clip survit au redémarrage)" : "ABSENTE — le clip sera retéléchargé avant chaque lecture (IDE : Flash Size avec FS)");
   if (!st.fsOk || !LittleFS.exists(FILE_META) || !LittleFS.exists(FILE_CLIP)) return;
   File m = LittleFS.open(FILE_META, "r");
@@ -105,16 +107,97 @@ inline bool download(const String& serverUrl, const String& hash, size_t announc
   return ok;
 }
 
+/**
+ * Télécharge le clip DIRECTEMENT dans un fichier, par morceaux de 256 octets : aucun gros tampon en RAM pendant que la connexion TLS (BearSSL, ≈ 16 Ko
+ * d'un seul bloc) est ouverte. C'est ce qui rend l'acquisition possible sur un ESP8266 dont le tas est déjà bien entamé (clip 9 Ko + TLS ne tiennent pas ensemble).
+ */
+inline bool downloadToFile(const String& serverUrl, const String& hash, size_t announced, const char* path, unsigned long& ms) {
+  const unsigned long t0 = millis();
+  bool ok = false;
+  File f = LittleFS.open(path, "w");
+  if (f) {
+    {
+      WiFiClientSecure client;
+      client.setInsecure();
+      HTTPClient http;
+      if (http.begin(client, serverUrl + "/api/block-clip?hash=" + hash)) {
+        http.setTimeout(15000);
+        http.useHTTP10(true);
+        const int code = http.GET();
+        if (code == 200) {
+          const int declared = http.getSize();
+          if (declared < 0 || (size_t)declared == announced) {
+            WiFiClient* stream = http.getStreamPtr();
+            uint8_t chunk[256];
+            size_t total = 0;
+            while (total < announced && millis() - t0 < 20000UL) {
+              if (stream->available()) {
+                const size_t want = (announced - total) < sizeof(chunk) ? (announced - total) : sizeof(chunk);
+                const size_t got = stream->readBytes(chunk, want);
+                if (got > 0) { if (f.write(chunk, got) != got) { Serial.println("[ANIM] écriture en flash impossible"); break; } total += got; }
+              } else delay(5);
+            }
+            ok = (total == announced);
+          } else Serial.printf("[ANIM] clip : taille annoncée %d != %u\n", declared, (unsigned)announced);
+        } else Serial.printf("[ANIM] clip : HTTP %d (mémoire ? plus gros bloc libre %u)\n", code, (unsigned)ESP.getMaxFreeBlockSize());
+        http.end();
+      } else Serial.println("[ANIM] clip : http.begin() impossible");
+    }                                                                  // TLS fermé ici, AVANT de relire le fichier
+    f.close();
+  }
+  ms = millis() - t0;
+  if (!ok && LittleFS.exists(path)) LittleFS.remove(path);
+  return ok;
+}
+
+/** Valide un clip rangé en fichier (CRC, structure) : lecture en RAM, TLS déjà fermé. */
+inline bool validateFile(const char* path, size_t n) {
+  File f = LittleFS.open(path, "r");
+  if (!f) return false;
+  const bool sizeOk = (f.size() == n);
+  uint8_t* clip = sizeOk ? (uint8_t*)malloc(n) : nullptr;
+  uint8_t* cur = sizeOk ? (uint8_t*)malloc(podbench::FRAME_BYTES) : nullptr;
+  bool ok = false;
+  if (clip && cur && f.read(clip, n) == n) {
+    podbench::Clip pc;
+    const podbench::Err perr = podbench::parse(clip, n, pc, cur);
+    ok = (perr == podbench::OK);
+    if (!ok) Serial.printf("[ANIM] clip refusé (%s)\n", podbench::errName(perr));
+    else Serial.printf("[ANIM] clip valide : %u images\n", (unsigned)pc.frames);
+  } else if (sizeOk) Serial.println("[ANIM] mémoire insuffisante pour valider le clip");
+  free(clip); free(cur);
+  f.close();
+  return ok;
+}
+
 /** Le pointeur du pull est-il nouveau ? Alors télécharge, valide, range en flash et active. À appeler APRÈS l'affichage de l'affiche. true = animation active. */
 inline bool acquire(State& st, const String& serverUrl) {
   if (st.pendingHash.length() != 64) return st.on;
   if (st.on && st.hash == st.pendingHash) return true;                 // déjà en flash
   const size_t n = st.pendingBytes;
   if (n < (size_t)(podbench::HEADER_BYTES + 5 + podbench::FRAME_BYTES) || n > MAX_CLIP) { Serial.printf("[ANIM] taille refusée (%u)\n", (unsigned)n); return false; }
-  // Le clip (n) + sa copie de travail (1 Ko) restent alloués pendant que la connexion TLS (BearSSL, ≈ 16 Ko d'un seul bloc) s'ouvre : il faut les deux.
+
+  if (st.fsOk) {
+    // Avec une flash : téléchargement par morceaux directement dans un fichier (aucun tampon pendant le TLS), puis validation clip par clip hors TLS.
+    Serial.printf("[ANIM] acquisition du clip : %u o vers la flash, plus gros bloc libre %u (besoin ≥ %u pour le TLS)\n", (unsigned)n, (unsigned)ESP.getMaxFreeBlockSize(), (unsigned)MIN_TLS_BLOCK);
+    if (ESP.getMaxFreeBlockSize() < MIN_TLS_BLOCK) { Serial.println("[ANIM] mémoire insuffisante pour une connexion TLS maintenant : réessai au prochain pull"); return false; }
+    if (LittleFS.exists(FILE_META)) LittleFS.remove(FILE_META);
+    unsigned long ms = 0;
+    if (!downloadToFile(serverUrl, st.pendingHash, n, FILE_TMP, ms)) { Serial.println("[ANIM] téléchargement échoué : réessai au prochain pull"); return false; }
+    if (!validateFile(FILE_TMP, n)) { LittleFS.remove(FILE_TMP); return false; }
+    if (LittleFS.exists(FILE_CLIP)) LittleFS.remove(FILE_CLIP);
+    if (!LittleFS.rename(FILE_TMP, FILE_CLIP)) { Serial.println("[ANIM] renommage impossible"); LittleFS.remove(FILE_TMP); return false; }
+    File m = LittleFS.open(FILE_META, "w");                            // clip COMPLET d'abord, marqueur ensuite
+    if (m) { m.println(st.pendingHash); m.println((unsigned)n); m.close(); }
+    st.on = true; st.hash = st.pendingHash; st.bytes = n;
+    Serial.printf("[ANIM] clip reçu en %lu ms et rangé en flash : lecture en boucle\n", ms);
+    return true;
+  }
+
+  // Sans flash : le clip doit tenir en RAM PENDANT la connexion TLS (clip + copie de travail + bloc TLS) ; il est retéléchargé avant chaque lecture.
   const uint32_t needDl = (uint32_t)n + podbench::FRAME_BYTES + MIN_TLS_BLOCK;
-  Serial.printf("[ANIM] acquisition du clip : %u o, plus gros bloc libre %u (besoin %u), flash %s\n", (unsigned)n, (unsigned)ESP.getMaxFreeBlockSize(), (unsigned)needDl, st.fsOk ? "LittleFS" : "absente");
-  if (ESP.getMaxFreeBlockSize() < needDl) { Serial.println("[ANIM] mémoire insuffisante pour télécharger le clip maintenant : réessai au prochain pull"); return false; }
+  Serial.printf("[ANIM] acquisition du clip : %u o en RAM (flash absente), plus gros bloc libre %u (besoin %u)\n", (unsigned)n, (unsigned)ESP.getMaxFreeBlockSize(), (unsigned)needDl);
+  if (ESP.getMaxFreeBlockSize() < needDl) { Serial.println("[ANIM] mémoire insuffisante pour télécharger le clip : choisir un Flash Size avec FS (voir Apprendre), réessai au prochain pull"); return false; }
   uint8_t* clip = (uint8_t*)malloc(n);
   uint8_t* cur = (uint8_t*)malloc(podbench::FRAME_BYTES);
   if (!clip || !cur) { free(clip); free(cur); Serial.println("[ANIM] malloc impossible"); return false; }
@@ -122,25 +205,10 @@ inline bool acquire(State& st, const String& serverUrl) {
   const bool got = download(serverUrl, st.pendingHash, n, clip, ms);
   podbench::Clip pc;
   const podbench::Err perr = got ? podbench::parse(clip, n, pc, cur) : podbench::ERR_SIZE;
-  free(cur);
-  if (!got || perr != podbench::OK) {
-    Serial.printf("[ANIM] clip refusé (%s)\n", got ? podbench::errName(perr) : "téléchargement incomplet");
-    free(clip);
-    return false;
-  }
-  bool stored = false;
-  if (st.fsOk) {                                                       // clip COMPLET d'abord, marqueur ensuite
-    if (LittleFS.exists(FILE_META)) LittleFS.remove(FILE_META);
-    File f = LittleFS.open(FILE_CLIP, "w");
-    if (f) { stored = (f.write(clip, n) == n); f.close(); }
-    if (stored) {
-      File m = LittleFS.open(FILE_META, "w");
-      if (m) { m.println(st.pendingHash); m.println((unsigned)n); m.close(); }
-    } else { Serial.println("[ANIM] écriture en flash impossible : clip retéléchargé à chaque lecture"); if (LittleFS.exists(FILE_CLIP)) LittleFS.remove(FILE_CLIP); }
-  }
-  free(clip);
+  free(cur); free(clip);
+  if (!got || perr != podbench::OK) { Serial.printf("[ANIM] clip refusé (%s)\n", got ? podbench::errName(perr) : "téléchargement incomplet"); return false; }
   st.on = true; st.hash = st.pendingHash; st.bytes = n;
-  Serial.printf("[ANIM] clip reçu en %lu ms, %u images, %s : lecture en boucle\n", ms, (unsigned)pc.frames, stored ? "rangé en flash" : "gardé par son hash (retéléchargé à chaque lecture)");
+  Serial.printf("[ANIM] clip reçu en %lu ms, %u images (gardé par son hash, retéléchargé à chaque lecture)\n", ms, (unsigned)pc.frames);
   return true;
 }
 

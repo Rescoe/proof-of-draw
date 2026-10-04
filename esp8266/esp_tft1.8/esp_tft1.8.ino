@@ -885,6 +885,10 @@ bool doRegister() {
 bool doFetchFrame(const String& frameId, const String& frameSource) {
   logHeapState("FETCHFRAME-BEFORE");
 
+  size_t totalRead = 0;
+  bool   success   = true;
+  unsigned long t0 = millis();
+  {   // ── connexion TLS : fermée AVANT l'ACK (sinon le second TLS manque de mémoire : « ACK → -1 », tas à 7 Ko) ──
   WiFiClientSecure client;
   client.setInsecure();
   HTTPClient http;
@@ -921,9 +925,6 @@ bool doFetchFrame(const String& frameId, const String& frameSource) {
   // automatiquement de ligne en ligne sans re-envoyer CASET/RASET.
   WiFiClient* stream = http.getStreamPtr();
   uint8_t rowBuf[TFT_ROW_BYTES];  // 256 bytes sur la stack — sûr ✓
-  size_t totalRead = 0;
-  bool   success   = true;
-  unsigned long t0 = millis();
 
   tft.startWrite();
   tft.setAddrWindow(0, 0, TFT_W, TFT_H);   // w=128, h=160 — largeur/hauteur, pas coords de fin ✓
@@ -964,6 +965,7 @@ bool doFetchFrame(const String& frameId, const String& frameSource) {
 
   tft.endWrite();
   http.end();
+  }   // TLS fermé
 
   Serial.printf("[FETCHFRAME] lu=%u/%u en %lums — %s\n",
                 totalRead, (unsigned)TFT_BUF_SIZE, millis() - t0,
@@ -1168,10 +1170,18 @@ bool doFetchScene(const String& frameId, const String& frameSource, const String
 // l'écran affiche « Banc d'essai terminé » jusqu'à la prochaine image.
 static uint16_t g_benchRow[TFT_W];                   // 128 pixels = une ligne de la zone
 podbenchesp::State g_bench;
+// Le TFT 1.8" est piloté en SPI LOGICIEL (bit-banging) : peindre une zone entière prend des centaines de ms. On rend la main au watchdog et au Wi-Fi après
+// chaque ligne (yield) et on remplit l'écran par bandes — sinon l'ESP redémarre (« déconnexion / reconnexion »).
+struct YieldTft {
+  void startWrite() { tft.startWrite(); }
+  void endWrite() { tft.endWrite(); }
+  void setAddrWindow(int x, int y, int w, int h) { tft.setAddrWindow(x, y, w, h); }
+  void writePixels(uint16_t* c, uint32_t n, bool blk, bool bigEndian) { tft.writePixels(c, n, blk, bigEndian); yield(); }
+};
 struct BenchTftPresenter {
   bool resident = false;                             // animation de bloc en boucle : on garde la dernière image entre deux tâches réseau
-  void begin(const podbench::Clip& c) { tft.fillScreen(c.bg); }
-  template <class Hook> bool play(const podbench::Clip& c, uint8_t* cur, Hook&& hook) { return podbench::play<podbench::GeoOne<48> >(c, cur, tft, g_benchRow, hook); }
+  void begin(const podbench::Clip& c) { for (int y = 0; y < TFT_H; y += 8) { tft.fillRect(0, y, TFT_W, 8, c.bg); yield(); } }
+  template <class Hook> bool play(const podbench::Clip& c, uint8_t* cur, Hook&& hook) { YieldTft yt; return podbench::play<podbench::GeoOne<48> >(c, cur, yt, g_benchRow, hook); }
   void end() { if (!resident) tftStatus("Banc d'essai", "termine"); }
 };
 BenchTftPresenter g_benchPresenter;
