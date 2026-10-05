@@ -156,7 +156,8 @@ const KEY_OBS_QUEUE = "chain:obs:queue";
 const KEY_OBS_PENDING = "chain:obs:pending";   // drapeau « la file d'observation n'est pas vide » : lu dans le MGET du pull (le pull ne dépile plus à chaque fois)
 
 const GENESIS_HASH      = "0".repeat(64);
-const CANDIDATE_TTL_SEC = parseInt(process.env.CANDIDATE_TTL_SEC ?? "600");
+// 30 min (600 avant le mode actif/dormant) : un écran dormant tire toutes les 15 min, il doit pouvoir voir le candidat à temps (lib/pullBudget.ts).
+const CANDIDATE_TTL_SEC = parseInt(process.env.CANDIDATE_TTL_SEC ?? "1800");
 const QUORUM_RATIO      = parseFloat(process.env.QUORUM_RATIO ?? "0.51");
 const RECENT_MAX        = 100; // blocs dans chain:recent
 
@@ -320,11 +321,19 @@ export async function getVotes(): Promise<VoteMap | null> {
   }
 }
 
+/** Votes depuis une valeur déjà lue (MGET d'une route) : zéro commande. */
+export function parseVotesRaw(raw: unknown): VoteMap | null {
+  if (!raw) return null;
+  try { return typeof raw === "string" ? JSON.parse(raw) : (raw as VoteMap); } catch { return null; }
+}
+
+/** `prefetched` : votes déjà lus par la route (undefined = lire ici). */
 export async function castVote(
   vote: ValidationVote,
   candidate: Candidate,
+  prefetched?: VoteMap | null,
 ): Promise<{ quorumReached: boolean; voteCount: number; needed: number }> {
-  const voteMap = await getVotes();
+  const voteMap = prefetched !== undefined ? prefetched : await getVotes();
   if (!voteMap || voteMap.candidateId !== candidate.candidateId) {
     return { quorumReached: false, voteCount: 0, needed: 0 };
   }

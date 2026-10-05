@@ -24,9 +24,10 @@ import { revalidatePath } from "next/cache";
 import { redis } from "@/lib/redis";
 import { frameKey } from "@/lib/queue";
 import { broadcastConverted } from "@/lib/broadcast";
-import { getDevice } from "@/lib/deviceStore";
-import { getCurrentCandidate, getVotes, castVote, claimFinalization, finalizeBlock, clearCandidate, ValidationVote } from "@/lib/chain";
-import { isBlacklisted, getIP, forbidden } from "@/lib/rateLimit";
+import type { Device } from "@/lib/deviceStore";
+import { markHot } from "@/lib/hot";
+import { parseCandidateRaw, parseVotesRaw, PULL_KEY_CANDIDATE, PULL_KEY_VOTES, getVotes, castVote, claimFinalization, finalizeBlock, clearCandidate, ValidationVote } from "@/lib/chain";
+import { getIP, forbidden } from "@/lib/rateLimit";
 import { verifyEd25519 } from "@/lib/ed25519";
 import { dequeueNextDraw } from "@/lib/drawQueue";
 import { invalidateThresholdsCache } from "@/lib/adaptiveValidation";
@@ -66,7 +67,6 @@ function json(body: unknown, status = 200) { return NextResponse.json(body, { st
 export async function POST(req: NextRequest) {
   try {
     const ip = getIP(req);
-    if (await isBlacklisted(ip)) return forbidden("Accès refusé");
 
     let body: Record<string, unknown>;
     try { body = await req.json(); } catch { return json({ error: "JSON invalide" }, 400); }
@@ -76,11 +76,16 @@ export async function POST(req: NextRequest) {
     if (!deviceId || !DEVICE_ID_REGEX.test(String(deviceId))) return json({ error: "deviceId invalide" }, 400);
     if (!candidateId || entropy == null || transitions == null || rle == null || score == null) return json({ error: "Métriques manquantes" }, 400);
 
-    const device = await getDevice(String(deviceId));
+    // UN MGET : blacklist IP + appareil + candidat + votes (≈ 5 commandes avant le 05/10/2026 : blacklist, appareil, candidat, votes + écriture)
+    const raws = await redis.mget<unknown[]>(`bl:ip:${ip}`, `device:${String(deviceId)}`, PULL_KEY_CANDIDATE, PULL_KEY_VOTES);
+    if (raws[0] !== null) return forbidden("Accès refusé");
+    let device: Device | null = null;
+    try { device = raws[1] ? (typeof raws[1] === "string" ? JSON.parse(raws[1] as string) : (raws[1] as Device)) : null; } catch { device = null; }
     if (!device) return json({ error: "Device inconnu" }, 404);
 
-    const candidate = await getCurrentCandidate();
+    const candidate = parseCandidateRaw(raws[2]);
     if (!candidate) return json({ error: "Aucun candidat actif" }, 409);
+    const prefetchedVotes = parseVotesRaw(raws[3]);
     if (candidate.candidateId !== String(candidateId)) return json({ error: "candidateId ne correspond pas au candidat actif", current: candidate.candidateId }, 409);
 
     const espScore = Number(score);
@@ -123,7 +128,7 @@ export async function POST(req: NextRequest) {
     }
 
     const vote: ValidationVote = { deviceId: String(deviceId), entropy: Number(entropy), transitions: Number(transitions), rle: Number(rle), score: espScore, signature: String(signature ?? ""), votedAt: Date.now() };
-    const { quorumReached, voteCount, needed } = await castVote(vote, candidate);
+    const { quorumReached, voteCount, needed } = await castVote(vote, candidate, prefetchedVotes);
 
     // voteCount===0 && needed===0 → voteMap absent ou candidateId désynchronisé
     if (voteCount === 0 && needed === 0 && !quorumReached) {
@@ -154,6 +159,7 @@ export async function POST(req: NextRequest) {
         await broadcastValidatedFrame(candidate.poolScreen, candidate.payload, frameId, block.displayTime, block.blockIndex, candidate.artistName);
       }
       await clearCandidate();
+      markHot().catch(() => {});   // un bloc vient d'être miné : le réseau est actif, les écrans restent à 5 min de pull
       // Invalider le cache Next.js → la BlockGallery se rechargera immédiatement
       revalidatePath("/", "page");
       // Invalider le cache des seuils adaptatifs pour cet écran (nouveau bloc = nouvelle moyenne)

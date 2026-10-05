@@ -10,6 +10,7 @@
 // Rate  : pas de lock 15min — le propriétaire peut changer son dessin quand il veut
 //         mais rate limit à 10/heure pour éviter les abus
 
+import { markHot } from "@/lib/hot";
 import { NextRequest, NextResponse } from "next/server";
 import { getDevice } from "@/lib/deviceStore";
 import { sessionOwnsDevice } from "@/lib/session";
@@ -103,6 +104,7 @@ export async function POST(req: NextRequest) {
   });
 
   await redis.set(personalKey(deviceId), stored, { ex: PERSONAL_TTL });
+  markHot().catch(() => {});   // un écran attend une image : le réseau passe à 5 min de pull
 
   console.log(`[personal-frame] device=${deviceId} screen=${screen}`);
 

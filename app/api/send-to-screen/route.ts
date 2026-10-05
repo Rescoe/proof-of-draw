@@ -22,6 +22,7 @@ import { animCapable, animPointerOfBlock, type AnimPointer } from "@/lib/anim/po
 import { decodeClip } from "@/lib/bench/clip";
 import { posterFor, type AnimScreen } from "@/lib/anim/block";
 import { getIP, isBlacklisted, forbidden } from "@/lib/rateLimit";
+import { markHot } from "@/lib/hot";
 
 const DEVICE_ID_REGEX = /^dev_[A-Z0-9]{8}$/;
 const HASH_REGEX      = /^[0-9a-f]{64}$/;
@@ -129,6 +130,7 @@ export async function POST(req: NextRequest) {
     personal:  true,
   });
   await redis.set(personalKey(deviceId), stored, { ex: PERSONAL_TTL });
+  markHot().catch(() => {});   // un écran attend une image : le réseau passe à 5 min de pull
 
   console.log(`[send-to-screen] source=${source} block=${blockHash.slice(0, 12)} device=${deviceId} screen=${screen}`);
   return NextResponse.json({ ok: true });

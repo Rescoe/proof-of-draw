@@ -64,8 +64,10 @@ Non, pas pour cet usage.
   Mon souvenir du plan gratuit (≈ 100 h de calcul par mois, à vérifier sur la page tarifs) est **inférieur** à 24 h × 30 j : on viserait le même mur, plus tard.
 - C'est une **réécriture** de `chain`, `queue`, `rateLimit`, `deviceStore`, files, verrous TTL — et « base de données » est un non-objectif du dépôt.
 - Neon est déjà utilisé côté ANA pour des données froides : c'est sa place (galeries, historiques longs : tâche Q10 de la note du 03/10), pas le chemin chaud des pulls.
-- **Filet d'urgence plus simple** : passer Upstash en **paiement à l'usage avec un plafond de dépense**. *À vérifier sur la page Pricing d'Upstash avant de décider* : mon souvenir est ≈ 0,2 $ par 100 000 commandes au-delà des 500 k gratuites, soit ≈ 1 $ pour un mois à 1 M de commandes ; le plan gratuit, lui,
-  refuse les requêtes au plafond (les écrans cessent de tirer).
+- **Filet d'urgence plus simple** : passer Upstash en **paiement à l'usage avec un plafond de dépense**. Tarifs relevés le 05/10/2026 sur [upstash.com/pricing/redis](https://upstash.com/pricing/redis) :
+  gratuit = 500 k commandes / mois, 256 Mo, 10 Go de bande passante (au plafond : « on fait de notre mieux pour garder la base en marche, mais on peut limiter le débit ») ; **paiement à l'usage = 0,20 $ par 100 000 commandes**, stockage 0,25 $/Go (1 Go gratuit),
+  **plafond mensuel de dépense réglable** (une fois atteint, la base est limitée en débit au lieu de continuer à facturer) ; plans fixes 10 $ (250 Mo) / 20 $ (1 Go), commandes illimitées. Le site ne dit pas si le paiement à l'usage garde les 500 k gratuits : on compte au pire.
+  Coût au pire : 500 k = 1 $ · 1 M = 2 $ · 2,5 M = 5 $ · 5 M = 10 $. **Recommandé : paiement à l'usage, plafond 5 $.** Comptage des `EVAL` : non précisé par la doc (« chaque commande d'un pipeline / d'une transaction est facturée à part »), d'où le calibrage du § 6.
 
 ## 6. Mesurer (à faire avant de décider du reste)
 
@@ -78,3 +80,27 @@ Non, pas pour cet usage.
 - Latence acceptée pour une œuvre envoyée (5 min, 10 min ?) → intervalle de repos et `CANDIDATE_TTL_SEC`.
 - Plan Upstash : rester gratuit, ou paiement à l'usage plafonné comme filet.
 - Nombre d'écrans visé d'ici fin octobre (les collègues), pour dimensionner.
+
+## 8. Lot du 05/10/2026 (suite) — flux par bloc et mode actif / dormant (serveur seulement, aucun firmware à reflasher)
+
+### 8.1 Flux par bloc (par écran et par bloc : ≈ 34 → ≈ 9 commandes, estimation)
+| Route | Avant | Maintenant |
+|---|---|---|
+| `/api/pull-frame` (image) | appareil + 1 lecture par écran + personnelle ≈ 3-4 | **1 MGET** |
+| `/api/ack-frame` | 3 lectures de blacklist + appareil ×2 + 1 lecture par écran + `saveDevice` (3 SET) + personnelle + affichage ≈ 11 | 1 MGET + 1 DEL + 1 SET (clé appareil seule) + 1-2 SET d'affichage ≈ **5** |
+| `/api/validate-candidate` | 2 blacklists + INCR/EXPIRE + appareil + candidat + votes ≈ 7 | **1 MGET** + rate-limit échantillonné 1/8 ≈ **1,1** |
+| `/api/validation-result` (le vote) | blacklist + appareil + candidat + votes + écriture ≈ 5 | 1 MGET + 1 SET ≈ **2** |
+
+`writeDeviceKey` (une seule clé `device:{id}`, au lieu des trois de `saveDevice`) sert aussi à la présence du pull, avec le bon TTL (90 j appairé / 48 h sinon : le pull remettait 48 h à un appareil appairé).
+
+### 8.2 Mode actif / dormant
+- Le réseau est « **chaud** » 30 min après la dernière activité : un candidat soumis, un bloc miné, une image envoyée à un écran, ou **l'ouverture de l'atelier de dessin / d'animation** (`POST /api/hot`, au plus 1 fois / 10 min / onglet).
+- Au repos, un écran tire toutes les **5 min** si le réseau est chaud, toutes les **15 min** sinon (`retryAfter` du serveur ; réglable `PULL_HOT_SEC` / `PULL_DORMANT_SEC` — mettre 300 aux deux supprime le mode dormant).
+- Le drapeau `net:hot` est lu dans le MGET du pull : zéro commande de plus.
+- **`CANDIDATE_TTL_SEC` passe de 600 à 1 800 s** (un écran dormant voit le candidat à temps). **Vérifier dans Vercel qu'aucune variable `CANDIDATE_TTL_SEC` n'impose encore 600** : elle prime sur la valeur par défaut. Contrepartie : un candidat qui n'atteint pas le quorum bloque la file 30 min au lieu de 10.
+- Présence : réécrite toutes les 10 min ; « en ligne » = 30 min ; « actif » du quorum = 45 min (une seule définition : `lib/pullBudget.ts` ; test de cohérence avec le pull dormant).
+- **Latence** : une œuvre soumise après une période calme attend le réveil des écrans — jusqu'à 15 min dans le pire cas ; l'ouverture de l'atelier (souvent plusieurs minutes avant l'envoi) les réveille déjà.
+
+### 8.3 Nouveau modèle (estimation)
+Pull au repos : ≈ 1,4 commande ; 20 h dormantes à 15 min (80 pulls) + 4 h chaudes à 5 min (48 pulls) = **≈ 180 commandes / jour / écran** (1 440 au départ). Par bloc et par écran ≈ 9.
+10 écrans, 10 blocs / jour : pulls ≈ 1 800 + blocs ≈ 900 + web/divers → **≈ 3 à 4 k / jour ≈ 100 k / mois**, très sous la cible (200 k) et sous le gratuit (500 k). Estimation à confirmer par la console Upstash.

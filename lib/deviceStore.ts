@@ -137,7 +137,7 @@ const TTL_SECONDS = 48 * 60 * 60;
 // overnight WiFi hiccup into an orphaned duplicate device with unreachable
 // mined blocks — see the incident this constant was raised in response to.
 const PAIRED_TTL_SECONDS = 90 * 24 * 60 * 60;
-import { ONLINE_MS } from "@/lib/pullBudget";   // 20 min : la présence n'est réécrite que toutes les 12 min (quota Redis)
+import { ONLINE_MS, ACTIVE_WINDOW_MS } from "@/lib/pullBudget";   // la présence n'est réécrite que toutes les 10 min (quota Redis)
 
 function deviceTtl(device: Device): number {
   return (device.artistId || device.artistName) ? PAIRED_TTL_SECONDS : TTL_SECONDS;
@@ -204,6 +204,14 @@ export function toOwnedDevice(d: Device): OwnedDevice {
 }
 
 // ─── Lecture / écriture ───────────────────────────────────────────────────────
+
+/**
+ * Réécrit UNIQUEMENT la clé device:{id} (1 commande) — présence, accusé de réception. saveDevice() en écrit trois (device, mac, pair) : inutile quand
+ * la MAC et le code d'appairage n'ont pas changé. Même TTL que saveDevice (48 h non appairé, 90 j appairé).
+ */
+export async function writeDeviceKey(device: Device): Promise<void> {
+  await redis.set(deviceKey(device.deviceId), JSON.stringify(device), { ex: deviceTtl(device) });
+}
 
 async function saveDevice(device: Device): Promise<void> {
   // 3 clés : device:id, mac:xxx, pair:CODE — TTL selon deviceTtl() (48h tant
@@ -377,7 +385,7 @@ export async function deleteDevice(deviceId: string): Promise<void> {
  * Un device est "actif" si son lastPing est récent (< ACTIVE_WINDOW_MS).
  * Utilisé pour le quorum global de validation Proof-of-Draw.
  */
-export async function getGlobalActiveCount(activeWindowMs = 30 * 60 * 1000): Promise<number> {
+export async function getGlobalActiveCount(activeWindowMs = ACTIVE_WINDOW_MS): Promise<number> {
   const allIds = (await redis.smembers("devices:all")) as string[];
   if (!allIds || allIds.length === 0) return 1; // minimum 1 pour éviter division par zéro
 

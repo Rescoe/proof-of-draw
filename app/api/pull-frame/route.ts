@@ -1,8 +1,9 @@
 // app/api/pull-frame/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { redis } from "@/lib/redis";
-import { getDevice } from "@/lib/deviceStore";
-import { getFrameForDevice } from "@/lib/queue";
+import type { Device } from "@/lib/deviceStore";
+import { frameKey, parseStoredFrame, type StoredFrame } from "@/lib/queue";
+import { SCREEN_IDS } from "@/lib/screenProfiles";
 import { isSceneScreen, selectDelivery } from "@/lib/scene/delivery";
 import { getScenePackage } from "@/lib/scene/store";
 
@@ -19,9 +20,18 @@ export async function GET(req: NextRequest) {
     if (!deviceId || !DEVICE_ID_REGEX.test(deviceId))
       return NextResponse.json({ error: "deviceId invalide" }, { status: 400 });
 
-    const device = await getDevice(deviceId);
+    // UN MGET : appareil + frames de TOUS les types d'écran + frame personnelle (≈ 3 à 4 commandes avant le 05/10/2026 : appareil, une lecture par écran, personnelle).
+    const FRAME_IDS = SCREEN_IDS as readonly string[];
+    const raws = await redis.mget<unknown[]>(`device:${deviceId}`, ...FRAME_IDS.map((s) => frameKey(deviceId, s)), personalKey(deviceId));
+    let device: Device | null = null;
+    try { device = raws[0] ? (typeof raws[0] === "string" ? JSON.parse(raws[0] as string) : (raws[0] as Device)) : null; } catch { device = null; }
     if (!device)
       return NextResponse.json({ error: "device inconnu" }, { status: 404 });
+    /** La plus ancienne frame du consensus parmi les écrans demandés (même règle que getFrameForDevice). */
+    const frameFor = (screens: string[]): StoredFrame | null => screens
+      .map((s) => { const i = FRAME_IDS.indexOf(s); return i < 0 ? null : parseStoredFrame(raws[1 + i]); })
+      .filter((f): f is StoredFrame => f !== null)
+      .reduce<StoredFrame | null>((oldest, f) => (oldest === null || f.storedAt < oldest.storedAt ? f : oldest), null);
 
     // ── scene-v1 : paquet binaire ANAS (≤ 4 Ko) ────────────────────────────
     // GET /api/pull-frame?deviceId=…&screen=oled096&kind=scene&artifactId=…&fmt=bin
@@ -33,7 +43,7 @@ export async function GET(req: NextRequest) {
       if (fmt !== "bin" || !screen || !isSceneScreen(screen) || !artifactId)
         return NextResponse.json({ error: "kind=scene exige fmt=bin, screen oled096|tft18 et artifactId" }, { status: 400 });
 
-      const pending = await getFrameForDevice(deviceId, [screen]);
+      const pending = frameFor([screen]);
       const selection = selectDelivery(device, screen, pending?.payload as Record<string, unknown> | undefined);
       if (selection.kind !== "scene" || selection.artifactId !== artifactId)
         return NextResponse.json({ error: "aucune scène en attente pour cet appareil" }, { status: 404 });
@@ -60,12 +70,12 @@ export async function GET(req: NextRequest) {
     // écran (voir lib/queue.ts) — quand le firmware précise &screen=, on ne
     // cherche QUE cette clé-là, jamais les autres écrans du device.
     const lookupScreens = screen ? [screen] : (device.screens ?? []);
-    const consensusFrame = await getFrameForDevice(deviceId, lookupScreens);
+    const consensusFrame = frameFor(lookupScreens);
     if (consensusFrame?.payload) {
       payload = consensusFrame.payload;
       frameId = consensusFrame.frameId;
     } else {
-      const personalRaw = await redis.get(personalKey(deviceId));
+      const personalRaw = raws[1 + FRAME_IDS.length];
       if (personalRaw) {
         const pf = typeof personalRaw === "string" ? JSON.parse(personalRaw) : personalRaw;
         if (pf?.payload) {

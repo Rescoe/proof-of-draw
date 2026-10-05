@@ -2,6 +2,7 @@
 // Les types d'écrans disponibles sont définis dans lib/screenProfiles.ts.
 // Ajouter un écran ici = uniquement dans screenProfiles.ts.
 
+import { ONLINE_MS } from "@/lib/pullBudget";
 import { unstable_cache } from "next/cache";
 import { redis } from "@/lib/redis";
 import { SCREEN_IDS, SCREEN_PROFILES, ScreenId } from "@/lib/screenProfiles";
@@ -112,8 +113,7 @@ export type NetworkSnapshot = {
   screens: NetworkScreenPool[];
 };
 
-const ONLINE_WINDOW_MS =
-  20 * 60 * 1000;
+const ONLINE_WINDOW_MS = ONLINE_MS;   // lib/pullBudget.ts : une seule définition de « en ligne »
 
 const NETWORK_CACHE_SECONDS = 3600;
 

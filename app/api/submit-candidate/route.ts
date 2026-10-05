@@ -16,6 +16,7 @@ import {
   MAX_AUTOMATION_RATIO,
 } from "@/lib/crypto";
 import { setCandidate, getCurrentCandidate, Candidate } from "@/lib/chain";
+import { markHot } from "@/lib/hot";
 import { getEffectiveThresholds } from "@/lib/adaptiveValidation";
 import type { ActionEvent, ReplayEvent } from "@/lib/types/actions";
 import { BENCH_SCREENS } from "@/lib/bench/screens";
@@ -187,7 +188,7 @@ export async function POST(req: NextRequest) {
 
   // Quorum global : tous les ESP actifs du réseau, tous écrans confondus
   const poolSize = await getGlobalActiveCount();
-  const CANDIDATE_TTL_SEC = parseInt(process.env.CANDIDATE_TTL_SEC ?? "600");
+  const CANDIDATE_TTL_SEC = parseInt(process.env.CANDIDATE_TTL_SEC ?? "1800");
 
   // Warning consolidé — résumé des observations de qualité (non-bloquant)
   const warning = qualityWarnings.length > 0
@@ -223,6 +224,7 @@ export async function POST(req: NextRequest) {
   };
 
   await setCandidate(candidate);
+  markHot().catch(() => {});   // quelqu'un dessine : les écrans au repos passent à 5 min de pull pendant 30 min
 
   console.log(`[submit-candidate] candidat créé id=${candidate.candidateId} poolSize=${poolSize} score=${metrics.score.toFixed(3)} drawScore=${drawScore} actionsHash=${actionsHash.slice(0, 12)}...`);
 

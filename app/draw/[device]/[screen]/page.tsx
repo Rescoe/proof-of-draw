@@ -13,6 +13,7 @@ import { useParams, useRouter } from "next/navigation";
 import { SCREEN_PROFILES, ScreenId, isValidScreenId } from "@/lib/screenProfiles";
 import type { OwnedDevice } from "@/lib/deviceStore";
 import { useDrawChannel } from "../../_studio/channel";
+import { wakeNetwork } from "@/lib/wakeNetwork";
 import type { DrawStudioProps } from "../../_studio/DrawStudio";
 
 function Splash({ text }: { text: string }) {
@@ -60,6 +61,8 @@ function DrawPageInner({ deviceId, screenId, onExit }: { deviceId: string; scree
   const [info, setInfo] = useState<Info>({ state: "loading" });
   const [prefill, setPrefill] = useState<string | undefined>(undefined);
   const [attempt, setAttempt] = useState(0);
+
+  useEffect(() => { wakeNetwork(); }, []);   // « j'ouvre l'atelier » : les écrans au repos passent de 15 à 5 min de pull (au plus 1 appel / 10 min / onglet)
 
   // Chargement de l'appareil : tentatives multiples, jamais de redirection
   useEffect(() => {

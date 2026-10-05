@@ -15,6 +15,7 @@ import { encodeGif } from "@/lib/bench/gif";
 import { BENCH_SCREEN_INFO, benchFirmwareOk, benchScreenOf } from "@/lib/bench/screens";
 import { blank, ellipse, flipH, flipV, floodFill, invert, line, motion, rect, setPixel, shifted, type Brush, type Frame, W, H } from "@/lib/bench/draw";
 import { histReducer, initHist, type Doc } from "@/lib/bench/history";
+import { wakeNetwork } from "@/lib/wakeNetwork";
 
 const DRAFT_KEYS = { bench: "pod-bench-draft-v1", studio: "pod-anim-studio-draft-v1" } as const;
 /** « bench » : banc d'essai (modèles de test, mesures, journal). « studio » : atelier de création d'animation (même éditeur, sans les outils de mesure). */
@@ -293,6 +294,8 @@ export default function BenchClient({ variant = "bench" }: { variant?: BenchVari
   }, [playing, idx, n, delays]);
 
   // ── Appareils TFT 2.8" du propriétaire ─────────────────────────────────────
+  useEffect(() => { if (isStudio) wakeNetwork(); }, [isStudio]);   // atelier d'animation ouvert : les écrans au repos passent à 5 min de pull
+
   useEffect(() => {
     let alive = true;
     fetch("/api/devices?mine=1", { cache: "no-store" })

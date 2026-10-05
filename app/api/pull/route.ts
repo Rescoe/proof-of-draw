@@ -1,9 +1,9 @@
 // app/api/pull/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { redis } from "@/lib/redis";
-import type { Device } from "@/lib/deviceStore";
+import { writeDeviceKey, type Device } from "@/lib/deviceStore";
 import { SCREEN_IDS } from "@/lib/screenProfiles";
-import { presenceStale, rlSampled, RL_SAMPLED_BLACKLIST, RL_SAMPLED_MAX } from "@/lib/pullBudget";
+import { HOT_KEY, idleRetrySec, presenceStale, rlSampled, RL_SAMPLED_BLACKLIST, RL_SAMPLED_MAX } from "@/lib/pullBudget";
 import { frameKey, parseStoredFrame, FramePayload } from "@/lib/queue";
 import { getIP, forbidden } from "@/lib/rateLimit";
 import { benchScreenOf } from "@/lib/bench/screens";
@@ -93,7 +93,7 @@ export async function GET(req: NextRequest) {
       `bl:ip:${ip}`, blDevKey(deviceId), `device:${deviceId}`,
       ...FRAME_IDS.map((s) => frameKey(deviceId, s)),
       personalKey(deviceId), PULL_KEY_HEAD, PULL_KEY_CANDIDATE, PULL_KEY_VOTES,
-      `chain:notify:${deviceId}`, `bench:mode:${deviceId}`, PULL_KEY_OBS_PENDING,
+      `chain:notify:${deviceId}`, `bench:mode:${deviceId}`, PULL_KEY_OBS_PENDING, HOT_KEY,
     );
     if (raws[0] !== null || raws[1] !== null) return forbidden("Accès refusé");
     let device: Device | null = null;
@@ -118,6 +118,7 @@ export async function GET(req: NextRequest) {
     const ownedNotif = (rest[4] as string | null) ?? null;
     const benchModeRaw = rest[5];
     const obsPending = rest[6] !== null && rest[6] !== undefined;
+    const networkHot = rest[7] !== null && rest[7] !== undefined;   // quelqu'un a dessiné / envoyé / ouvert l'atelier depuis < 30 min
     // Mode banc d'essai actif pour un écran compatible (TFT 2.8", TFT 1.8", OLED) : annoncé à l'appareil, qui passe en contrôle rapide.
     const benchMode = benchScreenOf(device.screens) !== null && benchModeRaw !== null && benchModeRaw !== undefined;
 
@@ -148,11 +149,7 @@ export async function GET(req: NextRequest) {
 
     // ── Ping device : réécrit seulement si lastSeen/lastPing ont plus de 12 min (en ligne = 20 min) — réduit le quota Redis ──
     if (presenceStale(device, Date.now())) {
-      await redis.set(
-        `device:${deviceId}`,
-        JSON.stringify({ ...device, lastSeen: Date.now(), lastPing: Date.now() }),
-        { ex: 48 * 3600 }
-      );
+      await writeDeviceKey({ ...device, lastSeen: Date.now(), lastPing: Date.now() });   // 1 commande, TTL selon l'appairage
     }
 
     // ── Sélection frame ─────────────────────────────────────────────────────
@@ -211,7 +208,7 @@ export async function GET(req: NextRequest) {
     const isIdle = (frameSource === "none" || personalAlreadyShown) && pendingValidation === null;
     // Appareil scene-v1 : aucun poll pendant l'animation → retryAfter = durée complète des boucles + marge (contrat §6).
     // Mode banc d'essai actif : l'appareil repasse au pull sous 30 s (au lieu de 300 s au repos) pour découvrir le mode rapidement.
-    const retryAfterBase = delivery.kind === "scene" ? sceneRetryAfterSec(delivery) : isIdle ? 300 : 60;
+    const retryAfterBase = delivery.kind === "scene" ? sceneRetryAfterSec(delivery) : isIdle ? idleRetrySec(networkHot) : 60;   // repos : 5 min si le réseau est chaud, 15 min sinon (lib/pullBudget.ts)
     const retryAfter = benchMode ? Math.min(retryAfterBase, 30) : retryAfterBase;
 
     // ── Métadonnées cartel (lecture à plat, accessible sans parser frame{}) ──
