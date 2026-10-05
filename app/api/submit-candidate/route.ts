@@ -18,6 +18,8 @@ import {
 import { setCandidate, getCurrentCandidate, Candidate } from "@/lib/chain";
 import { markHot } from "@/lib/hot";
 import { getEffectiveThresholds } from "@/lib/adaptiveValidation";
+import { buildCandidateV2 } from "@/lib/podVote";
+import { PPM } from "@/lib/podMetrics";
 import type { ActionEvent, ReplayEvent } from "@/lib/types/actions";
 import { BENCH_SCREENS } from "@/lib/bench/screens";
 import { buildAnimSubmissionFromClip, type AnimScreen, type AnimSubmission } from "@/lib/anim/block";
@@ -111,6 +113,10 @@ export async function POST(req: NextRequest) {
   // Calculés en parallèle : metrics depuis les pixels, thresholds depuis l'historique Redis.
   // Animation : métriques = moyenne des métriques de chaque image (le score que les ESP signent est la moyenne des scores d'images).
   const metrics = animSub ? animSub.metrics : computeComplexity(pixels, W, H);
+  // Validation réelle (P2) : métriques ENTIÈRES (pod-metrics-2) et hash du contenu brut, que les appareils recalculent. Pour un dessin statique, le score
+  // du candidat devient celui de la V2 (corrige le score ≈ 0 de l'e-ink 2,9" BWR, défaut de la V1 : lib/podMetrics.ts).
+  const v2 = animSub ? null : buildCandidateV2(screen, screen === "eink29bwr" ? { black, red } : { buffer });
+  const effectiveScore = v2 ? v2.s / PPM : metrics.score;
 
   // ── Analyse géométrique et temporelle du replay ──────────────────────────────
   const [podGeometry, thresholds] = await Promise.all([
@@ -155,8 +161,8 @@ export async function POST(req: NextRequest) {
   }
 
   // Complexité visuelle — warning seulement
-  if (metrics.score < thresholds.complexity)
-    qualityWarnings.push(`complexité basse (${(metrics.score * 100).toFixed(1)}%)`);
+  if (effectiveScore < thresholds.complexity)
+    qualityWarnings.push(`complexité basse (${(effectiveScore * 100).toFixed(1)}%)`);
 
 
   const existing = await getCurrentCandidate();
@@ -216,7 +222,8 @@ export async function POST(req: NextRequest) {
     replayEvents:   replayEvents.length > 0 ? replayEvents : undefined,
     podHashEnriched: podEnrichedHash,
     podGeometry:     podGeometry ?? undefined,
-    score: metrics.score,
+    score: effectiveScore,
+    ...(v2 ? { v2 } : {}),
     submittedAt: Date.now(),
     expiresAt: Date.now() + CANDIDATE_TTL_SEC * 1000,
     poolSize,
@@ -231,13 +238,11 @@ export async function POST(req: NextRequest) {
   return NextResponse.json({
     ok: true,
     candidateId: candidate.candidateId,
-    score: metrics.score,
+    score: effectiveScore,
     warning,
-    metrics: {
-      entropy:     metrics.entropy,
-      transitions: metrics.transitions,
-      rle:         metrics.rle,
-    },
+    metrics: v2
+      ? { entropy: v2.e / PPM, transitions: v2.t / PPM, rle: v2.r / PPM }
+      : { entropy: metrics.entropy, transitions: metrics.transitions, rle: metrics.rle },
     podGeometry: podGeometry ?? null,
     poolSize,
     expiresIn: CANDIDATE_TTL_SEC,

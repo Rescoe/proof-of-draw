@@ -1,110 +1,45 @@
 // app/api/candidate-frame/route.ts
-// Sert le payload binaire du candidat courant pour validation locale côté ESP (V2).
+// GET /api/candidate-frame?candidateId=… — contenu BRUT du candidat courant, pour que les appareils le revérifient (chantier « validation réelle », P2).
 //
-// GET /api/candidate-frame?candidateId=<uuid>&fmt=bin[&screen=eink29bwr][&deviceId=dev_XXX]
+//   Corps : octets bruts, dans l'ordre canonique de lib/podMetrics.ts (tampon unique ; noir ‖ rouge pour l'e-ink 2,9″). Pas de JSON, pas de base64
+//   (même principe que /api/pull-frame). En-têtes : X-Screen-Type, X-Raw-Hash (SHA-256 hex du corps), X-Metrics-Version.
+//   Les ESP8266 le lisent EN FLUX (readFull() en boucle) : hash SHA-256 + métriques entières sans jamais garder l'image en mémoire.
 //
-// Réponse (fmt=bin) :
-//   eink29bwr : black[4736] + red[4736] = 9472 bytes concat
-//   eink27bw  : buffer[5808] bytes
-//   oled096   : buffer[1024] bytes
-//
-// Header X-Score-Server = score serveur de référence (pour détecter drift côté ESP).
-// 404 si le candidat est expiré ou remplacé → l'ESP bascule en V1 (fallback).
+// COÛT REDIS : 1 lecture du candidat à la PREMIÈRE requête ; la réponse est immuable par candidateId (UUID) → servie ensuite par le CDN :
+// le coût ne dépend pas du nombre de validateurs. Le contenu n'a rien de secret (il est publié dans la galerie une fois le bloc miné).
 
 import { NextRequest, NextResponse } from "next/server";
 import { getCurrentCandidate } from "@/lib/chain";
-import { isBlacklisted, getIP, forbidden } from "@/lib/rateLimit";
-import { redis } from "@/lib/redis";
+import { isPodScreen, rawContent } from "@/lib/podMetrics";
+import { METRICS_VERSION } from "@/lib/podMetrics";
 
-export const runtime = "nodejs";
-
-const DEVICE_ID_REGEX = /^dev_[A-Z0-9]{8}$/;
+export const dynamic = "force-dynamic";
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 export async function GET(req: NextRequest) {
-  const ip = getIP(req);
-  if (await isBlacklisted(ip)) return forbidden("Accès refusé");
-
-  const url         = new URL(req.url);
-  const candidateId = url.searchParams.get("candidateId") ?? "";
-  const deviceId    = url.searchParams.get("deviceId")    ?? "";
-  const fmt         = url.searchParams.get("fmt")         ?? "json";
-
-  if (!candidateId) {
-    return NextResponse.json({ error: "candidateId requis" }, { status: 400 });
-  }
-
-  // Rate limit léger par device (6 req/min) — évite les boucles rapides en cas de bug firmware
-  if (deviceId && DEVICE_ID_REGEX.test(deviceId)) {
-    const rlKey = `rl:cand-frame:${deviceId}`;
-    const count = await redis.incr(rlKey);
-    if (count === 1) await redis.expire(rlKey, 60);
-    if (count > 6) {
-      return NextResponse.json({ error: "Trop de requêtes" }, { status: 429 });
-    }
-  }
+  const candidateId = req.nextUrl.searchParams.get("candidateId") ?? "";
+  if (!UUID_RE.test(candidateId)) return NextResponse.json({ error: "candidateId invalide" }, { status: 400 });
 
   const candidate = await getCurrentCandidate();
-
-  if (!candidate) {
-    return new Response(null, { status: 404, headers: { "X-Reason": "no-candidate" } });
+  if (!candidate || candidate.candidateId !== candidateId || !candidate.v2) {
+    return NextResponse.json({ error: "Candidat introuvable ou sans spécification v2" }, { status: 404, headers: { "Cache-Control": "public, s-maxage=30" } });
   }
-  if (candidate.candidateId !== candidateId) {
-    // Le candidat a expiré ou a été remplacé entre le pull et la validation
-    return new Response(null, {
-      status: 404,
-      headers: {
-        "X-Reason":     "candidate-expired-or-replaced",
-        "X-Current-Id": candidate.candidateId,
-      },
-    });
-  }
+  const screen = candidate.v2.screen;
+  if (!isPodScreen(screen)) return NextResponse.json({ error: "écran non géré" }, { status: 404 });
 
-  if (fmt !== "bin") {
-    return NextResponse.json({
-      candidateId,
-      screen:    candidate.poolScreen,
-      score:     candidate.score,
-      expiresIn: Math.ceil((candidate.expiresAt - Date.now()) / 1000),
-    });
-  }
+  let body: Uint8Array;
+  try { body = rawContent(screen, candidate.payload as { buffer?: string; black?: string; red?: string }); }
+  catch { return NextResponse.json({ error: "contenu illisible" }, { status: 500 }); }
 
-  const payload = candidate.payload as Record<string, string>;
-  const screen  = candidate.poolScreen;
-
-  let data: Buffer;
-  try {
-    if (screen === "eink29bwr") {
-      if (!payload["black"] || !payload["red"]) {
-        return NextResponse.json({ error: "Payload BWR incomplet" }, { status: 500 });
-      }
-      const black = Buffer.from(payload["black"], "base64");
-      const red   = Buffer.from(payload["red"],   "base64");
-      data = Buffer.concat([black, red]); // 9472 bytes : black first, then red
-    } else {
-      if (!payload["buffer"]) {
-        return NextResponse.json({ error: "Payload buffer absent" }, { status: 500 });
-      }
-      data = Buffer.from(payload["buffer"], "base64");
-    }
-  } catch (err) {
-    console.error("[candidate-frame] decode error:", err);
-    return NextResponse.json({ error: "Décodage impossible" }, { status: 500 });
-  }
-
-  console.log(
-    `[candidate-frame] candidateId=${candidateId.slice(0, 8)} screen=${screen} size=${data.length} device=${deviceId || "?"}`
-  );
-
-  return new Response(new Uint8Array(data), {
+  return new NextResponse(Buffer.from(body), {
     status: 200,
     headers: {
-      "Content-Type":   "application/octet-stream",
-      "Content-Length": String(data.length),
-      "X-Candidate-Id": candidateId,
-      "X-Screen":       screen,
-      "X-Score-Server": candidate.score.toFixed(4),
-      "X-Expires-In":   String(Math.ceil((candidate.expiresAt - Date.now()) / 1000)),
-      "Cache-Control":  "no-store",
+      "Content-Type": "application/octet-stream",
+      "Content-Length": String(body.length),
+      "Cache-Control": "public, s-maxage=1800, max-age=1800, immutable",
+      "X-Screen-Type": screen,
+      "X-Raw-Hash": candidate.v2.rawHash,
+      "X-Metrics-Version": String(METRICS_VERSION),
     },
   });
 }

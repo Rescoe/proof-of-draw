@@ -94,6 +94,8 @@ export async function GET(req: NextRequest) {
       // Animation : le score à signer est la moyenne des scores de ses N images (recalculable depuis le bloc). Deux champs de plus
       // seulement pour une animation (≈ 35 octets) : un dessin reçoit exactement la même réponse qu'avant.
       ...(candidate.kind === "animation" && candidate.anim ? { kind: "animation", frames: candidate.anim.frames } : {}),
+      // Validation réelle (P2) : ce que l'appareil doit RECALCULER après GET /api/candidate-frame (≈ 110 octets de plus ; absent pour une animation)
+      ...(candidate.v2 ? { v2: { screen: candidate.v2.screen, bytes: candidate.v2.rawBytes, hash: candidate.v2.rawHash } } : {}),
     },
   });
 }

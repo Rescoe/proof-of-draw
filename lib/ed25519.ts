@@ -7,7 +7,7 @@
 //   message    : string UTF-8 signé par l'ESP ("deviceId:candidateId:score")
 //   sigHex     : 128 chars hex = 64 bytes (signature ED25519)
 
-import { createPublicKey, createVerify } from "node:crypto";
+import { createPublicKey, verify } from "node:crypto";
 
 // Préfixe SPKI pour ED25519 (RFC 8032 / RFC 5958)
 // Permet d'importer une clé publique brute (32 bytes) dans l'API Node.js crypto
@@ -41,7 +41,9 @@ export function verifyEd25519(
     const spkiDer = Buffer.concat([ED25519_SPKI_PREFIX, pubKeyBytes]);
     const pubKey  = createPublicKey({ key: spkiDer, format: "der", type: "spki" });
 
-    return createVerify("ed25519").update(msgBytes).verify(pubKey, sigBytes);
+    // Ed25519 n'a pas de condensé séparé : il FAUT crypto.verify(null, …). L'ancien `createVerify("ed25519")` renvoyait toujours false, même pour une
+    // signature valide (constaté le 05/10/2026) — c'est ce qui rendait le mode strict inutilisable et masquait l'absence de vérification réelle.
+    return verify(null, msgBytes, pubKey, sigBytes);
   } catch {
     // Clé ou signature malformée → rejet silencieux
     return false;

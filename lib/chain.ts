@@ -122,6 +122,9 @@ export interface Candidate {
   // ── Animation : le clip, les empreintes et les scores PAR IMAGE ; `score` = leur moyenne, `imageHash` = leur racine ─────────
   kind?: "animation";
   anim?: import("@/lib/anim/block").AnimCandidatePart;
+
+  // ── Validation réelle (P2) : hash du contenu brut + métriques entières que les appareils RECALCULENT (lib/podVote.ts) ─────────
+  v2?: import("@/lib/podVote").CandidateV2;
 }
 
 export interface ValidationVote {
@@ -132,6 +135,11 @@ export interface ValidationVote {
   score: number;
   signature: string;
   votedAt: number;
+  // ── Vote v2 (additif) : absent = vote hérité (écho du score serveur), compté comme une approbation ─────────────────────────
+  v?: 2;
+  verdict?: "accept" | "reject";
+  reason?: string;
+  suspect?: boolean;
 }
 
 export interface VoteMap {
@@ -327,12 +335,16 @@ export function parseVotesRaw(raw: unknown): VoteMap | null {
   try { return typeof raw === "string" ? JSON.parse(raw) : (raw as VoteMap); } catch { return null; }
 }
 
+export const isRejectVote = (v: ValidationVote): boolean => v.verdict === "reject";
+export const countAccepts = (m: VoteMap): number => Object.values(m.votes).filter((v) => !isRejectVote(v)).length;
+export const countRejects = (m: VoteMap): number => Object.values(m.votes).filter(isRejectVote).length;
+
 /** `prefetched` : votes déjà lus par la route (undefined = lire ici). */
 export async function castVote(
   vote: ValidationVote,
   candidate: Candidate,
   prefetched?: VoteMap | null,
-): Promise<{ quorumReached: boolean; voteCount: number; needed: number }> {
+): Promise<{ quorumReached: boolean; voteCount: number; needed: number; rejectCount?: number }> {
   const voteMap = prefetched !== undefined ? prefetched : await getVotes();
   if (!voteMap || voteMap.candidateId !== candidate.candidateId) {
     return { quorumReached: false, voteCount: 0, needed: 0 };
@@ -341,19 +353,21 @@ export async function castVote(
   if (voteMap.votes[vote.deviceId]) {
     return {
       quorumReached: false,
-      voteCount: Object.keys(voteMap.votes).length,
+      voteCount: countAccepts(voteMap),
       needed: Math.ceil(candidate.poolSize * QUORUM_RATIO),
+      rejectCount: countRejects(voteMap),
     };
   }
 
   voteMap.votes[vote.deviceId] = vote;
   await redis.set(KEY_VOTES, JSON.stringify(voteMap), { ex: CANDIDATE_TTL_SEC });
 
-  const voteCount = Object.keys(voteMap.votes).length;
+  // Seules les APPROBATIONS comptent pour le quorum ; un refus signé (vote v2) est conservé mais ne finalise rien.
+  const voteCount = countAccepts(voteMap);
   const needed    = Math.ceil(candidate.poolSize * QUORUM_RATIO);
   const quorumReached = voteCount >= Math.max(1, needed);
 
-  return { quorumReached, voteCount, needed };
+  return { quorumReached, voteCount, needed, rejectCount: countRejects(voteMap) };
 }
 
 // ─── Sélection équitable du mineur ───────────────────────────────────────────

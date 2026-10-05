@@ -33,6 +33,8 @@ import { dequeueNextDraw } from "@/lib/drawQueue";
 import { invalidateThresholdsCache } from "@/lib/adaptiveValidation";
 import { broadcastAnimation } from "@/lib/anim/broadcast";
 import { invalidateNetworkSnapshot } from "@/lib/networkSnapshot";
+import { checkVoteV2, parseVoteV2, voteMessageV2 } from "@/lib/podVote";
+import { PPM } from "@/lib/podMetrics";
 
 const DEVICE_ID_REGEX = /^dev_[A-Z0-9]{8}$/;
 const BLACKLIST_TTL = parseInt(process.env.BLACKLIST_TTL_SECONDS ?? "604800");
@@ -75,7 +77,10 @@ export async function POST(req: NextRequest) {
     const { deviceId, candidateId, entropy, transitions, rle, score, signature } = body as Record<string, string | number>;
 
     if (!deviceId || !DEVICE_ID_REGEX.test(String(deviceId))) return json({ error: "deviceId invalide" }, 400);
-    if (!candidateId || entropy == null || transitions == null || rle == null || score == null) return json({ error: "Métriques manquantes" }, 400);
+    // Vote v2 (validation réelle, P2) : l'appareil a recalculé le hash et les métriques (e, t, r en ppm) et signe son verdict. Voir lib/podVote.ts.
+    const isV2 = Number((body as Record<string, unknown>).v) === 2;
+    if (!isV2 && (!candidateId || entropy == null || transitions == null || rle == null || score == null)) return json({ error: "Métriques manquantes" }, 400);
+    if (!candidateId) return json({ error: "candidateId manquant" }, 400);
 
     // UN MGET : blacklist IP + appareil + candidat + votes (≈ 5 commandes avant le 05/10/2026 : blacklist, appareil, candidat, votes + écriture)
     const raws = await redis.mget<unknown[]>(`bl:ip:${ip}`, `device:${String(deviceId)}`, PULL_KEY_CANDIDATE, PULL_KEY_VOTES);
@@ -89,9 +94,9 @@ export async function POST(req: NextRequest) {
     const prefetchedVotes = parseVotesRaw(raws[3]);
     if (candidate.candidateId !== String(candidateId)) return json({ error: "candidateId ne correspond pas au candidat actif", current: candidate.candidateId }, 409);
 
-    const espScore = Number(score);
+    let espScore = Number(score);
     const serverScore = candidate.score;
-    const drift = Math.abs(espScore - serverScore);
+    const drift = isV2 ? 0 : Math.abs(espScore - serverScore);
     if (drift > 0.4) console.warn(`[validation-result] drift élevé device=${deviceId} drift=${drift.toFixed(3)}`);
 
     // ── Vérification signature ED25519 ────────────────────────────────────────
@@ -100,10 +105,33 @@ export async function POST(req: NextRequest) {
     // enregistré et actif. Cela permet le minage même en cas d'incompatibilité
     // de librairie ED25519 entre l'ESP et Node.js (problème rhempel vs OpenSSL).
     // STRICT_SIGNATURE=true dans les variables Vercel pour réactiver le rejet.
+    // Vote v2 : signature OBLIGATOIRE (jamais permissive) sur « pod-vote-v2|appareil|candidat|hash|version|e|t|r|verdict » ; un accept doit reproduire
+    // exactement le hash et les métriques du serveur (calcul entier, tolérance zéro). Un reject signé est conservé mais ne finalise rien.
+    let v2Vote: { e: number; t: number; r: number; verdict: "accept" | "reject"; reason?: string; suspect: boolean } | null = null;
+    if (isV2) {
+      if (!candidate.v2) return json({ error: "Candidat sans spécification v2 : voter en v1" }, 409);
+      const parsed = parseVoteV2(body);
+      if (!parsed || parsed.deviceId !== String(deviceId) || parsed.candidateId !== candidate.candidateId) return json({ error: "Vote v2 invalide" }, 400);
+      const sig2 = String(signature ?? "");
+      if (!device.publicKey || sig2.length !== 128 || !verifyEd25519(device.publicKey, voteMessageV2(parsed), sig2)) {
+        console.warn(`[validation-result] vote v2 : signature invalide ou clé absente device=${deviceId}`);
+        return json({ error: "Signature invalide" }, 403);
+      }
+      const check = checkVoteV2(candidate.v2, parsed);
+      if (!check.ok) {
+        console.warn(`[validation-result] vote v2 refusé (${check.reason} différent du candidat) device=${deviceId}`);
+        return json({ error: `Vote refusé : ${check.reason} différent du candidat`, reason: check.reason }, 422);
+      }
+      v2Vote = { e: parsed.e, t: parsed.t, r: parsed.r, verdict: check.verdict, reason: parsed.reason, suspect: check.suspect };
+      espScore = check.verdict === "accept" ? candidate.v2.s / PPM : 0;
+    }
+
     const STRICT_SIG = process.env.STRICT_SIGNATURE === "true";
     const sigStr = String(signature ?? "");
 
-    if (device.publicKey && sigStr.length === 128) {
+    if (isV2) {
+      // déjà vérifiée plus haut
+    } else if (device.publicKey && sigStr.length === 128) {
       // Tentative de vérification ED25519 — log le résultat, ne bloque QUE en mode strict
       const message = `${deviceId}:${String(candidateId)}:${espScore.toFixed(3)}`;
       const valid   = verifyEd25519(device.publicKey, message, sigStr);
@@ -128,8 +156,18 @@ export async function POST(req: NextRequest) {
       console.warn(`[validation-result] pas de publicKey device=${deviceId} — mise à jour firmware requise`);
     }
 
-    const vote: ValidationVote = { deviceId: String(deviceId), entropy: Number(entropy), transitions: Number(transitions), rle: Number(rle), score: espScore, signature: String(signature ?? ""), votedAt: Date.now() };
-    const { quorumReached, voteCount, needed } = await castVote(vote, candidate, prefetchedVotes);
+    const vote: ValidationVote = v2Vote
+      ? { deviceId: String(deviceId), entropy: v2Vote.e / PPM, transitions: v2Vote.t / PPM, rle: v2Vote.r / PPM, score: espScore, signature: String(signature ?? ""), votedAt: Date.now(),
+          v: 2, verdict: v2Vote.verdict, ...(v2Vote.reason ? { reason: v2Vote.reason } : {}), ...(v2Vote.suspect ? { suspect: true } : {}) }
+      : { deviceId: String(deviceId), entropy: Number(entropy), transitions: Number(transitions), rle: Number(rle), score: espScore, signature: String(signature ?? ""), votedAt: Date.now() };
+    const { quorumReached, voteCount, needed, rejectCount } = await castVote(vote, candidate, prefetchedVotes);
+
+    // Trop de refus pour que le quorum d'approbations soit encore atteignable : le candidat est refusé par le réseau (vote v2 uniquement).
+    if (!quorumReached && rejectCount !== undefined && rejectCount > 0 && candidate.poolSize - rejectCount < Math.max(1, needed)) {
+      console.log(`[validation-result] candidat REFUSÉ par le réseau candidate=${candidate.candidateId} refus=${rejectCount}/${candidate.poolSize}`);
+      await clearCandidate();
+      return json({ ok: true, blockMined: false, rejected: true, rejectCount, voteCount, needed }, 200);
+    }
 
     // voteCount===0 && needed===0 → voteMap absent ou candidateId désynchronisé
     if (voteCount === 0 && needed === 0 && !quorumReached) {
@@ -146,7 +184,8 @@ export async function POST(req: NextRequest) {
         return json({ ok: true, blockMined: false, alreadyFinalized: true, voteCount, needed }, 200);
       }
       const voteMap = await getVotes();
-      const allVotes = voteMap ? Object.values(voteMap.votes) : [vote];
+      const accepted = voteMap ? Object.values(voteMap.votes).filter((v) => v.verdict !== "reject") : [];
+      const allVotes = accepted.length > 0 ? accepted : [vote];
       const frameId = crypto.randomUUID();
       // vote.deviceId = l'ESP dont le vote vient d'atteindre le quorum → premier mineur
       const block = await finalizeBlock(candidate, allVotes, frameId, vote.deviceId);

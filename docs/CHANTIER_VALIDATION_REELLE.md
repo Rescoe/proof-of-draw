@@ -345,3 +345,18 @@ Conséquences : un seul format de vote et un seul vérificateur public pour tout
 
 ## Annexe D — Avancement
 - **05/10/2026, P0 amorcé** : `lib/keyPinning.ts` (+ `tests/keyPinning.test.ts`), branché dans `/api/register` **derrière `PIN_DEVICE_KEY=true`** (désactivé par défaut pour ne pas bloquer un propriétaire qui efface l'EEPROM). **À faire pour clore P0** : réinitialisation de clé par le profil, vote par profil, exclusion de l'auteur, champ `verdict`, `STRICT_SIGNATURE` par version de firmware, tests hostiles (§ 8, § 9).
+
+## Annexe E — Nouveaux constats et avancement (05/10/2026, session de démarrage)
+
+**Constats découverts en implémentant (niveau [C], reproduits par des tests)**
+- **F10 — Le score serveur de l'e-ink 2,9″ BWR était ≈ 0,001 pour TOUT dessin** (noir ou rouge) : la V1 fusionnait les canaux par OU des bits bruts (1 = blanc), si bien qu'un pixel n'était « actif » que s'il était noir ET rouge. Corrigé en V2 (actif = noir OU rouge). Les blocs déjà minés gardent leurs scores V1 (non réécrits).
+- **F11 — `verifyEd25519` (serveur) refusait TOUTES les signatures, même valides** : `createVerify("ed25519")` ne fonctionne pas, il faut `crypto.verify(null, …)`. C'est ce qui rendait `STRICT_SIGNATURE` inutilisable (« incompatibilité de librairie » supposée) et le mode permissif trompeur. **Corrigé** (`lib/ed25519.ts`, `tests/ed25519.test.ts`). Conséquence : la signature V1 `deviceId:candidateId:score` peut maintenant être réellement vérifiée ; **lire les journaux Vercel** (« signature ED25519 valide » / « invalide ») pour savoir si les firmwares actuels signent un message conforme avant de toucher à `STRICT_SIGNATURE`.
+- **F12 — Course sur les votes** : `castVote` relit/modifie/réécrit toute la table des votes (`lib/chain.ts`) ; deux votes simultanés peuvent s'écraser. À corriger avant la bascule stricte (écriture atomique par appareil : `HSET`, ou script).
+
+**Livré**
+- **P0 (partiel)** : `lib/keyPinning.ts` (derrière `PIN_DEVICE_KEY`), `verifyEd25519` réparée.
+- **P1 (livré)** : `lib/podMetrics.ts` + `lib/podMetricsTable.ts` (généré par `scripts/gen-pod-metrics-table.js`), `esp8266/_shared/pod_metrics.h` (+ table, harnais `host/metrics_harness.cpp`). Compilation vérifiée avec les chaînes **xtensa (ESP8266)** et **arm-none-eabi (R4)** (`-Wall -Wextra -Werror`) ; **le test différentiel g++ n'a pas pu s'exécuter ici (aucun g++ hôte)** : il s'active seul dès que `g++` est disponible (`CXX=…`), à lancer avant le premier flash.
+- **P2 (serveur, livré)** : `lib/podVote.ts` ; `candidate.v2` (hash brut + métriques entières) calculé à la soumission des dessins statiques ; `GET /api/candidate-frame?candidateId=…` (octet-stream, immuable, CDN) ; `validate-candidate` annonce `v2 {screen, bytes, hash}` ; `validation-result` accepte le **vote v2** (signature Ed25519 obligatoire, accept exact au hash/ppm près, refus signé recevable, quorum sur les approbations seulement, candidat refusé quand le quorum devient inatteignable). Les votes v1 restent acceptés (compatibilité). Score d'un candidat statique = score V2.
+- Tests : 300 (299 passent, 1 ignoré : g++), `tsc` propre.
+
+**Reste (ordre)** : **P3 firmware ESP8266** (validation en flux : SHA-256 BearSSL + `PodFeeder`, vote v2, `[VALIDATE]` au Serial — sauvegarde `firmware-backups/` d'abord ; essai matériel requis) ; puis P0 restant (vote par profil, exclusion de l'auteur, réinitialisation de clé), F12, P5 (comité), P6 (bascule stricte).
