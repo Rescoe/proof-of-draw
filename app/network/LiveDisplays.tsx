@@ -78,6 +78,7 @@ function payloadToImageData(p: ImagePayload): ImageData | null {
 
 export function ShownThumb({ frameId, screen, box }: { frameId: string; screen: string; box: { w: number; h: number } }) {
   const ref = useRef<HTMLCanvasElement>(null);
+  const wrapRef = useRef<HTMLDivElement>(null);   // observé à la place du canvas : un canvas en display:none ne « coupe » jamais la fenêtre, l'image ne se chargeait donc jamais (carrés blancs)
   const [state, setState] = useState<"loading" | "ok" | "missing">("loading");
   const [native, setNative] = useState<{ w: number; h: number } | null>(null);
 
@@ -99,8 +100,8 @@ export function ShownThumb({ frameId, screen, box }: { frameId: string; screen: 
       setState("ok");
       });
     };
-    const canvas = ref.current;
-    if (!canvas || !("IntersectionObserver" in window)) {
+    const target = wrapRef.current;
+    if (!target || !("IntersectionObserver" in window)) {
       start();
       return () => { alive = false; };
     }
@@ -110,14 +111,14 @@ export function ShownThumb({ frameId, screen, box }: { frameId: string; screen: 
         observer.disconnect();
       }
     }, { rootMargin: "160px" });
-    observer.observe(canvas);
+    observer.observe(target);
     return () => { alive = false; observer.disconnect(); };
   }, [frameId, screen]);
 
   const scale = native ? Math.min(box.w / native.w, box.h / native.h) : 1;
   const w = native ? Math.round(native.w * scale) : box.w, h = native ? Math.round(native.h * scale) : box.h;
   return (
-    <div className="ld-thumb" style={{ width: box.w, height: box.h }}>
+    <div ref={wrapRef} className="ld-thumb" style={{ width: box.w, height: box.h }}>
       <canvas ref={ref} style={{ width: w, height: h, imageRendering: "pixelated", display: state === "ok" ? "block" : "none" }} />
       {state !== "ok" && <span className="ld-muted">{state === "loading" ? "…" : "aperçu expiré"}</span>}
     </div>

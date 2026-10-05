@@ -8,7 +8,7 @@ import { CORE_NODE_ID, deviceNodeId, screenNodeId } from "./model";
 import { SidePanel } from "./SidePanel";
 import { ServerInfoPanel } from "./ServerInfoPanel";
 import { GlobalTerminalPanel, useNetworkEventStream } from "./GlobalTerminal";
-import { useLiveDisplays } from "./LiveDisplays";
+import { LiveDisplaysSection, useLiveDisplays } from "./LiveDisplays";
 
 type Props = { snapshot: NetworkSnapshot | null; fixture?: string };
 
@@ -310,6 +310,11 @@ export function NetworkMap({ snapshot, fixture }: Props) {
       `}</style>
     </div>
 
+    <LiveDisplaysSection
+      snapshot={snapshot}
+      data={live.data}
+      onSelect={(device, screen) => handleSelect(device, screen)}
+    />
     </>
   );
 }
