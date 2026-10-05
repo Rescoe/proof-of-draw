@@ -583,6 +583,43 @@ void burnTFTCartel() {
   tft.print(botLine);
 }
 
+// Cartel d'une ANIMATION : le clip (128×64) occupe y 48..111 ; les deux bandes libres de 48 px portent un cartel FIXE, dessiné une seule fois par lecture
+// (cet écran n'a pas de tactile : rien à afficher/cacher). Haut : RESCOE · #bloc + titre sur 2 lignes. Bas : artiste + date. Données = celles rangées avec le clip.
+void drawAnimCartel(const String& title, const String& artist, const String& ts, int block) {
+  const int TOP = 48, BOT = 112;
+  tft.fillRect(0, 0, TFT_W, TOP, C_DARK);
+  tft.drawFastHLine(0, TOP - 1, TFT_W, C_GOLD);
+  tft.setTextSize(1);
+  tft.setTextColor(C_GOLD, C_DARK);
+  tft.setCursor(3, 4);
+  tft.print("RESCOE");
+  if (block >= 0) {
+    String blk = "#" + String(block);
+    tft.setTextColor(C_GREY, C_DARK);
+    int bx = TFT_W - (int)blk.length() * 6 - 3;
+    if (bx < 50) bx = 50;
+    tft.setCursor(bx, 4);
+    tft.print(blk);
+  }
+  tft.drawFastHLine(0, 14, TFT_W, C_GREY);
+  String tl = title.length() ? title : String("Sans titre");
+  tft.setTextColor(C_WHITE, C_DARK);
+  tft.setCursor(3, 20);
+  tft.print(tl.substring(0, 21));
+  if (tl.length() > 21) { tft.setCursor(3, 32); tft.print(tl.substring(21, 42)); }
+
+  tft.fillRect(0, BOT, TFT_W, TFT_H - BOT, C_DARK);
+  tft.drawFastHLine(0, BOT, TFT_W, C_GOLD);
+  tft.setTextColor(C_WHITE, C_DARK);
+  tft.setCursor(3, BOT + 6);
+  tft.print(artist.length() ? artist.substring(0, 21) : String("Proof-of-Draw"));
+  if (ts.length()) {
+    tft.setTextColor(C_GREY, C_DARK);
+    tft.setCursor(3, BOT + 20);
+    tft.print(ts.substring(0, 21));
+  }
+}
+
 // Affiche un frame RGB565 depuis un buffer complet (restauration SD boot).
 //
 // ⚠️ ORDRE DES BYTES — explication complète :
@@ -1170,6 +1207,7 @@ bool doFetchScene(const String& frameId, const String& frameSource, const String
 // l'écran affiche « Banc d'essai terminé » jusqu'à la prochaine image.
 static uint16_t g_benchRow[TFT_W];                   // 128 pixels = une ligne de la zone
 podbenchesp::State g_bench;
+podanimesp::State g_anim;                            // animation de bloc active (clip en flash), voir pod_anim_esp.h
 // Le TFT 1.8" est piloté en SPI LOGICIEL (bit-banging) : peindre une zone entière prend des centaines de ms. On rend la main au watchdog et au Wi-Fi après
 // chaque ligne (yield) et on remplit l'écran par bandes — sinon l'ESP redémarre (« déconnexion / reconnexion »).
 struct YieldTft {
@@ -1180,13 +1218,18 @@ struct YieldTft {
 };
 struct BenchTftPresenter {
   bool resident = false;                             // animation de bloc en boucle : on garde la dernière image entre deux tâches réseau
-  void begin(const podbench::Clip& c) { for (int y = 0; y < TFT_H; y += 8) { tft.fillRect(0, y, TFT_W, 8, c.bg); yield(); } }
+  void begin(const podbench::Clip& c) {
+    for (int y = 0; y < TFT_H; y += 8) { tft.fillRect(0, y, TFT_W, 8, c.bg); yield(); }
+    if (resident) drawAnimCartel(g_anim.title, g_anim.artist, g_anim.ts, g_anim.block);   // cartel fixe dans les bandes libres, sans tactile
+  }
   template <class Hook> bool play(const podbench::Clip& c, uint8_t* cur, Hook&& hook) { YieldTft yt; return podbench::play<podbench::GeoOne<48> >(c, cur, yt, g_benchRow, hook); }
   void end() { if (!resident) tftStatus("Banc d'essai", "termine"); }
 };
 BenchTftPresenter g_benchPresenter;
 BenchTftPresenter g_animPresenter;                   // même écran, mode « résident » (g_animPresenter.resident = true dans setup())
-podanimesp::State g_anim;                            // animation de bloc active (clip en flash), voir pod_anim_esp.h
+
+/** Cartel du pull courant → rangé avec le clip (à appeler JUSTE AVANT podanimesp::acquire). */
+static void setAnimCartel() { g_anim.title = pendingWorkTitle; g_anim.artist = pendingArtistName; g_anim.ts = pendingDisplayTs; g_anim.block = currentBlockIndex; }
 
 /** Temps avant la prochaine tâche réseau (pull, vote, ré-validation) : l'animation ne la retarde jamais. */
 unsigned long msUntilNextTask() {
@@ -1362,7 +1405,8 @@ bool doPull() {
 
   if (newFrameId == lastFrameId) {
     Serial.println("[PULL] Frame déjà affichée");
-    if (g_anim.pendingHash.length() == 64) podanimesp::acquire(g_anim, String(SERVER_URL));
+    if (nextPullIntervalMs < (unsigned long)pullRetryAfter * 1000UL && newCandId.length() == 0) nextPullIntervalMs = (unsigned long)pullRetryAfter * 1000UL;   // image déjà affichée : rythme de repos du serveur (quota Redis)
+    if (g_anim.pendingHash.length() == 64) { setAnimCartel(); podanimesp::acquire(g_anim, String(SERVER_URL)); }
     return true;
   }
 
@@ -1373,7 +1417,7 @@ bool doPull() {
   else {
     const bool shown = doFetchFrame(newFrameId, newFrameSource) && lastFrameId == newFrameId;
     // L'affiche est à l'écran : une animation de bloc → on rapatrie le clip et on la joue en boucle ; une image fixe → l'animation précédente s'arrête.
-    if (shown) { if (g_anim.pendingHash.length() == 64) podanimesp::acquire(g_anim, String(SERVER_URL)); else podanimesp::forget(g_anim); }
+    if (shown) { if (g_anim.pendingHash.length() == 64) { setAnimCartel(); podanimesp::acquire(g_anim, String(SERVER_URL)); } else podanimesp::forget(g_anim); }
     return true;
   }
   if (g_anim.on) podanimesp::forget(g_anim);        // une scène ANA remplace l'animation de bloc

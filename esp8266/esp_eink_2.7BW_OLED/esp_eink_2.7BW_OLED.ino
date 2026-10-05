@@ -1595,6 +1595,7 @@ bool doPull() {
   // ── Frame déjà affichée ──
   if (newFrameId == lastFrameId) {
     Serial.println("[PULL] Frame déjà affichée");
+    if (nextPullIntervalMs < (unsigned long)pullRetryAfter * 1000UL && newCandId.length() == 0) nextPullIntervalMs = (unsigned long)pullRetryAfter * 1000UL;   // image déjà affichée : rythme de repos du serveur (quota Redis)
     if (newScreen == SCREEN_OLED && g_anim.pendingHash.length() == 64 && podanimesp::acquire(g_anim, String(SERVER_URL))) oledTickActive = false;
     return true;
   }

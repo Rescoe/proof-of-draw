@@ -205,7 +205,11 @@ export async function GET(req: NextRequest) {
     }
 
     // ── retryAfter : hint pour les ESP afin de réduire le polling en idle ───
-    const isIdle = frameSource === "none" && pendingValidation === null;
+    // QUOTA REDIS : une frame PERSONNELLE (« Afficher sur mon écran ») n'est pas supprimée par l'ACK (elle sert à restaurer l'image après un redémarrage).
+    // Si l'appareil l'a déjà confirmée (ACK postérieur à sa création), il n'a rien de nouveau : rythme de repos (300 s) au lieu de 60 s — avant, un écran qui
+    // affichait une image envoyée depuis la galerie tirait le pull chaque minute, indéfiniment (≈ 240 commandes/heure/écran).
+    const personalAlreadyShown = frameSource === "personal" && typeof personalFrame?.createdAt === "number" && (device.lastFrameReceivedAt ?? 0) >= personalFrame.createdAt;
+    const isIdle = (frameSource === "none" || personalAlreadyShown) && pendingValidation === null;
     // Appareil scene-v1 : aucun poll pendant l'animation → retryAfter = durée complète des boucles + marge (contrat §6).
     // Mode banc d'essai actif : l'appareil repasse au pull sous 30 s (au lieu de 300 s au repos) pour découvrir le mode rapidement.
     const retryAfterBase = delivery.kind === "scene" ? sceneRetryAfterSec(delivery) : isIdle ? 300 : 60;

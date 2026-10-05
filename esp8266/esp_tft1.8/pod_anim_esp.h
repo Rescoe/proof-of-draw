@@ -28,7 +28,7 @@ namespace podanimesp {
 static const size_t   MAX_CLIP       = 9216;     // même plafond que le serveur (lib/bench/clip.ts)
 static const uint32_t MIN_TLS_BLOCK  = 17000;    // plus gros bloc libre pour télécharger : clip 9 Ko + copie 1 Ko + TLS BearSSL
 static const char*    FILE_CLIP      = "/anim.bin";
-static const char*    FILE_META      = "/anim.txt";   // 2 lignes : hash du bloc, taille
+static const char*    FILE_META      = "/anim.txt";   // 6 lignes : hash du bloc, taille, titre, artiste, date, n° de bloc (le cartel suit le clip)
 static const char*    FILE_TMP       = "/anim.tmp";   // téléchargement en cours (renommé en /anim.bin une fois validé)
 
 struct State {
@@ -36,6 +36,9 @@ struct State {
   bool   on = false;          // une animation est active (sur la flash, ou à retélécharger)
   String hash = "";           // bloc de l'animation active
   size_t bytes = 0;
+  // Cartel de l'animation (fixe : certains écrans n'ont pas de tactile). À remplir AVANT acquire() avec ceux du pull ; relu au démarrage.
+  String title = "", artist = "", ts = "";
+  int    block = -1;
   String pendingHash = "";    // pointeur reçu par le dernier pull (vide = aucun)
   size_t pendingBytes = 0;
 };
@@ -50,6 +53,11 @@ inline void begin(State& st) {
   if (!m) return;
   String h = m.readStringUntil('\n'); h.trim();
   String b = m.readStringUntil('\n'); b.trim();
+  st.title = m.readStringUntil('\n');  st.title.trim();
+  st.artist = m.readStringUntil('\n'); st.artist.trim();
+  st.ts = m.readStringUntil('\n');     st.ts.trim();
+  String blk = m.readStringUntil('\n'); blk.trim();
+  st.block = blk.length() ? (int)blk.toInt() : -1;
   m.close();
   File f = LittleFS.open(FILE_CLIP, "r");
   const size_t n = f ? f.size() : 0;
@@ -66,6 +74,7 @@ inline void begin(State& st) {
 inline void forget(State& st) {
   if (st.on) Serial.println("[ANIM] arrêt : nouvelle image fixe");
   st.on = false; st.hash = ""; st.bytes = 0;
+  st.title = ""; st.artist = ""; st.ts = ""; st.block = -1;
   if (!st.fsOk) return;
   if (LittleFS.exists(FILE_META)) LittleFS.remove(FILE_META);
   if (LittleFS.exists(FILE_CLIP)) LittleFS.remove(FILE_CLIP);
@@ -188,9 +197,9 @@ inline bool acquire(State& st, const String& serverUrl) {
     if (LittleFS.exists(FILE_CLIP)) LittleFS.remove(FILE_CLIP);
     if (!LittleFS.rename(FILE_TMP, FILE_CLIP)) { Serial.println("[ANIM] renommage impossible"); LittleFS.remove(FILE_TMP); return false; }
     File m = LittleFS.open(FILE_META, "w");                            // clip COMPLET d'abord, marqueur ensuite
-    if (m) { m.println(st.pendingHash); m.println((unsigned)n); m.close(); }
+    if (m) { m.println(st.pendingHash); m.println((unsigned)n); m.println(st.title); m.println(st.artist); m.println(st.ts); m.println(st.block); m.close(); }
     st.on = true; st.hash = st.pendingHash; st.bytes = n;
-    Serial.printf("[ANIM] clip reçu en %lu ms et rangé en flash : lecture en boucle\n", ms);
+    Serial.printf("[ANIM] clip reçu en %lu ms et rangé en flash : lecture en boucle (cartel : %s / %s)\n", ms, st.title.c_str(), st.artist.c_str());
     return true;
   }
 
