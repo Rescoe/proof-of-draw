@@ -295,6 +295,11 @@ Ne jamais saturer Redis. Toute route, page, cron ou firmware qui y accède doit 
 - **Pull d'écran (05/10/2026)** : 1 `MGET` (appareil + frames + tête + candidat + votes + notification + banc d'essai + drapeau d'observation), rate-limit ÉCHANTILLONNÉ 1/8, présence réécrite toutes les 12 min (en ligne = 20 min), observation dépilée seulement si `chain:obs:pending` : ≈ 1,5 commande au repos (5 avant). Flux par bloc (pull-frame, ack, validate, vote) en 1 MGET ; mode actif/dormant (repos 5 min si `net:hot`, sinon 15 min ; `CANDIDATE_TTL_SEC` 1800). Plan 200 k/mois, leviers, tarifs Upstash, décisions : `docs/PLAN_REDIS_200K.md`.
 - Manquement du 03/10 (page `/bench` : ≈ 8 600 commandes/h par onglet, onglet caché compris) et plan de réduction (tâches Q1–Q12) : `docs/NOTE_BENCH_ET_QUOTAS_2026_10_03.md`.
 
+## Chantier à venir : validation réelle (cadrage du 05/10/2026)
+
+Aujourd'hui le vote des ESP est un **écho** du `score_server` (aucun calcul local, signatures permissives, identité usurpable). Dossier complet, modèle de menace, spécification
+des métriques entières, plan en 7 phases et décisions à prendre : `docs/CHANTIER_VALIDATION_REELLE.md`. **Ne pas parler de « consensus/preuve » dans l'UI au-delà du niveau réellement atteint.**
+
 ## Non-goals
 
 Ne pas faire :
