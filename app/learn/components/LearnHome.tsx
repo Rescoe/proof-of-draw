@@ -45,6 +45,7 @@ export function LearnHome() {
         <div className={styles.heroActions}>
           <Link className={styles.primaryButton} href="/learn?path=install#installer">Installer mon écran</Link>
           <Link className={styles.secondaryButton} href="/draw">Dessiner maintenant</Link>
+          <Link className={styles.secondaryButton} href="/learn?path=power#consommation">Consommation électrique</Link>
         </div>
       </div>
 

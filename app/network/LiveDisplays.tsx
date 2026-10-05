@@ -19,7 +19,7 @@ const POLL_MS = 60_000;
 
 // ─── Données ─────────────────────────────────────────────────────────────────
 
-export function useLiveDisplays(): { data: DisplaysResponse | null; error: boolean } {
+export function useLiveDisplays(fixture?: string): { data: DisplaysResponse | null; error: boolean } {
   const [data, setData] = useState<DisplaysResponse | null>(null);
   const [error, setError] = useState(false);
 
@@ -27,7 +27,8 @@ export function useLiveDisplays(): { data: DisplaysResponse | null; error: boole
     let alive = true;
     let timer: ReturnType<typeof setInterval> | null = null;
     const load = () => {
-      fetch("/api/network/displays")
+      const suffix = fixture ? `?fixture=${encodeURIComponent(fixture)}` : "";
+      fetch(`/api/network/displays${suffix}`)
         .then((r) => (r.ok ? r.json() : Promise.reject(new Error(String(r.status)))))
         .then((d: DisplaysResponse) => { if (alive) { setData(d); setError(false); } })
         .catch(() => { if (alive) setError(true); });
@@ -41,7 +42,7 @@ export function useLiveDisplays(): { data: DisplaysResponse | null; error: boole
     if (document.visibilityState === "visible") start();
     document.addEventListener("visibilitychange", onVisibility);
     return () => { alive = false; stop(); document.removeEventListener("visibilitychange", onVisibility); };
-  }, []);
+  }, [fixture]);
 
   return { data, error };
 }
@@ -82,8 +83,12 @@ export function ShownThumb({ frameId, screen, box }: { frameId: string; screen: 
 
   useEffect(() => {
     let alive = true;
+    let started = false;
     setState("loading");
-    loadImage(frameId, screen).then((p) => {
+    const start = () => {
+      if (started) return;
+      started = true;
+      loadImage(frameId, screen).then((p) => {
       if (!alive) return;
       const data = p ? payloadToImageData(p) : null;
       const c = ref.current, ctx = c?.getContext("2d");
@@ -92,8 +97,21 @@ export function ShownThumb({ frameId, screen, box }: { frameId: string; screen: 
       ctx.putImageData(data, 0, 0);
       setNative({ w: data.width, h: data.height });
       setState("ok");
-    });
-    return () => { alive = false; };
+      });
+    };
+    const canvas = ref.current;
+    if (!canvas || !("IntersectionObserver" in window)) {
+      start();
+      return () => { alive = false; };
+    }
+    const observer = new IntersectionObserver((entries) => {
+      if (entries.some((entry) => entry.isIntersecting)) {
+        start();
+        observer.disconnect();
+      }
+    }, { rootMargin: "160px" });
+    observer.observe(canvas);
+    return () => { alive = false; observer.disconnect(); };
   }, [frameId, screen]);
 
   const scale = native ? Math.min(box.w / native.w, box.h / native.h) : 1;

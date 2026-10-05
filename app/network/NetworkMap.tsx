@@ -1,36 +1,58 @@
 "use client";
 
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect } from "react";
 import type { NetworkSnapshot, NetworkDevice } from "@/lib/networkSnapshot";
 import { NetworkStage } from "./NetworkStage";
+import { Graph, type GraphSelection } from "./graph";
+import { CORE_NODE_ID, deviceNodeId, screenNodeId } from "./model";
 import { SidePanel } from "./SidePanel";
 import { ServerInfoPanel } from "./ServerInfoPanel";
-import { GlobalTerminalPanel } from "./GlobalTerminal";
-import { LiveDisplaysSection, useLiveDisplays } from "./LiveDisplays";
+import { GlobalTerminalPanel, useNetworkEventStream } from "./GlobalTerminal";
+import { useLiveDisplays } from "./LiveDisplays";
 
-type Props = { snapshot: NetworkSnapshot | null };
+type Props = { snapshot: NetworkSnapshot | null; fixture?: string };
 
 // Sélection unifiée : un device (+ éventuellement un de ses écrans), ou le
 // nœud central "RESCOE" (infos serveur/réseau global).
-type Selection =
-  | { kind: "device"; device: NetworkDevice; focusScreen?: string }
-  | { kind: "server" };
+type ViewMode = "classic" | "diagram";
 
-export function NetworkMap({ snapshot }: Props) {
-  const [selected, setSelected] = useState<Selection | null>(null);
+export function NetworkMap({ snapshot, fixture }: Props) {
+  const [selected, setSelected] = useState<GraphSelection | null>(null);
+  const [viewMode, setViewMode] = useState<ViewMode>("classic");
   // Ce que chaque écran affiche réellement (ACK firmware) — une requête partagée par la section « en direct » et le panneau appareil
-  const live = useLiveDisplays();
+  const live = useLiveDisplays(fixture);
+  // Une seule boucle d'événements pour le terminal ET la vue expérimentale :
+  // activer LAB ne crée aucune requête supplémentaire vers Redis.
+  const eventStream = useNetworkEventStream(fixture);
+
+  useEffect(() => {
+    const requested = new URLSearchParams(window.location.search).get("networkView");
+    if (requested === "diagram") setViewMode("diagram");
+  }, []);
+
+  const switchView = useCallback((mode: ViewMode) => {
+    setViewMode(mode);
+    const url = new URL(window.location.href);
+    if (mode === "diagram") url.searchParams.set("networkView", "diagram");
+    else url.searchParams.delete("networkView");
+    window.history.replaceState({}, "", `${url.pathname}${url.search}${url.hash}`);
+  }, []);
 
   const handleSelect = useCallback((device: NetworkDevice, screen?: string) => {
+    const nodeId = screen ? screenNodeId(device.publicId, screen) : deviceNodeId(device.publicId);
     setSelected((prev) => {
-      const same = prev?.kind === "device" &&
-        prev.device.deviceId === device.deviceId && prev.focusScreen === screen;
-      return same ? null : { kind: "device", device, focusScreen: screen };
+      return prev?.nodeId === nodeId ? null : screen
+        ? { kind: "screen", nodeId, device, screen }
+        : { kind: "device", nodeId, device };
     });
   }, []);
 
   const handleSelectServer = useCallback(() => {
-    setSelected((prev) => (prev?.kind === "server" ? null : { kind: "server" }));
+    setSelected((prev) => (prev?.kind === "core" ? null : { kind: "core", nodeId: CORE_NODE_ID }));
+  }, []);
+
+  const handleGraphSelect = useCallback((selection: GraphSelection) => {
+    setSelected((prev) => prev?.nodeId === selection.nodeId ? null : selection);
   }, []);
 
   if (!snapshot || !snapshot.devices?.length) {
@@ -47,37 +69,140 @@ export function NetworkMap({ snapshot }: Props) {
 
   return (
     <>
+    <div className="nv2-view-switch" aria-label="Mode de visualisation du réseau">
+      <div>
+        <span className="nv2-view-switch__label">Vue réseau</span>
+        <div className="nv2-view-switch__buttons">
+          <button type="button" className={viewMode === "classic" ? "is-active" : ""} onClick={() => switchView("classic")} aria-pressed={viewMode === "classic"}>
+            Topologie
+          </button>
+          <button type="button" className={viewMode === "diagram" ? "is-active" : ""} onClick={() => switchView("diagram")} aria-pressed={viewMode === "diagram"}>
+            Constellation <span>LAB</span>
+          </button>
+        </div>
+      </div>
+      <p>{viewMode === "classic" ? "Vue historique conservée" : "Carte spatiale · niveaux de détail · flux réellement observés"}</p>
+    </div>
     {/* Le panel est toujours présent — console par défaut, device info si sélectionné */}
     <div className="nv2-layout nv2-layout--panel">
-      <NetworkStage
-        snapshot={snapshot}
-        onDeviceSelect={handleSelect}
-        selectedDeviceId={selected?.kind === "device" ? selected.device.deviceId : undefined}
-        onServerSelect={handleSelectServer}
-        isServerSelected={selected?.kind === "server"}
-      />
+      {viewMode === "classic" ? (
+        <NetworkStage
+          snapshot={snapshot}
+          onDeviceSelect={handleSelect}
+          selectedDeviceId={selected?.kind === "device" ? selected.device.deviceId : undefined}
+          onServerSelect={handleSelectServer}
+          isServerSelected={selected?.kind === "core"}
+        />
+      ) : (
+        <Graph
+          key={`${fixture ?? "live"}:${snapshot.totals.devices}`}
+          variant="full"
+          snapshot={snapshot}
+          displays={live.data?.displays ?? null}
+          events={eventStream.events}
+          selectedId={selected?.nodeId}
+          onSelect={handleGraphSelect}
+        />
+      )}
 
       <aside className={`nv2-panel-wrap${selected ? " nv2-panel-wrap--has-selection" : ""}`}>
-        {selected?.kind === "device" ? (
+        {selected?.kind === "device" || selected?.kind === "screen" ? (
           <SidePanel
             device={selected.device}
-            focusScreen={selected.focusScreen}
+            focusScreen={selected.kind === "screen" ? selected.screen : undefined}
             displays={live.data?.displays ?? null}
             onClose={() => setSelected(null)}
           />
-        ) : selected?.kind === "server" ? (
+        ) : selected?.kind === "core" ? (
           <ServerInfoPanel snapshot={snapshot} onClose={() => setSelected(null)} />
+        ) : selected?.kind === "artist" ? (
+          <div className="nv2-panel nv2-panel--terminal" style={{ padding: "1.25rem" }}>
+            <div className="nv2-panel__section-label">Artiste</div>
+            <h2>{selected.artist.label}</h2>
+            <p>{selected.artist.devices.length} appareil(s) · {selected.artist.screenCount} écran(s) · {selected.artist.onlineCount} en ligne</p>
+            <p style={{ color: "#718198", fontSize: 12 }}>La fiche détaillée et l’isolation arrivent au jalon suivant.</p>
+          </div>
+        ) : selected?.kind === "cluster" ? (
+          <div className="nv2-panel nv2-panel--terminal" style={{ padding: "1.25rem" }}>
+            <div className="nv2-panel__section-label">Zone de la carte</div>
+            <h2>{selected.cluster.deviceCount} appareils</h2>
+            <p>{selected.cluster.deviceCount} appareil(s) · {selected.cluster.onlineCount} en ligne</p>
+            <p>{selected.cluster.artistCount} artiste(s) dans cette zone de détail.</p>
+            <p style={{ color: "#718198", fontSize: 12 }}>Cette zone sert uniquement à naviguer dans les détails ; elle ne représente pas un groupe d’artistes.</p>
+          </div>
         ) : (
           <div className="nv2-panel nv2-panel--terminal">
             <div className="nv2-panel__section-label" style={{ padding: "1rem 1.25rem 0", marginBottom: 0 }}>
               Journal réseau
             </div>
-            <GlobalTerminalPanel />
+            <GlobalTerminalPanel stream={eventStream} />
           </div>
         )}
       </aside>
 
       <style>{`
+        .nv2-view-switch {
+          display: flex;
+          align-items: flex-end;
+          justify-content: space-between;
+          gap: 18px;
+          margin: 0 0 10px;
+          padding: 9px 11px;
+          border: 1px solid rgba(255,255,255,0.06);
+          border-radius: 12px;
+          color: #cbd5e1;
+          background: rgba(8,12,20,0.92);
+          font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        }
+        .nv2-view-switch__label {
+          display: block;
+          margin: 0 0 6px 3px;
+          color: #607087;
+          font: 700 9px/1 ui-monospace, SFMono-Regular, Menlo, monospace;
+          letter-spacing: .1em;
+          text-transform: uppercase;
+        }
+        .nv2-view-switch__buttons {
+          display: flex;
+          gap: 3px;
+          padding: 3px;
+          border: 1px solid rgba(255,255,255,0.06);
+          border-radius: 9px;
+          background: #060a11;
+        }
+        .nv2-view-switch__buttons button {
+          border: 0;
+          border-radius: 6px;
+          padding: 7px 10px;
+          color: #718198;
+          background: transparent;
+          font-size: 11px;
+          cursor: pointer;
+        }
+        .nv2-view-switch__buttons button.is-active {
+          color: #e2e8f0;
+          background: rgba(59,130,246,0.14);
+          box-shadow: inset 0 0 0 1px rgba(96,165,250,0.16);
+        }
+        .nv2-view-switch__buttons button:last-child.is-active {
+          color: #99f6e4;
+          background: rgba(45,212,191,0.1);
+          box-shadow: inset 0 0 0 1px rgba(45,212,191,0.16);
+        }
+        .nv2-view-switch__buttons span {
+          margin-left: 4px;
+          padding: 2px 4px;
+          border: 1px solid currentColor;
+          border-radius: 4px;
+          font: 700 7px/1 ui-monospace, SFMono-Regular, Menlo, monospace;
+          opacity: .8;
+        }
+        .nv2-view-switch p {
+          margin: 0 3px 3px;
+          color: #607087;
+          font-size: 10px;
+          text-align: right;
+        }
         /* Layout : carte réseau + panel droit fixe */
         .nv2-layout {
           display: grid;
@@ -129,6 +254,8 @@ export function NetworkMap({ snapshot }: Props) {
         }
 
         @media (max-width: 900px) {
+          .nv2-view-switch { align-items: flex-start; }
+          .nv2-view-switch p { display: none; }
           /* Sur tablette/mobile : panel passe en dessous, en pleine page —
              PAS de cadre à hauteur fixe avec scroll interne (sensation de
              "boîte" qui capture le geste). Il s'ouvre en entier et défile
@@ -158,6 +285,10 @@ export function NetworkMap({ snapshot }: Props) {
             display: none;
           }
         }
+        @media (max-width: 480px) {
+          .nv2-view-switch { padding: 8px; }
+          .nv2-view-switch__buttons button { padding: 7px 8px; }
+        }
 
         /* Empty state */
         .nv2-empty {
@@ -179,11 +310,6 @@ export function NetworkMap({ snapshot }: Props) {
       `}</style>
     </div>
 
-    <LiveDisplaysSection
-      snapshot={snapshot}
-      data={live.data}
-      onSelect={handleSelect}
-    />
     </>
   );
 }

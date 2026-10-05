@@ -1,6 +1,6 @@
 import styles from "../learn.module.css";
 
-export type LearnPath = "install" | "no-esp" | "network";
+export type LearnPath = "install" | "no-esp" | "network" | "power";
 
 const groups = [
   {
@@ -23,6 +23,7 @@ const groups = [
       ["/learn?path=network#consensus", "Consensus"],
       ["/learn?path=network#why", "Solidité technique"],
       ["/learn?path=network#licence", "Licences"],
+      ["/learn?path=power#consommation", "Consommation électrique"],
     ],
   },
 ];

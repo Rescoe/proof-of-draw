@@ -3,12 +3,15 @@
 import { useEffect, useRef, useState, useCallback } from "react";
 import { usePolling } from "@/lib/usePolling";
 
-type LogEventType = "BLOCK_MINED" | "VALIDATION_PENDING" | "VALIDATION_VOTE" | "ANIMATION" | "CHAIN_EMPTY";
+export type LogEventType = "BLOCK_MINED" | "VALIDATION_PENDING" | "VALIDATION_VOTE" | "ANIMATION" | "CHAIN_EMPTY";
 
-type LogEvent = {
+export type LogEvent = {
   id: string;
   type: LogEventType;
   ts: number;
+  deviceId?: string;
+  /** Identifiant public stable renvoyé par l'API ; utilisé par le nouveau graphe. */
+  deviceRef?: string;
   screen?: string;
   blockIndex?: number;
   artistName?: string;
@@ -121,7 +124,7 @@ function EventLine({ ev }: { ev: LogEvent }) {
 
 // ─── Hook partagé pour les events (peut être instancié plusieurs fois) ─────
 
-function useTerminalEvents() {
+function useTerminalEvents(fixture?: string) {
   const [events, setEvents]       = useState<LogEvent[]>([]);
   const [connected, setConnected] = useState(false);
   const seenIds   = useRef<Set<string>>(new Set());
@@ -130,7 +133,8 @@ function useTerminalEvents() {
   const fetchEvents = useCallback(async (paused: boolean) => {
     pausedRef.current = paused;
     try {
-      const r = await fetch("/api/network/activity-log", { cache: "no-store" });
+      const suffix = fixture ? `?fixture=${encodeURIComponent(fixture)}` : "";
+      const r = await fetch(`/api/network/activity-log${suffix}`, { cache: "no-store" });
       if (!r.ok) return;
       const data = await r.json();
       setConnected(true);
@@ -147,9 +151,21 @@ function useTerminalEvents() {
     } catch {
       setConnected(false);
     }
-  }, []);
+  }, [fixture]);
 
   return { events, connected, seenIds, fetchEvents };
+}
+
+/**
+ * Flux partagé par la carte, le mode laboratoire et le terminal compact.
+ * Une seule boucle de polling est créée : changer de vue n'ajoute donc aucune
+ * lecture à l'endpoint ni aucune commande Redis.
+ */
+export type NetworkEventStream = { events: LogEvent[]; connected: boolean };
+export function useNetworkEventStream(fixture?: string): NetworkEventStream {
+  const { events, connected, fetchEvents } = useTerminalEvents(fixture);
+  usePolling(() => fetchEvents(false), POLL_MS);
+  return { events, connected };
 }
 
 // ─── Terminal standalone (pleine largeur, sous la carte réseau) ─────────────
@@ -274,17 +290,17 @@ export function GlobalTerminal() {
 }
 
 // ─── Terminal compact (intégré dans le side panel) ──────────────────────────
-export function GlobalTerminalPanel() {
+export function GlobalTerminalPanel({ stream }: { stream: NetworkEventStream }) {
   const [paused, setPaused]   = useState(false);
   const [active, setActive]   = useState(false);
   const [showAll, setShowAll] = useState(false);
+  const [frozenEvents, setFrozenEvents] = useState<LogEvent[]>([]);
   const containerRef = useRef<HTMLDivElement>(null);
   const bodyRef      = useRef<HTMLDivElement>(null);
-  const { events, connected, fetchEvents } = useTerminalEvents();
+  const events = paused ? frozenEvents : stream.events;
+  const connected = stream.connected;
 
   const visibleEvents = showAll ? events.slice(-200) : events.slice(-10);
-
-  usePolling(() => fetchEvents(paused), POLL_MS);
 
   useEffect(() => {
     if (!active || paused) return;
@@ -348,6 +364,7 @@ export function GlobalTerminalPanel() {
               className="gterm__btn"
               onClick={(e) => {
                 e.stopPropagation();
+                if (!paused) setFrozenEvents(stream.events);
                 setPaused((v) => !v);
               }}
             >

@@ -6,6 +6,7 @@ import { LearnNavigation } from "./components/LearnNavigation";
 import type { LearnPath } from "./components/LearnNavigation";
 import { LegacyHashRedirect } from "./components/LegacyHashRedirect";
 import { NoEspPath } from "./components/NoEspPath";
+import { PowerPath } from "./components/PowerPath";
 import { isInstallProfileId } from "./data/installProfiles";
 import styles from "./learn.module.css";
 
@@ -16,7 +17,7 @@ export const metadata: Metadata = {
 
 function parsePath(value: string | string[] | undefined): LearnPath | null {
   const path = Array.isArray(value) ? value[0] : value;
-  return path === "install" || path === "no-esp" || path === "network" ? path : null;
+  return path === "install" || path === "no-esp" || path === "network" || path === "power" ? path : null;
 }
 
 export default async function LearnPage({
@@ -40,6 +41,7 @@ export default async function LearnPage({
             {path === "install" ? <InstallGuide initialProfileId={initialProfileId} /> : null}
             {path === "no-esp" ? <NoEspPath /> : null}
             {path === "network" ? <ExpertDocumentation /> : null}
+            {path === "power" ? <PowerPath /> : null}
           </div>
         </div>
       ) : null}
