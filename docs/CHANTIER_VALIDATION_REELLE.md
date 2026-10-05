@@ -360,3 +360,11 @@ Conséquences : un seul format de vote et un seul vérificateur public pour tout
 - Tests : 300 (299 passent, 1 ignoré : g++), `tsc` propre.
 
 **Reste (ordre)** : **P3 firmware ESP8266** (validation en flux : SHA-256 BearSSL + `PodFeeder`, vote v2, `[VALIDATE]` au Serial — sauvegarde `firmware-backups/` d'abord ; essai matériel requis) ; puis P0 restant (vote par profil, exclusion de l'auteur, réinitialisation de clé), F12, P5 (comité), P6 (bascule stricte).
+
+## Annexe F — P3 démarré : firmware e-ink 2,9″ BWR v2.1 (05/10/2026) — ⚠ NON TESTÉ sur le matériel
+- **Fichiers** : `esp8266/_shared/pod_vote_esp.h` (lecture en flux + SHA-256 BearSSL + verdict objectif + message signé) et copies dans `esp8266/esp_eink_2.9BWR/` (`pod_metrics.h`, `pod_metrics_table.h`, `pod_vote_esp.h`, synchronisées par `node scripts/sync-bench-header.js`). `esp_eink_2.9BWR.ino` : `doValidateV2()` (avant `doValidate()`), crochet dans `doValidate()` (si la réponse porte `v2`), version déclarée **2.1**, `DynamicJsonDocument` 512 → 768. Sauvegarde : `firmware-backups/2026-10-05_avant-validation-v2/`.
+- **Compilation** : `xtensa-lx106-elf-g++ -fsyntax-only -Wall` avec le noyau ESP8266 3.1.2 (ArduinoJson et Crypto réels) sur la fonction et les en-têtes : **0 erreur**. La compilation complète du croquis et l'exécution restent à faire dans l'IDE Arduino.
+- **Mémoire** : aucun tampon d'image ; `malloc(4 736)` temporaire pendant la lecture (déjà libérés : `blackBuf`/`redBuf`) ; pile : un morceau de 256 o. Le TLS reste un bloc de ≈ 16 Ko (règle existante).
+- **Essai à faire (critères d'acceptation P3)** : au Serial, `[VALIDATE2] eink29bwr 9472 o en … ms | e=… t=… r=… s=… | verdict=accept` puis `Vote OK` ; `[MEM]` stable avant/après (`VALIDATE2-BEFORE/AFTER`) ; durée < 60 s ; relever `ms` ; **forcer un refus** (modifier un octet côté serveur) et vérifier `reject hash`. En cas de `422` : les métriques du serveur et de la carte diffèrent → copier la ligne `[VALIDATE2]` et la réponse serveur.
+- **Compatibilité** : un firmware ≤ 2.0 continue de voter en v1 ; un candidat sans `v2` (animation) reste voté en v1.
+- **Reste P3** : même intégration sur e-ink 2,7″ (seul et + OLED) et TFT 1,8″ (après l'essai de la 2,9″), puis P4 (R4).

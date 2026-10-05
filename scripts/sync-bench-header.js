@@ -10,11 +10,18 @@ const MASTERS = {
   "pod_bench.h": "arduino_uno_r4/pod_uno_r4/pod_bench.h",          // lecteur de clips (aucune dépendance Arduino)
   "pod_bench_esp.h": "esp8266/_shared/pod_bench_esp.h",            // réseau + mesures ESP8266
   "pod_anim_esp.h": "esp8266/_shared/pod_anim_esp.h",              // animation résidente (clip en flash, lecture en boucle) ESP8266
+  "pod_metrics.h": "esp8266/_shared/pod_metrics.h",                // validation réelle : métriques entières en flux (pur C++)
+  "pod_metrics_table.h": "esp8266/_shared/pod_metrics_table.h",    // table d'entropie (générée : scripts/gen-pod-metrics-table.js)
+  "pod_vote_esp.h": "esp8266/_shared/pod_vote_esp.h",              // validation réelle : lecture en flux + SHA-256 (ESP8266)
 };
 const COPIES = {
   "pod_bench.h": ["esp8266/esp_tft1.8/pod_bench.h", "esp8266/esp_eink_2.7BW_OLED/pod_bench.h"],
   "pod_bench_esp.h": ["esp8266/esp_tft1.8/pod_bench_esp.h", "esp8266/esp_eink_2.7BW_OLED/pod_bench_esp.h"],
   "pod_anim_esp.h": ["esp8266/esp_tft1.8/pod_anim_esp.h", "esp8266/esp_eink_2.7BW_OLED/pod_anim_esp.h"],
+  // Validation réelle : déployée d'abord sur l'e-ink 2,9" BWR (P3) ; les autres firmwares suivent après l'essai matériel
+  "pod_metrics.h": ["esp8266/esp_eink_2.9BWR/pod_metrics.h"],
+  "pod_metrics_table.h": ["esp8266/esp_eink_2.9BWR/pod_metrics_table.h"],
+  "pod_vote_esp.h": ["esp8266/esp_eink_2.9BWR/pod_vote_esp.h"],
 };
 module.exports = { MASTERS, COPIES };
 
