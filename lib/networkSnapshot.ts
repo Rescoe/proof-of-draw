@@ -3,19 +3,25 @@
 // Ajouter un écran ici = uniquement dans screenProfiles.ts.
 
 import { ONLINE_MS } from "@/lib/pullBudget";
-import { unstable_cache } from "next/cache";
+import { unstable_cache, revalidateTag } from "next/cache";
 import { redis } from "@/lib/redis";
 import { SCREEN_IDS, SCREEN_PROFILES, ScreenId } from "@/lib/screenProfiles";
+import { readShownRecords, type DisplayKV } from "@/lib/displayState";
+import { animCapable } from "@/lib/anim/pointer";
+import { publicDeviceId } from "@/lib/network/publicId";
+import { hardwareOfFirmware, type Hardware } from "@/lib/network/hardware";
 
 // Ré-exporté pour compatibilité avec les composants qui importent ScreenType
 export type ScreenType = ScreenId;
 
-type DeviceRecord = {
+export type DeviceRecord = {
   deviceId: string;
   mac?: string;
   screens: string[];
   firmware: string;
   artistName?: string;
+  artistId?: string;
+  sceneCapability?: { sceneV1?: boolean };
   pairCode?: string;
   lastSeen: number;
   lastPing: number;
@@ -60,8 +66,21 @@ export type DeviceScreenInfo = {
 
 export type NetworkDevice = {
   deviceId: string;
+  /** Identifiant PUBLIC stable (HMAC du deviceId) : relie un événement à un noeud sans révéler l'identifiant des firmwares. */
+  publicId: string;
   artistName?: string;
+  /**
+   * Clé de regroupement STABLE d'un artiste : `a:<artistId>` (profil), sinon `n:<nom normalisé>`, sinon `unassigned`.
+   * Deux artistes homonymes ont deux clés différentes dès qu'ils ont un profil ; ne jamais regrouper par nom seul quand `a:` existe.
+   */
+  artistKey: string;
   firmware: string;
+  /** Famille de carte déduite de la version de firmware déclarée (« unknown » plutôt qu'une supposition). */
+  hardware: Hardware;
+  /** Capacités déduites de la version de firmware déclarée (lib/anim/pointer.ts). */
+  capabilities: { animation: boolean; animationScreens: string[]; scene: boolean };
+  /** Types d'écran de l'appareil (= les pools auxquels il appartient). */
+  pools: string[];
 
   // IMPORTANT :
   // un device peut avoir plusieurs écrans
@@ -115,7 +134,46 @@ export type NetworkSnapshot = {
 
 const ONLINE_WINDOW_MS = ONLINE_MS;   // lib/pullBudget.ts : une seule définition de « en ligne »
 
-const NETWORK_CACHE_SECONDS = 3600;
+// 300 s (3 600 avant le 05/10/2026, sans aucune invalidation : « en ligne » et nouveaux appareils pouvaient avoir 1 h de retard).
+// Invalidé en plus par invalidateNetworkSnapshot() à l'enregistrement d'un appareil et au minage d'un bloc.
+const NETWORK_CACHE_SECONDS = 300;
+export const NETWORK_SNAPSHOT_TAG = "network-snapshot";
+
+/** À appeler quand le réseau change (enregistrement d'un appareil, bloc miné). Ne lève jamais. */
+export function invalidateNetworkSnapshot(): void {
+  try { revalidateTag(NETWORK_SNAPSHOT_TAG, { expire: 0 }); } catch { /* hors contexte de requête : le TTL de repli suffit */ }
+}
+
+/** Fabrique le NetworkDevice public depuis la fiche appareil (pur : aucun accès Redis) — partagé avec les fixtures de test. */
+export function toNetworkDevice(
+  device: DeviceRecord,
+  recentFrame: NetworkFrame | null,
+  now: number = Date.now(),
+): NetworkDevice {
+  const screens = Array.isArray(device.screens) ? device.screens : [];
+  const animationScreens = screens.filter((s) => animCapable({ screens, firmware: device.firmware }, s));
+  const name = device.artistName?.trim();
+  return {
+    deviceId:   device.deviceId,
+    publicId:   publicDeviceId(device.deviceId),
+    artistName: device.artistName,
+    artistKey:  device.artistId ? `a:${device.artistId}` : name ? `n:${name.toLocaleLowerCase("fr")}` : "unassigned",
+    firmware:   device.firmware,
+    hardware:   hardwareOfFirmware(device.firmware),
+    capabilities: { animation: animationScreens.length > 0, animationScreens, scene: device.sceneCapability?.sceneV1 === true },
+    pools:      [...screens],
+    screens:    screens.map((screen) => {
+      const meta = getScreenMeta(screen);
+      return { screen, label: meta.label, description: meta.description };
+    }),
+    lastSeen:   device.lastSeen ?? 0,
+    lastPing:   device.lastPing ?? 0,
+    framesSent: device.framesSent ?? 0,
+    createdAt:  device.createdAt ?? 0,
+    isOnline:   Math.max(device.lastSeen || 0, device.lastPing || 0) > 0 && now - Math.max(device.lastSeen || 0, device.lastPing || 0) <= ONLINE_WINDOW_MS,
+    recentFrame,
+  };
+}
 
 // Métadonnées d’écran dérivées de screenProfiles — pas de liste hardcodée ici
 function getScreenMeta(screen: string): { label: string; description: string } {
@@ -130,251 +188,8 @@ function getScreenMeta(screen: string): { label: string; description: string } {
   };
 }
 
-function isOnline(
-  device: Pick<
-    DeviceRecord,
-    "lastSeen" | "lastPing"
-  >
-) {
-  const lastActivity = Math.max(
-    device.lastSeen || 0,
-    device.lastPing || 0
-  );
-
-  return (
-    Date.now() - lastActivity <=
-    ONLINE_WINDOW_MS
-  );
-}
-
-function sanitizeFrame(
-  frame: RawFrame | null | undefined
-): NetworkFrame | null {
-  if (!frame?.frameId || !frame.createdAt) {
-    return null;
-  }
-
-  const payload = frame.payload ?? {};
-
-  const hasBwr = Boolean(
-    payload.black || payload.red
-  );
-
-  const hasMono = Boolean(
-    payload.buffer
-  );
-
-  const preview: NetworkPreview = hasBwr
-    ? {
-        mode: "bwr",
-        black: payload.black,
-        red: payload.red,
-      }
-    : hasMono
-      ? {
-          mode: "mono",
-          buffer: payload.buffer,
-        }
-      : {
-          mode: "none",
-        };
-
-  return {
-    frameId: frame.frameId,
-
-    createdAt: frame.createdAt,
-
-    ageSec: Math.max(
-      0,
-      Math.floor(
-        (Date.now() - frame.createdAt) /
-          1000
-      )
-    ),
-
-    sourceDeviceId:
-      frame.sourceDeviceId,
-
-    targetScreen: payload.screen,
-
-    preview,
-  };
-}
-
-async function fetchDevice(
-  deviceId: string
-): Promise<NetworkDevice | null> {
-  const device = await redis.get<DeviceRecord>(`device:${deviceId}`);
-  if (!device) {
-    return null;
-  }
-
-  const screens = Array.isArray(
-    device.screens
-  )
-    ? device.screens
-    : [];
-
-  // One frame per screen now (frame:{deviceId}:{screen} — see lib/queue.ts) —
-  // fetch each of this device's screens and keep the newest for this single
-  // "recentFrame" display slot.
-  const frameRaws = screens.length > 0
-    ? await redis.mget<(RawFrame | null)[]>(...screens.map((s) => `frame:${deviceId}:${s}`))
-    : [];
-  let frame: RawFrame | null = null;
-  for (const raw of frameRaws) {
-    if (!raw) continue;
-    const parsed: RawFrame = typeof raw === "string" ? JSON.parse(raw) : raw;
-    if (!frame || (parsed.createdAt ?? 0) > (frame.createdAt ?? 0)) frame = parsed;
-  }
-
-  return {
-    deviceId: device.deviceId,
-
-    artistName: device.artistName,
-
-    firmware: device.firmware,
-
-    screens: screens.map((screen) => {
-      const meta =
-        getScreenMeta(screen);
-
-      return {
-        screen,
-        label: meta.label,
-        description:
-          meta.description,
-      };
-    }),
-
-    lastSeen:
-      device.lastSeen ?? 0,
-
-    lastPing:
-      device.lastPing ?? 0,
-
-    framesSent:
-      device.framesSent ?? 0,
-
-    createdAt:
-      device.createdAt ?? 0,
-
-    isOnline: isOnline(device),
-
-    recentFrame:
-      sanitizeFrame(frame),
-  };
-}
-
-async function buildNetworkSnapshot(): Promise<NetworkSnapshot> {
-
-  /*
-    ==========================================
-    STEP 1
-    récupérer TOUS les devices uniques
-    ==========================================
-  */
-
-  const poolResults =
-    await Promise.all(
-      SCREEN_IDS.map(
-        async (screen) => {
-          const ids =
-            await redis.smembers<
-              string[]
-            >(
-              `pool:screen:${screen}`
-            );
-
-          return {
-            screen,
-            ids:
-              ids?.filter(Boolean) ??
-              [],
-          };
-        }
-      )
-    );
-
-  const allDeviceIds = [
-    ...new Set(
-      poolResults.flatMap(
-        (p) => p.ids
-      )
-    ),
-  ];
-
-  /*
-    ==========================================
-    STEP 2
-    charger devices uniques — batch mget (Axe 6 optimization)
-    2 mget au lieu de N*2 redis.get individuels
-    ==========================================
-  */
-
-  let devices: NetworkDevice[] = [];
-
-  if (allDeviceIds.length > 0) {
-    const deviceKeys = allDeviceIds.map((id) => `device:${id}`);
-
-    const deviceRaws = await redis.mget<(DeviceRecord | null)[]>(...deviceKeys);
-    const parsedDevices: (DeviceRecord | null)[] = deviceRaws.map((raw) =>
-      raw ? (typeof raw === "string" ? JSON.parse(raw) : raw) : null
-    );
-
-    // A device now has one frame PER SCREEN (frame:{deviceId}:{screen} — see
-    // lib/queue.ts), not one shared frame — a multi-screen device (eink27bw +
-    // oled096) can have both populated. Fetch every (device, screen) pair in
-    // one batched mget, same "2 mget instead of N*2 gets" optimization as
-    // before, then keep the newest per device for this dashboard's single
-    // "recentFrame" slot.
-    const framePairs: { deviceId: string; screen: string }[] = [];
-    parsedDevices.forEach((device, i) => {
-      if (!device) return;
-      const screens = Array.isArray(device.screens) ? device.screens : [];
-      for (const screen of screens) framePairs.push({ deviceId: allDeviceIds[i], screen });
-    });
-
-    const frameKeys = framePairs.map(({ deviceId, screen }) => `frame:${deviceId}:${screen}`);
-    const frameRaws = frameKeys.length > 0
-      ? await redis.mget<(RawFrame | null)[]>(...frameKeys)
-      : [];
-
-    const newestFrameByDevice = new Map<string, RawFrame>();
-    framePairs.forEach(({ deviceId }, idx) => {
-      const raw = frameRaws[idx];
-      if (!raw) return;
-      const frame: RawFrame = typeof raw === "string" ? JSON.parse(raw) : raw;
-      const existing = newestFrameByDevice.get(deviceId);
-      if (!existing || (frame.createdAt ?? 0) > (existing.createdAt ?? 0)) {
-        newestFrameByDevice.set(deviceId, frame);
-      }
-    });
-
-    for (let i = 0; i < allDeviceIds.length; i++) {
-      const device = parsedDevices[i];
-      if (!device) continue;
-
-      const screens = Array.isArray(device.screens) ? device.screens : [];
-
-      devices.push({
-        deviceId:   device.deviceId,
-        artistName: device.artistName,
-        firmware:   device.firmware,
-        screens:    screens.map((screen) => {
-          const meta = getScreenMeta(screen);
-          return { screen, label: meta.label, description: meta.description };
-        }),
-        lastSeen:   device.lastSeen ?? 0,
-        lastPing:   device.lastPing ?? 0,
-        framesSent: device.framesSent ?? 0,
-        createdAt:  device.createdAt ?? 0,
-        isOnline:   isOnline(device),
-        recentFrame: sanitizeFrame(newestFrameByDevice.get(device.deviceId) ?? null),
-      });
-    }
-  }
-
+/** Assemble le snapshot public depuis la liste des appareils (tri, pools par écran, totaux) — pur, partagé avec les fixtures de test. */
+export function assembleNetworkSnapshot(devices: NetworkDevice[], framesWaiting: number): NetworkSnapshot {
   devices.sort((a, b) => {
     const aa = Math.max(
       a.lastSeen,
@@ -444,11 +259,6 @@ async function buildNetworkSnapshot(): Promise<NetworkSnapshot> {
       (d) => d.isOnline
     ).length;
 
-  const framesWaiting =
-    devices.filter(
-      (d) => Boolean(d.recentFrame)
-    ).length;
-
   const totalScreens =
     devices.reduce(
       (acc, device) =>
@@ -490,6 +300,108 @@ async function buildNetworkSnapshot(): Promise<NetworkSnapshot> {
   };
 }
 
+async function buildNetworkSnapshot(): Promise<NetworkSnapshot> {
+
+  /*
+    ==========================================
+    STEP 1
+    récupérer TOUS les devices uniques
+    ==========================================
+  */
+
+  const poolResults =
+    await Promise.all(
+      SCREEN_IDS.map(
+        async (screen) => {
+          const ids =
+            await redis.smembers<
+              string[]
+            >(
+              `pool:screen:${screen}`
+            );
+
+          return {
+            screen,
+            ids:
+              ids?.filter(Boolean) ??
+              [],
+          };
+        }
+      )
+    );
+
+  const allDeviceIds = [
+    ...new Set(
+      poolResults.flatMap(
+        (p) => p.ids
+      )
+    ),
+  ];
+
+  /*
+    ==========================================
+    STEP 2
+    charger devices uniques — batch mget (Axe 6 optimization)
+    2 mget au lieu de N*2 redis.get individuels
+    ==========================================
+  */
+
+  let devices: NetworkDevice[] = [];
+  let framesWaiting = 0;
+
+  if (allDeviceIds.length > 0) {
+    const deviceKeys = allDeviceIds.map((id) => `device:${id}`);
+
+    const deviceRaws = await redis.mget<(DeviceRecord | null)[]>(...deviceKeys);
+    const parsedDevices: (DeviceRecord | null)[] = deviceRaws.map((raw) =>
+      raw ? (typeof raw === "string" ? JSON.parse(raw) : raw) : null
+    );
+
+    const pairs: { deviceId: string; screen: string }[] = [];
+    parsedDevices.forEach((device, i) => {
+      if (!device) return;
+      const screens = Array.isArray(device.screens) ? device.screens : [];
+      for (const screen of screens) pairs.push({ deviceId: allDeviceIds[i], screen });
+    });
+
+    // ─ Ce que chaque écran AFFICHE réellement (ACK), en MÉTADONNÉES seulement (~300 o par écran) : 1 MGET.
+    //   Avant le 05/10/2026 on relisait ici les frames EN ATTENTE avec leurs buffers d'image (jusqu'à 205 Ko chacune) et on les embarquait dans la
+    //   page : 931 Ko de base64 sur 1,07 Mo de HTML pour une vitrine qui n'affichait aucune vignette. Les images se chargent désormais à la demande
+    //   (/api/network/display-image, immuable, mise en cache).
+    // ─ Nombre de frames en attente : 1 EXISTS (un compte, aucun payload).
+    const [shown, waiting] = await Promise.all([
+      readShownRecords(redis as unknown as DisplayKV, pairs),
+      pairs.length > 0 ? redis.exists(...pairs.map(({ deviceId, screen }) => `frame:${deviceId}:${screen}`)) : Promise.resolve(0),
+    ]);
+    framesWaiting = Number(waiting) || 0;
+
+    const now = Date.now();
+    for (let i = 0; i < allDeviceIds.length; i++) {
+      const device = parsedDevices[i];
+      if (!device) continue;
+
+      // Dernier affichage CONFIRMÉ de l'appareil (hors frame personnelle : jamais décrite publiquement)
+      let recent: NetworkFrame | null = null;
+      for (const rec of Object.values(shown[device.deviceId] ?? {})) {
+        if (rec.kind === "personal") continue;
+        if (!recent || rec.shownAt > recent.createdAt) {
+          recent = {
+            frameId: rec.frameId,
+            createdAt: rec.shownAt,
+            ageSec: Math.max(0, Math.floor((now - rec.shownAt) / 1000)),
+            sourceDeviceId: rec.kind === "ana" ? "ana-bridge" : "consensus",
+            targetScreen: rec.screen,
+            preview: { mode: "none" },   // JAMAIS de buffer ici : les images passent par /api/network/display-image
+          };
+        }
+      }
+      devices.push(toNetworkDevice(device, recent, now));
+    }
+  }
+
+  return assembleNetworkSnapshot(devices, framesWaiting);
+}
+
 /*
   ==========================================
   CACHE PARTAGÉ GLOBAL
@@ -511,7 +423,7 @@ export const getNetworkSnapshot =
         NETWORK_CACHE_SECONDS,
 
       tags: [
-        "network-snapshot",
+        NETWORK_SNAPSHOT_TAG,
       ],
     }
   );

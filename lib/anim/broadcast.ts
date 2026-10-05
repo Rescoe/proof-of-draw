@@ -23,7 +23,7 @@ export async function broadcastAnimation(opts: {
   const { part, blockHash, blockIndex, artistName, frameId, displayTime } = opts;
   const ttl = Math.max(900, Math.min(displayTime, 7200));
   const pointer: AnimPointer = { hash: blockHash, bytes: part.bytes, frames: part.frames };
-  const _block = { index: blockIndex, artistName, displayTime, frameId, minedAt: Date.now() };
+  const _block = { index: blockIndex, artistName, displayTime, frameId, minedAt: Date.now(), hash: blockHash };
 
   const pools: Record<string, string[]> = {};
   const lists = await Promise.all(ANIM_SCREENS.map((s) => redis.smembers(`pool:screen:${s}`) as Promise<string[]>));

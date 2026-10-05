@@ -36,6 +36,14 @@ Rédigé après relecture du travail non commité de ChatGPT (`ExperimentalNetwo
 
 ChatGPT développe **contre ces types** ; en attendant P1-P3, il peut stubber les champs dans le module de modèle.
 
+### 2.1 Livré (05/10/2026) — contrat à utiliser
+- **P1** `NetworkDevice` : `publicId` (`pub_` + 12 hex, HMAC, **à utiliser pour toute clé/lien nouveau**), `artistKey` (profil ; `undefined` si non associé ; deux artistes homonymes ont des clés différentes), `hardware` (`"esp8266" | "uno-r4" | "unknown"`), `capabilities { animation, animationScreens, scene }`, `pools` (par écran, dans le snapshot). `recentFrame.preview` vaut toujours `{ mode: "none" }` : **aucune image dans le snapshot**, elles passent par `/api/network/display-image`.
+- **P2** cache du snapshot 300 s, invalidé (tag `network-snapshot`) à l'enregistrement d'un NOUVEL appareil et au minage d'un bloc.
+- **P3** `lib/network/fixtures.ts` + `lib/network/source.ts`. En développement : `?fixture=<n>` (0–800) sur la page → `getNetworkSnapshotFor(searchParams.fixture)` ; les routes `/api/network/displays?fixture=n`, `/api/network/activity-log?fixture=n` et `/api/network/display-image?frameId=fixture-…&screen=…` répondent avec des données synthétiques **sans Redis**. Le client doit répercuter `?fixture` sur ses fetch. Ignoré en production. Contient homonymes, appareils non associés, matériel inconnu, appareil sans écran, firmware ancien, hors ligne, affichages < 5 min.
+- **P4** événements de vote : `deviceRef` (= `publicId`) ; plus aucun fragment de `deviceId` dans `message`. Relier un vote à un noeud : `device.publicId === event.deviceRef`.
+- **P5** `/api/network/displays` (inchangé dans sa forme) : par `deviceId` puis écran : `frameId, shownAt, hasImage, mode, workTitle, artistName, blockIndex, blockHash, isAnimation, kind`. Limite connue : la CLÉ de premier niveau est encore le `deviceId` (le snapshot l'expose aussi) ; le client doit rester tolérant, une migration vers `publicId` viendra séparément.
+- **À ne pas faire** : construire de nouveaux liens, URL ou clés avec `deviceId`.
+
 ## 3. Architecture : un socle commun, deux pages
 ```
 app/network/model/            ← PUR (aucun React) — partagé par A et B
@@ -184,11 +192,11 @@ Sélection unique partagée (diagramme ↔ panneau ↔ liste ↔ URL). Fermer le
   À chaque jalon : build, captures desktop 1280 + mobile 375, états du §9.11, et la liste de ce qui n'a pas pu être vérifié.
 - Les tests doivent être **écrits même si leur exécution est bloquée localement** ; Claude les relance.
 
-## 11. Questions ouvertes (à poser au porteur avant de coder)
-1. `RecentArtists` sur l'accueil : version compacte (une ligne d'avatars) ou retrait complet ?
-2. Critère de regroupement des clusters : **activité** (proposé) ou famille d'écran dominante ?
-3. Fenêtre de persistance des flux : **5 min** (proposé) ou autre ?
-4. Minimap sur `/network` : utile ou superflu ?
+## 11. Décisions prises sur les questions ouvertes (05/10/2026) — elles ne sont plus ouvertes
+1. **`RecentArtists` sur l'accueil : RETIRÉ complètement** (les artistes sont déjà dans le diagramme ; le composant doublonnait et coûtait un fetch). Lecture retenue de « en complet non ? » = « retrait complet » ; à confirmer par le porteur.
+2. **Clusters : regroupement pseudo-aléatoire STABLE et MÉLANGÉ — jamais par type d'écran** (pas de « clans » ; on veut de la mixité). Règle : `cluster = hash32(artistKey) mod k`, k ≈ ⌈√(nombre d'artistes)⌉ borné [3 ; 12], effectifs équilibrés (on déplace les artistes d'un cluster trop gros vers le plus petit, dans l'ordre du hash, pour rester déterministe). Un artiste reste dans le même cluster d'une visite à l'autre tant que k ne change pas. Aucun critère d'écran, de firmware ni de matériel. Les clusters servent à l'organisation visuelle, pas à une catégorie affichée : leur donner un nom neutre (« Lot 3 »), jamais un type d'écran.
+3. **Persistance des flux : 5 minutes**, calculée côté client à partir de ce que `/api/network/displays` (`shownAt`) et `/api/network/activity-log` (`ts`) renvoient DÉJÀ : un flux reste visible jusqu'à `ts + 5 min`. **Aucun appel supplémentaire, aucune commande Redis de plus.** Interdit : raccourcir les intervalles de sondage pour « faire plus vivant ».
+4. **Minimap : oui sur `/network`**, affichée seulement au-delà de ~40 noeuds (inutile en dessous), repliable ; **masquée par défaut sur mobile** (elle prendrait la place du diagramme) ; absente de l'accueil.
 
 ## 12. Ce que Claude fait en parallèle (pour ne pas bloquer ChatGPT)
 P1 à P5 (§2) en priorité ; puis relecture de chaque jalon (taille de la charge utile, coût Redis, cohérence avec `lib/`), tests relancés, et rétroaction.

@@ -4,6 +4,7 @@
 // Les frames personnelles n'ont aucune copie : 404.
 
 import { NextRequest, NextResponse } from "next/server";
+import { fixtureCount, fixtureImage } from "@/lib/network/fixtures";
 import { redis } from "@/lib/redis";
 import { isValidScreenId } from "@/lib/screenProfiles";
 import { readShownImage, FRAME_ID_RE, type DisplayKV } from "@/lib/displayState";
@@ -13,6 +14,11 @@ export async function GET(req: NextRequest) {
   const screen = req.nextUrl.searchParams.get("screen") ?? "";
   if (!FRAME_ID_RE.test(frameId) || !isValidScreenId(screen)) {
     return NextResponse.json({ error: "paramètres invalides" }, { status: 400 });
+  }
+  // DÉVELOPPEMENT SEULEMENT : frameId « fixture-… » → vignette synthétique (fixtureCount ≠ null seulement hors production)
+  if (frameId.startsWith("fixture-") && fixtureCount("0") !== null) {
+    const img = fixtureImage(frameId, screen);
+    return img ? NextResponse.json({ imagePayload: img }) : NextResponse.json({ error: "image indisponible" }, { status: 404 });
   }
   const imagePayload = await readShownImage(redis as unknown as DisplayKV, frameId, screen);
   if (!imagePayload) {

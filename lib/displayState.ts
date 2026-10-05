@@ -23,6 +23,7 @@ export interface ShownRecord {
   blockHash?:  string;     // bloc galerie ANA correspondant
   blockIndex?: number;     // bloc de la chaîne humaine
   mode?:       "frame" | "scene";   // ce que l'appareil a joué (firmware scene-v1 : champ `mode` de l'ACK)
+  isAnimation?: boolean;            // l'œuvre est une ANIMATION de bloc (le pointeur `anim` accompagnait la frame) : l'écran la joue en boucle
   hasImage:    boolean;
 }
 
@@ -77,7 +78,11 @@ export function buildShownRecord(
     workTitle:  str(p.workTitle)?.slice(0, 120),
     artistName: (str(p.drawArtistName) ?? str(block.artistName))?.slice(0, 80),
     anaKind:    kind === "ana" ? str(p.anaKind) : undefined,
-    blockHash:  kind === "ana" && /^[0-9a-f]{64}$/.test(String(p.blockHash)) ? String(p.blockHash) : undefined,
+    // bloc de la galerie : ANA (champ du payload) ou chaîne humaine (`_block.hash`, posé au minage depuis le 05/10/2026)
+    blockHash:  kind === "ana"
+      ? (/^[0-9a-f]{64}$/.test(String(p.blockHash)) ? String(p.blockHash) : undefined)
+      : (/^[0-9a-f]{64}$/.test(String(block.hash)) ? String(block.hash) : undefined),
+    ...(p.anim && typeof p.anim === "object" ? { isAnimation: true } : {}),
     blockIndex: int(block.index),
     ...(mode ? { mode } : {}),
     hasImage: imagePayloadOf(frame, screen) !== null,

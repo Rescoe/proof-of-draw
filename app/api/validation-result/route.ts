@@ -32,13 +32,14 @@ import { verifyEd25519 } from "@/lib/ed25519";
 import { dequeueNextDraw } from "@/lib/drawQueue";
 import { invalidateThresholdsCache } from "@/lib/adaptiveValidation";
 import { broadcastAnimation } from "@/lib/anim/broadcast";
+import { invalidateNetworkSnapshot } from "@/lib/networkSnapshot";
 
 const DEVICE_ID_REGEX = /^dev_[A-Z0-9]{8}$/;
 const BLACKLIST_TTL = parseInt(process.env.BLACKLIST_TTL_SECONDS ?? "604800");
 const FRAME_TTL_SEC = parseInt(process.env.DRAW_WINDOW_SEC ?? "900");
 
-async function broadcastValidatedFrame(poolScreen: string, payload: Record<string, unknown>, frameId: string, displayTime: number, blockIndex: number, artistName: string): Promise<void> {
-  const _block = { index: blockIndex, artistName, displayTime, frameId, minedAt: Date.now() };
+async function broadcastValidatedFrame(poolScreen: string, payload: Record<string, unknown>, frameId: string, displayTime: number, blockIndex: number, artistName: string, blockHash?: string): Promise<void> {
+  const _block = { index: blockIndex, artistName, displayTime, frameId, minedAt: Date.now(), ...(blockHash ? { hash: blockHash } : {}) };
   const ttl = Math.max(900, Math.min(displayTime, 7200));
 
   // Écrans d'autres types ayant opté pour la conversion : indépendant du pool natif
@@ -156,9 +157,10 @@ export async function POST(req: NextRequest) {
         await broadcastAnimation({ part: candidate.anim, blockHash: block.blockHash, blockIndex: block.blockIndex, artistName: candidate.artistName, frameId, displayTime: block.displayTime })
           .catch((e) => console.error("[validation-result] diffusion de l'animation échouée:", e));
       } else {
-        await broadcastValidatedFrame(candidate.poolScreen, candidate.payload, frameId, block.displayTime, block.blockIndex, candidate.artistName);
+        await broadcastValidatedFrame(candidate.poolScreen, candidate.payload, frameId, block.displayTime, block.blockIndex, candidate.artistName, block.blockHash);
       }
       await clearCandidate();
+      invalidateNetworkSnapshot();   // un bloc vient d'être miné : la vue réseau se reconstruit à la prochaine visite
       markHot().catch(() => {});   // un bloc vient d'être miné : le réseau est actif, les écrans restent à 5 min de pull
       // Invalider le cache Next.js → la BlockGallery se rechargera immédiatement
       revalidatePath("/", "page");

@@ -3,11 +3,13 @@
 // Utilisé par le terminal global de la home page.
 // Aucune donnée sensible (pas de MAC, pairCode, payload image).
 
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { redis } from "@/lib/redis";
 import { parseBlocks, getCurrentCandidate, getVotes } from "@/lib/chain";
 import type { Block } from "@/lib/chain";
 import { recentAnimationEvents } from "@/lib/anim/store";
+import { fixtureCount, buildFixtureSnapshot, buildFixtureEvents } from "@/lib/network/fixtures";
+import { publicDeviceId } from "@/lib/network/publicId";
 
 export const dynamic = "force-dynamic";
 
@@ -23,6 +25,8 @@ export type LogEvent = {
   type: LogEventType;
   ts: number;
   screen?: string;
+  /** Identifiant PUBLIC (pub_xxxxxxxxxxxx) de l'appareil concerné — jamais le deviceId réel. Même valeur que NetworkDevice.publicId. */
+  deviceRef?: string;
   artistName?: string;
   blockIndex?: number;
   blockHash?: string;
@@ -46,8 +50,11 @@ const CACHE_MS = 30_000;
 let memo: { at: number; body: { events: LogEvent[]; generatedAt: number } } | null = null;
 let inflight: Promise<{ events: LogEvent[]; generatedAt: number }> | null = null;
 
-export async function GET() {
+export async function GET(req: NextRequest) {
   try {
+    // DÉVELOPPEMENT SEULEMENT (?fixture=n) : événements synthétiques, aucune lecture Redis. Ignoré en production.
+    const fx = fixtureCount(req.nextUrl.searchParams.get("fixture"));
+    if (fx !== null) return NextResponse.json({ events: buildFixtureEvents(buildFixtureSnapshot(fx)), generatedAt: Date.now() });
     if (memo && Date.now() - memo.at < CACHE_MS) return respond(memo.body);
     if (!inflight) inflight = build().then((b) => { memo = { at: Date.now(), body: b }; return b; }).finally(() => { inflight = null; });
     return respond(await inflight);
@@ -124,7 +131,8 @@ async function build(): Promise<{ events: LogEvent[]; generatedAt: number }> {
             type:    "VALIDATION_VOTE",
             ts:      vote.votedAt,
             screen:  candidate.poolScreen,
-            message: `VOTE · ${devId.slice(0, 12)} · score ${(vote.score * 100).toFixed(0)}%`,
+            deviceRef: publicDeviceId(devId),
+            message: `VOTE · ${publicDeviceId(devId)} · score ${(vote.score * 100).toFixed(0)}%`,
           });
         }
       }

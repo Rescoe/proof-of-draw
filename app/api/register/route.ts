@@ -3,6 +3,7 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { registerDevice, updateDevicePublicKey } from "@/lib/deviceStore";
+import { invalidateNetworkSnapshot } from "@/lib/networkSnapshot";
 import {
   checkRateLimit, isBlacklisted, isDeviceCapReached,
   getIP, tooManyRequests, forbidden,
@@ -108,6 +109,9 @@ export async function POST(req: NextRequest) {
         : `http://${req.headers.get("host")}`);
 
     const primaryScreen = screens[0];
+    // Nouvel appareil seulement : un ESP non appairé se ré-enregistre chaque minute — invalider à chaque fois ferait reconstruire la vue en boucle
+    // (≈ 8 commandes par reconstruction). Un firmware mis à jour se voit au plus tard après le TTL de repli (300 s).
+    if (isNew) invalidateNetworkSnapshot();
 
     return NextResponse.json({
       deviceId:   device.deviceId,
