@@ -223,9 +223,7 @@ export function Graph({ variant, snapshot, displays = null, events = [], selecte
                 if (!device) return null;
                 if (node.kind === "device") {
                   if (!showDevices) return null;
-                  const shownItems = Object.entries(displays?.[device.deviceId] ?? {}).sort(([, a], [, b]) => b.shownAt - a.shownAt);
-                  const [shownScreen, shown] = shownItems[0] ?? [];
-                  return <DeviceNode key={node.id} node={node} device={device} shown={shown} shownScreen={shownScreen} detailed={showDeviceDetails} thumbnail={common.selected || showThumbnails} active={activeIds.has(node.id)} {...common} />;
+                  return <DeviceNode key={node.id} node={node} device={device} detailed={showDeviceDetails} active={activeIds.has(node.id)} {...common} />;
                 }
                 if (!showScreens || !node.screen) return null;
                 const info = device.screens.find((screen) => screen.screen === node.screen);
