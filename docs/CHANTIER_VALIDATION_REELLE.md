@@ -330,3 +330,18 @@ Les opérations intermédiaires tiennent en `uint64` (`1e12 × runs` ≤ 1e12 ×
 | Firmware de référence (vote) | `esp8266/esp_eink_2.9BWR/esp_eink_2.9BWR.ino` l. 1290-1360 |
 | Précédent de test différentiel C++ | `tests/podBenchR4.test.ts` |
 | Précédent de version de firmware | `lib/anim/pointer.ts` |
+
+## Annexe C — Classes de validateurs par capacité (ajout du 05/10/2026 : ESP, Arduino, bientôt Raspberry Pi et autres cartes)
+
+Le protocole de vote v2 (§ 5.1) est **indépendant du matériel** : tout appareil qui sait calculer `pod-metrics-2`, hacher en SHA-256 et signer en Ed25519 peut voter. Le vote déclare sa **classe** (`vclass`) ; le comité peut exiger au moins un membre de classe supérieure.
+
+| Classe | Matériel | Peut attester | Remarques |
+|---|---|---|---|
+| **A** | ESP8266, UNO R4 (RA4M1) | N1 + N2 (intégrité, métriques, règles objectives) | en flux, sans tampon (§ 4) |
+| **B** | ESP32 (≈ 520 Ko de RAM), cartes équivalentes | N1 + N2, images lourdes entières, plus de marge TLS | candidat d'implémentation du mode « image complète » (TFT) |
+| **C** | Raspberry Pi, PC, navigateur | N1 + N2 + **N3** (replay pixel-exact via le moteur de dessin, rythme humain) | auditeurs ; signatures d'audit non bloquantes puis, si le porteur le décide, membres du comité |
+
+Conséquences : un seul format de vote et un seul vérificateur public pour toutes les cartes ; ajouter une carte = fournir une implémentation de `pod-metrics-2` validée sur les vecteurs de test (§ 5.2). Pistes commerciales/recherche triées dans le vault : `PoD - Pistes de monétisation et de recherche (tri du 05-10-2026)`.
+
+## Annexe D — Avancement
+- **05/10/2026, P0 amorcé** : `lib/keyPinning.ts` (+ `tests/keyPinning.test.ts`), branché dans `/api/register` **derrière `PIN_DEVICE_KEY=true`** (désactivé par défaut pour ne pas bloquer un propriétaire qui efface l'EEPROM). **À faire pour clore P0** : réinitialisation de clé par le profil, vote par profil, exclusion de l'auteur, champ `verdict`, `STRICT_SIGNATURE` par version de firmware, tests hostiles (§ 8, § 9).

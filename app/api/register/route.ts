@@ -4,6 +4,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { registerDevice, updateDevicePublicKey } from "@/lib/deviceStore";
 import { invalidateNetworkSnapshot } from "@/lib/networkSnapshot";
+import { decideKeyUpdate, pinEnabledFromEnv } from "@/lib/keyPinning";
 import {
   checkRateLimit, isBlacklisted, isDeviceCapReached,
   getIP, tooManyRequests, forbidden,
@@ -99,7 +100,13 @@ export async function POST(req: NextRequest) {
     // Stocker la clé publique ED25519 si fournie (firmware v2+)
     // Validation stricte : exactement 64 chars hex (32 bytes)
     if (typeof publicKey === "string" && /^[a-f0-9]{64}$/i.test(publicKey)) {
-      await updateDevicePublicKey(device.deviceId, publicKey.toLowerCase());
+      // P0 « validation réelle » : avec PIN_DEVICE_KEY=true, la première clé est fixée (docs/CHANTIER_VALIDATION_REELLE.md § 5.6)
+      const decision = decideKeyUpdate(device.publicKey, publicKey.toLowerCase(), pinEnabledFromEnv());
+      if (decision === "refuse") {
+        console.warn(`[/api/register] clé publique différente refusée device=${device.deviceId} (épinglage actif)`);
+        return NextResponse.json({ error: "Clé publique déjà enregistrée pour cet appareil" }, { status: 409 });
+      }
+      if (decision === "set") await updateDevicePublicKey(device.deviceId, publicKey.toLowerCase());
     }
 
     const host =
