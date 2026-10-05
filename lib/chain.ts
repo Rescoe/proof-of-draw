@@ -153,6 +153,7 @@ const actionsKey = (hash: string) => `chain:actions:${hash}`;
 const replayKey  = (hash: string) => `chain:replay:${hash}`;
 const animKey    = (hash: string) => `chain:anim:${hash}`;
 const KEY_OBS_QUEUE = "chain:obs:queue";
+const KEY_OBS_PENDING = "chain:obs:pending";   // drapeau « la file d'observation n'est pas vide » : lu dans le MGET du pull (le pull ne dépile plus à chaque fois)
 
 const GENESIS_HASH      = "0".repeat(64);
 const CANDIDATE_TTL_SEC = parseInt(process.env.CANDIDATE_TTL_SEC ?? "600");
@@ -223,6 +224,8 @@ export async function getBlockImages(hashes: string[]): Promise<(BlockImagePaylo
 // ── Lecture groupée pour /api/pull (quota Redis : tout part dans UN SEUL MGET) ──────────────────────────────────────────────
 export const PULL_KEY_HEAD = KEY_HEAD;
 export const PULL_KEY_CANDIDATE = KEY_CANDIDATE;
+export const PULL_KEY_VOTES = KEY_VOTES;
+export const PULL_KEY_OBS_PENDING = KEY_OBS_PENDING;
 
 /** Tête de chaîne depuis une valeur brute déjà lue (même résultat que getChainHead). */
 export function parseChainHeadRaw(raw: unknown): Block | null {
@@ -443,6 +446,7 @@ export async function finalizeBlock(
       enqueuedAt: minedAt,
     });
     await redis.lpush(KEY_OBS_QUEUE, obsTask);
+    await redis.set(KEY_OBS_PENDING, "1");
   }
 
   // ── Sélection équitable du mineur ────────────────────────────────────────────
@@ -710,7 +714,7 @@ export async function getBlockReplay(hash: string): Promise<import("@/lib/types/
 /** Dépile la prochaine tâche d'observation. Appelé par /api/pull quand un ESP est disponible. */
 export async function popObsTask(): Promise<{ type: string; blockHashes: string[]; targetBlockHash?: string; enqueuedAt: number } | null> {
   const raw = await redis.rpop<string>(KEY_OBS_QUEUE);
-  if (!raw) return null;
+  if (!raw) { await redis.del(KEY_OBS_PENDING); return null; }   // file vide : on baisse le drapeau (les pulls cessent de dépiler)
   try {
     return typeof raw === "string" ? JSON.parse(raw) : raw as { type: string; blockHashes: string[]; targetBlockHash?: string; enqueuedAt: number };
   } catch {

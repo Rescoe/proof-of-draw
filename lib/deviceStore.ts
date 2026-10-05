@@ -137,7 +137,7 @@ const TTL_SECONDS = 48 * 60 * 60;
 // overnight WiFi hiccup into an orphaned duplicate device with unreachable
 // mined blocks — see the incident this constant was raised in response to.
 const PAIRED_TTL_SECONDS = 90 * 24 * 60 * 60;
-const ONLINE_MS   = 10 * 60 * 1000;
+import { ONLINE_MS } from "@/lib/pullBudget";   // 20 min : la présence n'est réécrite que toutes les 12 min (quota Redis)
 
 function deviceTtl(device: Device): number {
   return (device.artistId || device.artistName) ? PAIRED_TTL_SECONDS : TTL_SECONDS;

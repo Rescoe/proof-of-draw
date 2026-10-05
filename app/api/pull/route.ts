@@ -1,20 +1,21 @@
 // app/api/pull/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { redis } from "@/lib/redis";
-import { getDevice } from "@/lib/deviceStore";
+import type { Device } from "@/lib/deviceStore";
+import { SCREEN_IDS } from "@/lib/screenProfiles";
+import { presenceStale, rlSampled, RL_SAMPLED_BLACKLIST, RL_SAMPLED_MAX } from "@/lib/pullBudget";
 import { frameKey, parseStoredFrame, FramePayload } from "@/lib/queue";
 import { getIP, forbidden } from "@/lib/rateLimit";
 import { benchScreenOf } from "@/lib/bench/screens";
-import { parseChainHeadRaw, parseCandidateRaw, PULL_KEY_HEAD, PULL_KEY_CANDIDATE, popObsTask } from "@/lib/chain";
+import { parseChainHeadRaw, parseCandidateRaw, PULL_KEY_HEAD, PULL_KEY_CANDIDATE, PULL_KEY_VOTES, PULL_KEY_OBS_PENDING, popObsTask } from "@/lib/chain";
 import type { ChainSummary } from "@/lib/chain";
 import { maybeCheckAnaFeed } from "@/lib/anaFeed";
 import { selectDelivery, withoutScenePointer, sceneRetryAfterSec, scenePullMeta, type DeliverySelection } from "@/lib/scene/delivery";
 import { animPullMeta, withoutAnimPointer } from "@/lib/anim/pointer";
 
 const DEVICE_ID_REGEX = /^dev_[A-Z0-9]{8}$/;
-// 5 pulls/min — compatible avec PULL_INTERVAL=60s + VALIDATE_INTERVAL=30s du firmware
+// Rate-limit ÉCHANTILLONNÉ (lib/pullBudget.ts) : 1 pull sur 8 compte ; > RL_SAMPLED_MAX dans la fenêtre = ≈ 32 pulls/min réels → 429.
 const PULL_WINDOW_SEC = parseInt(process.env.PULL_WINDOW_SEC ?? "60");
-const PULL_MAX        = parseInt(process.env.PULL_LIMIT_PER_WINDOW ?? "5");
 const BLACKLIST_TTL   = parseInt(process.env.BLACKLIST_TTL_SECONDS ?? "604800");
 
 const rlKey       = (deviceId: string) => `rl:pull:${deviceId}`;
@@ -64,34 +65,39 @@ export async function GET(req: NextRequest) {
         chain: null, pendingValidation: null,
       }, 400);
 
-    // ── Rate limit (1 commande) ─────────────────────────────────────────────
-    const count = Number(await redis.eval(RL_SCRIPT, [rlKey(deviceId)], [String(PULL_WINDOW_SEC)]));
-
-    if (count > PULL_MAX) {
-      const ttl = await redis.ttl(rlKey(deviceId));
-      if (count >= PULL_MAX * 10) {
-        await redis.set(blDevKey(deviceId), "1", { ex: BLACKLIST_TTL });
-        console.warn(`[pull] auto-blacklist device=${deviceId}`);
+    // ── Rate limit ÉCHANTILLONNÉ ────────────────────────────────────────────
+    // Un écran normal tire ≤ 1 fois/min : il ne touche presque jamais Redis ici (1 pull sur 8). Un emballement (≈ 32 pulls/min et plus) est coupé en quelques secondes.
+    if (rlSampled(Math.random())) {
+      const count = Number(await redis.eval(RL_SCRIPT, [rlKey(deviceId)], [String(PULL_WINDOW_SEC)]));
+      if (count > RL_SAMPLED_MAX) {
+        const ttl = await redis.ttl(rlKey(deviceId));
+        if (count >= RL_SAMPLED_BLACKLIST) {
+          await redis.set(blDevKey(deviceId), "1", { ex: BLACKLIST_TTL });
+          console.warn(`[pull] auto-blacklist device=${deviceId}`);
+        }
+        return json({
+          error: "Trop de requêtes",
+          retryAfter: Math.max(ttl, 0),
+          frame: null, frameSource: "none",
+          frameId: null, screen: null,
+          chain: null, pendingValidation: null,
+        }, 429);
       }
-      return json({
-        error: "Trop de requêtes",
-        retryAfter: Math.max(ttl, 0),
-        frame: null, frameSource: "none",
-        frameId: null, screen: null,
-        chain: null, pendingValidation: null,
-      }, 429);
     }
 
-    // ── Fetch parallèle ─────────────────────────────────────────────────────
-    // getChainHead() remplace getChainSummary() pour éviter un double read Redis
-    // et accéder aux champs workTitle / drawArtistName du bloc (métadonnées cartel).
-    // getFrameForDevice needs device.screens to know which per-screen keys to
-    // check (a multi-screen device, e.g. eink27bw + oled096, can have a
-    // pending frame on either — the older of the two wins, see lib/queue.ts),
-    // so device has to resolve first rather than joining the Promise.all below.
-    // Coût d'un pull au repos : 1 (rate limit) + 1 (appareil) + 1 (MGET de tout le reste) + 1 (tâche d'observation) = 4 commandes
-    // (13 avant le 03/10/2026 : blacklist ×2, INCR+EXPIRE, appareil, frames ×N, personnelle, tête, candidat, notification, mode banc d'essai).
-    const device = await getDevice(deviceId);
+    // ── UN SEUL MGET : appareil + frames + tête de chaîne + candidat + votes + notification + banc d'essai + drapeau d'observation ──
+    // Les clés de frame de TOUS les types d'écran sont lues (SCREEN_IDS) : on n'a plus besoin de lire l'appareil d'abord pour connaître ses écrans.
+    // Coût d'un pull au repos : 1 commande (+ ≈ 0,125 de rate-limit échantillonné + ≈ 0,3 de présence toutes les 12 min). 5 avant le 05/10/2026.
+    const FRAME_IDS = SCREEN_IDS as readonly string[];
+    const raws = await redis.mget<unknown[]>(
+      `bl:ip:${ip}`, blDevKey(deviceId), `device:${deviceId}`,
+      ...FRAME_IDS.map((s) => frameKey(deviceId, s)),
+      personalKey(deviceId), PULL_KEY_HEAD, PULL_KEY_CANDIDATE, PULL_KEY_VOTES,
+      `chain:notify:${deviceId}`, `bench:mode:${deviceId}`, PULL_KEY_OBS_PENDING,
+    );
+    if (raws[0] !== null || raws[1] !== null) return forbidden("Accès refusé");
+    let device: Device | null = null;
+    try { device = raws[2] ? (typeof raws[2] === "string" ? JSON.parse(raws[2] as string) : (raws[2] as Device)) : null; } catch { device = null; }
     if (!device)
       return json({
         error: "device inconnu",
@@ -100,23 +106,18 @@ export async function GET(req: NextRequest) {
         chain: null, pendingValidation: null,
       }, 404);
     const screens = device.screens ?? [];
-    const raws = await redis.mget<unknown[]>(
-      `bl:ip:${ip}`, blDevKey(deviceId),
-      ...screens.map((s) => frameKey(deviceId, s)),
-      personalKey(deviceId), PULL_KEY_HEAD, PULL_KEY_CANDIDATE,
-      `chain:notify:${deviceId}`, `bench:mode:${deviceId}`,
-    );
-    if (raws[0] !== null || raws[1] !== null) return forbidden("Accès refusé");
-    const frameRaws = raws.slice(2, 2 + screens.length);
-    const rest = raws.slice(2 + screens.length);
+    const frameRaws = FRAME_IDS.map((s, i) => (screens.includes(s) ? raws[3 + i] : null));
+    const rest = raws.slice(3 + FRAME_IDS.length);
     // La plus ancienne frame gagne (même règle que getFrameForDevice : les écrans d'un appareil multi-écran tournent équitablement)
     const consensusFrame = frameRaws.map(parseStoredFrame).filter((f): f is NonNullable<ReturnType<typeof parseStoredFrame>> => f !== null)
       .reduce<ReturnType<typeof parseStoredFrame>>((oldest, f) => (oldest === null || f.storedAt < oldest.storedAt ? f : oldest), null);
     const personalFrame = parsePersonal(rest[0]);
     const chainHead = parseChainHeadRaw(rest[1]);
     const candidate = parseCandidateRaw(rest[2]);
-    const ownedNotif = (rest[3] as string | null) ?? null;
-    const benchModeRaw = rest[4];
+    const votesRawMget = rest[3];
+    const ownedNotif = (rest[4] as string | null) ?? null;
+    const benchModeRaw = rest[5];
+    const obsPending = rest[6] !== null && rest[6] !== undefined;
     // Mode banc d'essai actif pour un écran compatible (TFT 2.8", TFT 1.8", OLED) : annoncé à l'appareil, qui passe en contrôle rapide.
     const benchMode = benchScreenOf(device.screens) !== null && benchModeRaw !== null && benchModeRaw !== undefined;
 
@@ -145,10 +146,8 @@ export async function GET(req: NextRequest) {
       await maybeCheckAnaFeed();
     }
 
-    // ── Ping device (skip si mis à jour il y a moins de 4 min — réduit le quota Redis) ──
-    const recentlyUpdated =
-      Math.max(device.lastSeen ?? 0, device.lastPing ?? 0) > Date.now() - 4 * 60 * 1000;
-    if (!recentlyUpdated) {
+    // ── Ping device : réécrit seulement si lastSeen/lastPing ont plus de 12 min (en ligne = 20 min) — réduit le quota Redis ──
+    if (presenceStale(device, Date.now())) {
       await redis.set(
         `device:${deviceId}`,
         JSON.stringify({ ...device, lastSeen: Date.now(), lastPing: Date.now() }),
@@ -183,7 +182,7 @@ export async function GET(req: NextRequest) {
     let pendingValidation: { candidateId: string; poolScreen: string; expiresIn: number; warning: string | null } | null = null;
 
     if (candidate) {
-      const votesRaw = await redis.get("candidate:votes");
+      const votesRaw = votesRawMget;   // déjà lu dans le MGET du début : zéro commande de plus
       let alreadyVoted = false;
       if (votesRaw) {
         try {
@@ -251,7 +250,8 @@ export async function GET(req: NextRequest) {
     // L'ESP n'affiche rien de nouveau — il envoie juste une confirmation serveur.
     // La tâche est dépilée de la queue uniquement quand le device est vraiment idle.
     let pendingObservation: { blockHashes: string[]; targetBlockHash?: string; enqueuedAt: number } | null = null;
-    if (isIdle) {
+    // Le drapeau chain:obs:pending (déjà lu dans le MGET) dit s'il y a quelque chose à dépiler : sinon aucune commande.
+    if (isIdle && obsPending) {
       const obsTask = await popObsTask();
       if (obsTask?.blockHashes?.length) {
         pendingObservation = {

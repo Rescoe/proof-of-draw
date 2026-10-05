@@ -5,6 +5,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getPublicDevices } from "@/lib/deviceStore";
 import { getIP, isBlacklisted, forbidden } from "@/lib/rateLimit";
+import { ONLINE_MS } from "@/lib/pullBudget";
 
 export async function GET(req: NextRequest) {
   const ip = getIP(req);
@@ -12,7 +13,6 @@ export async function GET(req: NextRequest) {
 
   try {
     const devices = await getPublicDevices();
-    const ONLINE_MS = 10 * 60 * 1000;
     return NextResponse.json({
       devices: devices.map((d) => ({
         deviceId:   d.deviceId,

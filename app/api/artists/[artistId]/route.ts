@@ -16,7 +16,7 @@ import {
 
 export const dynamic = "force-dynamic";
 
-const ONLINE_MS = 10 * 60 * 1000;
+import { ONLINE_MS } from "@/lib/pullBudget";
 
 export async function GET(
   _req: NextRequest,
