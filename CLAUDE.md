@@ -300,6 +300,8 @@ Ne jamais saturer Redis. Toute route, page, cron ou firmware qui y accède doit 
 Aujourd'hui le vote des ESP est un **écho** du `score_server` (aucun calcul local, signatures permissives, identité usurpable). Dossier complet, modèle de menace, spécification
 des métriques entières, plan en 7 phases et décisions à prendre : `docs/CHANTIER_VALIDATION_REELLE.md`. **Ne pas parler de « consensus/preuve » dans l'UI au-delà du niveau réellement atteint.**
 
+**Reprise du 06/10/2026** : lire aussi `docs/REPRISE_2026_10_06_VALIDATION_ET_RESEAU.md` avant de poursuivre. Cette note fixe les garde-fous décidés : rejets v2 non bloquants pendant le canari, vote atomique avant essais multi-cartes, P0 complet avant mode strict, différentiel C++ obligatoire et interdiction de commiter le firmware TFT 1.8 local contenant le Wi-Fi.
+
 ## Non-goals
 
 Ne pas faire :
