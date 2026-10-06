@@ -34,7 +34,7 @@ Pas de shield TFT en même temps (D8/D9/D10 partagés). Broches modifiables par 
 - **BUSY** : polarité du pilote officiel Waveshare (HAUT = occupé). Le pilote ESP du dépôt attend l'inverse (il ne tient que par ses temporisations).
 - **Cartel / textes dessinés dans le repère de l'image du serveur** (`bufRow = x`, `bufCol = 127 - y`, glyphes bit 0 = haut) : bande « date · #bloc » en HAUT, « artiste - titre » en BAS. Le firmware ESP dessine dans un repère retourné (bandes inversées) — à confirmer à l'œil sur l'écran réel.
 - Écran blanc avant chaque nouvelle œuvre (`CLEAR_BEFORE_IMAGE 1`, comme l'ESP) : ~30 s au total. Mettre 0 pour un seul rafraîchissement.
-- Pas de calcul de métriques local (le vote reprend `score_server`, comme les firmwares actuels).
+- **Validation réelle (r4eink29-1.1, 06/10/2026, non testé carte)** : la R4 relit le candidat, recalcule hash + métriques entières et vote en v2 — voir `CANARI_R4_EINK29.md`. Un candidat sans `v2` (animation) reste voté en v1 (écho du score serveur).
 
 ## À me rapporter après le premier essai (Serial 115200)
 

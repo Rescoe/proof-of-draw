@@ -2,7 +2,7 @@
 #pragma once
 #include <stdint.h>
 #ifdef ARDUINO
-#include <pgmspace.h>
+#include <Arduino.h>   // PROGMEM, pgm_read_dword : ESP8266 ET UNO R4 (le coeur R4 n a pas <pgmspace.h>)
 #define POD_PROGMEM PROGMEM
 #else
 #define POD_PROGMEM
