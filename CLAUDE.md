@@ -267,7 +267,14 @@ redessiner les bandes sans re-télécharger. Détails, contraintes et mesures à
 **Piège R4 : pile principale de 1 Ko** (protection désactivée) → pas de gros tableau local, tampons statiques, `[MEM]`/`[SELFTEST]` au Serial.
 Vue réseau : icône dédiée (tablette portrait) + turquoise. Tests : `podHttpR4`, `canvasToScreen` (tft28), `screenConvert` (boucle sur tous les écrans).
 
-## Banc d'essai d'animation — TFT 2.8" (02/10/2026, v1 test)
+## Atelier d'animation (refonte du 06/10/2026) — remplace le banc d'essai
+
+`/animer` = éditeur plein écran SANS défilement de page (le canvas tient toujours dans la scène, la boîte à outils n'est jamais sous lui), 3 modes (Essentiel · Studio · Pro), 7 brosses
+(`lib/anim/brushes.ts`), fantôme avant/après, retour/annuler/rétablir toujours visibles, un 2e doigt annule le trait en cours. Code : `app/animer/*` ; détails, purge et proposition de canvas maître :
+`docs/ATELIER_ANIMATION.md`. **Le banc d'essai a été supprimé** (UI `/bench` redirigée vers `/animer`, routes `/api/bench/{send,mode,status,clear}` retirées) ; `poll`/`clip`/`result` restent pour
+le firmware déjà déployé (inertes : plus rien n'active `benchMode`). Règle d'interface mobile : aucune boîte à outils sous un canvas dans une page qui défile (le geste de défilement dessine).
+
+## (Historique) Banc d'essai d'animation — TFT 2.8" (02/10/2026, v1 test) — retiré le 06/10/2026, voir ci-dessus
 
 Page `/bench` (lien sur la carte de l'appareil) : animation 128×64 1 bit → clip « PBC1 » en DIFFÉRENCES (`lib/bench/clip.ts`, plafond 9 Ko) → `/api/bench/{send,mode,poll,clip,result,status}`
 (Redis `bench:*`, TTL courts) → firmware `pod_bench.h` (repeint les seuls octets modifiés, ×15/8, mesures renvoyées). `/api/pull` ajoute `benchMode` pour un tft28 quand le mode est actif.

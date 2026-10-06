@@ -1,5 +1,7 @@
 # Banc d'essai d'animation — TFT 2.8" tactile (v1, preuve de concept)
 
+> ⚠ **Document historique (06/10/2026)** : l'interface du banc d'essai (`/bench`) et les routes `/api/bench/{send,mode,status,clear}` ont été **supprimées** ; l'atelier unique est `/animer` (voir `ATELIER_ANIMATION.md`). Restent : le format de clip PBC1, `/api/bench/{poll,clip,result}` (firmware déjà déployé) et les lecteurs de clips des firmwares.
+
 Statut : **code complet et testé sur PC (codeur, lecteur firmware, API) — PAS encore essayé sur la carte.** Page : `/bench` (lien « 🧪 Banc d'essai »
 sur la carte de l'appareil dans Mon profil). Firmware : `r4tft28-2.3` (2.1 minimum pour le banc d'essai).
 

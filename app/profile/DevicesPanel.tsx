@@ -469,7 +469,6 @@ function DeviceCard({ d, open, onToggle, onRenamed, profile, children }: {
         <div className="dev-actions" style={{ display: "flex", gap: "0.4rem", flexShrink: 0 }}>
           <DrawMenu d={d} />
           <DrawMenu d={d} mode="animate" />
-          {d.screens.includes("tft28") && <a href="/bench" title="Banc d'essai d'animation (test)" style={{ ...ghostBtn, textDecoration: "none", display: "inline-flex", alignItems: "center" }}>🧪 Banc d&apos;essai</a>}
           <button
             type="button" onClick={onToggle} aria-expanded={open}
             style={{ ...ghostBtn, fontWeight: 600, borderColor: open ? "var(--accent)" : "var(--border)", color: open ? "var(--accent)" : "var(--text2)" }}

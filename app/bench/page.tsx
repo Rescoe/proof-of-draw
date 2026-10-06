@@ -1,11 +1,6 @@
-"use client";
-
-// app/bench/page.tsx — Banc d'essai d'animation (TFT 2.8" tactile). Chargé côté navigateur uniquement : il lit le brouillon local (localStorage).
-
-import dynamic from "next/dynamic";
-
-const BenchClient = dynamic(() => import("./BenchClient"), { ssr: false, loading: () => <p style={{ padding: "2rem", textAlign: "center", color: "var(--text3)" }}>Chargement du banc d&apos;essai…</p> });
+// app/bench/page.tsx — le banc d'essai d'animation a été retiré (06/10/2026) : l'atelier unique d'animation est /animer. Cette page ne sert que de redirection pour les anciens liens.
+import { redirect } from "next/navigation";
 
 export default function BenchPage() {
-  return <BenchClient />;
+  redirect("/animer");
 }

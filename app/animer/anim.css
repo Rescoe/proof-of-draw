@@ -1,0 +1,94 @@
+/* ═══════════════════════════════════════════════════════════════════════
+   Atelier d'animation (06/10/2026) — s'appuie sur les jetons et composants de Pod Studio (../draw/_studio/studio.css).
+   Plein écran, AUCUN défilement de page : la boîte à outils n'est jamais sous le canvas.
+     .an.st--stack : téléphone portrait   (barre · scène · ligne de temps · options · outils)
+     .an.st--side  : paysage / ordinateur (outils à gauche · scène · options à droite · ligne de temps sous la scène)
+   ═══════════════════════════════════════════════════════════════════════ */
+
+.an.st--stack {
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: auto minmax(0, 1fr) auto auto auto;
+  grid-template-areas: "top" "stage" "tl" "opts" "tools";
+}
+.an.st--side {
+  grid-template-columns: var(--st-tools-w) minmax(0, 1fr) var(--st-side-w);
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  grid-template-areas: "top top top" "tools stage side" "tl tl tl";   /* la ligne de temps prend TOUTE la largeur : une seule rangée de commandes */
+}
+.an.st--side.st--dense { --st-tools-w: 100px; --st-side-w: 252px; }
+
+/* ── Barre du haut : retour · annuler · rétablir toujours visibles ──────── */
+.an .st-top { gap: 2px; }
+.an-undo { width: 46px; min-width: 46px; background: var(--st-surface-2); border: 1px solid var(--st-line); }
+.an-top-title { flex: 1 1 0; min-width: 0; padding: 0 8px; color: var(--st-text-2); font-weight: 600; font-size: 14px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.an-modebtn { height: 40px; flex: none; }
+.an .st-send { height: 40px; }
+@media (max-width: 430px) {
+  .an-send-label { display: none; }
+  .an .st-send { padding: 0 12px; }
+  .an-modebtn span { max-width: 70px; overflow: hidden; text-overflow: ellipsis; }
+}
+
+/* ── Scène : le canvas tient entièrement, aucun geste ne la fait défiler ── */
+.an-stage {
+  grid-area: stage; position: relative; min-width: 0; min-height: 0;
+  display: grid; place-items: center; overflow: hidden;
+  touch-action: none; overscroll-behavior: none;
+  background: radial-gradient(circle at 50% 40%, #171724 0%, #0d0d15 72%), var(--st-bg);
+}
+.an-canvas {
+  display: block; flex: none; image-rendering: pixelated; cursor: crosshair;
+  touch-action: none; border-radius: 4px;
+  box-shadow: 0 0 0 1px var(--st-line-2), 0 18px 48px rgba(0, 0, 0, 0.55);
+  -webkit-user-drag: none;
+}
+.an-stage[data-tool="fill"] .an-canvas { cursor: cell; }
+.an-stage .st-hud { left: 8px; top: 8px; bottom: auto; }
+
+/* ── Ligne de temps ──────────────────────────────────────────────────────── */
+.an-timeline {
+  grid-area: tl; min-width: 0;
+  background: var(--st-surface); border-top: 1px solid var(--st-line);
+  padding: 6px 8px 8px; display: flex; flex-direction: column; gap: 6px;
+}
+.an-tl-ctrl { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.an-tl-ctrl .st-btn { flex: none; }
+.an-tl-speed { flex: 1 1 130px; min-width: 120px; max-width: 280px; }
+.an-tl-speed .st-slider { min-width: 0; width: 100%; }
+.an-tl-stats { margin-left: auto; font-size: 12px; font-weight: 700; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.an-strip {
+  display: flex; gap: 6px; align-items: flex-start;
+  overflow-x: auto; overflow-y: hidden; touch-action: pan-x; overscroll-behavior-x: contain;
+  scrollbar-width: thin; padding: 2px 2px 4px;
+}
+.an-thumb {
+  flex: none; display: flex; flex-direction: column; align-items: center; gap: 2px;
+  padding: 3px; border-radius: 8px; border: 2px solid var(--st-line); background: var(--st-surface-2); cursor: pointer; color: var(--st-text-3);
+  font-size: 10px; font-weight: 700;
+}
+.an-thumb canvas { display: block; width: 80px; height: 40px; image-rendering: pixelated; border-radius: 3px; }
+.an-thumb--on { border-color: var(--st-accent-hi); color: var(--st-accent-hi); background: var(--st-accent-soft); }
+.an-thumb--add { width: 52px; height: 58px; justify-content: center; border-style: dashed; }
+.an-thumb[disabled] { opacity: 0.35; cursor: default; }
+/* Paysage bas (téléphone couché) : commandes à gauche, images à droite, sur UNE rangée */
+.an.st--side.st--dense .an-timeline { flex-direction: row; align-items: center; gap: 10px; padding: 4px 8px; }
+.an.st--side.st--dense .an-tl-ctrl { flex-wrap: nowrap; flex: none; }
+.an.st--side.st--dense .an-tl-stats { display: none; }
+.an.st--side.st--dense .an-tl-speed { flex: 0 0 120px; min-width: 100px; }
+.an.st--side.st--dense .an-strip { flex: 1 1 0; min-width: 0; }
+.an.st--side.st--dense .an-tl-ctrl .st-btn { width: 42px; min-width: 42px; height: 42px; }
+.st--dense .an-thumb canvas { width: 64px; height: 32px; }
+.st--dense .an-thumb--add { height: 46px; width: 44px; }
+.st--dense .an-timeline { padding: 4px 8px 6px; gap: 4px; }
+
+/* ── Options (ligne en portrait, panneau à droite en paysage) ───────────── */
+.an .st-optsrow { grid-area: opts; }
+.an .st-toolsrow { grid-area: tools; }
+.an-side { grid-area: side; }
+.an.st--side .st-sect--opts { gap: 8px; align-content: flex-start; }
+
+/* ── Divers ─────────────────────────────────────────────────────────────── */
+.an-meter { height: 10px; border-radius: 5px; background: var(--st-surface-3); overflow: hidden; }
+.an-meter i { display: block; height: 100%; border-radius: 5px; transition: width 0.2s; }
+.an .st-toasts { z-index: 50; }
+@media (prefers-reduced-motion: reduce) { .an *, .an *::before, .an *::after { animation: none !important; transition: none !important; } }

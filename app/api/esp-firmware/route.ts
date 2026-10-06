@@ -147,7 +147,7 @@ export async function GET(req: NextRequest) {
         "  (Les bibliothèques Wi-Fi, EEPROM, SPI et SD de la carte sont fournies avec son cœur Arduino.)",
         "",
         "⚠ Firmwares tft18 et e-ink 2.7\" + OLED (v2.1) : ils contiennent la lecture des animations du banc d'essai, écrite le 03/10/2026 et NON TESTÉE sur le matériel.",
-        "  Ce code reste inactif tant que le mode banc d'essai n'est pas activé dans l'application (page /bench) ; le reste du firmware est inchangé.",
+        "  Ce code reste inactif (le banc d'essai de l'application a été retiré le 06/10/2026 : plus aucune interface n'active ce mode) ; le reste du firmware est inchangé.",
         "  Un firmware d'avant l'ajout est conservé dans le dépôt : firmware-backups/2026-10-03_avant-integration-animation/.",
         "",
         "Plus d'infos : https://proof-of-draw.vercel.app/learn",
