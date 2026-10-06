@@ -15,15 +15,15 @@ const roles = [
     icon: Vote,
     label: "Validateur",
     title: "Nœud de consensus",
-    description: "L’ESP interroge le serveur, calcule des métriques visuelles et vote pour accepter ou refuser un dessin.",
+    description: "L’ESP interroge le serveur, relit le contenu du candidat, recalcule son hash et des métriques entières, puis signe son vote (images fixes ; les animations sont encore votées en v1).",
     details: ["GET /api/pull", "GET /api/validate-candidate", "POST /api/validation-result"],
   },
   {
     icon: Blocks,
     label: "Mineur",
     title: "Finalisation d’un bloc",
-    description: "Un validateur est tiré au sort à chaque quorum et son compteur de blocs minés est mis à jour.",
-    details: ["Tirage pondéré inverse", "chain:notify:{deviceId}", "Le vote constitue le travail"],
+    description: "Un validateur est tiré au sort par le serveur à chaque quorum et son compteur de blocs minés est mis à jour.",
+    details: ["Tirage pondéré inverse", "chain:notify:{deviceId}", "Tirage non encore rejouable par un tiers"],
   },
   {
     icon: Server,
@@ -50,7 +50,7 @@ const strengths = [
   {
     icon: Bot,
     title: "Résistance aux automatismes",
-    description: "Le serveur détecte les séquences d’actions trop rapides et le réseau d’ESP conserve la décision collective.",
+    description: "Le serveur détecte les séquences d’actions trop rapides ; cette vérification du geste reste, pour l’instant, une vérification du serveur.",
     meta: "automationRatio · MAX_AUTOMATION_RATIO",
   },
   {
@@ -146,11 +146,11 @@ Payload adapté au profil de l’écran`}</CodeBlock>
             Le serveur vérifie la session, applique les limites et publie le candidat.
           </p></div></div>
           <div><span>2</span><div><h4>Vote des ESP</h4><p>
-            Les validateurs détectent le candidat, mesurent l’entropie, les transitions, le score RLE et la couverture,
-            puis envoient leur résultat à <Code>POST /api/validation-result</Code>.
+            Les validateurs détectent le candidat, téléchargent son contenu brut, recalculent le SHA-256 et les métriques entières (entropie, transitions, runs),
+            signent leur verdict puis l’envoient à <Code>POST /api/validation-result</Code>. Le serveur refuse tout « accepte » dont le hash ou une métrique diffère.
           </p></div></div>
           <div><span>3</span><div><h4>Quorum et bloc</h4><p>
-            Le quorum correspond à <Code>⌈ poolSize × 0,51 ⌉</Code> votes, avec un minimum d’un vote. Le serveur finalise le bloc,
+            Le quorum correspond à <Code>⌈ poolSize × 0,51 ⌉</Code> approbations (appareils appairés actifs), avec un minimum d’un vote. Le serveur finalise le bloc,
             relie son hash au bloc précédent et conserve l’image et ses métadonnées.
           </p></div></div>
           <div><span>4</span><div><h4>Sélection du mineur</h4><p>
@@ -160,8 +160,8 @@ Payload adapté au profil de l’écran`}</CodeBlock>
         </div>
         <Callout title="Comparaison des scores">
           <p>
-            Le serveur compare son score avec celui des ESP. Un écart supérieur à 0,4 déclenche une alerte,
-            mais la décision reste fondée sur la majorité.
+            Un vote v2 doit reproduire exactement le calcul du serveur ; un refus signé est enregistré mais, pendant la phase d’essai, ne bloque pas le candidat.
+            Voir la synthèse (parcours 04) pour le niveau d’assurance réellement atteint.
           </p>
         </Callout>
       </Disclosure>

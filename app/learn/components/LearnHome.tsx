@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { Cable, Network, PencilLine } from "lucide-react";
+import { Cable, Layers, Network, PencilLine } from "lucide-react";
 import { Eyebrow } from "./ContentPrimitives";
 import styles from "../learn.module.css";
 
@@ -28,6 +28,14 @@ const paths = [
     description: "Explorez l’architecture pull, les rôles, le consensus, la chaîne de blocs et les choix techniques.",
     action: "Lire la documentation",
   },
+  {
+    href: "/learn?path=synthesis#synthese",
+    icon: Layers,
+    number: "04",
+    title: "Synthèse et feuille de route",
+    description: "Toute la technologie sur une page : ce que les cartes calculent, ce que la chaîne garantit, et le travail restant.",
+    action: "Voir la synthèse",
+  },
 ];
 
 export function LearnHome() {
@@ -46,6 +54,7 @@ export function LearnHome() {
           <Link className={styles.primaryButton} href="/learn?path=install#installer">Installer mon écran</Link>
           <Link className={styles.secondaryButton} href="/draw">Dessiner maintenant</Link>
           <Link className={styles.secondaryButton} href="/learn?path=power#consommation">Consommation électrique</Link>
+          <Link className={styles.secondaryButton} href="#feuille-de-route">Feuille de route</Link>
         </div>
       </div>
 

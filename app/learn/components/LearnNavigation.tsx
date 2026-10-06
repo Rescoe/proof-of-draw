@@ -1,6 +1,6 @@
 import styles from "../learn.module.css";
 
-export type LearnPath = "install" | "no-esp" | "network" | "power";
+export type LearnPath = "install" | "no-esp" | "network" | "power" | "synthesis";
 
 const groups = [
   {
@@ -24,6 +24,9 @@ const groups = [
       ["/learn?path=network#why", "Solidité technique"],
       ["/learn?path=network#licence", "Licences"],
       ["/learn?path=power#consommation", "Consommation électrique"],
+      ["/learn?path=synthesis#synthese", "Synthèse technique"],
+      ["/learn?path=synthesis#synth-niveaux", "Niveaux d’assurance"],
+      ["#feuille-de-route", "Feuille de route"],
     ],
   },
 ];

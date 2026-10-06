@@ -90,7 +90,7 @@
 
 .pathGrid {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(235px, 1fr));
   gap: 1rem;
 }
 
@@ -295,6 +295,7 @@
 .documentationContent {
   min-width: 0;
   display: grid;
+  grid-template-columns: minmax(0, 1fr);   /* sans cela, un tableau large élargit la colonne au-delà de l'écran (défilement horizontal du document sur téléphone) */
   gap: 2rem;
 }
 
@@ -1381,5 +1382,273 @@
   .secondaryButton,
   .screenChoice {
     transition: none;
+  }
+}
+
+/* ─── Synthèse technique (parcours 04) ─────────────────────────────────────── */
+.synthTableWrap {
+  margin: 0.8rem 0;
+  overflow-x: auto;
+  border: 1px solid var(--border-soft);
+  border-radius: 0.75rem;
+}
+
+.synthTable {
+  width: 100%;
+  min-width: 560px;
+  border-collapse: collapse;
+  font-size: 0.78rem;
+  line-height: 1.5;
+}
+
+.synthTable th,
+.synthTable td {
+  padding: 0.6rem 0.8rem;
+  border-bottom: 1px solid var(--border-soft);
+  text-align: left;
+  vertical-align: top;
+}
+
+.synthTable th {
+  color: var(--text3);
+  font-size: 0.66rem;
+  font-weight: 800;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  background: rgba(255, 255, 255, 0.025);
+}
+
+.synthTable td {
+  color: var(--text2);
+}
+
+.synthTable td:first-child {
+  color: var(--text);
+  font-weight: 700;
+}
+
+.synthTable tr:last-child td {
+  border-bottom: 0;
+}
+
+.synthGlossary {
+  display: grid;
+  gap: 0.5rem;
+  margin: 0;
+}
+
+.synthGlossary div {
+  padding: 0.65rem 0.8rem;
+  border: 1px solid var(--border-soft);
+  border-radius: 0.65rem;
+  background: rgba(255, 255, 255, 0.015);
+}
+
+.synthGlossary dt {
+  color: var(--text);
+  font-size: 0.82rem;
+  font-weight: 800;
+}
+
+.synthGlossary dd {
+  margin: 0.15rem 0 0;
+  color: var(--text2);
+  font-size: 0.8rem;
+  line-height: 1.55;
+}
+
+/* ─── Feuille de route (tout en bas de la page) ────────────────────────────── */
+.roadmapWrap {
+  width: min(1240px, 100%);
+  margin: 3rem auto 0;
+}
+
+.roadmapSection {
+  background: linear-gradient(180deg, rgba(20, 18, 34, 0.96), rgba(12, 12, 20, 0.96));
+}
+
+.roadTotal {
+  display: grid;
+  gap: 0.7rem;
+  margin-bottom: 1rem;
+  padding: 1rem 1.1rem;
+  border: 1px solid var(--border);
+  border-radius: 0.9rem;
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.roadTotalNumbers {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.5rem;
+}
+
+.roadTotalNumbers strong {
+  font-size: 2rem;
+  letter-spacing: -0.04em;
+  color: var(--text);
+}
+
+.roadTotalNumbers span {
+  color: var(--text2);
+  font-size: 0.9rem;
+}
+
+.roadTotalNumbers small {
+  margin-left: auto;
+  color: var(--text3);
+  font-size: 0.75rem;
+}
+
+.roadBar {
+  display: flex;
+  height: 8px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: var(--bg4);
+}
+
+.roadBarDone {
+  background: #4ade80;
+}
+
+.roadBarDoing {
+  background: #fbbf24;
+}
+
+.roadLegend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-bottom: 1rem;
+}
+
+.statusBadge {
+  flex: 0 0 auto;
+  display: inline-block;
+  min-width: 4.6rem;
+  padding: 0.18rem 0.55rem;
+  border: 1px solid;
+  border-radius: 999px;
+  font-size: 0.66rem;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-align: center;
+  text-transform: uppercase;
+}
+
+.statusDone {
+  border-color: rgba(74, 222, 128, 0.4);
+  background: rgba(74, 222, 128, 0.1);
+  color: #86efac;
+}
+
+.statusDoing {
+  border-color: rgba(251, 191, 36, 0.45);
+  background: rgba(251, 191, 36, 0.1);
+  color: #fcd34d;
+}
+
+.statusTodo {
+  border-color: var(--border);
+  background: rgba(255, 255, 255, 0.03);
+  color: var(--text3);
+}
+
+.roadPhases {
+  display: grid;
+  gap: 0.65rem;
+}
+
+.roadPhase {
+  border: 1px solid var(--border);
+  border-radius: 0.9rem;
+  background: rgba(255, 255, 255, 0.018);
+}
+
+.roadPhase > summary {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 0.45rem 0.8rem;
+  align-items: center;
+  padding: 0.85rem 1rem;
+  cursor: pointer;
+  list-style: none;
+}
+
+.roadPhase > summary::-webkit-details-marker {
+  display: none;
+}
+
+.roadPhaseTitle {
+  color: var(--text);
+  font-size: 0.92rem;
+  font-weight: 800;
+}
+
+.roadPhaseCount {
+  color: var(--text3);
+  font: 700 0.78rem "JetBrains Mono", monospace;
+}
+
+.roadPhase > summary .roadBar {
+  grid-column: 1 / -1;
+  height: 5px;
+}
+
+.roadPhaseSummary {
+  margin: 0;
+  padding: 0.1rem 1rem 0.4rem;
+  color: var(--text2);
+  font-size: 0.82rem;
+  line-height: 1.6;
+}
+
+.roadItems {
+  display: grid;
+  gap: 0.35rem;
+  margin: 0;
+  padding: 0.3rem 0.8rem 0.9rem;
+  list-style: none;
+}
+
+.roadItems li {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.7rem;
+  padding: 0.55rem 0.6rem;
+  border-radius: 0.6rem;
+  background: rgba(255, 255, 255, 0.015);
+}
+
+.roadItems li > div {
+  min-width: 0;
+}
+
+.roadItems strong {
+  display: block;
+  color: var(--text);
+  font-size: 0.82rem;
+  line-height: 1.45;
+}
+
+.roadItems small {
+  display: block;
+  margin-top: 0.15rem;
+  color: var(--text3);
+  font-size: 0.74rem;
+  line-height: 1.5;
+}
+
+@media (max-width: 680px) {
+  .roadTotalNumbers small {
+    margin-left: 0;
+    flex-basis: 100%;
+  }
+
+  .roadItems li {
+    flex-direction: column;
+    gap: 0.35rem;
   }
 }

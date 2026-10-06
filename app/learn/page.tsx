@@ -7,17 +7,19 @@ import type { LearnPath } from "./components/LearnNavigation";
 import { LegacyHashRedirect } from "./components/LegacyHashRedirect";
 import { NoEspPath } from "./components/NoEspPath";
 import { PowerPath } from "./components/PowerPath";
+import { Roadmap } from "./components/Roadmap";
+import { SynthesisPath } from "./components/SynthesisPath";
 import { resolveInstallProfileId } from "./data/installProfiles";
 import styles from "./learn.module.css";
 
 export const metadata: Metadata = {
   title: "Apprendre | Proof-of-Draw",
-  description: "Installer un écran avec une carte ESP8266 ou UNO R4 WiFi, participer sans matériel et comprendre le réseau Proof-of-Draw.",
+  description: "Installer un écran avec une carte ESP8266 ou UNO R4 WiFi, participer sans matériel, comprendre le réseau Proof-of-Draw, lire la synthèse technique et la feuille de route.",
 };
 
 function parsePath(value: string | string[] | undefined): LearnPath | null {
   const path = Array.isArray(value) ? value[0] : value;
-  return path === "install" || path === "no-esp" || path === "network" || path === "power" ? path : null;
+  return path === "install" || path === "no-esp" || path === "network" || path === "power" || path === "synthesis" ? path : null;
 }
 
 export default async function LearnPage({
@@ -43,9 +45,13 @@ export default async function LearnPage({
             {path === "no-esp" ? <NoEspPath /> : null}
             {path === "network" ? <ExpertDocumentation /> : null}
             {path === "power" ? <PowerPath /> : null}
+            {path === "synthesis" ? <SynthesisPath /> : null}
           </div>
         </div>
       ) : null}
+      <div className={styles.roadmapWrap}>
+        <Roadmap />
+      </div>
     </main>
   );
 }
