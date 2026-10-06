@@ -11,6 +11,7 @@ on compare leurs résultats. ⚠ Tout ce qui suit est **compilé, jamais exécut
 | ESP8266 + TFT 1,8″ | `esp8266/esp_tft1.8` | `tft18-2.3` | 42 016 / 80 192 o | n'importe quel écran (tampon alloué avant le TLS, seulement pour OLED / e-ink 2,9″) |
 | ESP8266 multiscreen e-ink 2,7″ + OLED | `esp8266/esp_eink_2.7BW_OLED` | `multiscreen-2.4` | 47 128 / 80 192 o | n'importe quel écran (tampon statique `g_e27Buf`) |
 | UNO R4 WiFi + e-ink 2,9″ | `arduino_uno_r4/pod_uno_r4_eink29` | `r4eink29-1.1` | 22 768 / 32 768 o | n'importe quel écran (tampon `blackBuf`) |
+| UNO R4 WiFi + TFT 2,8″ tactile | `arduino_uno_r4/pod_uno_r4` | `r4tft28-2.5` | 21 444 / 32 768 o | n'importe quel écran (tampon statique 4 736 o) ; compilé avec la bibliothèque SD 1.3.0 |
 
 Les trois autres ports R4 (`pod_uno_r4_eink27`, `…_eink27_oled`, `…_tft18`, écrits par GPT, versions `…-1.1`) ont la même logique mais ne font pas partie de cet essai.
 
@@ -20,11 +21,14 @@ Les trois autres ports R4 (`pod_uno_r4_eink27`, `…_eink27_oled`, `…_tft18`, 
 ## Avant de téléverser
 1. **Pousser** (`git push`) et attendre le déploiement Vercel : le serveur doit annoncer `v2`, accepter `screen` dans l'ACK, compter les votes atomiquement.
 2. Variables Vercel : `STRICT_SIGNATURE` et `PIN_DEVICE_KEY` absentes ou `false` ; `ENFORCE_V2_REJECTIONS` **absente**.
-3. **Wi-Fi** : à saisir dans vos copies locales des `.ino` ESP (déjà fait pour 2,9″ et TFT 1,8″) ; ne jamais committer (le dépôt contient des versions sans identifiants). R4 : `secrets.h` local.
+3. **Wi-Fi** : dans un `secrets.h` LOCAL de chaque dossier (ESP et R4), ignoré par git et déjà prérempli ; les `.ino` ne contiennent plus aucun identifiant (`tests/noWifiSecrets.test.ts` échoue sinon). Sur une nouvelle machine : copier `secrets.h.example` en `secrets.h`.
 4. Un appareil neuf ou réinitialisé a une nouvelle identité : l'appairer, puis (si c'est un remplacement) utiliser « ⇄ Fusionner » dans Mon profil.
 5. `MIN_V2_APPROVALS` (Vercel, défaut 0). Le quorum est `ceil(pool × 0,51)` approbations. Si tous les appareils actifs du réseau sont vos 4 appareils v2 (pool = 4 ⇒ quorum 3) :
    - `MIN_V2_APPROVALS=3` : le bloc n'existe que si les 3 approbations sont recalculées (le vrai test) ;
    - si d'**anciens** appareils v1 sont encore actifs dans le pool, ils peuvent atteindre le quorum seuls (constat du bloc #92) : mettre au moins `1`. Sans appareil v2 capable, le candidat expire (30 min) sans bloc.
+
+## Dessins à envoyer : IMAGES FIXES uniquement
+Une **animation** (atelier `/animer`) n'a pas de spécification v2 : tous les appareils votent alors en **v1 (écho du score serveur)**, sans calcul. Pour tester la validation réelle, dessiner des images fixes.
 
 ## Déroulé
 Serial 115200 enregistré dans un fichier **pour chaque carte**, noter l'heure de chaque essai.

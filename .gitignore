@@ -63,3 +63,4 @@ next-env.d.ts
 .claude
 # Firmware : identifiants Wi-Fi locaux
 arduino_uno_r4/**/secrets.h
+esp8266/**/secrets.h

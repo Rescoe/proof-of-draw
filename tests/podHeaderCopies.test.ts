@@ -17,6 +17,7 @@ const COPIES: Record<string, string[]> = {
     "arduino_uno_r4/pod_uno_r4_eink27/pod_metrics.h",
     "arduino_uno_r4/pod_uno_r4_eink27_oled/pod_metrics.h",
     "arduino_uno_r4/pod_uno_r4_tft18/pod_metrics.h",
+    "arduino_uno_r4/pod_uno_r4/pod_metrics.h",
   ],
   "esp8266/_shared/pod_metrics_table.h": [
     "esp8266/esp_eink_2.9BWR/pod_metrics_table.h",
@@ -26,11 +27,13 @@ const COPIES: Record<string, string[]> = {
     "arduino_uno_r4/pod_uno_r4_eink27/pod_metrics_table.h",
     "arduino_uno_r4/pod_uno_r4_eink27_oled/pod_metrics_table.h",
     "arduino_uno_r4/pod_uno_r4_tft18/pod_metrics_table.h",
+    "arduino_uno_r4/pod_uno_r4/pod_metrics_table.h",
   ],
   "arduino_uno_r4/pod_uno_r4_eink29/pod_vote_r4.h": [
     "arduino_uno_r4/pod_uno_r4_eink27/pod_vote_r4.h",
     "arduino_uno_r4/pod_uno_r4_eink27_oled/pod_vote_r4.h",
     "arduino_uno_r4/pod_uno_r4_tft18/pod_vote_r4.h",
+    "arduino_uno_r4/pod_uno_r4/pod_vote_r4.h",
   ],
   "esp8266/_shared/pod_vote_esp.h": ["esp8266/esp_eink_2.9BWR/pod_vote_esp.h", "esp8266/esp_tft1.8/pod_vote_esp.h", "esp8266/esp_eink_2.7BW_OLED/pod_vote_esp.h"],
 };
@@ -56,6 +59,7 @@ const SKETCHES = [
   "arduino_uno_r4/pod_uno_r4_eink27/pod_uno_r4_eink27.ino",
   "arduino_uno_r4/pod_uno_r4_eink27_oled/pod_uno_r4_eink27_oled.ino",
   "arduino_uno_r4/pod_uno_r4_tft18/pod_uno_r4_tft18.ino",
+  "arduino_uno_r4/pod_uno_r4/pod_uno_r4.ino",
 ];
 for (const sketch of SKETCHES) {
   test(`${sketch} : vote v2 sur tout type d'écran, re-register sur 403`, () => {

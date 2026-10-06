@@ -36,7 +36,6 @@
 #include <SHA256.h>
 #include "pod_http.h"
 #include "pod_bench.h"
-#include "pod_vote_r4.h"       // validation réelle (vote v2) : SHA-256 + métriques entières en flux — ⚠ NON TESTÉ sur la carte
 
 // ─── CONFIG ────────────────────────────────────────────────────────────────
 // Wi-Fi : copier secrets.h.example en secrets.h (ignoré par git) puis renseigner SSID / mot de passe (2,4 GHz).
@@ -51,7 +50,7 @@
 
 #define SERVER_HOST       "proof-of-draw.vercel.app"
 #define SCREEN_TYPE       "tft28"            // profil serveur 240×320 RGB565 (lib/screenProfiles.ts)
-#define FIRMWARE_VERSION  "r4tft28-2.5"
+#define FIRMWARE_VERSION  "r4tft28-2.4"
 #define TOUCH_ENABLED     1                  // toucher = afficher / cacher le cartel
 #define PULL_INTERVAL     60000UL
 #define VALIDATE_INTERVAL 30000UL
@@ -760,78 +759,17 @@ static bool doPull() {
   return true;
 }
 
-// ─── VALIDATION RÉELLE (vote v2) — ⚠ NON TESTÉE SUR LA CARTE ─────────────
-// Le serveur annonce le candidat (écran, taille, SHA-256) ; la R4 lit le contenu BRUT en flux, recalcule le hash et les métriques entières, décide d'un verdict objectif,
-// le signe (Ed25519) et vote. Elle relit un candidat de N'IMPORTE QUEL écran (le serveur ne l'oblige pas à voter pour son type) ; le tampon que demandent l'OLED (1 024 o)
-// et l'e-ink 2,9" (4 736 o) est statique (la pile de la R4 est petite). Un candidat tft28 (153 600 o) est lu en flux, sans tampon d'image.
-static uint8_t g_voteChunk[256];
-static uint8_t g_voteScratch[4736];
-
-static bool doValidateV2(const String& candidateId, const String& screenName, size_t bytes, const String& announcedHash) {
-  PodScreenKind kind;
-  if (!podKindFromName(screenName.c_str(), &kind)) { logf("[VALIDATE2] écran inconnu : %s", screenName.c_str()); return false; }
-  reportMem("VALIDATE2-avant");
-  PodCheck chk; memset(&chk, 0, sizeof(chk));
-  {
-    Conn c(HTTP_TIMEOUT_MS);
-    const int code = c.request("GET", String("/api/candidate-frame?candidateId=") + candidateId, nullptr);
-    chk.http = code;
-    logf("[HTTP GET] /api/candidate-frame -> %d", code);
-    if (code == 200) podCheckStream(c.rd, kind, bytes, g_voteScratch, sizeof(g_voteScratch), g_voteChunk, sizeof(g_voteChunk), &chk);
-    c.client.stop();
-  }
-  if (!chk.ok) { logf("[VALIDATE2] lecture/calcul impossible (http=%d, %u/%u octets)", chk.http, (unsigned)chk.bytes, (unsigned)bytes); return false; }
-
-  bool accept = false;
-  const char* reason = podVerdict(chk, announcedHash, &accept);
-  logf("[VALIDATE2] %s %u o en %lu ms | e=%lu t=%lu r=%lu s=%lu | verdict=%s %s", screenName.c_str(), (unsigned)chk.bytes, (unsigned long)chk.ms,
-       (unsigned long)chk.m.e, (unsigned long)chk.m.t, (unsigned long)chk.m.r, (unsigned long)chk.m.s, accept ? "accept" : "reject", reason);
-  logf("[VALIDATE2] hash=%s", chk.hash);
-
-  const String msg = podVoteMessage(deviceId, candidateId, chk.hash, chk.m, accept);
-  uint8_t sig[64];
-  const unsigned long ts = millis();
-  Ed25519::sign(sig, privateKey, publicKey, (const uint8_t*)msg.c_str(), msg.length());
-  logf("[VALIDATE2] signature en %lu ms", millis() - ts);
-  const String body = String("{\"v\":2,\"deviceId\":\"") + deviceId + "\",\"candidateId\":\"" + candidateId + "\",\"rawHash\":\"" + chk.hash + "\"," +
-                      "\"e\":" + String((unsigned long)chk.m.e) + ",\"t\":" + String((unsigned long)chk.m.t) + ",\"r\":" + String((unsigned long)chk.m.r) + "," +
-                      "\"verdict\":\"" + (accept ? "accept" : "reject") + "\"" + (accept ? String("") : String(",\"reason\":\"") + reason + "\"") +
-                      ",\"signature\":\"" + bytesToHex(sig, 64) + "\"}";
-  String vResp;
-  const int vCode = httpCall("POST", "/api/validation-result", &body, vResp);
-  bool mined = false;
-  if (vCode == 200) {
-    logf("[VALIDATE2] Vote OK");
-    if (vResp.indexOf("\"blockMined\":true") >= 0) { logf("[VALIDATE2] BLOC MINÉ"); mined = true; }
-    if (vResp.indexOf("\"rejectObserved\":true") >= 0) logf("[VALIDATE2] refus enregistré par le serveur (non bloquant)");
-  } else {
-    logf("[VALIDATE2] Echec vote (%d) : 403 = signature, 422 = hash/métriques différents du serveur — %s", vCode, vResp.c_str());
-    // 403 « Signature » = clé publique désynchronisée côté serveur : on se ré-enregistre pour la renvoyer (comme le chemin v1), le prochain cycle votera.
-    if (vResp.indexOf("Signature") >= 0) { logf("[VALIDATE2] resynchronisation de la clé publique (re-register)"); doRegister(); }
-  }
-  reportMem("VALIDATE2-après");
-  return mined;
-}
-
 // ─── VALIDATION ────────────────────────────────────────────────────────────
 static bool doValidate() {
   if (pendingCandidateId.length() == 0) return false;
   String resp;
   if (httpCall("GET", "/api/validate-candidate?deviceId=" + deviceId, nullptr, resp) != 200 || resp.length() == 0) { pendingCandidateId = ""; return false; }
-  JSON_DOC(doc, 768);   // 512 avant la validation réelle : la réponse porte aussi { v2: écran, taille, hash } (≈ 110 o)
+  JSON_DOC(doc, 512);
   if (deserializeJson(doc, resp)) { pendingCandidateId = ""; return false; }
   if ((doc["alreadyVoted"] | false) || doc["candidate"].isNull()) { pendingCandidateId = ""; return false; }
   JsonObject cand = doc["candidate"];
   const String candidateId = cand["candidateId"] | "";
   if (candidateId.length() == 0) { pendingCandidateId = ""; return false; }
-  // Validation RÉELLE : si le serveur annonce { v2 }, on revérifie le contenu au lieu de recopier son score (anciens serveurs / animations : chemin v1 ci-dessous).
-  if (!cand["v2"].isNull()) {
-    const String v2screen = cand["v2"]["screen"] | "";
-    const size_t v2bytes  = cand["v2"]["bytes"] | 0;
-    const String v2hash   = cand["v2"]["hash"] | "";
-    pendingCandidateId = "";
-    return doValidateV2(candidateId, v2screen, v2bytes, v2hash);
-  }
   const float score = cand["score_server"] | 0.5f;
 
   const String signature = signED25519(candidateId, score);

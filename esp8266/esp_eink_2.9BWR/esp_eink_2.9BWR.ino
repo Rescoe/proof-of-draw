@@ -42,8 +42,15 @@
 #include "pod_vote_esp.h"  // validation réelle (vote v2) : SHA-256 + métriques entières en flux — ⚠ NON TESTÉ sur le matériel
 
 // ─── CONFIG ────────────────────────────────────────────────────────────────
-const char* WIFI_SSID = "";
-const char* WIFI_PASSWORD = "";
+// Wi-Fi : copier secrets.h.example en secrets.h (ignoré par git : les identifiants ne doivent JAMAIS être commités), puis renseigner SSID / mot de passe (2,4 GHz).
+#if __has_include("secrets.h")
+  #include "secrets.h"
+  const char* WIFI_SSID     = SECRET_WIFI_SSID;
+  const char* WIFI_PASSWORD = SECRET_WIFI_PASSWORD;
+#else
+  const char* WIFI_SSID     = "";            // ← renseigner (ou créer secrets.h)
+  const char* WIFI_PASSWORD = "";
+#endif
 
 
 #define SERVER_URL      "https://proof-of-draw.vercel.app"
