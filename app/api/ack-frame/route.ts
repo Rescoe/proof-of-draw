@@ -22,6 +22,9 @@ export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
     const { deviceId, frameId } = body;
+    // `screen` (facultatif, firmware multiscreen-2.3+) : sur un appareil multi-écran, une même frameId peut être en attente sur deux écrans
+    // (conversion d'un dessin) → on n'acquitte que l'écran qui l'a réellement affichée.
+    const ackScreen: string | null = typeof body.screen === "string" ? body.screen : null;
 
     if (!deviceId || !frameId)
       return NextResponse.json({ error: "deviceId et frameId requis" }, { status: 400 });
@@ -42,7 +45,7 @@ export async function POST(req: NextRequest) {
     // La frame du consensus dont l'id correspond (parmi les écrans de CET appareil)
     let taken: { frame: StoredFrame; screen: string } | null = null;
     FRAME_IDS.forEach((s, i) => {
-      if (taken || !device!.screens.includes(s)) return;
+      if (taken || !device!.screens.includes(s) || (ackScreen && s !== ackScreen)) return;
       const f = parseStoredFrame(raws[3 + i]);
       if (f && f.frameId === frameId) taken = { frame: f, screen: s };
     });

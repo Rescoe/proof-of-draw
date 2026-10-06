@@ -4,7 +4,7 @@ import { redis } from "@/lib/redis";
 import { writeDeviceKey, type Device } from "@/lib/deviceStore";
 import { SCREEN_IDS } from "@/lib/screenProfiles";
 import { HOT_KEY, idleRetrySec, presenceStale, rlSampled, RL_SAMPLED_BLACKLIST, RL_SAMPLED_MAX } from "@/lib/pullBudget";
-import { frameKey, parseStoredFrame, FramePayload } from "@/lib/queue";
+import { frameKey, parseStoredFrame, oldestFrame, FramePayload } from "@/lib/queue";
 import { getIP, forbidden } from "@/lib/rateLimit";
 import { benchScreenOf } from "@/lib/bench/screens";
 import { parseChainHeadRaw, parseCandidateRaw, PULL_KEY_HEAD, PULL_KEY_CANDIDATE, PULL_KEY_VOTES, PULL_KEY_OBS_PENDING, popObsTask } from "@/lib/chain";
@@ -109,8 +109,7 @@ export async function GET(req: NextRequest) {
     const frameRaws = FRAME_IDS.map((s, i) => (screens.includes(s) ? raws[3 + i] : null));
     const rest = raws.slice(3 + FRAME_IDS.length);
     // La plus ancienne frame gagne (même règle que getFrameForDevice : les écrans d'un appareil multi-écran tournent équitablement)
-    const consensusFrame = frameRaws.map(parseStoredFrame).filter((f): f is NonNullable<ReturnType<typeof parseStoredFrame>> => f !== null)
-      .reduce<ReturnType<typeof parseStoredFrame>>((oldest, f) => (oldest === null || f.storedAt < oldest.storedAt ? f : oldest), null);
+    const consensusFrame = oldestFrame(frameRaws.map(parseStoredFrame));
     const personalFrame = parsePersonal(rest[0]);
     const chainHead = parseChainHeadRaw(rest[1]);
     const candidate = parseCandidateRaw(rest[2]);

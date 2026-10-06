@@ -2,7 +2,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { redis } from "@/lib/redis";
 import type { Device } from "@/lib/deviceStore";
-import { frameKey, parseStoredFrame, type StoredFrame } from "@/lib/queue";
+import { frameKey, parseStoredFrame, oldestFrame, type StoredFrame } from "@/lib/queue";
 import { SCREEN_IDS } from "@/lib/screenProfiles";
 import { isSceneScreen, selectDelivery } from "@/lib/scene/delivery";
 import { getScenePackage } from "@/lib/scene/store";
@@ -28,10 +28,9 @@ export async function GET(req: NextRequest) {
     if (!device)
       return NextResponse.json({ error: "device inconnu" }, { status: 404 });
     /** La plus ancienne frame du consensus parmi les écrans demandés (même règle que getFrameForDevice). */
-    const frameFor = (screens: string[]): StoredFrame | null => screens
-      .map((s) => { const i = FRAME_IDS.indexOf(s); return i < 0 ? null : parseStoredFrame(raws[1 + i]); })
-      .filter((f): f is StoredFrame => f !== null)
-      .reduce<StoredFrame | null>((oldest, f) => (oldest === null || f.storedAt < oldest.storedAt ? f : oldest), null);
+    const frameFor = (screens: string[]): StoredFrame | null => oldestFrame(
+      screens.map((s) => { const i = FRAME_IDS.indexOf(s); return i < 0 ? null : parseStoredFrame(raws[1 + i]); }),
+    );
 
     // ── scene-v1 : paquet binaire ANAS (≤ 4 Ko) ────────────────────────────
     // GET /api/pull-frame?deviceId=…&screen=oled096&kind=scene&artifactId=…&fmt=bin

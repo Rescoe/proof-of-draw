@@ -40,6 +40,26 @@ const FRAME_TTL = 15 * 60;
 
 export function frameKey(deviceId: string, screen: string) { return `frame:${deviceId}:${screen}`; }
 
+/**
+ * Date d'écriture d'une frame, pour la règle « la plus ancienne gagne » entre les écrans d'un appareil multi-écran.
+ * Les écrivains de frames (validation-result, lib/broadcast.ts, lib/anim/broadcast.ts) posent `createdAt`, PAS `storedAt` (réservé à storeFrame) :
+ * comparer `storedAt` seul donnait `undefined < undefined` = faux → l'ordre de SCREEN_IDS décidait (oled096 avant eink27bw : une frame OLED en attente
+ * masquait l'e-ink tant qu'elle n'était pas acquittée, jusqu'à 2 h pour une animation).
+ */
+export function frameStoredAt(f: { storedAt?: number; createdAt?: number } | null | undefined): number {
+  if (!f) return Number.POSITIVE_INFINITY;
+  if (typeof f.storedAt === "number") return f.storedAt;
+  if (typeof f.createdAt === "number") return f.createdAt;
+  return Number.POSITIVE_INFINITY;   // sans date : jamais prioritaire sur une frame datée
+}
+
+/** La plus ancienne frame d'une liste (égalité : la première de la liste). */
+export function oldestFrame<T extends { storedAt?: number; createdAt?: number }>(frames: readonly (T | null)[]): T | null {
+  let best: T | null = null;
+  for (const f of frames) if (f && (best === null || frameStoredAt(f) < frameStoredAt(best))) best = f;
+  return best;
+}
+
 // Upstash peut retourner un objet déjà parsé OU une string JSON — on gère les deux
 export function parseStoredFrame(raw: unknown): StoredFrame | null { return parseFrame(raw); }
 function parseFrame(raw: unknown): StoredFrame | null {
@@ -89,7 +109,7 @@ export async function getFrameForDevice(
   const raws = await Promise.all(screens.map(s => redis.get(frameKey(deviceId, s))));
   const frames = raws.map(parseFrame).filter((f): f is StoredFrame => f !== null);
   if (frames.length === 0) return null;
-  return frames.reduce((oldest, f) => (f.storedAt < oldest.storedAt ? f : oldest));
+  return oldestFrame(frames);
 }
 
 /**
