@@ -656,8 +656,9 @@ static uint8_t g_voteChunk[256];
 
 static bool doValidateV2(const String& candidateId, const String& screenName, size_t bytes, const String& announcedHash) {
   PodScreenKind kind;
-  if (!podKindFromName(screenName.c_str(), &kind) || kind != POD_EINK27BW) {
-    logf("[VALIDATE2] écran non pris en charge : %s", screenName.c_str());
+  // Un appareil relit un candidat de N'IMPORTE QUEL écran (le serveur ne l'oblige pas à voter pour son type) : blackBuf (≥ 4 736 o) sert de tampon pour l'OLED et l'e-ink 2,9".
+  if (!podKindFromName(screenName.c_str(), &kind)) {
+    logf("[VALIDATE2] écran inconnu : %s", screenName.c_str());
     return false;
   }
   PodCheck chk; memset(&chk, 0, sizeof(chk));
@@ -665,7 +666,7 @@ static bool doValidateV2(const String& candidateId, const String& screenName, si
     Conn c(HTTP_TIMEOUT_MS);
     const int code = c.request("GET", String("/api/candidate-frame?candidateId=") + candidateId, nullptr);
     chk.http = code;
-    if (code == 200) podCheckStream(c.rd, kind, bytes, nullptr, 0, g_voteChunk, sizeof(g_voteChunk), &chk);
+    if (code == 200) podCheckStream(c.rd, kind, bytes, blackBuf, BUF_SIZE, g_voteChunk, sizeof(g_voteChunk), &chk);
     c.client.stop();
   }
   if (!chk.ok) { logf("[VALIDATE2] calcul impossible (%u/%u octets)", (unsigned)chk.bytes, (unsigned)bytes); return false; }
@@ -678,6 +679,8 @@ static bool doValidateV2(const String& candidateId, const String& screenName, si
                       ",\"signature\":\"" + bytesToHex(sig, 64) + "\"}";
   String resp; const int code = httpCall("POST", "/api/validation-result", &body, resp);
   logf("[VALIDATE2] e=%lu t=%lu r=%lu verdict=%s HTTP=%d", (unsigned long)chk.m.e, (unsigned long)chk.m.t, (unsigned long)chk.m.r, accept ? "accept" : reason, code);
+  // 403 « Signature » = clé publique désynchronisée côté serveur : on se ré-enregistre pour la renvoyer (comme le chemin v1), le prochain cycle votera.
+  if (code != 200 && resp.indexOf("Signature") >= 0) { logf("[VALIDATE2] resynchronisation de la clé publique (re-register)"); doRegister(); }
   return code == 200 && resp.indexOf("\"blockMined\":true") >= 0;
 }
 

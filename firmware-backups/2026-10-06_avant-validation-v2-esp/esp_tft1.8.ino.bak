@@ -72,7 +72,6 @@
 #include "ana_scene_v1.h"  // lecteur scene-v1 (œuvres génératives animées) — testé sur PC contre le moteur de référence
 #include "pod_bench_esp.h" // banc d'essai d'animation (clips PBC1) — ⚠ NON TESTÉ sur le matériel (voir en-tête)
 #include "pod_anim_esp.h"  // animation résidente en boucle (blocs d'animation) — ⚠ NON TESTÉ sur le matériel (voir en-tête)
-#include "pod_vote_esp.h"  // validation réelle (vote v2) : SHA-256 + métriques entières en flux — ⚠ NON TESTÉ sur le matériel
 
 // ─── CONFIG ────────────────────────────────────────────────────────────────
 const char* WIFI_SSID = "";
@@ -81,7 +80,7 @@ const char* WIFI_PASSWORD = "";
 
 #define SERVER_URL        "https://proof-of-draw.vercel.app"
 #define SCREEN_TYPE       "tft18"
-#define FIRMWARE_VERSION  "tft18-2.3"
+#define FIRMWARE_VERSION  "tft18-2.2"
 #define PULL_INTERVAL     60000UL   // 1 min
 #define VALIDATE_INTERVAL 30000UL   // 30s
 
@@ -1426,60 +1425,6 @@ bool doPull() {
 }
 
 // ─── VALIDATION (identique 29BWR — V1 echo score_server) ──────────────────
-// ─── VALIDATION RÉELLE (vote v2) ─────────────────────────────────────────────
-// ⚠ NON TESTÉ sur le matériel (docs/CHANTIER_VALIDATION_REELLE.md, P3). Le serveur annonce le candidat (écran, taille, SHA-256) ; ici l'ESP lit le contenu BRUT (40 960 o RGB565)
-// en flux, recalcule le hash et les métriques entières, décide d'un verdict objectif, le signe (Ed25519) et vote. AUCUN tampon d'image. L'appareil relit un candidat de N'IMPORTE QUEL écran
-// (le serveur ne l'oblige pas à voter pour son type) : seuls l'OLED et l'e-ink 2,9" demandent un petit tampon (1 024 / 4 736 o), alloué AVANT la connexion TLS et libéré aussitôt après.
-bool doValidateV2(const String& candidateId, const String& screenName, size_t bytes, const String& announcedHash) {
-  PodScreenKind kind;
-  if (!podKindFromName(screenName, &kind)) { Serial.println("[VALIDATE2] écran inconnu: " + screenName); return false; }
-  uint8_t* scratch = nullptr;
-  size_t scratchLen = 0;
-  if (kind == POD_OLED096 || kind == POD_EINK29BWR) {
-    scratchLen = POD_SCRATCH_BYTES;
-    scratch = (uint8_t*)malloc(scratchLen);
-    if (!scratch) { Serial.println("[VALIDATE2] malloc scratch impossible"); return false; }
-  }
-  logHeapState("VALIDATE2-BEFORE");
-  PodCheck chk;
-  bool ok = podFetchAndCheck(String(SERVER_URL) + "/api/candidate-frame?candidateId=" + candidateId, kind, bytes, scratch, scratchLen, &chk);
-  free(scratch);
-  if (!ok) {
-    Serial.printf("[VALIDATE2] lecture/calcul impossible (http=%d, %u/%u octets)\n", chk.http, (unsigned)chk.bytes, (unsigned)bytes);
-    return false;
-  }
-
-  bool accept = false;
-  const char* reason = podVerdict(chk, announcedHash, &accept);
-  Serial.printf("[VALIDATE2] %s %u o en %lu ms | e=%lu t=%lu r=%lu s=%lu | verdict=%s %s\n", screenName.c_str(), (unsigned)chk.bytes, (unsigned long)chk.ms,
-                (unsigned long)chk.m.e, (unsigned long)chk.m.t, (unsigned long)chk.m.r, (unsigned long)chk.m.s, accept ? "accept" : "reject", reason);
-  Serial.println(String("[VALIDATE2] hash=") + chk.hash);
-
-  String msg = podVoteMessage(deviceId, candidateId, chk.hash, chk.m, accept);
-  uint8_t sig[64];
-  Ed25519::sign(sig, privateKey, publicKey, (const uint8_t*)msg.c_str(), msg.length());
-
-  String body = String("{\"v\":2,\"deviceId\":\"") + deviceId + "\",\"candidateId\":\"" + candidateId + "\",\"rawHash\":\"" + chk.hash + "\","
-                "\"e\":" + String((unsigned long)chk.m.e) + ",\"t\":" + String((unsigned long)chk.m.t) + ",\"r\":" + String((unsigned long)chk.m.r) + ","
-                "\"verdict\":\"" + (accept ? "accept" : "reject") + "\"" + (accept ? String("") : String(",\"reason\":\"") + reason + "\"") +
-                ",\"signature\":\"" + bytesToHex(sig, 64) + "\"}";
-
-  String vResp;
-  bool vOk = httpPost("/api/validation-result", body, vResp);
-  bool mined = false;
-  if (vOk) {
-    Serial.println("[VALIDATE2] Vote OK");
-    if (vResp.indexOf("\"blockMined\":true") >= 0) { Serial.println("[VALIDATE2] BLOC MINE"); mined = true; }
-    if (vResp.indexOf("\"rejectObserved\":true") >= 0) Serial.println("[VALIDATE2] refus enregistré par le serveur (non bloquant)");
-  } else {
-    Serial.println("[VALIDATE2] Echec vote (403 signature, 422 hash/métriques différents du serveur) : " + vResp);
-    // 403 Signature invalide → clé publique désynchronisée : on se ré-enregistre pour la renvoyer (comme le chemin v1), le prochain cycle votera.
-    if (vResp.indexOf("Signature") >= 0) { Serial.println("[VALIDATE2] Re-register pour resynchroniser publicKey..."); doRegister(); }
-  }
-  logHeapState("VALIDATE2-AFTER");
-  return mined;
-}
-
 bool doValidate() {
   if (pendingCandidateId.length() == 0) return false;
 
@@ -1498,7 +1443,7 @@ bool doValidate() {
     return false;
   }
 
-  DynamicJsonDocument doc(768);   // 512 avant la validation réelle : la réponse porte aussi { v2: écran, taille, hash } (≈ 110 o)
+  DynamicJsonDocument doc(512);
   if (deserializeJson(doc, resp)) {
     Serial.println("[VALIDATE] JSON error");
     pendingCandidateId = "";
@@ -1523,16 +1468,6 @@ bool doValidate() {
   if (candidateId.length() == 0) {
     pendingCandidateId = "";
     return false;
-  }
-
-  // Validation RÉELLE : si le serveur annonce { v2 }, on revérifie le contenu au lieu de recopier son score (anciens serveurs / animations : chemin v1 ci-dessous).
-  if (!cand["v2"].isNull()) {
-    String v2screen = cand["v2"]["screen"] | "";
-    size_t v2bytes  = cand["v2"]["bytes"] | 0;
-    String v2hash   = cand["v2"]["hash"] | "";
-    pendingCandidateId = "";
-    doc.clear();
-    return doValidateV2(candidateId, v2screen, v2bytes, v2hash);
   }
 
   float score = cand["score_server"] | 0.5f;

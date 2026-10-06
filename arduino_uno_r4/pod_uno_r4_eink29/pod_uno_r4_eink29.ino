@@ -650,12 +650,12 @@ static bool doPull() {
 // ⚠ NON TESTÉ sur la carte (docs/CANARI_R4_EINK29.md). Le serveur annonce le candidat (écran, taille, SHA-256) ; ici la R4 lit le contenu BRUT en flux, recalcule
 // le hash et les métriques entières, décide d'un verdict objectif, le signe (Ed25519) et vote. Aucune image n'est gardée : blackBuf sert de tampon « noir » pendant
 // la lecture (il est ré-écrit en entier avant le prochain affichage) ; le morceau de lecture est statique (la pile de la R4 est petite).
+// Un appareil relit un candidat de N'IMPORTE QUEL écran (le serveur ne l'oblige pas à voter pour son type) : blackBuf (≥ 4 736 o) sert de tampon pour l'OLED et l'e-ink 2,9".
 static uint8_t g_voteChunk[256];
 
 static bool doValidateV2(const String& candidateId, const String& screenName, size_t bytes, const String& announcedHash) {
   PodScreenKind kind;
   if (!podKindFromName(screenName.c_str(), &kind)) { logf("[VALIDATE2] écran inconnu: %s", screenName.c_str()); return false; }
-  if (kind != POD_EINK29BWR) { logf("[VALIDATE2] ce firmware ne sait relire que eink29bwr (reçu %s) : pas de vote", screenName.c_str()); return false; }
   reportMem("VALIDATE2-avant");
 
   PodCheck chk;

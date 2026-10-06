@@ -754,16 +754,16 @@ static bool doPull() {
 
 // ─── VALIDATION RÉELLE (vote v2) — ⚠ NON TESTÉE SUR LA CARTE ─────────────
 static uint8_t g_voteChunk[256];
-static uint8_t g_voteScratch[OLED_BUF_SIZE];
 
 static bool doValidateV2(const String& candidateId, const String& screenName, size_t bytes, const String& announcedHash) {
   PodScreenKind kind;
-  if (!podKindFromName(screenName.c_str(), &kind) || (kind != POD_EINK27BW && kind != POD_OLED096)) {
-    logf("[VALIDATE2] écran non pris en charge : %s", screenName.c_str());
+  // Un appareil relit un candidat de N'IMPORTE QUEL écran (le serveur ne l'oblige pas à voter pour son type) : blackBuf (≥ 4 736 o) sert de tampon pour l'OLED et l'e-ink 2,9".
+  if (!podKindFromName(screenName.c_str(), &kind)) {
+    logf("[VALIDATE2] écran inconnu : %s", screenName.c_str());
     return false;
   }
-  uint8_t* scratch = kind == POD_OLED096 ? g_voteScratch : nullptr;
-  const size_t scratchLen = kind == POD_OLED096 ? sizeof(g_voteScratch) : 0;
+  uint8_t* scratch = blackBuf;
+  const size_t scratchLen = BUF_SIZE;
   PodCheck chk; memset(&chk, 0, sizeof(chk));
   {
     Conn c(HTTP_TIMEOUT_MS);
@@ -782,6 +782,8 @@ static bool doValidateV2(const String& candidateId, const String& screenName, si
                       ",\"signature\":\"" + bytesToHex(sig, 64) + "\"}";
   String resp; const int code = httpCall("POST", "/api/validation-result", &body, resp);
   logf("[VALIDATE2] %s e=%lu t=%lu r=%lu verdict=%s HTTP=%d", screenName.c_str(), (unsigned long)chk.m.e, (unsigned long)chk.m.t, (unsigned long)chk.m.r, accept ? "accept" : reason, code);
+  // 403 « Signature » = clé publique désynchronisée côté serveur : on se ré-enregistre pour la renvoyer (comme le chemin v1), le prochain cycle votera.
+  if (code != 200 && resp.indexOf("Signature") >= 0) { logf("[VALIDATE2] resynchronisation de la clé publique (re-register)"); doRegister(); }
   return code == 200 && resp.indexOf("\"blockMined\":true") >= 0;
 }
 

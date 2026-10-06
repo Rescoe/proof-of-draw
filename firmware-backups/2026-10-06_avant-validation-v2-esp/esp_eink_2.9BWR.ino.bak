@@ -858,7 +858,7 @@ bool doRegister() {
   String pubHex     = keysLoaded ? bytesToHex(publicKey, 32) : "";
   String ownedHashes = loadOwnedHashesJson();  // ex: ["abc...","def..."] ou []
   String body = "{\"mac\":\"" + mac + "\",\"screens\":[\"" + SCREEN_TYPE + "\"],"
-                "\"firmware\":\"2.2\",\"publicKey\":\"" + pubHex + "\","
+                "\"firmware\":\"2.1\",\"publicKey\":\"" + pubHex + "\","
                 "\"ownedHashes\":" + ownedHashes + "}";
   String resp;
 
@@ -1291,11 +1291,8 @@ bool doValidateV2(const String& candidateId, const String& screenName, size_t by
   if (vOk) {
     Serial.println("[VALIDATE2] Vote OK");
     if (vResp.indexOf("\"blockMined\":true") >= 0) { Serial.println("[VALIDATE2] BLOC MINE"); frameReady = true; }
-    if (vResp.indexOf("\"rejectObserved\":true") >= 0) Serial.println("[VALIDATE2] refus enregistré par le serveur (non bloquant)");
   } else {
-    Serial.println("[VALIDATE2] Echec vote (403 signature, 422 hash/métriques différents du serveur) : " + vResp);
-    // 403 Signature invalide → clé publique désynchronisée : on se ré-enregistre pour la renvoyer (comme le chemin v1), le prochain cycle votera.
-    if (vResp.indexOf("Signature") >= 0) { Serial.println("[VALIDATE2] Re-register pour resynchroniser publicKey..."); doRegister(); }
+    Serial.println("[VALIDATE2] Echec vote (voir la réponse ci-dessus : 403 signature, 422 hash/métriques différents du serveur)");
   }
   logHeapState("VALIDATE2-AFTER");
   return vOk;
