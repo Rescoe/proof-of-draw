@@ -315,6 +315,10 @@ des métriques entières, plan en 7 phases et décisions à prendre : `docs/CHAN
 
 **Reprise du 06/10/2026** : lire aussi `docs/REPRISE_2026_10_06_VALIDATION_ET_RESEAU.md` avant de poursuivre. Cette note fixe les garde-fous décidés : rejets v2 non bloquants pendant le canari, vote atomique avant essais multi-cartes, P0 complet avant mode strict, différentiel C++ obligatoire et interdiction de commiter le firmware TFT 1.8 local contenant le Wi-Fi.
 
+**Plan de travail du 06/10/2026** (audits Claude + GPT, rôles : GPT orchestrateur/auditeur, Claude réalisateur) : `docs/PLAN_DE_TRAVAIL_CONSENSUS_FINAL_2026_10_06.md` (lots 0-10 : preuves, protocole v3, identité, reçus signés, comité, noyau `consensusPoD`, animations calculées, cartels, grand reflash + OTA, documentation).
+Les audits : `docs/NOTE_CLAUDE_AUDIT_VALIDATION_CONSENSUS_OTA_2026_10_06.md` et `docs/AUDIT_GPT_CONSENSUS_POD_IOT_2026_10_06.md`. **À la clôture de chaque lot : mettre à jour `app/learn/data/roadmap.ts` (feuille de route, fin de la page Apprendre) et, si un niveau d'assurance change, la synthèse `app/learn/components/SynthesisPath.tsx`** (test `learnRoadmap`).
+Firmware e-ink 2,7" seul (`eink27bw-2.1`) : vote v2 porté le 06/10/2026, compilé, **non essayé sur la carte**.
+
 ## Non-goals
 
 Ne pas faire :
