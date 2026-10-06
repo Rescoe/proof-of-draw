@@ -12,6 +12,7 @@
 // firmware ancien (sans animation), appareils hors ligne, affichages récents (< 5 min) et anciens (jours).
 
 import { assembleNetworkSnapshot, toNetworkDevice, type DeviceRecord, type NetworkDevice, type NetworkSnapshot } from "@/lib/networkSnapshot";
+import { describeSummary, describeVote } from "@/lib/validationSummary";
 import type { PublicShown } from "@/lib/displayState";
 import type { LogEvent } from "@/app/api/network/activity-log/route";
 import { publicDeviceId } from "@/lib/network/publicId";
@@ -161,13 +162,18 @@ export function buildFixtureEvents(snapshot: NetworkSnapshot, now: number = Date
     validatorCount: Math.min(2, online.length), poolSize: Math.max(1, online.length), workTitle: "Mouche", message: "VALIDATION en attente" });
   for (let i = 0; i < Math.min(8, online.length); i++) {
     const d = online[i];
+    // mélange réaliste du canari : écho v1, acceptations v2 (métriques entières), un refus v2
+    const score = (40 + Math.floor(r() * 40)) / 100;
+    const dv = describeVote(i % 4 === 1 ? { v: 2, verdict: "accept", entropy: 0.61 + i / 100, transitions: 0.18, rle: 0.07, score }
+      : i === 6 ? { v: 2, verdict: "reject", reason: "hash", suspect: true, entropy: 0.5, transitions: 0.2, rle: 0.1, score: 0 } : { score });
     events.push({ id: `fixture-vote-${i}`, type: "VALIDATION_VOTE", ts: now - (30 + i * 55) * 1000, deviceRef: d.publicId,
-      screen: d.screens[0]?.screen, message: `VOTE · ${d.publicId.slice(0, 12)} · score ${40 + Math.floor(r() * 40)}%` });
+      screen: d.screens[0]?.screen, voteVersion: dv.voteVersion, verdict: dv.verdict, ...(dv.reason ? { reason: dv.reason } : {}), ...(dv.metricsPpm ? { metricsPpm: dv.metricsPpm } : {}),
+      message: `VOTE · ${d.publicId.slice(0, 12)} · ${dv.detail}` });
   }
   for (let i = 0; i < 3; i++) {
     const d = pick(snapshot.devices);
     events.push({ id: `fixture-block-${i}`, type: "BLOCK_MINED", ts: now - (2 + i * 6) * 60_000, screen: d?.screens[0]?.screen, artistName: d?.artistName,
-      blockIndex: 90 - i, workTitle: TITLES[(i * 5) % TITLES.length], message: `BLOC #${90 - i}` });
+      blockIndex: 90 - i, workTitle: TITLES[(i * 5) % TITLES.length], votesLabel: describeSummary(i === 0 ? { v2: 1, v1: 2, rejects: 1 } : { v2: 0, v1: 3, rejects: 0 }), message: `BLOC #${90 - i}` });
   }
   const a = pick(snapshot.devices);
   events.push({ id: "fixture-anim", type: "ANIMATION", ts: now - 9 * 60_000, artistName: a?.artistName, workTitle: "Marée", message: "ANIMATION · Marée" });

@@ -20,6 +20,8 @@ export type LogEvent = {
   score?: number;
   validatorCount?: number;
   poolSize?: number;
+  /** Niveau de validation réellement atteint (bloc) : « v2 vérifié×1 · v1 écho×0 ». */
+  votesLabel?: string;
   message: string;
 };
 
@@ -65,6 +67,9 @@ function EventLine({ ev }: { ev: LogEvent }) {
           )}
           {ev.validatorCount !== undefined && (
             <span className="gterm__seg gterm__seg--dim">{ev.validatorCount}&nbsp;validateurs</span>
+          )}
+          {ev.votesLabel && (
+            <span className="gterm__seg gterm__seg--dim">{ev.votesLabel}</span>
           )}
         </>
       );

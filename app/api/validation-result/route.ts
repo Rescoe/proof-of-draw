@@ -26,7 +26,7 @@ import { frameKey } from "@/lib/queue";
 import { broadcastConverted } from "@/lib/broadcast";
 import type { Device } from "@/lib/deviceStore";
 import { markHot } from "@/lib/hot";
-import { parseCandidateRaw, parseVotesRaw, PULL_KEY_CANDIDATE, PULL_KEY_VOTES, getVotes, castVote, claimFinalization, finalizeBlock, clearCandidate, ValidationVote } from "@/lib/chain";
+import { countRejects, parseCandidateRaw, parseVotesRaw, PULL_KEY_CANDIDATE, PULL_KEY_VOTES, getVotes, castVote, claimFinalization, finalizeBlock, clearCandidate, ValidationVote } from "@/lib/chain";
 import { getIP, forbidden } from "@/lib/rateLimit";
 import { verifyEd25519 } from "@/lib/ed25519";
 import { dequeueNextDraw } from "@/lib/drawQueue";
@@ -196,7 +196,7 @@ export async function POST(req: NextRequest) {
       const allVotes = accepted.length > 0 ? accepted : [vote];
       const frameId = crypto.randomUUID();
       // vote.deviceId = l'ESP dont le vote vient d'atteindre le quorum → premier mineur
-      const block = await finalizeBlock(candidate, allVotes, frameId, vote.deviceId);
+      const block = await finalizeBlock(candidate, allVotes, frameId, vote.deviceId, voteMap ? countRejects(voteMap) : 0);
 
       if (candidate.anim) {
         // Animation : diffusée à TOUS les écrans dynamiques (TFT 2.8", TFT 1.8", OLED) dont le firmware la joue — affiche à leur géométrie + pointeur du clip.

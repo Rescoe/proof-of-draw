@@ -36,6 +36,7 @@ import { sha256Hex, computeDisplayTime } from "@/lib/crypto";
 import type { ReplayAnalysis } from "@/lib/crypto";
 import { FramePayload } from "@/lib/queue";
 import type { ActionEvent } from "@/lib/types/actions";
+import { summarizeVotes, type VotesSummary } from "@/lib/validationSummary";
 
 export interface Block {
   blockIndex: number;
@@ -60,6 +61,7 @@ export interface Block {
 
   // ── Minage & Propriété ──────────────────────────────────────────────────────
   minerDeviceId?: string;      // ESP dont le vote a déclenché le quorum (premier mineur, immuable)
+  votesSummary?: VotesSummary; // niveau de validation RÉELLEMENT atteint : approbations v2 (recalculées), v1 (écho du score serveur), refus. Additif, hors du hash du bloc.
   ownerDeviceId?: string;      // Propriétaire actuel du bloc (transférable — commence = minerDeviceId)
 
   // ── Axe 3 : Ré-validation ────────────────────────────────────────────────────
@@ -465,6 +467,7 @@ export async function finalizeBlock(
   votes: ValidationVote[],
   frameId: string,
   minerDeviceId?: string,   // ESP dont le vote a déclenché le quorum
+  rejects = 0,              // refus signés (v2) reçus avant le quorum : seulement pour le résumé affiché
 ): Promise<Block> {
   const head     = await getChainHead();
   const length   = await getChainLength();
@@ -550,6 +553,7 @@ export async function finalizeBlock(
     // Axe 4
     podHashEnriched: candidate.podHashEnriched,
     podGeometry:     candidate.podGeometry,
+    votesSummary:    summarizeVotes(votes, rejects),
     ...(candidate.anim
       ? { kind: "animation" as const, anim: { frames: candidate.anim.frames, loops: candidate.anim.loops, playMs: candidate.anim.playMs, bytes: candidate.anim.bytes, root: candidate.anim.root } }
       : {}),

@@ -28,6 +28,11 @@ type LogEvent = {
   score?: number;
   validatorCount?: number;
   poolSize?: number;
+  votesLabel?: string;
+  voteVersion?: 1 | 2;
+  verdict?: "accept" | "reject";
+  reason?: string;
+  metricsPpm?: { e: number; t: number; r: number };
   message: string;
 };
 
@@ -78,7 +83,7 @@ function toEspLines(ev: LogEvent): EspLine[] {
           ts: ev.ts,
           tag: "PULL",
           tagColor: TAG_COLOR.PULL,
-          text: `${esp} ▸ Nouveau bloc #${ev.blockIndex} hash=${hash}…`,
+          text: `${esp} ▸ Nouveau bloc #${ev.blockIndex} hash=${hash}…${ev.votesLabel ? ` · ${ev.votesLabel}` : ""}`,
         },
         {
           id: `${ev.id}-fetch`,
@@ -112,7 +117,9 @@ function toEspLines(ev: LogEvent): EspLine[] {
           ts: ev.ts,
           tag: "VALIDATE",
           tagColor: TAG_COLOR.VALIDATE,
-          text: `${esp} ▸ Vote OK · score=${score}`,
+          text: ev.voteVersion === 2
+            ? `${esp} ▸ Vote v2 ${ev.verdict === "reject" ? `✗ refus (${ev.reason ?? "?"})` : "✓ accepte"}${ev.metricsPpm ? ` · e=${ev.metricsPpm.e} t=${ev.metricsPpm.t} r=${ev.metricsPpm.r}` : ""}`
+            : `${esp} ▸ Vote v1 · écho du score serveur (non vérifié) · score=${score}`,
         },
       ];
     }

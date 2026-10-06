@@ -10,6 +10,7 @@ import type { Block } from "@/lib/chain";
 import { recentAnimationEvents } from "@/lib/anim/store";
 import { fixtureCount, buildFixtureSnapshot, buildFixtureEvents } from "@/lib/network/fixtures";
 import { publicDeviceId } from "@/lib/network/publicId";
+import { describeSummary, describeVote } from "@/lib/validationSummary";
 
 export const dynamic = "force-dynamic";
 
@@ -35,6 +36,13 @@ export type LogEvent = {
   validatorCount?: number;
   poolSize?: number;
   workTitle?: string;
+  /** Niveau de validation réellement atteint (bloc) : « v2 vérifié×1 · v1 écho×0 ». Absent pour un bloc ancien. */
+  votesLabel?: string;
+  /** Vote : version (1 = écho du score serveur, 2 = recalculé par l'appareil), verdict, motif de refus, métriques entières en ppm. */
+  voteVersion?: 1 | 2;
+  verdict?: "accept" | "reject";
+  reason?: string;
+  metricsPpm?: { e: number; t: number; r: number };
   message: string;
 };
 
@@ -97,6 +105,7 @@ async function build(): Promise<{ events: LogEvent[]; generatedAt: number }> {
           drawScore:      b.drawScore,
           validatorCount: b.validatorIds?.length ?? 0,
           workTitle:      b.workTitle,
+          ...(b.votesSummary ? { votesLabel: describeSummary(b.votesSummary) } : {}),
           message: `BLOC #${b.blockIndex}${title} · ${b.poolScreen} · ${artist} · PoD ${(b.drawScore * 100).toFixed(0)}%`,
         });
       }
@@ -132,7 +141,7 @@ async function build(): Promise<{ events: LogEvent[]; generatedAt: number }> {
             ts:      vote.votedAt,
             screen:  candidate.poolScreen,
             deviceRef: publicDeviceId(devId),
-            message: `VOTE · ${publicDeviceId(devId)} · score ${(vote.score * 100).toFixed(0)}%`,
+            ...(() => { const d = describeVote(vote); return { voteVersion: d.voteVersion, verdict: d.verdict, ...(d.reason ? { reason: d.reason } : {}), ...(d.metricsPpm ? { metricsPpm: d.metricsPpm } : {}), message: `VOTE · ${publicDeviceId(devId)} · ${d.detail}` }; })(),
           });
         }
       }
