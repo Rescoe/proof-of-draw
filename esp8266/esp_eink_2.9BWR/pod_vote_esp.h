@@ -69,6 +69,9 @@ inline bool podFetchAndCheck(const String& url, PodScreenKind kind, size_t expec
       if (want > expectBytes - total) want = expectBytes - total;
       size_t got = stream->readBytes(chunk, want);
       if (got > 0) {
+#ifdef POD_TEST_FLIP_BYTE
+        if (total == 0) chunk[0] ^= 0x01;   // ESSAI DE REFUS (G5) : un octet du flux est modifié → le hash recalculé diffère → verdict « reject » (hash). Jamais en production.
+#endif
         br_sha256_update(&sha, chunk, got);
         feeder.feed(chunk, got);
         total += got;

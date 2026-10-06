@@ -339,35 +339,77 @@ export const isRejectVote = (v: ValidationVote): boolean => v.verdict === "rejec
 export const countAccepts = (m: VoteMap): number => Object.values(m.votes).filter((v) => !isRejectVote(v)).length;
 export const countRejects = (m: VoteMap): number => Object.values(m.votes).filter(isRejectVote).length;
 
-/** `prefetched` : votes déjà lus par la route (undefined = lire ici). */
-export async function castVote(
+/**
+ * Enregistrement ATOMIQUE d'un vote (G2, 06/10/2026). Avant : GET de la carte des votes, ajout en mémoire, SET → deux votes simultanés s'écrasaient (le dernier
+ * écrit gagnait, l'autre vote était perdu et le quorum jamais atteint). Maintenant un script Lua côté Redis fait lecture + test « a déjà voté » + écriture d'un
+ * seul tenant : aucun vote n'est perdu, un double vote est ignoré. COÛT : 1 commande EVAL par vote (= le SET d'avant ; la lecture préalable reste le MGET de la route).
+ * Le format stocké est inchangé (même JSON { candidateId, votes }) : pull, validate-candidate et la vue réseau n'ont rien à changer.
+ * Retour : [1, carte] vote ajouté · [0, carte] déjà voté · [-1] aucune carte / autre candidat.
+ */
+export const VOTE_SCRIPT = [
+  "local raw = redis.call('GET', KEYS[1])",
+  "if not raw then return {-1} end",
+  "local m = cjson.decode(raw)",
+  "if m['candidateId'] ~= ARGV[1] then return {-1} end",
+  "if type(m['votes']) ~= 'table' then m['votes'] = {} end",
+  "if m['votes'][ARGV[2]] ~= nil then return {0, raw} end",
+  "m['votes'][ARGV[2]] = cjson.decode(ARGV[3])",
+  "local enc = cjson.encode(m)",
+  "redis.call('SET', KEYS[1], enc, 'EX', tonumber(ARGV[4]))",
+  "return {1, enc}",
+].join("\n");
+
+function voteSummary(voteMap: VoteMap, candidate: Candidate, added: boolean) {
+  // Seules les APPROBATIONS comptent pour le quorum ; un refus signé (vote v2) est conservé mais ne finalise rien.
+  const voteCount = countAccepts(voteMap);
+  const needed    = Math.ceil(candidate.poolSize * QUORUM_RATIO);
+  return { quorumReached: added && voteCount >= Math.max(1, needed), voteCount, needed, rejectCount: countRejects(voteMap) };
+}
+
+/** Ancien chemin (lecture-modification-écriture, NON atomique) : seulement si le script Redis est indisponible. */
+async function castVoteLegacy(r: VoteRedis, vote: ValidationVote, candidate: Candidate, prefetched?: VoteMap | null) {
+  const voteMap = prefetched !== undefined ? prefetched : parseVotesRaw(await r.get(KEY_VOTES));
+  if (!voteMap || voteMap.candidateId !== candidate.candidateId) return { quorumReached: false, voteCount: 0, needed: 0 };
+  if (voteMap.votes[vote.deviceId]) return voteSummary(voteMap, candidate, false);
+  voteMap.votes[vote.deviceId] = vote;
+  await r.set(KEY_VOTES, JSON.stringify(voteMap), { ex: CANDIDATE_TTL_SEC });
+  return voteSummary(voteMap, candidate, true);
+}
+
+/** Sous-ensemble de Redis utilisé par le vote (injectable pour les tests). */
+export interface VoteRedis {
+  eval(script: string, keys: string[], args: string[]): Promise<unknown>;
+  get(key: string): Promise<unknown>;
+  set(key: string, value: string, opts: { ex: number }): Promise<unknown>;
+}
+
+/** `prefetched` : votes déjà lus par la route (undefined = pas de lecture préalable ; le script relit de toute façon, atomiquement). */
+export function castVote(vote: ValidationVote, candidate: Candidate, prefetched?: VoteMap | null) {
+  return castVoteOn(redis as unknown as VoteRedis, vote, candidate, prefetched);
+}
+
+export async function castVoteOn(
+  r: VoteRedis,
   vote: ValidationVote,
   candidate: Candidate,
   prefetched?: VoteMap | null,
 ): Promise<{ quorumReached: boolean; voteCount: number; needed: number; rejectCount?: number }> {
-  const voteMap = prefetched !== undefined ? prefetched : await getVotes();
-  if (!voteMap || voteMap.candidateId !== candidate.candidateId) {
-    return { quorumReached: false, voteCount: 0, needed: 0 };
+  // Sorties sans commande : pas de carte pour CE candidat, ou déjà voté (lu dans le MGET de la route)
+  if (prefetched !== undefined) {
+    if (!prefetched || prefetched.candidateId !== candidate.candidateId) return { quorumReached: false, voteCount: 0, needed: 0 };
+    if (prefetched.votes[vote.deviceId]) return voteSummary(prefetched, candidate, false);
   }
-
-  if (voteMap.votes[vote.deviceId]) {
-    return {
-      quorumReached: false,
-      voteCount: countAccepts(voteMap),
-      needed: Math.ceil(candidate.poolSize * QUORUM_RATIO),
-      rejectCount: countRejects(voteMap),
-    };
+  try {
+    const res = await r.eval(VOTE_SCRIPT, [KEY_VOTES], [candidate.candidateId, vote.deviceId, JSON.stringify(vote), String(CANDIDATE_TTL_SEC)]) as unknown;
+    if (!Array.isArray(res) || typeof res[0] !== "number") throw new Error("réponse du script de vote inattendue");
+    if (res[0] === -1) return { quorumReached: false, voteCount: 0, needed: 0 };
+    const voteMap = parseVotesRaw(res[1]);
+    if (!voteMap) throw new Error("carte des votes illisible après le script");
+    return voteSummary(voteMap, candidate, res[0] === 1);
+  } catch (e) {
+    console.error("[castVote] script atomique indisponible — repli sur l'écriture non atomique :", e);
+    return castVoteLegacy(r, vote, candidate, prefetched);
   }
-
-  voteMap.votes[vote.deviceId] = vote;
-  await redis.set(KEY_VOTES, JSON.stringify(voteMap), { ex: CANDIDATE_TTL_SEC });
-
-  // Seules les APPROBATIONS comptent pour le quorum ; un refus signé (vote v2) est conservé mais ne finalise rien.
-  const voteCount = countAccepts(voteMap);
-  const needed    = Math.ceil(candidate.poolSize * QUORUM_RATIO);
-  const quorumReached = voteCount >= Math.max(1, needed);
-
-  return { quorumReached, voteCount, needed, rejectCount: countRejects(voteMap) };
 }
 
 // ─── Sélection équitable du mineur ───────────────────────────────────────────

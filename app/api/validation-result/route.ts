@@ -163,10 +163,18 @@ export async function POST(req: NextRequest) {
     const { quorumReached, voteCount, needed, rejectCount } = await castVote(vote, candidate, prefetchedVotes);
 
     // Trop de refus pour que le quorum d'approbations soit encore atteignable : le candidat est refusé par le réseau (vote v2 uniquement).
-    if (!quorumReached && rejectCount !== undefined && rejectCount > 0 && candidate.poolSize - rejectCount < Math.max(1, needed)) {
+    // G1 (reprise du 06/10/2026) : pendant le canari, un refus v2 est ENREGISTRÉ et observable (carte des votes + journal + réponse) mais ne supprime PAS le candidat :
+    // le comité mélange encore des approbations v1 (écho du score serveur) et v2, ce mélange n'a pas de sémantique sûre. Les rejets ne deviennent bloquants qu'avec
+    // ENFORCE_V2_REJECTIONS=true, et seulement pour un comité exclusivement v2 (après P0 et le canari matériel).
+    const enforceRejections = process.env.ENFORCE_V2_REJECTIONS === "true";
+    const rejectionsWouldBlock = !quorumReached && rejectCount !== undefined && rejectCount > 0 && candidate.poolSize - rejectCount < Math.max(1, needed);
+    if (rejectionsWouldBlock && enforceRejections) {
       console.log(`[validation-result] candidat REFUSÉ par le réseau candidate=${candidate.candidateId} refus=${rejectCount}/${candidate.poolSize}`);
       await clearCandidate();
       return json({ ok: true, blockMined: false, rejected: true, rejectCount, voteCount, needed }, 200);
+    }
+    if (v2Vote?.verdict === "reject") {
+      console.warn(`[validation-result] REFUS v2 OBSERVÉ (non bloquant) device=${deviceId} candidate=${candidate.candidateId} raison=${v2Vote.reason ?? "?"} refus=${rejectCount ?? 0}/${candidate.poolSize} bloquerait=${rejectionsWouldBlock}`);
     }
 
     // voteCount===0 && needed===0 → voteMap absent ou candidateId désynchronisé
@@ -235,7 +243,7 @@ export async function POST(req: NextRequest) {
       return json({ ok: true, blockMined: true, blockIndex: block.blockIndex, blockHash: block.blockHash, displayTime: block.displayTime, score: block.score, artistName: block.artistName, voteCount }, 200);
     }
 
-    return json({ ok: true, blockMined: false, voteCount, needed, candidateId: candidate.candidateId, expiresIn: Math.ceil((candidate.expiresAt - Date.now()) / 1000) }, 200);
+    return json({ ok: true, blockMined: false, voteCount, needed, candidateId: candidate.candidateId, expiresIn: Math.ceil((candidate.expiresAt - Date.now()) / 1000), ...(v2Vote?.verdict === "reject" ? { rejectObserved: true, rejectCount: rejectCount ?? 0 } : {}) }, 200);
   } catch (err) {
     console.error("[validation-result] fatal error:", err);
     return json({ error: "Erreur interne", blockMined: false }, 500);

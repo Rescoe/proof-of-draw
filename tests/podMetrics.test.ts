@@ -63,7 +63,7 @@ test("correction du défaut V1 : un dessin noir ou rouge sur l'e-ink 2,9″ n'a 
 
 // ── Différentiel firmware (g++) ───────────────────────────────────────────────────────────────────────────────────────────────────────────────
 function findCompiler(): string | null {
-  for (const c of [process.env.CXX, "g++", "C:\msys64\mingw64\bin\g++.exe", "/usr/bin/g++", "/usr/local/bin/g++"].filter(Boolean) as string[]) {
+  for (const c of [process.env.CXX, "g++", "C:/msys64/mingw64/bin/g++.exe", "/usr/bin/g++", "/usr/local/bin/g++"].filter(Boolean) as string[]) {
     try { execFileSync(c, ["--version"], { stdio: "ignore" }); return c; } catch { /* suivant */ }
   }
   return null;
