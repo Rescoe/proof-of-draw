@@ -13,6 +13,7 @@ import type { ActionEvent, ReplayEvent } from "@/lib/types/actions";
 import { floodFill, drawLine, drawRect, drawEllipse } from "@/lib/canvasPrimitives";
 import { Replayer, isReplayV2, modeForProfile, scoreTimeline, textureLabel } from "@/lib/drawEngine";
 import { SCREEN_PROFILES } from "@/lib/screenProfiles";
+import { OBS_BADGE, OBS_FIELD_LABEL, OBS_FIELD_VALUE, OBS_NOTE, OBS_ROW_CONFIRMED, OBS_ROW_PENDING, OBS_SECTION_TITLE } from "@/lib/observationWording";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -58,10 +59,10 @@ function ObserverSection({ revalidated }: { revalidated: NonNullable<BlockWithIm
         aria-expanded={expanded}
       >
         <span className="bd-section-title" style={{ margin: 0 }}>
-          Observers ({observers.length})
+          {OBS_SECTION_TITLE(observers.length)}
         </span>
-        <span className="bd-obs-badge">
-          {confirmedEntries}/{revalidated.length} validations
+        <span className="bd-obs-badge" title={OBS_NOTE}>
+          {OBS_BADGE(confirmedEntries, revalidated.length)}
         </span>
         <span className="bd-obs-chevron">{expanded ? "▾" : "▸"}</span>
       </button>
@@ -73,8 +74,8 @@ function ObserverSection({ revalidated }: { revalidated: NonNullable<BlockWithIm
               <code className="bd-id-chip">{id}</code>
               <span className="bd-obs-count">
                 {ats.length > 0
-                  ? `✓ ${ats.length} confirm.`
-                  : "⏳ en attente"}
+                  ? OBS_ROW_CONFIRMED(ats.length)
+                  : OBS_ROW_PENDING}
               </span>
             </div>
           ))}
@@ -150,7 +151,7 @@ function TabDetails({ block }: { block: BlockWithImage }) {
         <MetaRow label="Complexité" value={(block.score * 100).toFixed(1) + "%"} />
         <MetaRow label="Affichage"  value={`${block.displayTime}s`} />
         <MetaRow label="Validateurs" value={block.validatorIds.length.toString()} />
-        {block.obsConfirmed && <MetaRow label="Observer"  value="Confirmé ✓" green />}
+        {block.obsConfirmed && <MetaRow label={OBS_FIELD_LABEL} value={OBS_FIELD_VALUE} sub={OBS_NOTE} />}
         {/* Propriété du bloc */}
         {block.minerDeviceId && (
           <MetaRow label="Mineur" value={block.minerDeviceId} sub={humanDevice(deviceLabels[block.minerDeviceId])} />

@@ -94,7 +94,7 @@ Définir précisément ce qu'on promet évite de remplacer un mensonge par un au
 |---|---|---|---|
 | **N0** (actuel) | « N appareils étaient en ligne » | rien | tous |
 | **N1 — Intégrité attestée** | « N appareils **indépendants** ont reçu **ces octets exacts** (hash), recalculé **ces métriques** et signé cet hash » | SHA-256 du flux, métriques entières, comparaison, signature Ed25519 sur le contenu | ESP8266 et R4 (§ 4) |
-| **N2 — Règles objectives** | N1 + « les règles de format/anti-spam du réseau sont respectées » (non vide, pas de bruit pur, géométrie valide, limites d'animation) | N1 + application d'un jeu de règles **public et versionné** | ESP8266 et R4 |
+| **N2 — Règles objectives** | N1 + « les règles de format/anti-spam du réseau sont respectées » (non uniforme, pas de bruit pur, géométrie valide, limites d'animation) | N1 + application d'un jeu de règles **public et versionné** | ESP8266 et R4 |
 | **N3 — Authenticité du geste** | N2 + « le replay reproduit l'image et le rythme est humain » | rejouer le replay (moteur de dessin) | **navigateur / Raspberry Pi / serveur** — **pas** ESP8266 ni R4 |
 
 **Principe directeur** : les appareils attestent N1-N2 (objectif, calculable, reproductible). N3 est assuré par le serveur et des **auditeurs** plus puissants. Le réseau **ne juge pas le goût** : aucun refus pour « laid » ou « simple », seulement pour des critères objectifs. C'est cohérent avec la décision déjà actée (« le serveur n'est pas juge de la qualité artistique »).
@@ -176,7 +176,7 @@ Objectif : **zéro divergence** entre Node.js, ESP8266 (float 32 bits) et R4. On
 **Quota** : la réponse est **immuable par `candidateId`** (`Cache-Control: public, s-maxage=…, immutable`), donc servie par le CDN après le premier accès : le coût Redis ne dépend pas du nombre de validateurs (même principe que `/api/block-clip`). Coût d'origine : 1 lecture du candidat par candidat.
 
 ### 5.4 Règles de verdict (N2) — objectives seulement [P]
-Un validateur **refuse** (`reject`) uniquement si : `imageHash` reçu ≠ annoncé ; métriques recalculées ≠ annoncées ; format/dimensions invalides ; image **vide** (aucun pixel actif) ; **bruit pur** (entropie et transitions au-dessus de seuils publiés, ex. > 0,98 et > 0,9) ; pour une animation, limites de durée/poids dépassées. Les seuils sont **versionnés** (`rulesVersion`) et publiés. **Aucun critère esthétique.**
+Un validateur **refuse** (`reject`) uniquement si : `imageHash` reçu ≠ annoncé ; métriques recalculées ≠ annoncées ; format/dimensions invalides ; image **uniforme** (toute blanche **ou toute pleine** : aucune variation, `e = 0` et `t = 0` ; motif de protocole actuel : `blank`, à renommer dans la v3) ; **bruit pur** (entropie et transitions au-dessus de seuils publiés, ex. > 0,98 et > 0,9) ; pour une animation, limites de durée/poids dépassées. Les seuils sont **versionnés** (`rulesVersion`) et publiés. **Aucun critère esthétique.**
 Les « avertissements » actuels de `submit-candidate` (durée, traits, couverture, complexité) **restent informatifs** : ils ne deviennent pas des motifs de refus des appareils.
 
 ### 5.5 Comité, quorum, liveness
@@ -266,7 +266,7 @@ Estimation par bloc, comité de 7 [E] :
 1. **Périmètre de la promesse** : adopter les niveaux N1-N2 (appareils) et N3 (serveur + auditeurs) et **l'écrire ainsi** publiquement (recommandé) ?
 2. **Réseau petit** : accepter un mode `bootstrap` étiqueté tant qu'il y a moins de 3 profils éligibles non-auteurs (recommandé), ou bloquer le minage tant que le comité n'est pas complet ?
 3. **Comité** : taille maximale K = 7 et seuil 2/3 conviennent-ils ?
-4. **Règles N2** : valider la liste d'objectifs (vide, bruit pur, format, limites d'animation) et refuser tout critère esthétique ?
+4. **Règles N2** : valider la liste d'objectifs (image uniforme, bruit pur, format, limites d'animation) et refuser tout critère esthétique ?
 5. **Ancienneté et appairage** : exiger l'appairage à un profil et 24 h d'ancienneté pour voter ?
 6. **Parc** : combien de cartes, de quels types, disponibles pour les essais P3-P4 ? Accepte-t-on qu'un firmware v1 cesse d'être validateur (il reste afficheur) ?
 7. **Réinitialisation de clé** : par le profil du propriétaire (session) — acceptable ?

@@ -8,6 +8,7 @@ import Link from "next/link";
 import type { BlockWithImage } from "@/lib/chain";
 import { BlockFrameCanvas } from "../BlockFrameCanvas";
 import { BlockDetail } from "../BlockDetail";
+import { OBS_CHIP, OBS_CHIP_TITLE } from "@/lib/observationWording";
 
 // ─── Types ─────────────────────────────────────────────────────────────────────
 
@@ -98,7 +99,7 @@ function BlockCard({ block, onClick }: { block: BlockWithImage; onClick: () => v
           {block.kind === "animation" && <span className="gc-chip gc-chip--replay" title="Animation validée image par image">🎞 Animation{block.anim ? ` · ${block.anim.frames} img` : ""}</span>}
           <span className="gc-chip">{block.validatorIds.length} valid.</span>
           {block.drawScore > 0 && <span className="gc-chip gc-chip--score">PoD {block.drawScore}</span>}
-          {block.obsConfirmed && <span className="gc-chip gc-chip--obs">obs ✓</span>}
+          {block.obsConfirmed && <span className="gc-chip gc-chip--obs" title={OBS_CHIP_TITLE}>{OBS_CHIP}</span>}
           {block.podHashEnriched && <span className="gc-chip gc-chip--replay">replay ✓</span>}
         </div>
         <div className="gc-card__hash">{block.blockHash.slice(0, 28)}…</div>

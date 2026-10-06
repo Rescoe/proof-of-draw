@@ -6,7 +6,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { execFileSync, spawnSync } from "node:child_process";
+import { compileHarness, describeChoice, findCompiler, runHarness } from "./helpers/cppHarness";
 import { ENTROPY_TABLE } from "../lib/podMetricsTable";
 import { METRIC_GRID, MetricsAccumulator, POD_SCREENS, isqrt, metricsFromRaw, type PodScreen } from "../lib/podMetrics";
 import { rgbaToScreenPayload } from "../lib/canvasToScreen";
@@ -62,26 +62,24 @@ test("correction du défaut V1 : un dessin noir ou rouge sur l'e-ink 2,9″ n'a 
 });
 
 // ── Différentiel firmware (g++) ───────────────────────────────────────────────────────────────────────────────────────────────────────────────
-function findCompiler(): string | null {
-  for (const c of [process.env.CXX, "g++", "C:/msys64/mingw64/bin/g++.exe", "/usr/bin/g++", "/usr/local/bin/g++"].filter(Boolean) as string[]) {
-    try { execFileSync(c, ["--version"], { stdio: "ignore" }); return c; } catch { /* suivant */ }
-  }
-  return null;
-}
-const compiler = findCompiler();
-const skip = compiler ? false : "aucun compilateur C++ (g++) trouvé : validation différentielle du firmware ignorée — définir CXX pour l'activer";
+// Diagnostic (Lot 0S) : le compilateur retenu, ou la liste des candidats essayés, est TOUJOURS affiché ; un échec de compilation/exécution montre
+// commande, code de sortie, stdout et stderr (tests/helpers/cppHarness.ts).
+const choice = findCompiler();
+const compiler = choice.path;
+console.log(`[podMetrics] ${describeChoice(choice)}`);
+const skip = compiler ? false : `${describeChoice(choice)} — validation différentielle du firmware IGNORÉE (ni verte, ni réussie)`;
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "podmetrics-"));
 const exe = path.join(tmp, process.platform === "win32" ? "metrics_harness.exe" : "metrics_harness");
 const KIND: Record<PodScreen, number> = { oled096: 0, eink27bw: 1, eink29bwr: 2, tft18: 3, tft28: 4 };
 before(() => {
   if (!compiler) return;
   const src = path.join(__dirname, "..", "esp8266", "_shared", "host", "metrics_harness.cpp");
-  const r = spawnSync(compiler, ["-std=c++11", "-Wall", "-Wextra", "-Werror", "-O2", src, "-o", exe], { encoding: "utf8" });
-  if (r.status !== 0) throw new Error(`compilation de pod_metrics.h impossible :\n${r.stdout}\n${r.stderr}`);
+  const command = compileHarness(compiler, src, exe);
+  console.log(`[podMetrics] harnais compilé : ${command}`);
 });
 function fw(screen: PodScreen, raw: Uint8Array, chunk: number) {
   const f = path.join(tmp, `${screen}-${chunk}.hex`); fs.writeFileSync(f, Buffer.from(raw).toString("hex"));
-  const out = execFileSync(exe, [String(KIND[screen]), String(chunk), f], { encoding: "utf8" }).trim().split(" ").map(Number);
+  const out = runHarness(exe, [String(KIND[screen]), String(chunk), f]).split(" ").map(Number);
   return { e: out[0], t: out[1], r: out[2], s: out[3] };
 }
 

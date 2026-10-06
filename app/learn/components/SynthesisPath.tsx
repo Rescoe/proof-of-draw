@@ -8,7 +8,7 @@ const pipeline = [
   ["Dessiner", "Le navigateur (Pod Studio) produit une image pixel-exacte pour l’écran visé et enregistre la séquence de gestes. Le serveur la reçoit avec une session signée (HMAC-SHA256)."],
   ["Soumettre", "Le serveur rejette les séquences trop automatiques, calcule l’empreinte de l’image (SHA-256), celle des gestes et un score de dessin, puis publie UN candidat à la fois."],
   ["Annoncer", "Pour une image fixe, le candidat porte une spécification « v2 » : type d’écran, taille en octets et SHA-256 du contenu brut. Les cartes la lisent dans une réponse très légère."],
-  ["Relire", "Chaque carte télécharge le contenu brut du candidat (octets exacts de l’écran, servis par un CDN) et le lit en flux, sans jamais garder l’image en mémoire."],
+  ["Relire", "Chaque carte télécharge le contenu brut du candidat (octets exacts de l’écran, servis par un CDN) et le lit en flux : le firmware évite de recopier l’image dans un second buffer complet."],
   ["Recalculer", "Pendant la lecture, la carte calcule le SHA-256 et trois métriques entières. Elle décide d’un verdict objectif puis signe son vote en Ed25519."],
   ["Voter", "Le serveur vérifie la signature et refuse tout « accepte » dont le hash ou une métrique diffère d’un seul ppm. Le vote est écrit de façon atomique."],
   ["Miner", "Au quorum (51 % des appareils appairés actifs), le serveur crée le bloc, relié par hash au précédent, et tire au sort le mineur parmi les validateurs."],
@@ -102,8 +102,9 @@ export function SynthesisPath() {
 
       <Disclosure title="Ce que les cartes calculent réellement" id="synth-calcul">
         <p>
-          Chaque carte lit le contenu brut du candidat <strong>en flux</strong> (un calcul court, aucun tampon
-          d’image ; la durée totale, réseau compris, est relevée au port série) et produit :
+          Chaque carte lit le contenu brut du candidat <strong>en flux</strong>, par petits morceaux, et met à jour ses compteurs au fur et à mesure.
+          Elle n’a pas besoin d’un second buffer complet de l’image ; seuls l’OLED (1 Ko) et l’e-ink 2,9″ (4,7 Ko) utilisent un petit espace de travail borné,
+          employé pendant la lecture. La durée totale, réseau compris, est relevée au port série. Chaque carte produit :
         </p>
         <CodeBlock>{`hash = SHA-256( octets bruts du contenu )
 e = entropie binaire du taux de pixels allumés        (table fixe, en ppm)
@@ -215,7 +216,7 @@ message signé = pod-vote-v2 | appareil | candidat | hash | version | e | t | r 
       <Disclosure title="Coûts et garde-fous" id="synth-couts">
         <ul className={styles.powerList}>
           <li><strong>Quotas Redis</strong> : toute nouveauté est chiffrée en commandes par heure avant d’être codée ; lectures groupées, cadence adaptative (5 minutes en activité, 15 au repos), contenu des candidats servi par un CDN.</li>
-          <li><strong>Mémoire ESP8266</strong> : jamais de gros tampon pendant la connexion chiffrée ; allocation après la fermeture ; chaînes en mémoire flash ; relevé du tas à chaque démarrage.</li>
+          <li><strong>Mémoire ESP8266</strong> : les tampons d’image destinés à l’affichage sont alloués après la fermeture de la connexion chiffrée ; pour la validation, un espace de travail borné (1 à 4,7 Ko selon l’écran) sert pendant la lecture en flux ; messages en mémoire flash ; relevé du tas au démarrage.</li>
           <li><strong>Mémoire UNO R4</strong> : tampons statiques seulement, pile principale d’un kilo-octet.</li>
           <li><strong>Secrets</strong> : les identifiants Wi-Fi vivent dans un fichier local ignoré par git, jamais dans les sketches publiés.</li>
         </ul>

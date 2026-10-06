@@ -72,7 +72,7 @@ export interface Block {
     observerIds: string[];
     confirmedAt: number;
   }[];
-  obsConfirmed?: boolean;      // true si l'actionsHash a été confirmé par des observers
+  obsConfirmed?: boolean;      // true si des appareils ont CONFIRMÉ LA RÉCEPTION de la tâche d'observation (renvoi des hashes reçus, non signé : AUCUN recalcul — lib/observationWording.ts)
 
   // Pont ANA — présent uniquement sur les blocs créés par lib/anaChain.ts
   // (jamais par finalizeBlock/le flux humain). Ces blocs vivent dans un index

@@ -11,6 +11,7 @@ const SKETCHES = [
   "esp8266/esp_eink_2.7BW_OLED/esp_eink_2.7BW_OLED.ino",
   "esp8266/esp_tft1.8/esp_tft1.8.ino",
   "esp8266/esp_eink_2.9BWR/esp_eink_2.9BWR.ino",
+  "esp8266/esp_eink_2.7BW/esp_eink_2.7BW.ino",   // e-ink 2,7" SEUL (eink27bw-2.1, Lot 0S) : RAM statique mesurée à la compilation du 06/10/2026 = 34 240 o (≤ 40 000)
 ];
 const read = (p: string) => fs.readFileSync(path.join(root, p), "utf8");
 
@@ -25,6 +26,8 @@ for (const sketch of SKETCHES) {
   });
 }
 
+// Seuls le multiscreen et le TFT 1,8" ont été migrés vers F()/PSTR(). Le 2,9" et le 2,7" seul gardent des messages Serial en RAM : leur RAM statique reste ≤ 40 000 o
+// (relevé de compilation) mais NE PAS y ajouter de tampon : voir « Variables and constants in RAM » à chaque changement (CLAUDE.md, règle 8).
 test("multiscreen et TFT 1,8\" : les messages Serial sont en mémoire flash (F() / PSTR()), pas en RAM", () => {
   for (const sketch of SKETCHES.slice(0, 2)) {
     const lines = read(sketch).split(/\r?\n/).filter((l) => !/^\s*\/\//.test(l));

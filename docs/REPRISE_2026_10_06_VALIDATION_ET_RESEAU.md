@@ -22,7 +22,7 @@ Le chantier de validation réelle peut continuer, mais **pas en déploiement ave
 3. une voix par profil éligible, quel que soit son nombre de cartes ;
 4. profil auteur exclu du comité de son œuvre ;
 5. appairage obligatoire et 24 heures d'ancienneté minimum ;
-6. règles N2 uniquement objectives : intégrité, format, vide, bruit, limites techniques ; jamais de jugement esthétique ;
+6. règles N2 uniquement objectives : intégrité, format, image uniforme, bruit, limites techniques ; jamais de jugement esthétique ;
 7. firmware v1 conservé comme afficheur, mais plus comme validateur après la bascule stricte ;
 8. réinitialisation de clé uniquement depuis une session authentifiée du profil propriétaire ;
 9. Raspberry Pi, navigateur et PC commencent comme auditeurs N3 non bloquants.
