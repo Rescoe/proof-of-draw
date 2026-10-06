@@ -72,14 +72,14 @@ export function LearnHome() {
           <h2>Qu’est-ce que Proof-of-Draw ?</h2>
           <p>
             Proof-of-Draw est un réseau ouvert où des artistes dessinent à la main dans un navigateur web.
-            Leurs créations sont validées collectivement par des micro-ordinateurs ESP8266, affichées sur des
+            Leurs créations sont validées collectivement par des microcontrôleurs connectés, affichées sur des
             écrans physiques puis conservées dans une chaîne de blocs légère.
           </p>
         </div>
         <div className={styles.overviewSteps}>
           {[
             ["01", "Dessiner", "Créer depuis un navigateur, sans installation."],
-            ["02", "Valider", "Les ESP connectés votent collectivement."],
+            ["02", "Valider", "Les appareils connectés votent collectivement."],
             ["03", "Miner", "Le dessin, l’auteur et la date rejoignent un bloc."],
             ["04", "Afficher", "L’œuvre arrive sur les écrans physiques compatibles."],
           ].map(([number, title, description]) => (

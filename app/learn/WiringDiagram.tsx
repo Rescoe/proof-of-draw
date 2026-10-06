@@ -28,11 +28,11 @@ export function WiringDiagram({ spec }: { spec: WiringSpec }) {
         aria-label={`Schéma de câblage : ${spec.title}`}
         style={{ width: "100%", maxWidth: 660, height: "auto", display: "block" }}
       >
-        {/* Boîte NodeMCU */}
+        {/* Boîte de la carte */}
         <rect x={20} y={12} width={NODE_X - 20} height={height - 24} rx={10}
           fill="var(--bg3)" stroke="var(--border)" />
         <text x={(20 + NODE_X) / 2} y={36} textAnchor="middle" fontSize={13} fontWeight={700} fill="var(--text)">
-          NodeMCU v1
+          {spec.controllerName}
         </text>
 
         {/* Boîte module */}
@@ -90,7 +90,7 @@ export function WiringDiagram({ spec }: { spec: WiringSpec }) {
             <tr style={{ textAlign: "left", color: "var(--text3)" }}>
               <th style={th}>Fil</th>
               <th style={th}>Module</th>
-              <th style={th}>NodeMCU</th>
+              <th style={th}>{spec.controllerName}</th>
               <th style={th}>Remarque</th>
             </tr>
           </thead>

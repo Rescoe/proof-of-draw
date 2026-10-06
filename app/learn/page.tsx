@@ -7,12 +7,12 @@ import type { LearnPath } from "./components/LearnNavigation";
 import { LegacyHashRedirect } from "./components/LegacyHashRedirect";
 import { NoEspPath } from "./components/NoEspPath";
 import { PowerPath } from "./components/PowerPath";
-import { isInstallProfileId } from "./data/installProfiles";
+import { resolveInstallProfileId } from "./data/installProfiles";
 import styles from "./learn.module.css";
 
 export const metadata: Metadata = {
   title: "Apprendre | Proof-of-Draw",
-  description: "Installer un écran ESP8266, participer sans matériel et comprendre le réseau Proof-of-Draw.",
+  description: "Installer un écran avec une carte ESP8266 ou UNO R4 WiFi, participer sans matériel et comprendre le réseau Proof-of-Draw.",
 };
 
 function parsePath(value: string | string[] | undefined): LearnPath | null {
@@ -23,12 +23,13 @@ function parsePath(value: string | string[] | undefined): LearnPath | null {
 export default async function LearnPage({
   searchParams,
 }: {
-  searchParams: Promise<{ path?: string | string[]; screen?: string | string[] }>;
+  searchParams: Promise<{ path?: string | string[]; screen?: string | string[]; board?: string | string[] }>;
 }) {
   const params = await searchParams;
   const path = parsePath(params.path);
   const screenValue = Array.isArray(params.screen) ? params.screen[0] : params.screen;
-  const initialProfileId = screenValue && isInstallProfileId(screenValue) ? screenValue : "eink29bwr";
+  const boardValue = Array.isArray(params.board) ? params.board[0] : params.board;
+  const initialProfileId = resolveInstallProfileId(screenValue ?? null, boardValue ?? null);
 
   return (
     <main className={styles.page}>

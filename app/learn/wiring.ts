@@ -17,6 +17,7 @@ export interface WireDef {
 export interface WiringSpec {
   id:         string;
   title:      string;
+  controllerName: string;
   moduleName: string;
   wires:      WireDef[];           // dans l'ordre des broches du module
   nodeOrder:  string[];            // ordre d'affichage côté NodeMCU
@@ -50,16 +51,31 @@ const EINK_WIRES: WireDef[] = [
   { pin: "BUSY", node: "D0",   color: WS.BUSY, note: "Occupé (lu par l'ESP pour attendre la fin du rafraîchissement)" },
 ];
 
-export const WIRING: Record<"eink29bwr" | "eink27bw" | "oled" | "tft18" | "tftSd", WiringSpec> = {
+const UNO_R4_PIN_INFO: Record<string, string> = {
+  D4: "SD CS",
+  D7: "BUSY",
+  D8: "RST / TOUCH CS",
+  D9: "DC",
+  D10: "TFT / EPD CS",
+  D11: "SPI COPI",
+  D12: "SPI CIPO",
+  D13: "SPI SCK",
+};
+
+const UNO_R4_ORDER = ["D4", "D7", "D8", "D9", "D10", "D11", "D12", "D13", "3.3V", "GND"];
+
+export const WIRING: Record<"eink29bwr" | "eink27bw" | "oled" | "tft18" | "tftSd" | "r4Eink29" | "r4Tft28", WiringSpec> = {
   eink29bwr: {
     id: "eink29bwr",
     title: 'E-Ink 2.9" BWR — firmware esp_eink_2.9BWR',
+    controllerName: "NodeMCU v1",
     moduleName: 'e-Paper 2.9" B V4',
     wires: EINK_WIRES, nodeOrder: NODE_ORDER, gpio: NODEMCU_GPIO,
   },
   eink27bw: {
     id: "eink27bw",
     title: 'E-Ink 2.7" BW — firmwares esp_eink_2.7BW et esp_eink_2.7BW_OLED',
+    controllerName: "NodeMCU v1",
     moduleName: 'e-Paper 2.7" V2',
     wires: EINK_WIRES, nodeOrder: NODE_ORDER, gpio: NODEMCU_GPIO,
   },
@@ -67,6 +83,7 @@ export const WIRING: Record<"eink29bwr" | "eink27bw" | "oled" | "tft18" | "tftSd
   oled: {
     id: "oled",
     title: "OLED 0.96″ (SSD1306, I²C) — en plus de l'e-ink 2.7″, firmware esp_eink_2.7BW_OLED",
+    controllerName: "NodeMCU v1",
     moduleName: 'OLED 0.96" I²C',
     wires: [
       { pin: "VCC", node: "3V3", color: "#dc2626", note: "3,3 V (même rail que l'e-ink)" },
@@ -80,6 +97,7 @@ export const WIRING: Record<"eink29bwr" | "eink27bw" | "oled" | "tft18" | "tftSd
   tft18: {
     id: "tft18",
     title: 'TFT 1.8" ST7735 — firmware esp_tft1.8',
+    controllerName: "NodeMCU v1",
     moduleName: 'TFT 1.8" (ST7735)',
     wires: [
       { pin: "VCC", node: "3V3", color: "#dc2626", note: "3,3 V" },
@@ -97,6 +115,7 @@ export const WIRING: Record<"eink29bwr" | "eink27bw" | "oled" | "tft18" | "tftSd
   tftSd: {
     id: "tftSd",
     title: "Carte SD du module TFT (optionnelle) — bus partagé avec l'écran",
+    controllerName: "NodeMCU v1",
     moduleName: "Lecteur SD du module",
     wires: [
       { pin: "CS",   node: "D4", color: "#f97316", note: "Chip select de la SD (GPIO2, haut au démarrage = SD désélectionnée)" },
@@ -105,5 +124,43 @@ export const WIRING: Record<"eink29bwr" | "eink27bw" | "oled" | "tft18" | "tftSd
       { pin: "MISO", node: "D6", color: "#16a34a", note: "Uniquement côté SD (l'écran n'a pas de MISO)" },
     ],
     nodeOrder: NODE_ORDER, gpio: NODEMCU_GPIO,
+  },
+  // Source : arduino_uno_r4/pod_uno_r4_eink29/epd29b.h et docs/UNO_R4_EINK29.md.
+  r4Eink29: {
+    id: "r4Eink29",
+    title: 'E-Ink 2.9" BWR — firmware pod_uno_r4_eink29',
+    controllerName: "UNO R4 WiFi",
+    moduleName: 'e-Paper 2.9" B V4',
+    wires: [
+      { pin: "VCC", node: "3.3V", color: WS.VCC, note: "Alimentation 3,3 V uniquement" },
+      { pin: "GND", node: "GND", color: WS.GND, note: "Masse commune" },
+      { pin: "DIN", node: "D11", color: WS.DIN, note: "SPI COPI (MOSI) matériel" },
+      { pin: "CLK", node: "D13", color: WS.CLK, note: "SPI SCK matériel" },
+      { pin: "CS", node: "D10", color: WS.CS, note: "Chip select de l’e-ink" },
+      { pin: "DC", node: "D9", color: WS.DC, note: "Données / commande" },
+      { pin: "RST", node: "D8", color: WS.RST, note: "Reset" },
+      { pin: "BUSY", node: "D7", color: WS.BUSY, note: "État de rafraîchissement de l’e-ink" },
+    ],
+    nodeOrder: UNO_R4_ORDER,
+    gpio: UNO_R4_PIN_INFO,
+  },
+  // Source : arduino_uno_r4/pod_uno_r4/pod_uno_r4.ino et docs/UNO_R4_TFT28.md.
+  // Le shield s’enfiche directement ; le schéma documente les lignes réellement utilisées.
+  r4Tft28: {
+    id: "r4Tft28",
+    title: 'Shield TFT 2.8" tactile — firmware pod_uno_r4',
+    controllerName: "UNO R4 WiFi",
+    moduleName: 'Shield TFT 2.8" tactile',
+    wires: [
+      { pin: "TFT CS", node: "D10", color: "#f97316", note: "Sélection de l’écran" },
+      { pin: "TFT DC", node: "D9", color: "#16a34a", note: "Données / commande" },
+      { pin: "TOUCH CS", node: "D8", color: "#9333ea", note: "Contrôleur tactile STMPE610" },
+      { pin: "SD CS", node: "D4", color: "#ef4444", note: "Lecteur microSD du shield" },
+      { pin: "COPI", node: "D11", color: "#2563eb", note: "Bus SPI partagé" },
+      { pin: "CIPO", node: "D12", color: "#0ea5e9", note: "Bus SPI partagé" },
+      { pin: "SCK", node: "D13", color: "#eab308", note: "Horloge SPI partagée" },
+    ],
+    nodeOrder: UNO_R4_ORDER,
+    gpio: UNO_R4_PIN_INFO,
   },
 };

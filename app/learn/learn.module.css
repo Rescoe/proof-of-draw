@@ -508,6 +508,70 @@
   gap: 0.65rem;
 }
 
+.selectorLabel {
+  margin: 0.9rem 0 0.55rem;
+  color: var(--text2);
+  font-size: 0.78rem;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.boardSelector {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.65rem;
+  margin-bottom: 0.9rem;
+}
+
+.boardChoice {
+  min-height: 76px;
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.85rem 0.95rem;
+  border: 1px solid var(--border);
+  border-radius: 0.85rem;
+  background: rgba(255, 255, 255, 0.018);
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 160ms ease, background 160ms ease, transform 160ms ease;
+}
+
+.boardChoice > svg {
+  flex: 0 0 auto;
+  color: #a79cff;
+}
+
+.boardChoice strong,
+.boardChoice small {
+  display: block;
+}
+
+.boardChoice strong {
+  font-size: 0.86rem;
+}
+
+.boardChoice small {
+  margin-top: 0.22rem;
+  color: var(--text3);
+  font-size: 0.7rem;
+  line-height: 1.4;
+}
+
+.boardChoice:hover:not(:disabled),
+.boardChoiceActive {
+  border-color: rgba(124, 107, 255, 0.5);
+  background: rgba(124, 107, 255, 0.08);
+  transform: translateY(-1px);
+}
+
+.boardChoice:disabled {
+  opacity: 0.42;
+  cursor: not-allowed;
+}
+
 .screenChoice {
   min-width: 0;
   display: grid;
@@ -1235,6 +1299,7 @@
   }
 
   .screenSelector,
+  .boardSelector,
   .overviewSteps,
   .identificationGrid,
   .libraryGrid,

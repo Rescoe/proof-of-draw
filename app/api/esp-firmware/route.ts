@@ -1,6 +1,6 @@
 // app/api/esp-firmware/route.ts
-// GET /api/esp-firmware?variant=all|eink29bwr|eink27bw|tft18
-// Retourne un ZIP contenant le(s) dossier(s) de firmware ESP correspondant(s).
+// GET /api/esp-firmware?variant=all|eink29bwr|eink27bw|tft18|r4Eink29|r4Tft28
+// Retourne un ZIP contenant le(s) dossier(s) de firmware correspondant(s).
 // Fonctionne uniquement avec le runtime Node.js (fs disponible).
 
 import { NextRequest, NextResponse } from "next/server";
@@ -10,21 +10,52 @@ import JSZip from "jszip";
 
 export const runtime = "nodejs";
 
-// Mapping variant → dossier(s) ESP
-const FIRMWARE_MAP: Record<string, string[]> = {
-  eink29bwr:     ["esp_eink_2.9BWR"],
-  eink27bw:      ["esp_eink_2.7BW_OLED"],
-  eink27bwSolo:  ["esp_eink_2.7BW"],
-  tft18:         ["esp_tft1.8"],
-  all:           ["esp_eink_2.9BWR", "esp_eink_2.7BW_OLED", "esp_eink_2.7BW", "esp_tft1.8"],
+const FIRMWARE_ROOTS = {
+  esp8266: join(process.cwd(), "esp8266"),
+  arduino_uno_r4: join(process.cwd(), "arduino_uno_r4"),
+} as const;
+
+type FirmwareSource = {
+  root: "esp8266" | "arduino_uno_r4";
+  folder: string;
 };
 
-const LABEL_MAP: Record<string, string> = {
-  eink29bwr:    "pod-firmware-eink29bwr",
-  eink27bw:     "pod-firmware-eink27bw-oled",
-  eink27bwSolo: "pod-firmware-eink27bw-solo",
-  tft18:        "pod-firmware-tft18",
-  all:          "pod-firmware-all",
+type FirmwareVariant = {
+  label: string;
+  board: "ESP8266 / NodeMCU" | "Arduino UNO R4 WiFi" | "plusieurs cartes";
+  sources: FirmwareSource[];
+  statusWarning?: string;
+};
+
+export const FIRMWARE_VARIANTS: Record<string, FirmwareVariant> = {
+  eink29bwr: { label: "pod-firmware-eink29bwr", board: "ESP8266 / NodeMCU", sources: [{ root: "esp8266", folder: "esp_eink_2.9BWR" }] },
+  eink27bw: { label: "pod-firmware-eink27bw-oled", board: "ESP8266 / NodeMCU", sources: [{ root: "esp8266", folder: "esp_eink_2.7BW_OLED" }] },
+  eink27bwSolo: { label: "pod-firmware-eink27bw-solo", board: "ESP8266 / NodeMCU", sources: [{ root: "esp8266", folder: "esp_eink_2.7BW" }] },
+  tft18: { label: "pod-firmware-tft18", board: "ESP8266 / NodeMCU", sources: [{ root: "esp8266", folder: "esp_tft1.8" }] },
+  r4Eink29: {
+    label: "pod-firmware-r4-eink29bwr",
+    board: "Arduino UNO R4 WiFi",
+    sources: [{ root: "arduino_uno_r4", folder: "pod_uno_r4_eink29" }],
+    statusWarning: "Cette combinaison compile et a été testée côté protocole, mais sa validation sur écran physique reste à confirmer.",
+  },
+  r4Tft28: {
+    label: "pod-firmware-r4-tft28",
+    board: "Arduino UNO R4 WiFi",
+    sources: [{ root: "arduino_uno_r4", folder: "pod_uno_r4" }],
+    statusWarning: "Cette combinaison compile et a été testée côté protocole, mais sa validation sur écran physique reste à confirmer.",
+  },
+  all: {
+    label: "pod-firmware-all",
+    board: "plusieurs cartes",
+    sources: [
+      { root: "esp8266", folder: "esp_eink_2.9BWR" },
+      { root: "esp8266", folder: "esp_eink_2.7BW_OLED" },
+      { root: "esp8266", folder: "esp_eink_2.7BW" },
+      { root: "esp8266", folder: "esp_tft1.8" },
+      { root: "arduino_uno_r4", folder: "pod_uno_r4_eink29" },
+      { root: "arduino_uno_r4", folder: "pod_uno_r4" },
+    ],
+  },
 };
 
 async function addDirToZip(zip: JSZip, dirPath: string, zipPrefix: string) {
@@ -35,6 +66,9 @@ async function addDirToZip(zip: JSZip, dirPath: string, zipPrefix: string) {
       if (entry.isDirectory()) {
         await addDirToZip(zip, fullPath, `${zipPrefix}/${entry.name}`);
       } else {
+        // Les identifiants Wi-Fi restent toujours locaux, même si un secrets.h
+        // existe sur la machine qui construit l'archive.
+        if (entry.name.toLowerCase() === "secrets.h") return;
         const content = await readFile(fullPath);
         zip.file(`${zipPrefix}/${entry.name}`, content);
       }
@@ -44,40 +78,42 @@ async function addDirToZip(zip: JSZip, dirPath: string, zipPrefix: string) {
 
 export async function GET(req: NextRequest) {
   const variant = req.nextUrl.searchParams.get("variant") ?? "all";
-  const folders  = FIRMWARE_MAP[variant];
+  const config = FIRMWARE_VARIANTS[variant];
 
-  if (!folders) {
+  if (!config) {
     return NextResponse.json({ error: "Variante inconnue" }, { status: 400 });
   }
 
   try {
     const zip = new JSZip();
-    const esp8266Root = join(process.cwd(), "esp8266");
-
-    for (const folder of folders) {
-      const dirPath = join(esp8266Root, folder);
-      await addDirToZip(zip, dirPath, folder);
+    for (const source of config.sources) {
+      const dirPath = join(FIRMWARE_ROOTS[source.root], source.folder);
+      await addDirToZip(zip, dirPath, source.folder);
     }
 
     // Ajouter un README succinct
     zip.file(
       "README.txt",
       [
-        "Proof-of-Draw — Firmware ESP8266",
-        "==================================",
+        "Proof-of-Draw — Firmware écran",
+        "================================",
+        "",
+        `Carte : ${config.board}`,
         "",
         "Contenu de cette archive :",
-        folders.map((f) => `  • ${f}/`).join("\n"),
+        config.sources.map((source) => `  • ${source.folder}/`).join("\n"),
         "",
         "Étapes :",
         "  1. Ouvrir le dossier correspondant à votre écran dans Arduino IDE",
-        "  2. Laisser SERVER_URL tel quel pour rejoindre le réseau public (ne le changer que pour votre propre instance)",
-        "  3. Modifier WIFI_SSID et WIFI_PASSWORD",
-        "  4. Flasher sur votre ESP8266 (Board : NodeMCU 1.0 / 80MHz)",
+        "  2. Ne pas modifier l’adresse du serveur pour rejoindre le réseau public",
+        config.board === "Arduino UNO R4 WiFi"
+          ? "  3. Copier secrets.h.example en secrets.h, puis renseigner SECRET_WIFI_SSID et SECRET_WIFI_PASSWORD"
+          : "  3. Modifier WIFI_SSID et WIFI_PASSWORD dans le fichier .ino",
+        `  4. Sélectionner la bonne carte (${config.board}) puis téléverser`,
         "",
-        "Carte : NodeMCU 1.0 (ESP-12E Module) — core ESP8266 (Gestionnaire de cartes).",
-        "Wi-Fi : réseau 2,4 GHz uniquement (WPA2) ; si vous changez de box, mettez à jour WIFI_SSID / WIFI_PASSWORD",
+        "Wi-Fi : réseau 2,4 GHz uniquement (WPA2) ; si vous changez de box, mettez à jour les identifiants Wi-Fi",
         "et téléversez à nouveau. Moniteur série : 115200 bauds.",
+        ...(config.statusWarning ? ["", `⚠ ${config.statusWarning}`] : []),
         "",
         "Bibliothèques Arduino requises (Gestionnaire de bibliothèques) :",
         "  • ArduinoJson >= 7.x (des avertissements « DynamicJsonDocument deprecated » à la compilation sont normaux)",
@@ -85,7 +121,8 @@ export async function GET(req: NextRequest) {
         "  • Crypto (Rhys Weatherley) — signature Ed25519",
         "  • TFT 1.8\" : Adafruit GFX Library + Adafruit ST7735 and ST7789 Library",
         "  • e-ink 2.7\" avec OLED : Adafruit GFX Library + Adafruit SSD1306",
-        "  (ESP8266WiFi, ESP8266HTTPClient, EEPROM, SPI, SD sont inclus dans le core ESP8266.)",
+        "  • TFT 2.8\" R4 : Adafruit GFX + ILI9341 + BusIO + STMPE610",
+        "  (Les bibliothèques Wi-Fi, EEPROM, SPI et SD de la carte sont fournies avec son cœur Arduino.)",
         "",
         "⚠ Firmwares tft18 et e-ink 2.7\" + OLED (v2.1) : ils contiennent la lecture des animations du banc d'essai, écrite le 03/10/2026 et NON TESTÉE sur le matériel.",
         "  Ce code reste inactif tant que le mode banc d'essai n'est pas activé dans l'application (page /bench) ; le reste du firmware est inchangé.",
@@ -104,7 +141,7 @@ export async function GET(req: NextRequest) {
       compressionOptions: { level: 6 },
     });
 
-    const filename = `${LABEL_MAP[variant] ?? "pod-firmware"}.zip`;
+    const filename = `${config.label}.zip`;
 
     return new NextResponse(buffer as unknown as BodyInit, {
       status: 200,

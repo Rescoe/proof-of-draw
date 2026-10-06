@@ -11,7 +11,7 @@ const groups = [
       ["/learn?path=install#arduino-ide", "Préparer Arduino"],
       ["/learn?path=install#firmware", "Firmware et Wi-Fi"],
       ["/learn?path=install#configure", "Téléverser"],
-      ["/learn?path=install#onboard", "Associer l’ESP"],
+      ["/learn?path=install#onboard", "Associer l’écran"],
     ],
   },
   {
