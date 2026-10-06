@@ -105,3 +105,34 @@ test("RÉGRESSION documentée : l'ancien chemin perd un vote quand deux votes pa
   await castVoteOn(r, vote("dev_B"), cand("c1", 2), JSON.parse(JSON.stringify(snapshot)));
   assert.equal(Object.keys((JSON.parse(store.get(k)!) as VoteMap).votes).length, 1, "un vote perdu : c'est ce que le script Lua évite");
 });
+
+// ── MIN_V2_APPROVALS : un bloc ne se mine pas sur de simples échos v1 quand on exige une approbation recalculée ──────────────────────────────
+const withV2 = (id: string, poolSize: number) => ({ candidateId: id, poolSize, v2: { screen: "eink29bwr" } } as unknown as Candidate);
+const v2accept = (d: string): ValidationVote => ({ ...vote(d), v: 2, verdict: "accept" } as ValidationVote);
+
+test("MIN_V2_APPROVALS=1 : 3 échos v1 n'atteignent pas le quorum ; l'arrivée d'une approbation v2 le déclenche", async () => {
+  process.env.MIN_V2_APPROVALS = "1";
+  try {
+    const { r, store } = fakeRedis();
+    store.set(KEY_VOTES, JSON.stringify({ candidateId: "c1", votes: {} }));
+    const c = withV2("c1", 5);   // quorum = ceil(5 × 0,51) = 3
+    assert.equal((await castVoteOn(r, vote("dev_A"), c, undefined)).quorumReached, false);
+    assert.equal((await castVoteOn(r, vote("dev_B"), c, undefined)).quorumReached, false);
+    const third = await castVoteOn(r, vote("dev_C"), c, undefined);
+    assert.equal(third.voteCount, 3);
+    assert.equal(third.quorumReached, false, "3 échos v1 : quorum numérique atteint mais aucune validation recalculée");
+    assert.equal((await castVoteOn(r, v2accept("dev_D"), c, undefined)).quorumReached, true, "l'approbation v2 finalise");
+  } finally { delete process.env.MIN_V2_APPROVALS; }
+});
+
+test("MIN_V2_APPROVALS absent (défaut) ou candidat sans v2 : comportement inchangé", async () => {
+  const { r, store } = fakeRedis();
+  store.set(KEY_VOTES, JSON.stringify({ candidateId: "c1", votes: {} }));
+  process.env.MIN_V2_APPROVALS = "1";
+  try {
+    // animation / ancien candidat (pas de v2) : aucune exigence
+    assert.equal((await castVoteOn(r, vote("dev_A"), cand("c1", 1), undefined)).quorumReached, true);
+  } finally { delete process.env.MIN_V2_APPROVALS; }
+  store.set(KEY_VOTES, JSON.stringify({ candidateId: "c2", votes: {} }));
+  assert.equal((await castVoteOn(r, vote("dev_A"), withV2("c2", 1), undefined)).quorumReached, true, "désactivé par défaut");
+});

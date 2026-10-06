@@ -361,11 +361,22 @@ export const VOTE_SCRIPT = [
   "return {1, enc}",
 ].join("\n");
 
+/** Approbations v2 (l'appareil a recalculé hash + métriques et signé) : distinctes des approbations v1 (écho du score serveur). */
+export const countV2Accepts = (m: VoteMap): number => Object.values(m.votes).filter((v) => v.v === 2 && !isRejectVote(v)).length;
+
+/**
+ * Nombre minimal d'approbations v2 exigé pour finaliser un candidat qui porte une spécification v2 (MIN_V2_APPROVALS, défaut 0 = désactivé).
+ * Sans cela, des votes v1 (simples échos du score serveur) peuvent à eux seuls atteindre le quorum et miner le bloc, sans qu'aucun appareil n'ait rien
+ * recalculé. À activer pour un essai de validation réelle (ex. 1) ; ATTENTION : sans appareil v2 capable dans le comité, le candidat expire sans bloc.
+ */
+const minV2Approvals = (): number => Math.max(0, parseInt(process.env.MIN_V2_APPROVALS ?? "0", 10) || 0);
+
 function voteSummary(voteMap: VoteMap, candidate: Candidate, added: boolean) {
   // Seules les APPROBATIONS comptent pour le quorum ; un refus signé (vote v2) est conservé mais ne finalise rien.
   const voteCount = countAccepts(voteMap);
   const needed    = Math.ceil(candidate.poolSize * QUORUM_RATIO);
-  return { quorumReached: added && voteCount >= Math.max(1, needed), voteCount, needed, rejectCount: countRejects(voteMap) };
+  const v2Ok      = !candidate.v2 || countV2Accepts(voteMap) >= minV2Approvals();
+  return { quorumReached: added && voteCount >= Math.max(1, needed) && v2Ok, voteCount, needed, rejectCount: countRejects(voteMap) };
 }
 
 /** Ancien chemin (lecture-modification-écriture, NON atomique) : seulement si le script Redis est indisponible. */

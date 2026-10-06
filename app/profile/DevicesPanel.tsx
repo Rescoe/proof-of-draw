@@ -241,6 +241,9 @@ function ManagePanel({ d, devices, profile, tab, setTab, onReload, onGive, onAsk
   const [copied, setCopied] = useState(false);
   const [transferTo, setTransferTo] = useState("");
   const [transferMsg, setTransferMsg] = useState("");
+  const [mergeTo, setMergeTo] = useState("");
+  const [mergeTyped, setMergeTyped] = useState("");
+  const [mergeMsg, setMergeMsg] = useState("");
   const [err, setErr] = useState<string | null>(null);
   const others = devices.filter((o) => o.deviceId !== d.deviceId);
 
@@ -389,6 +392,40 @@ function ManagePanel({ d, devices, profile, tab, setTab, onReload, onGive, onAsk
             </button>
           </div>
           {transferMsg && <p style={{ ...muted, marginTop: "0.4rem" }}>{transferMsg}</p>}
+
+          {/* Ancien ➜ Nouveau : blocs + historique + pools, puis suppression de CET appareil (ex. l'écran change de carte et reçoit un nouvel identifiant) */}
+          <div style={{ marginTop: "1rem", paddingTop: "0.8rem", borderTop: "1px dashed var(--border)" }}>
+            <div style={{ fontSize: "0.85rem", fontWeight: 600 }}>⇄ Fusionner dans un autre appareil</div>
+            <p style={{ ...muted, marginTop: 2, marginBottom: "0.55rem" }}>
+              <strong>{deviceLabel(d)}</strong> (l&apos;ancien) est vidé dans le <strong>nouvel</strong> appareil choisi : ses blocs et son historique le suivent, puis l&apos;ancien est
+              <strong> supprimé définitivement</strong>. Utile quand un écran change de carte (ex. ESP8266 ➜ UNO R4) et apparaît sous un nouvel identifiant.
+            </p>
+            <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap", alignItems: "center" }}>
+              <select value={mergeTo} onChange={(e) => setMergeTo(e.target.value)} aria-label="Nouvel appareil (destination)" style={{ ...ghostBtn, padding: "0.4rem 0.6rem" }}>
+                <option value="">nouvel appareil…</option>
+                {others.map((o) => <option key={o.deviceId} value={o.deviceId}>{deviceLabel(o)}</option>)}
+              </select>
+              <input
+                value={mergeTyped} onChange={(e) => setMergeTyped(e.target.value)} autoComplete="off" spellCheck={false}
+                placeholder={`retapez : ${deleteConfirmWord(d)}`} aria-label="Confirmation : nom de l'ancien appareil"
+                style={{ padding: "0.4rem 0.6rem", borderRadius: 6, border: "1px solid var(--border)", background: "var(--bg)", color: "var(--text)", fontSize: "0.8rem", minWidth: 180 }}
+              />
+              <button
+                type="button" disabled={!mergeTo || !deleteConfirmed(mergeTyped, d) || busy === "merge"}
+                style={{ ...ghostBtn, borderColor: "rgba(248,113,113,0.45)", color: "#f87171", opacity: !mergeTo || !deleteConfirmed(mergeTyped, d) || busy === "merge" ? 0.5 : 1 }}
+                onClick={() => run("merge", async () => {
+                  setMergeMsg("");
+                  const { ok, data } = await postJson("/api/my-devices/merge", { fromDeviceId: d.deviceId, toDeviceId: mergeTo, confirm: mergeTyped });
+                  if (!ok) { setMergeMsg(typeof data.error === "string" ? data.error : "Échec de la fusion."); return; }
+                  setMergeMsg(`Fusion faite : ${data.blocksTransferred}/${data.blocksTotal} bloc(s) transféré(s), ${data.historyMoved} entrée(s) d'historique. L'ancien appareil est supprimé.`);
+                  onReload();
+                })}
+              >
+                {busy === "merge" ? "Fusion…" : "⇄ Fusionner et supprimer l'ancien"}
+              </button>
+            </div>
+            {mergeMsg && <p role="status" style={{ ...muted, marginTop: "0.4rem" }}>{mergeMsg}</p>}
+          </div>
         </div>
       )}
 
