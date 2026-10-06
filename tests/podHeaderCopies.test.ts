@@ -9,8 +9,25 @@ const root = path.join(__dirname, "..");
 const read = (p: string) => fs.readFileSync(path.join(root, p), "utf8").replace(/\r\n/g, "\n");
 
 const COPIES: Record<string, string[]> = {
-  "esp8266/_shared/pod_metrics.h": ["esp8266/esp_eink_2.9BWR/pod_metrics.h", "arduino_uno_r4/pod_uno_r4_eink29/pod_metrics.h"],
-  "esp8266/_shared/pod_metrics_table.h": ["esp8266/esp_eink_2.9BWR/pod_metrics_table.h", "arduino_uno_r4/pod_uno_r4_eink29/pod_metrics_table.h"],
+  "esp8266/_shared/pod_metrics.h": [
+    "esp8266/esp_eink_2.9BWR/pod_metrics.h",
+    "arduino_uno_r4/pod_uno_r4_eink29/pod_metrics.h",
+    "arduino_uno_r4/pod_uno_r4_eink27/pod_metrics.h",
+    "arduino_uno_r4/pod_uno_r4_eink27_oled/pod_metrics.h",
+    "arduino_uno_r4/pod_uno_r4_tft18/pod_metrics.h",
+  ],
+  "esp8266/_shared/pod_metrics_table.h": [
+    "esp8266/esp_eink_2.9BWR/pod_metrics_table.h",
+    "arduino_uno_r4/pod_uno_r4_eink29/pod_metrics_table.h",
+    "arduino_uno_r4/pod_uno_r4_eink27/pod_metrics_table.h",
+    "arduino_uno_r4/pod_uno_r4_eink27_oled/pod_metrics_table.h",
+    "arduino_uno_r4/pod_uno_r4_tft18/pod_metrics_table.h",
+  ],
+  "arduino_uno_r4/pod_uno_r4_eink29/pod_vote_r4.h": [
+    "arduino_uno_r4/pod_uno_r4_eink27/pod_vote_r4.h",
+    "arduino_uno_r4/pod_uno_r4_eink27_oled/pod_vote_r4.h",
+    "arduino_uno_r4/pod_uno_r4_tft18/pod_vote_r4.h",
+  ],
   "esp8266/_shared/pod_vote_esp.h": ["esp8266/esp_eink_2.9BWR/pod_vote_esp.h"],
 };
 

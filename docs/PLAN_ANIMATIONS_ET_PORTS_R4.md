@@ -38,10 +38,10 @@ même protocole serveur (register → pull → image → ACK, validation Ed25519
 | # | Tâche | Base de code | Points d'attention | État |
 |---|---|---|---|---|
 | C1 | **R4 + OLED 0,96" SSD1306** (écran `oled096`) | `pod_uno_r4` (R4 TFT 2.8", pour la structure) + `Adafruit_SSD1306` | I2C du R4 (connecteur Qwiic / A4-A5), 1 Ko d'image ; œuvres ANA = scene-v1 `oled096` à décider (R4 : RAM 32 Ko) ; ticker du firmware multiscreen à reprendre ou pas | ⏳ |
-| C2 | **R4 + TFT 1.8" ST7735** (écran `tft18`) | `pod_uno_r4` + `Adafruit_ST7735` (SPI **matériel**) | 40 960 o par image (comme le R4 TFT 2.8" mais plus petit) ; pas de partage de bus avec la SD si pas de SD ; cartel brûlé (bandes de 14 px) | ⏳ |
-| C3 | **R4 + e-ink 2.7" BW** et **e-ink 2.7" + OLED** (combo) | `pod_uno_r4_eink29` pour l'e-ink | seulement si l'utilisateur veut ces cartes en R4 ; le combo e-ink + OLED est le plus lourd (deux écrans, un ticker) | 🔎 |
+| C2 | **R4 + TFT 1.8" ST7735** (écran `tft18`) | `pod_uno_r4` + `Adafruit_ST7735` (SPI **matériel**) | images fixes et vote v2 compilés en `r4tft18-1.1` ; animation volontairement non annoncée avant essai réel | 🟡 compilé, non testé sur matériel |
+| C3 | **R4 + e-ink 2.7" BW** et **e-ink 2.7" + OLED** (combo) | `pod_uno_r4_eink29` pour l'e-ink | images fixes et vote v2 compilés en `r4eink27-1.1` / `r4multiscreen-1.1` ; combo à 68 % de RAM statique | 🟡 compilés, non testés sur matériel |
 | C4 | **Banc d'essai d'animation** dans chaque port R4 (mêmes `pod_bench.h` + lecteur ; `pod_bench_esp.h` est propre à l'ESP8266 : utiliser la version R4 de `pod_uno_r4.ino`) | `pod_uno_r4.ino` (déjà fait pour le TFT 2.8") | OLED : `playBitmap` ; TFT 1.8" : `GeoOne<48>` ; ajouter les écrans à `lib/bench/screens.ts` si le préfixe de firmware change | ⏳ |
-| C5 | Pour chaque port : **compilation arduino-cli**, mesure de la RAM (≤ 23 296 o de données statiques sur le R4), **avertissement « non testé »** en tête du `.ino`, de la doc et de la page | | ⏳ |
+| C5 | Pour chaque port : **compilation arduino-cli**, mesure de la RAM (≤ 23 296 o de données statiques sur le R4), **avertissement « non testé »** en tête du `.ino`, de la doc et de la page | fait pour les trois ports de C2/C3 ; reste à refaire après toute modification et pour C1 | 🟡 |
 | C6 | Sauvegarde préalable de tout `.ino` modifié (`firmware-backups/<date>/`) | | ⏳ à chaque fois |
 
 Précautions déjà apprises sur le R4 (à reprendre telles quelles) : pile principale de 1 Ko (Ed25519 ≈ 1,7 Ko → déborde dans le tas : ne rien allouer en pile de gros), `FRAME_BYTES`/`ROW_BYTES`
@@ -54,17 +54,17 @@ pour n'importe quelle combinaison, comme aujourd'hui pour les ESP.
 
 | # | Tâche | Détail | État |
 |---|---|---|---|
-| D1 | Modèle de données des combinaisons : `carte` (esp8266 / uno_r4) × `écran` (eink29bwr, eink27bw, eink27bw+oled, oled096, tft18, tft28) → dossier(s) de firmware, câblage, bibliothèques, version minimale, **statut de test** | étendre `app/learn/data/installProfiles.ts` (aujourd'hui : profils ESP seulement) | ⏳ |
-| D2 | Archives : étendre `/api/esp-firmware` (variantes `?board=r4&screen=…`) ; chaque ZIP contient le dossier de firmware **autonome** (y compris `pod_bench*.h`, `secrets.h.example`), un `README.txt` propre à la combinaison (câblage, bibliothèques, carte à choisir, procédure), l'avertissement de test | les dossiers R4 (`arduino_uno_r4/…`) ne sont pas servis aujourd'hui | ⏳ |
-| D3 | Page « Apprendre » : sélecteur de matériel → câblage (schéma existant `WiringDiagram`) + bibliothèques + téléchargement ; **bandeau d'avertissement** sur toute combinaison non testée, avec la date et ce qui est testé | | ⏳ |
+| D1 | Modèle de données des combinaisons : `carte` (esp8266 / uno_r4) × `écran` (eink29bwr, eink27bw, eink27bw+oled, oled096, tft18, tft28) → dossier(s) de firmware, câblage, bibliothèques, version minimale, **statut de test** | profils ajoutés pour e-ink 2,7", combo e-ink/OLED et TFT 1,8" sur R4 ; OLED seul reste à produire | 🟡 |
+| D2 | Archives : étendre `/api/esp-firmware` (variantes `?board=r4&screen=…`) ; chaque ZIP contient le dossier de firmware **autonome** (y compris `pod_bench*.h`, `secrets.h.example`), un `README.txt` propre à la combinaison (câblage, bibliothèques, carte à choisir, procédure), l'avertissement de test | variantes R4 et avertissements livrés pour C2/C3 ; OLED seul reste à produire | 🟡 |
+| D3 | Page « Apprendre » : sélecteur de matériel → câblage (schéma existant `WiringDiagram`) + bibliothèques + téléchargement ; **bandeau d'avertissement** sur toute combinaison non testée, avec la date et ce qui est testé | intégré pour C2/C3 | 🟡 |
 | D4 | Tableau de compatibilité dans la doc (matériel × fonctions : image, validation, cartel, animations, tactile, SD) | | ⏳ |
-| D5 | Test automatique des archives : chaque ZIP contient exactement les fichiers attendus, aucun identifiant Wi-Fi, aucun `secrets.h` | test jest/node | ⏳ |
+| D5 | Test automatique des archives : chaque ZIP contient exactement les fichiers attendus, aucun identifiant Wi-Fi, aucun `secrets.h` | couverture ajoutée pour les variantes R4 ; `secrets.h.example` requis et `secrets.h` interdit | ✅ |
 
 ### Avertissements « non testé » — où ils doivent apparaître
 1. En-tête de chaque `.ino` / `.h` concerné (✅ fait pour `esp_tft1.8`, `esp_eink_2.7BW_OLED`, `pod_bench_esp.h`).
-2. `README.txt` de chaque archive (D2).
+2. `README.txt` de chaque archive (✅ pour les variantes R4 de C2/C3).
 3. Page « Apprendre » et page `/bench` (✅ pour le banc d'essai : bandeau orange par écran, piloté par `tested` dans `lib/bench/screens.ts`).
-4. Journal série au démarrage : `[BENCH] … NON TESTÉ` (⏳ à ajouter aux ports R4).
+4. Journal série au démarrage : avertissement explicite (✅ pour les ports R4 de C2/C3).
 
 ## Hors périmètre / décisions à prendre
 - 🔎 Faut-il animer aussi les **e-ink** (non : rafraîchissement de plusieurs secondes) ? Réponse proposée : non.

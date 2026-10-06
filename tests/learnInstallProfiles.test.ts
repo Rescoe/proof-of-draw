@@ -22,13 +22,24 @@ test("apprendre : e-ink 2.9 propose ESP8266 et UNO R4 avec leurs firmwares propr
   assert.equal(r4?.wiring[0]?.controllerName, "UNO R4 WiFi");
 });
 
+test("apprendre : les trois nouveaux ports complètent la matrice UNO R4", () => {
+  assert.equal(profileForSelection("eink27bwSolo", "unoR4")?.id, "r4Eink27");
+  assert.equal(profileForSelection("eink27bwOled", "unoR4")?.id, "r4Eink27Oled");
+  assert.equal(profileForSelection("tft18", "unoR4")?.id, "r4Tft18");
+  for (const id of ["r4Eink27", "r4Eink27Oled", "r4Tft18"] as const) {
+    const profile = INSTALL_PROFILE_LIST.find((item) => item.id === id);
+    assert.equal(profile?.testedOnHardware, false);
+    assert.match(profile?.statusNote ?? "", /non testé|pas encore été/i);
+  }
+});
+
 test("apprendre : une combinaison indisponible conserve l'écran et choisit sa carte compatible", () => {
   assert.equal(resolveInstallProfileId("tft28", "esp8266"), "r4Tft28");
-  assert.equal(resolveInstallProfileId("eink27bwSolo", "unoR4"), "eink27bwSolo");
+  assert.equal(resolveInstallProfileId("eink27bwSolo", "unoR4"), "r4Eink27");
   assert.equal(resolveInstallProfileId("r4Eink29", null), "r4Eink29");
 });
 
-for (const variant of ["r4Eink29", "r4Tft28"] as const) {
+for (const variant of ["r4Eink29", "r4Eink27", "r4Eink27Oled", "r4Tft18", "r4Tft28"] as const) {
   test(`archive ${variant} : firmware autonome sans secrets Wi-Fi`, async () => {
     const response = await GET(new NextRequest(`http://localhost/api/esp-firmware?variant=${variant}`));
     assert.equal(response.status, 200);
@@ -39,5 +50,9 @@ for (const variant of ["r4Eink29", "r4Tft28"] as const) {
     assert.ok(paths.includes(`${profile.firmwareFolder}/${profile.firmwareEntryFile}`));
     assert.ok(paths.includes(`${profile.firmwareFolder}/secrets.h.example`));
     assert.ok(!paths.some((path) => /(^|\/)secrets\.h$/i.test(path)));
+    if (["r4Eink27", "r4Eink27Oled", "r4Tft18"].includes(variant)) {
+      const sketch = await zip.file(`${profile.firmwareFolder}/${profile.firmwareEntryFile}`)?.async("string");
+      assert.match(sketch ?? "", /NON TESTÉ SUR LE MATÉRIEL/);
+    }
   });
 }

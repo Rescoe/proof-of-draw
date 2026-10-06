@@ -52,6 +52,10 @@ const EINK_WIRES: WireDef[] = [
 ];
 
 const UNO_R4_PIN_INFO: Record<string, string> = {
+  "3.3V": "alimentation",
+  GND: "masse",
+  A4: "SDA I²C",
+  A5: "SCL I²C",
   D4: "SD CS",
   D7: "BUSY",
   D8: "RST / TOUCH CS",
@@ -62,9 +66,9 @@ const UNO_R4_PIN_INFO: Record<string, string> = {
   D13: "SPI SCK",
 };
 
-const UNO_R4_ORDER = ["D4", "D7", "D8", "D9", "D10", "D11", "D12", "D13", "3.3V", "GND"];
+const UNO_R4_ORDER = ["A4", "A5", "D4", "D7", "D8", "D9", "D10", "D11", "D12", "D13", "3.3V", "GND"];
 
-export const WIRING: Record<"eink29bwr" | "eink27bw" | "oled" | "tft18" | "tftSd" | "r4Eink29" | "r4Tft28", WiringSpec> = {
+export const WIRING: Record<"eink29bwr" | "eink27bw" | "oled" | "tft18" | "tftSd" | "r4Eink29" | "r4Eink27" | "r4Oled" | "r4Tft18" | "r4Tft28", WiringSpec> = {
   eink29bwr: {
     id: "eink29bwr",
     title: 'E-Ink 2.9" BWR — firmware esp_eink_2.9BWR',
@@ -140,6 +144,59 @@ export const WIRING: Record<"eink29bwr" | "eink27bw" | "oled" | "tft18" | "tftSd
       { pin: "DC", node: "D9", color: WS.DC, note: "Données / commande" },
       { pin: "RST", node: "D8", color: WS.RST, note: "Reset" },
       { pin: "BUSY", node: "D7", color: WS.BUSY, note: "État de rafraîchissement de l’e-ink" },
+    ],
+    nodeOrder: UNO_R4_ORDER,
+    gpio: UNO_R4_PIN_INFO,
+  },
+  // Source : arduino_uno_r4/pod_uno_r4_eink27/epdif.h.
+  r4Eink27: {
+    id: "r4Eink27",
+    title: 'E-Ink 2.7" BW — firmwares pod_uno_r4_eink27 et pod_uno_r4_eink27_oled',
+    controllerName: "UNO R4 WiFi",
+    moduleName: 'e-Paper 2.7" V2',
+    wires: [
+      { pin: "VCC", node: "3.3V", color: WS.VCC, note: "Alimentation 3,3 V uniquement" },
+      { pin: "GND", node: "GND", color: WS.GND, note: "Masse commune" },
+      { pin: "DIN", node: "D11", color: WS.DIN, note: "SPI COPI (MOSI) matériel" },
+      { pin: "CLK", node: "D13", color: WS.CLK, note: "SPI SCK matériel" },
+      { pin: "CS", node: "D10", color: WS.CS, note: "Chip select de l’e-ink" },
+      { pin: "DC", node: "D9", color: WS.DC, note: "Données / commande" },
+      { pin: "RST", node: "D8", color: WS.RST, note: "Reset" },
+      { pin: "BUSY", node: "D7", color: WS.BUSY, note: "État de rafraîchissement" },
+    ],
+    nodeOrder: UNO_R4_ORDER,
+    gpio: UNO_R4_PIN_INFO,
+  },
+  // I²C matériel de l'UNO R4 : SDA=A4, SCL=A5 (broches également sérigraphiées SDA/SCL).
+  r4Oled: {
+    id: "r4Oled",
+    title: 'OLED 0.96" SSD1306 — second écran du firmware pod_uno_r4_eink27_oled',
+    controllerName: "UNO R4 WiFi",
+    moduleName: 'OLED 0.96" I²C',
+    wires: [
+      { pin: "VCC", node: "3.3V", color: "#dc2626", note: "Alimentation 3,3 V" },
+      { pin: "GND", node: "GND", color: "#111827", note: "Masse commune avec l’e-ink" },
+      { pin: "SDA", node: "A4", color: "#2563eb", note: "Données I²C, adresse 0x3C" },
+      { pin: "SCL", node: "A5", color: "#eab308", note: "Horloge I²C" },
+    ],
+    nodeOrder: UNO_R4_ORDER,
+    gpio: UNO_R4_PIN_INFO,
+  },
+  // Source : arduino_uno_r4/pod_uno_r4_tft18/pod_uno_r4_tft18.ino.
+  r4Tft18: {
+    id: "r4Tft18",
+    title: 'TFT 1.8" ST7735S — firmware pod_uno_r4_tft18',
+    controllerName: "UNO R4 WiFi",
+    moduleName: 'TFT 1.8" (ST7735S)',
+    wires: [
+      { pin: "VCC", node: "3.3V", color: "#dc2626", note: "Alimentation et logique 3,3 V" },
+      { pin: "GND", node: "GND", color: "#111827" },
+      { pin: "SCL", node: "D13", color: "#eab308", note: "SPI SCK matériel" },
+      { pin: "SDA", node: "D11", color: "#2563eb", note: "SPI COPI (MOSI) matériel" },
+      { pin: "RES", node: "D8", color: "#f8fafc", note: "Reset" },
+      { pin: "DC", node: "D9", color: "#16a34a", note: "Données / commande" },
+      { pin: "CS", node: "D10", color: "#f97316", note: "Chip select de l’écran" },
+      { pin: "BLK", node: "3.3V", color: "#9333ea", note: "Rétroéclairage toujours allumé" },
     ],
     nodeOrder: UNO_R4_ORDER,
     gpio: UNO_R4_PIN_INFO,

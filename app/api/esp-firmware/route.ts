@@ -1,5 +1,5 @@
 // app/api/esp-firmware/route.ts
-// GET /api/esp-firmware?variant=all|eink29bwr|eink27bw|tft18|r4Eink29|r4Tft28
+// GET /api/esp-firmware?variant=all|eink29bwr|eink27bw|tft18|r4Eink29|r4Eink27|r4Eink27Oled|r4Tft18|r4Tft28
 // Retourne un ZIP contenant le(s) dossier(s) de firmware correspondant(s).
 // Fonctionne uniquement avec le runtime Node.js (fs disponible).
 
@@ -38,6 +38,24 @@ export const FIRMWARE_VARIANTS: Record<string, FirmwareVariant> = {
     sources: [{ root: "arduino_uno_r4", folder: "pod_uno_r4_eink29" }],
     statusWarning: "Cette combinaison compile et a été testée côté protocole, mais sa validation sur écran physique reste à confirmer.",
   },
+  r4Eink27: {
+    label: "pod-firmware-r4-eink27bw",
+    board: "Arduino UNO R4 WiFi",
+    sources: [{ root: "arduino_uno_r4", folder: "pod_uno_r4_eink27" }],
+    statusWarning: "PORT NON TESTÉ SUR LE MATÉRIEL (06/10/2026) : e-ink 2,7 pouces seul sur UNO R4 WiFi.",
+  },
+  r4Eink27Oled: {
+    label: "pod-firmware-r4-eink27bw-oled",
+    board: "Arduino UNO R4 WiFi",
+    sources: [{ root: "arduino_uno_r4", folder: "pod_uno_r4_eink27_oled" }],
+    statusWarning: "PORT NON TESTÉ SUR LE MATÉRIEL (06/10/2026) : multiscreen e-ink 2,7 pouces + OLED sur UNO R4 WiFi. Images fixes seulement avant validation.",
+  },
+  r4Tft18: {
+    label: "pod-firmware-r4-tft18",
+    board: "Arduino UNO R4 WiFi",
+    sources: [{ root: "arduino_uno_r4", folder: "pod_uno_r4_tft18" }],
+    statusWarning: "PORT NON TESTÉ SUR LE MATÉRIEL (06/10/2026) : TFT 1,8 pouces sur UNO R4 WiFi. Images fixes seulement avant validation.",
+  },
   r4Tft28: {
     label: "pod-firmware-r4-tft28",
     board: "Arduino UNO R4 WiFi",
@@ -47,12 +65,16 @@ export const FIRMWARE_VARIANTS: Record<string, FirmwareVariant> = {
   all: {
     label: "pod-firmware-all",
     board: "plusieurs cartes",
+    statusWarning: "L’archive complète contient des ports marqués NON TESTÉS SUR LE MATÉRIEL. Lire l’en-tête de chaque sketch avant téléversement.",
     sources: [
       { root: "esp8266", folder: "esp_eink_2.9BWR" },
       { root: "esp8266", folder: "esp_eink_2.7BW_OLED" },
       { root: "esp8266", folder: "esp_eink_2.7BW" },
       { root: "esp8266", folder: "esp_tft1.8" },
       { root: "arduino_uno_r4", folder: "pod_uno_r4_eink29" },
+      { root: "arduino_uno_r4", folder: "pod_uno_r4_eink27" },
+      { root: "arduino_uno_r4", folder: "pod_uno_r4_eink27_oled" },
+      { root: "arduino_uno_r4", folder: "pod_uno_r4_tft18" },
       { root: "arduino_uno_r4", folder: "pod_uno_r4" },
     ],
   },

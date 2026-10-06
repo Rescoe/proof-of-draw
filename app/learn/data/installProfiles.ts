@@ -3,7 +3,7 @@ import { WIRING, type WiringSpec } from "../wiring";
 
 export type BoardId = "esp8266" | "unoR4";
 export type InstallScreenId = "eink29bwr" | "eink27bwSolo" | "eink27bwOled" | "tft18" | "tft28";
-export type InstallProfileId = "eink29bwr" | "eink27bwSolo" | "eink27bwOled" | "tft18" | "r4Eink29" | "r4Tft28";
+export type InstallProfileId = "eink29bwr" | "eink27bwSolo" | "eink27bwOled" | "tft18" | "r4Eink29" | "r4Eink27" | "r4Eink27Oled" | "r4Tft18" | "r4Tft28";
 
 export interface LibraryRequirement {
   name: string;
@@ -149,6 +149,49 @@ export const INSTALL_PROFILES: Record<InstallProfileId, InstallProfile> = {
     wiringIntro: "Utilisez le SPI matériel de la R4 : DIN sur D11 et CLK sur D13, puis les quatre lignes de contrôle.",
     wiring: [WIRING.r4Eink29], specificLibraries: [], accent: "#ef4444", testedOnHardware: false,
     statusNote: "Le firmware compile et son lecteur réseau est testé sur PC, mais cette combinaison doit encore être validée sur une carte physique.",
+  },
+  r4Eink27: {
+    id: "r4Eink27", boardId: "unoR4", installScreenId: "eink27bwSolo",
+    screenIds: ["eink27bw"], screens: screens("eink27bw"),
+    firmwareVariant: "r4Eink27", firmwareFilename: "pod-firmware-r4-eink27bw.zip",
+    firmwareFolder: "pod_uno_r4_eink27", firmwareEntryFile: "pod_uno_r4_eink27.ino",
+    moduleReference: "Waveshare 2.7inch e-Paper V2",
+    shortDescription: "Écran e-ink noir et blanc piloté par l’UNO R4 WiFi, avec image conservée hors tension.",
+    wiringIntro: "Utilisez le SPI matériel de la R4 : DIN sur D11 et CLK sur D13, puis les quatre lignes de contrôle.",
+    wiring: [WIRING.r4Eink27], specificLibraries: [], accent: "#e5e7eb", testedOnHardware: false,
+    statusNote: "Port avec vote réel v2 compilé pour UNO R4 WiFi (44 % flash, 58 % RAM). Il n’a pas encore été essayé sur le matériel.",
+  },
+  r4Eink27Oled: {
+    id: "r4Eink27Oled", boardId: "unoR4", installScreenId: "eink27bwOled",
+    screenIds: ["eink27bw", "oled096"], screens: screens("eink27bw", "oled096"),
+    firmwareVariant: "r4Eink27Oled", firmwareFilename: "pod-firmware-r4-eink27bw-oled.zip",
+    firmwareFolder: "pod_uno_r4_eink27_oled", firmwareEntryFile: "pod_uno_r4_eink27_oled.ino",
+    moduleReference: "Waveshare 2.7inch e-Paper V2 + OLED SSD1306 I²C",
+    shortDescription: "Multiscreen R4 : œuvre principale sur e-ink et second flux sur OLED, restauré depuis l’EEPROM.",
+    wiringIntro: "Câblez l’e-ink sur le SPI matériel, puis l’OLED sur le bus I²C de la R4 (SDA/A4 et SCL/A5).",
+    wiring: [WIRING.r4Eink27, WIRING.r4Oled],
+    specificLibraries: [
+      { name: "Adafruit GFX Library", version: "dernière version", purpose: "Base graphique de l’écran OLED." },
+      { name: "Adafruit SSD1306", version: "dernière version", purpose: "Pilote de l’OLED 0.96\"." },
+    ],
+    accent: "#22d3ee", testedOnHardware: false,
+    statusNote: "Port multiscreen avec vote réel v2 compilé pour UNO R4 WiFi (50 % flash, 68 % RAM), mais non testé sur une carte physique. Les images fixes sont actives ; animations et scene-v1 restent désactivées jusqu’aux mesures matérielles.",
+  },
+  r4Tft18: {
+    id: "r4Tft18", boardId: "unoR4", installScreenId: "tft18",
+    screenIds: ["tft18"], screens: screens("tft18"),
+    firmwareVariant: "r4Tft18", firmwareFilename: "pod-firmware-r4-tft18.zip",
+    firmwareFolder: "pod_uno_r4_tft18", firmwareEntryFile: "pod_uno_r4_tft18.ino",
+    moduleReference: "ST7735S 1.8inch TFT",
+    shortDescription: "TFT couleur piloté en SPI matériel ; l’image RGB565 est reçue ligne par ligne pour préserver la RAM.",
+    wiringIntro: "Reliez le TFT au SPI matériel de la R4 : SDA sur D11, SCL sur D13 et les contrôles sur D8 à D10.",
+    wiring: [WIRING.r4Tft18],
+    specificLibraries: [
+      { name: "Adafruit GFX Library", version: "dernière version", purpose: "Base graphique du TFT." },
+      { name: "Adafruit ST7735 and ST7789 Library", version: "dernière version", purpose: "Pilote du TFT 1.8\"." },
+    ],
+    accent: "#f59e0b", testedOnHardware: false,
+    statusNote: "Port avec vote réel v2 compilé pour UNO R4 WiFi (48 % flash, 49 % RAM), mais non testé sur une carte physique. Les images fixes sont actives ; animations et scene-v1 restent désactivées jusqu’aux mesures matérielles.",
   },
   r4Tft28: {
     id: "r4Tft28", boardId: "unoR4", installScreenId: "tft28",
