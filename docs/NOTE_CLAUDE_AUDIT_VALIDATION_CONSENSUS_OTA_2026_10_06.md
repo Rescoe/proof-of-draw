@@ -15,7 +15,7 @@
 
 1. **Oui, les appareils calculent réellement** [C]. Un ESP8266 ou une R4 en firmware v2 télécharge le contenu brut du candidat, en calcule **le SHA-256 et trois métriques entières** (entropie, transitions, RLE) *en flux*, **signe** le résultat en Ed25519 et l'envoie. Le serveur refuse tout vote « accept » dont le hash ou une métrique diffère **d'un seul ppm**. La parité C++/TypeScript a été prouvée par `g++` (tests). C'est une vraie victoire : c'était un écho du score serveur jusqu'au 05/10.
 2. **Mais ce n'est pas encore un consensus distribué** [C]. Le serveur reste **l'oracle** (un vote est « bon » s'il est égal à ce que le serveur a calculé), il est **le seul à finaliser**, il **ne conserve pas les votes signés dans le bloc**, et un appareil v1 (écho) compte encore comme une approbation. Un tiers ne peut donc **pas** vérifier un bloc sans faire confiance au serveur. Niveau honnête atteint aujourd'hui : **N1 partiel** (« des appareils ont recalculé ces octets exacts »), pas N2 complet, pas de comité, pas de vérification publique.
-3. **Le « taux de menteurs » promis dans la doc n'existe pas encore** [C]. C'est la phase P5 (comité, seuil 2/3, simulations avec 30 % d'appareils fictifs) : **non commencée**. Le quorum actuel (51 % des appareils *actifs*, fictifs compris) tombe dès qu'un attaquant enregistre ~10 faux appareils face à 4 vrais (§ 3.3).
+3. **Le « taux de menteurs » promis dans la doc n'existe pas encore** [C]. C'est la phase P5 (comité, seuil 2/3, simulations avec 30 % d'appareils fictifs) : **non commencée**. Le quorum actuel (51 % des appareils *appairés* actifs) peut être atteint par des votes d'appareils **non appairés** (la route de vote ne vérifie pas l'appairage) : face à 4 vrais appareils (quorum 3), trois faux appareils enregistrés par simple requête HTTP suffisent à finaliser (§ 3.3). *[Corrigé le 06/10 après lecture de l'audit GPT : ma première version affirmait à tort que les faux appareils gonflaient le quorum.]*
 4. **Les prochains gains sont peu coûteux** : (a) **conserver les votes signés dans le bloc** + y lier `parentHash` → bloc vérifiable hors serveur ; (b) **un vote par profil, auteur exclu, comité tiré au sort** ; (c) **hash salé par appareil** pour qu'on ne puisse pas recopier la réponse d'un voisin ; (d) vérificateur public. Rien de tout cela n'exige plus de RAM sur l'ESP8266.
 5. **Mises à jour à distance : faisables** (§ 6) — ESP8266 via `ESP8266httpUpdate` + **binaire signé** (le cœur installé contient `signing.py` et `Update.installSignature`), R4 via la bibliothèque officielle `OTAUpdate` (présente dans le cœur 1.5.3 installé). **Une première installation manuelle reste nécessaire**, mais on peut la rendre universelle (un seul binaire par famille, **identifiants Wi-Fi saisis ensuite** par portail captif et stockés en EEPROM/`Preferences`) : c'est ce qui rend les mises à jour distantes possibles *sans* recompiler par utilisateur.
 6. **Cartels e-ink** (§ 7) : le firmware **efface 28 lignes sur 128** (22 %) de l'e-ink 2,9″ et 26 sur 176 (15 %) de l'e-ink 2,7″ pour y graver le texte [C]. Solution **sans reflash** : dessiner sur une zone réservée (canvas 296×100, complété en blanc par le serveur). Solution **avec reflash** : un réglage `cartelMode` lu dans `/api/pull`. Je recommande les deux, dans cet ordre.
@@ -51,7 +51,8 @@ Fichiers : `esp8266/_shared/pod_metrics.h` (cœur, 143 l.), `pod_vote_esp.h` (ES
 | ESP8266 TFT 1,8″ (`tft18-2.4`) | 40 960 o (RGB565) | aucun | essai réel ✔ |
 | R4 + e-ink 2,9″ (`r4eink29-1.1`) | 9 472 o | statiques | essai réel ✔ |
 | R4 + TFT 2,8″ tactile (`r4tft28-2.5`) | 153 600 o | `g_voteScratch[4736]` statique | **non essayé** ; lecture série ≈ 15-25 s [D] |
-| R4 e-ink 2,7″ / e-ink 2,7″ + OLED / TFT 1,8″ (ports GPT) | idem | statiques | compilés, **non essayés** |
+| R4 e-ink 2,7″ / e-ink 2,7″ + OLED / TFT 1,8″ (ports GPT) | idem | statiques | essai réel ✔ (retour du porteur, 06/10) |
+| **ESP8266 e-ink 2,7″ BW « seul »** (`eink27bw-2.0`) | **aucun calcul** : le sketch n'a pas `doValidateV2` ni `pod_vote_esp.h` | — | **reste en v1 (écho)** — omis de ma première version, relevé par GPT, vérifié [C] |
 
 **Ce que ça prouve** : l'appareil *a lu* le contenu (sinon e/t/r seraient faux) et possède la clé qui signe. **Ce que ça ne prouve pas** : que le calcul a été fait *sur le microcontrôleur* — un script sur PC qui connaît la clé fait pareil (le contenu est public, l'enregistrement est ouvert, § 3.4).
 
@@ -117,19 +118,17 @@ Doc de référence : `CHANTIER_VALIDATION_REELLE.md` (niveaux N0-N3, phases P0-P
 
 ### 3.3 « Taux de menteurs » : ce que le système tolère aujourd'hui, et ce que viserait le comité
 
-**Aujourd'hui** (quorum = `ceil(0,51 × poolSize)`, `poolSize` = tous les appareils actifs, fictifs compris, 1 voix par *appareil*) — calcul exact avec 4 vrais appareils :
+**Aujourd'hui** : quorum = `ceil(0,51 × poolSize)`, où `poolSize` = appareils **appairés** actifs (`getGlobalActiveCount`) ; mais **tout appareil enregistré et actif peut voter** (aucun contrôle d'appairage dans `validation-result`), et le vote est **par appareil**. Avec 4 vrais appareils appairés (pool 4, quorum 3) :
 
-| Faux appareils actifs | pool | quorum | Les faux seuls l'atteignent ? | Les vrais seuls l'atteignent ? |
-|---|---|---|---|---|
-| 0 | 4 | 3 | non | **oui** |
-| 4 | 8 | 5 | non | **non (blocage)** |
-| 10 | 14 | 8 | **oui** | non |
-| 30 | 34 | 18 | **oui** | non |
+| Faux appareils **non appairés** votant | pool (inchangé) | quorum | Les faux seuls l'atteignent ? |
+|---|---|---|---|
+| 1-2 | 4 | 3 | non (mais ils comptent dans les 3) |
+| **3** | 4 | 3 | **oui** — bloc finalisé sans aucun vrai appareil |
 
-Deux attaques réalistes avec de simples requêtes HTTP (enregistrement ouvert) [E, non rejouées] :
-- **Blocage** : gonfler `poolSize` jusqu'à ce que les vrais appareils ne puissent plus atteindre 51 %.
-- **Capture** : avec ≥ 51 % de faux appareils, voter « écho » v1 et **gagner la propriété des blocs** (`ownerDeviceId` = mineur tiré parmi les validateurs).
-Ils ne peuvent **pas** faire valider un contenu altéré (le hash est lié), ni miner sans candidat (le candidat vient du serveur) — c'est le garde-fou majeur actuel.
+Conséquences réalistes [E, déduites du code, non rejouées] :
+- **Capture** : trois requêtes d'enregistrement + trois votes v1 « écho » finalisent un candidat et attribuent la propriété du bloc (`ownerDeviceId`) à un faux appareil. Un faux v2 doit en revanche reproduire hash et métriques exacts : il lui faut télécharger le contenu public, ce qui est trivial sur PC.
+- **Blocage** : il n'est possible qu'en faisant **appairer** des faux appareils (ce qui gonfle `poolSize`) ; la facilité dépend de `/api/onboard` (non auditée ici).
+- Un contenu altéré reste **impossible** à faire valider (hash lié) et il faut un candidat émis par le serveur : c'est le garde-fou majeur actuel.
 
 **Comité visé** (proposition P5 : K membres tirés par profil, seuil ⌈2K/3⌉, avec repli séquentiel). Probabilité qu'une fraction *f* de profils malhonnêtes (tirage indépendant, calcul binomial reproductible par `node -e`) :
 
@@ -157,7 +156,7 @@ Priorité : 🔴 impacte la sûreté / la vérité des affichages · 🟠 import
 | **K1** | 🔴 | **Les votes signés ne sont pas conservés** : `clearCandidate()` supprime `candidate:votes` ; `Block` ne garde que `validatorIds` et `votesSummary` (hors hash). Un bloc n'est pas vérifiable hors serveur. | `lib/chain.ts` `finalizeBlock`, `app/api/validation-result` | Stocker `votes[]` (id public, hash, e/t/r, verdict, signature ≈ 130 o/vote) dans `chain:block:*` ; inclure leur racine dans `blockHash` pour les **nouveaux** blocs (version de bloc). |
 | **K2** | 🔴 | **Enregistrement sans preuve de possession** : l'identité = MAC déclarée ; la clé publique est acceptée telle quelle (`PIN_DEVICE_KEY=false`) ; n'importe quel script crée/usurpe un appareil. | `app/api/register/route.ts` | Défi-réponse : `register` renvoie un nonce, le suivant exige une signature ; épinglage + récupération par session propriétaire (déjà décidée). |
 | **K3** | 🔴 | **Vote non réservé aux appareils appairés** et **auteur non exclu** (aucun test de `candidate.deviceId` / profil dans `validation-result` ni `validate-candidate`). | `app/api/validation-result/route.ts` | Éligibilité côté serveur (voir reste de P0). |
-| **K4** | 🟠 | **`poolSize` = tous les appareils actifs** (tous écrans, v1 compris) figé à la soumission ⇒ attaque par gonflement du quorum (§ 3.3). | `app/api/submit-candidate/route.ts` l. 196 | Comité borné par profils éligibles. |
+| **K4** | 🔴 | **Incohérence pool/vote** : `poolSize` (`getGlobalActiveCount`) ne compte que les appareils **appairés** actifs, mais `validate-candidate` et `validation-result` acceptent tout appareil enregistré et actif. Des votes non appairés s'ajoutent au numérateur sans toucher au dénominateur (§ 3.3). *(Constat de GPT, vérifié ; ma version initiale décrivait l'inverse.)* | `lib/deviceStore.ts` l. 388-416, `app/api/validation-result/route.ts` | Une seule fonction d'éligibilité partagée par le pool, `validate-candidate` et `validation-result`. |
 | **K5** | 🟠 | **Génération de la clé privée ESP8266 : entropie faible** : `randomSeed(analogRead(A0) ^ millis() ^ RSSI)` puis `random(256) ^ analogRead(A0)` (PRNG 32 bits, broche A0 flottante). Le champ des clés possibles est loin de 2²⁵⁶. La R4, elle, hache 384 lectures ADC + `micros()` + MAC + RSSI (mieux, mais pas un TRNG). | `esp8266/*/*.ino` `generateKeys()` ; `pod_uno_r4_*.ino` `gatherEntropy()` | ESP8266 : `ESP.random()` / registre matériel `RANDOM_REG32` (Wi-Fi allumé) ; R4 : le TRNG du RA4M1 si exposé. Les clés existantes ne changent qu'au prochain reset de clé (acceptable, à documenter). |
 | **K6** | 🟠 | **Sélection du mineur non rejouable** (`Math.random()` serveur). | `lib/chain.ts` `selectEquitableMiner` | Tirage déterministe `SHA-256(candidateId ‖ parentHash ‖ clé)` — publiquement recalculable. |
 | **K7** | 🟠 | **`obs-confirm` / `observer-result` : écho non signé** ; `revalidated[].observerIds`/`obsConfirmed` ressemble à une vérification sans en être une. À ne pas afficher comme « re-vérifié ». | `app/api/obs-confirm/route.ts`, `esp_*.ino doObsConfirm()` | Soit le supprimer, soit en faire une vraie revérification signée (re-hash du bloc via `/api/block-image`). |
@@ -166,6 +165,8 @@ Priorité : 🔴 impacte la sûreté / la vérité des affichages · 🟠 import
 | **K10** | 🟡 | **`/api/candidate-frame` met en cache 30 s un 404** quand le candidat demandé n'est pas encore « courant » : un validateur trop rapide peut empoisonner le CDN 30 s pour cette URL. | `app/api/candidate-frame/route.ts` l. 25 | `Cache-Control: no-store` sur le 404. |
 | **K11** | 🟡 | **`finalizeBlock` lit tête et longueur puis écrit sans verrou** : sûr tant qu'un seul candidat existe et que `claimFinalization` protège, mais fragile si on autorise deux candidats ou l'importation de blocs. | `lib/chain.ts` | Script atomique ou `WATCH`/CAS avant d'augmenter le débit. |
 | **K12** | 🟡 | **Le score final d'un bloc `(score serveur + moyenne des scores votés)/2`** mélange échos v1 et v2 ; tant que les v2 sont forcés égaux au serveur, c'est neutre, mais cela masque un éventuel désaccord. | `lib/chain.ts` l. 487 | À revoir avec le comité. |
+| **K14** | 🟠 | **`reason` non signé** : le verdict l'est, pas le motif du refus ; un relais pourrait en changer le texte. *(GPT)* | `lib/podVote.ts` `voteMessageV2` | Signer un code de règle + `rulesVersion` dans le message (v3). |
+| **K15** | 🟠 | **Le serveur ne revérifie pas `blank`/`noise`** : il vérifie hash et métriques, pas les règles N2 avant d'accepter un verdict signé ; et `blank` désigne toute image **uniforme** (blanche *ou* pleine), pas seulement « vide ». *(GPT, vérifié)* | `lib/podVote.ts` `checkVoteV2`, `pod_vote_esp.h` `podVerdict` | Réappliquer les règles côté serveur ; renommer le motif `uniform`. |
 | **K13** | 🟡 | **Redemande de clé au téléversement R4** (EEPROM effacée) ⇒ nouveau `deviceId` ⇒ outil « Ancien ➜ Nouveau » déjà fait ; mais l'épinglage de clé strict le casserait. | `lib/keyPinning.ts` | Prévoir la récupération par le profil avant d'activer `PIN_DEVICE_KEY`. |
 
 ---
@@ -220,7 +221,7 @@ Le test différentiel `g++` existe déjà ; un **nœud hôte** (§ 8) permet de 
 ### 6.2 Verdict : faisable
 
 **ESP8266** — [E, à valider par un essai]
-- Mécanisme standard : `ESPhttpUpdate.update(client, url)` en HTTPS (BearSSL). **Contrainte mémoire** : le TLS réclame ≈ 35 Ko de tas (le même budget que nos GET) ; l'OTA doit donc être faite **juste après la connexion Wi-Fi, avant toute allocation**, comme `/api/register` — on a ≈ 38 Ko après Wi-Fi (`NOTE_MULTISCREEN_TAS`), c'est **juste** : à mesurer. Le binaire (≈ 0,5 Mo) tient dans l'emplacement OTA de 1 019 Ko.
+- Mécanisme standard : `ESPhttpUpdate.update(client, url)` en HTTPS (BearSSL). **Contrainte mémoire** : le TLS réclame ≈ 35 Ko de tas (le même budget que nos GET) ; l'OTA doit donc être faite **juste après la connexion Wi-Fi, avant toute allocation**, comme `/api/register` — on a ≈ 38 Ko après Wi-Fi (`NOTE_MULTISCREEN_TAS`), c'est **juste** : à mesurer. Le binaire (≈ 0,5 Mo) devrait tenir dans l'emplacement OTA de 1 019 Ko ; **si la règle est « ancienne + nouvelle image dans la même zone »** (point soulevé par GPT), le TFT 1,8″ (502 Ko ×2 ≈ 1 004 Ko) est **à la limite** : à mesurer avant de conclure.
 - **Signature obligatoire** : `Update.installSignature(&hash, &sign)` avec une clé publique RSA compilée dans le firmware ; `signing.py` signe le `.bin` (outil déjà dans le cœur). Indispensable puisque le TLS n'est pas authentifié (K9) et parce que **pousser du code sur tous les appareils est le pouvoir le plus dangereux du système** : la clé privée de signature ne doit jamais être sur Vercel.
 - **Pas de retour arrière automatique** sur ESP8266 (l'ancienne image est écrasée au redémarrage) : une mauvaise image peut exiger un reflash par câble. Parades : déploiement par **vagues** (canari → 10 % → 100 %, par `hash(deviceId) mod 100`), image de **secours** (compteur de redémarrages en EEPROM ; après 3 échecs : point d'accès + téléchargement du firmware « recovery »), et OTA essayée d'abord sur vos 4 appareils.
 
@@ -361,6 +362,16 @@ bool podVerifyBlock(const PodBlock&, const PodVote* votes, size_t n);   // véri
 - **Aucun essai matériel n'a été fait pour l'OTA** : toutes les affirmations OTA sont [E] ou [?] (R4).
 - Le calcul binomial (§ 3.3) suppose des profils malhonnêtes **indépendants** et un tirage uniforme ; une collusion ou un Sybil par profils faux le rend optimiste.
 - Les attaques de blocage/capture du § 3.3 sont **déduites du code**, pas rejouées contre un serveur.
+
+## 12. Écarts avec l'audit GPT (analyse croisée du 06/10/2026)
+
+Voir `AUDIT_GPT_CONSENSUS_POD_IOT_2026_10_06.md`. Les deux audits **convergent** sur : calcul v2 réel pour les images fixes, chaîne « centralisée à témoins signés », animations en v1, reçus signés non conservés, mineur non rejouable, `obs-confirm` = écho, `setInsecure()`, comité ≤ 7 profils / 2/3 / auteur exclu / un vote par profil, OTA faisable avec binaire signé, nœuds sans écran via `screens: []` + rôle `validator`.
+
+**Corrigé dans ma note grâce à GPT** : K4 (pool = appairés seulement), ESP e-ink 2,7″ seul resté en v1, K14 (`reason` non signé), K15 (`blank`/`noise` non revérifiés, `blank` = uniforme), état « essayé » des ports R4, nuance flash OTA (ancienne + nouvelle image).
+
+**Que GPT n'a pas relevé (propre à cette note)** : K1 détaillé avec liaison `parentHash` (A4), K5 entropie des clés, K10 cache CDN du 404, K11 finalisation sans verrou, K13 clé R4 régénérée, tableau de tolérance du comité (§ 3.3), taille réelle des binaires, parcours de provisioning Wi-Fi par portail captif, argument « le calcul ne protège pas contre un PC ».
+
+**Désaccords restants** — voir la réponse à l'utilisateur dans la conversation (ordre de la feuille de route, périmètre de `consensusPoD.h`, pondération par classe, cartels et `renderHash`, manifeste OTA).
 
 ## Sources consultées
 
