@@ -2,12 +2,12 @@ import type { PublicShown } from "@/lib/displayState";
 import { ShownThumb } from "../../LiveDisplays";
 import { SCREEN_COLOR, type LayoutNode } from "../../model";
 
-type Props = { node: LayoutNode; label: string; shown?: PublicShown; selected: boolean; hitRadius: number; detailed: boolean; thumbnail: boolean; onSelect: () => void; onFocus: () => void };
+type Props = { node: LayoutNode; label: string; shown?: PublicShown; selected: boolean; hitRadius: number; detailed: boolean; thumbnail: boolean; scale?: number; onSelect: () => void; onFocus: () => void };
 
-export function ScreenNode({ node, label, shown, selected, hitRadius, detailed, thumbnail, onSelect, onFocus }: Props) {
+export function ScreenNode({ node, label, shown, selected, hitRadius, detailed, thumbnail, scale = 1, onSelect, onFocus }: Props) {
   const color = SCREEN_COLOR[node.screen ?? ""] ?? "#94a3b8";
   return (
-    <g className={`ng-node ng-screen${selected ? " is-selected" : ""}${shown ? " is-confirmed" : ""}`} transform={`translate(${node.x} ${node.y})`} role="button" tabIndex={0}
+    <g className={`ng-node ng-screen${selected ? " is-selected" : ""}${shown ? " is-confirmed" : ""}`} transform={`translate(${node.x} ${node.y}) scale(${scale})`} role="button" tabIndex={0}
       aria-label={`${label}${shown ? ", affichage confirmé" : ", sans affichage confirmé"}`} onClick={onSelect} onDoubleClick={onFocus}
       onKeyDown={(event) => { if (event.key === "Enter") onSelect(); }}>
       <circle className="ng-hit" r={hitRadius} />

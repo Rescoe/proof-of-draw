@@ -1,11 +1,11 @@
 import type { ArtistGroup, LayoutNode } from "../../model";
 
-type Props = { node: LayoutNode; artist: ArtistGroup; selected: boolean; hitRadius: number; detailed: boolean; active: boolean; onSelect: () => void; onFocus: () => void };
+type Props = { node: LayoutNode; artist: ArtistGroup; selected: boolean; hitRadius: number; detailed: boolean; active: boolean; scale?: number; onSelect: () => void; onFocus: () => void };
 
-export function ArtistNode({ node, artist, selected, hitRadius, detailed, active, onSelect, onFocus }: Props) {
+export function ArtistNode({ node, artist, selected, hitRadius, detailed, active, scale = 1, onSelect, onFocus }: Props) {
   const initials = artist.label.split(/\s+/).filter(Boolean).slice(0, 2).map((part) => part[0]?.toLocaleUpperCase("fr")).join("") || "?";
   return (
-    <g className={`ng-node ng-artist${selected ? " is-selected" : ""}${active ? " is-active" : ""}`} transform={`translate(${node.x} ${node.y})`} role="button" tabIndex={0}
+    <g className={`ng-node ng-artist${selected ? " is-selected" : ""}${active ? " is-active" : ""}`} transform={`translate(${node.x} ${node.y}) scale(${scale})`} role="button" tabIndex={0}
       aria-label={`${artist.label}, ${artist.devices.length} appareils`} onClick={onSelect} onDoubleClick={onFocus}
       onKeyDown={(event) => { if (event.key === "Enter") onSelect(); }}>
       <circle className="ng-hit" r={hitRadius} />

@@ -17,6 +17,7 @@ import {
   layoutNetwork,
   screenNodeId,
   stablePointForKey,
+  summarizeArtist,
   type ClusterGroup,
   type NetworkHierarchy,
 } from "../app/network/model";
@@ -192,4 +193,78 @@ test("saturation : le nombre de flux visuels est plafonné", () => {
   const flows = buildObservedFlows({ devices: [device], artists: groupDevicesByArtist([device]), events, now: NOW });
   assert.equal(flows.length, MAX_VISIBLE_FLOWS);
   assert.equal(flows[0].id, "event:vote-0");
+});
+
+// ── Constellation : petits réseaux bien répartis, appareils et écrans à l'écart, fiche artiste ───────────────────────────────────────────
+
+function smallNetwork(artists: number, devicesPer = 2): NetworkDevice[] {
+  const out: NetworkDevice[] = [];
+  let i = 0;
+  for (let a = 0; a < artists; a++) for (let d = 0; d < devicesPer; d++) out.push(makeDevice(i++, { artistKey: `a:artiste-${a}`, artistName: `Artiste ${a}` }));
+  return out;
+}
+
+const angleOf = (n: { x: number; y: number }) => Math.atan2(n.y, n.x);
+
+test("petit réseau : les artistes sont répartis autour du core (aucun grand vide angulaire)", () => {
+  for (const count of [1, 2, 3, 5, 8, 12]) {
+    const layout = layoutNetwork(buildNetworkHierarchy(smallNetwork(count)));
+    const artists = layout.nodes.filter((n) => n.kind === "artist");
+    assert.equal(artists.length, count);
+    assert.ok(layout.nodeScale > 1, "petit réseau : nœuds dessinés plus gros");
+    if (count < 3) continue;
+    const angles = artists.map(angleOf).sort((a, b) => a - b);
+    const gaps = angles.map((a, i) => (i === angles.length - 1 ? angles[0] + Math.PI * 2 - a : angles[i + 1] - a));
+    // l'ellipse (x ×1,15, y ×0,92) déforme un peu les angles : on tolère 2,2 × l'écart idéal
+    assert.ok(Math.max(...gaps) < ((Math.PI * 2) / count) * 2.2, `${count} artistes : plus grand vide ${Math.max(...gaps).toFixed(2)} rad`);
+  }
+});
+
+test("petit réseau : appareils et écrans restent loin de la bulle de leur artiste, et deux artistes ne se chevauchent pas", () => {
+  const layout = layoutNetwork(buildNetworkHierarchy(smallNetwork(5, 3)));
+  const byId = layout.nodeIndex;
+  for (const node of layout.nodes) {
+    if (node.kind === "device" && node.parentId) {
+      const artist = byId.get(node.parentId)!;
+      const gap = Math.hypot(node.x - artist.x, node.y - artist.y) - (artist.radius + node.radius) * layout.nodeScale;
+      assert.ok(gap > 60, `appareil trop près de son artiste (${gap.toFixed(0)})`);
+    }
+    if (node.kind === "screen" && node.parentId) {
+      const device = byId.get(node.parentId)!;
+      const gap = Math.hypot(node.x - device.x, node.y - device.y) - (device.radius + node.radius) * layout.nodeScale;
+      assert.ok(gap > 30, `écran trop près de son appareil (${gap.toFixed(0)})`);
+    }
+  }
+  const artists = layout.nodes.filter((n) => n.kind === "artist");
+  for (let i = 0; i < artists.length; i++) for (let j = i + 1; j < artists.length; j++) {
+    assert.ok(Math.hypot(artists[i].x - artists[j].x, artists[i].y - artists[j].y) > 500, "artistes trop proches");
+  }
+});
+
+test("petit réseau : positions déterministes (ordre d'entrée sans effet)", () => {
+  const devices = smallNetwork(4, 2);
+  const a = layoutNetwork(buildNetworkHierarchy(devices));
+  const b = layoutNetwork(buildNetworkHierarchy([...devices].reverse()));
+  assert.deepEqual(a.nodes.map((n) => [n.id, n.x, n.y]).sort(), b.nodes.map((n) => [n.id, n.x, n.y]).sort());
+});
+
+test("grand réseau (zones de navigation) : échelle de dessin inchangée", () => {
+  const layout = layoutNetwork(buildNetworkHierarchy(smallNetwork(30, 1)));
+  assert.equal(layout.nodeScale, 1);
+});
+
+test("fiche artiste : en ligne d'abord, œuvres confirmées triées du plus récent, rien d'inventé sans ACK", () => {
+  const devices = [
+    makeDevice(0, { artistKey: "a:x", artistName: "X", isOnline: false, lastSeen: NOW - 9 * 3600_000, lastPing: NOW - 9 * 3600_000, framesSent: 4 }),
+    makeDevice(1, { artistKey: "a:x", artistName: "X", isOnline: true, framesSent: 6 }),
+  ];
+  const artist = groupDevicesByArtist(devices)[0];
+  const shown = (shownAt: number, workTitle: string) => ({ frameId: "fid-" + shownAt, screen: "eink29bwr", shownAt, kind: "consensus", workTitle, hasImage: true }) as never;
+  const displays = { [devices[0].deviceId]: { [devices[0].screens[0].screen]: shown(NOW - 1000, "Récent") }, [devices[1].deviceId]: {} };
+  const s = summarizeArtist(artist, displays);
+  assert.equal(s.devices[0].device.deviceId, devices[1].deviceId, "l'appareil en ligne passe en premier");
+  assert.equal(s.framesSent, 10);
+  assert.equal(s.recentWorks.length, 1);
+  assert.equal(s.recentWorks[0].title, "Récent");
+  assert.equal(summarizeArtist(artist, null).recentWorks.length, 0, "aucun ACK ⇒ aucune œuvre affichée");
 });

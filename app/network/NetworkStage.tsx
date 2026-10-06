@@ -32,6 +32,9 @@ const ZOOM_MIN  = 0.4;
 const ZOOM_MAX  = 4.0;
 const ZOOM_STEP = 0.25;
 
+// Les moteurs JS serveur et navigateur peuvent différer d'un ulp après cos/sin : 3 décimales évitent tout écart d'hydratation (SSR) sans effet visuel.
+const r3 = (v: number) => Math.round(v * 1000) / 1000;
+
 export function NetworkStage({ snapshot, onDeviceSelect, selectedDeviceId, onServerSelect, isServerSelected }: Props) {
   const stageRef = useRef<HTMLDivElement | null>(null);
   const svgRef   = useRef<SVGSVGElement | null>(null);
@@ -97,8 +100,8 @@ export function NetworkStage({ snapshot, onDeviceSelect, selectedDeviceId, onSer
         const angle = (Math.PI * 2 * i) / count - Math.PI / 2 + ringOffset;
         out.push({
           device: devices[idx],
-          x: cx + Math.cos(angle) * radius,
-          y: cy + Math.sin(angle) * radius,
+          x: r3(cx + Math.cos(angle) * radius),
+          y: r3(cy + Math.sin(angle) * radius),
           ring,
         });
         idx++;
@@ -130,8 +133,8 @@ export function NetworkStage({ snapshot, onDeviceSelect, selectedDeviceId, onSer
           screen,
           deviceId: node.device.deviceId,
           device: node.device,
-          x: node.x + Math.cos(angle) * dist,
-          y: node.y + Math.sin(angle) * dist,
+          x: r3(node.x + Math.cos(angle) * dist),
+          y: r3(node.y + Math.sin(angle) * dist),
           espX: node.x,
           espY: node.y,
           color: screenColor(screen.screen),

@@ -1,5 +1,5 @@
 import type { NetworkDevice } from "@/lib/networkSnapshot";
-import { CORE_NODE_ID, GRAPH_GEOMETRY } from "./constants";
+import { CORE_NODE_ID, GRAPH_GEOMETRY, SPACIOUS_GEOMETRY } from "./constants";
 import {
   artistNodeId,
   deviceNodeId,
@@ -38,6 +38,8 @@ export type LayoutLink = {
 };
 
 export type GraphLayout = {
+  /** Petit réseau : orbites larges et nœuds dessinés plus gros (voir SPACIOUS_GEOMETRY). 1 pour un grand réseau. */
+  nodeScale: number;
   nodes: LayoutNode[];
   links: LayoutLink[];
   nodeIndex: Map<string, LayoutNode>;
@@ -61,25 +63,52 @@ function pointToWorld(point: StablePoint, size: number): { x: number; y: number 
   return { x, y };
 }
 
-function resolveArtistPositions(artists: ArtistGroup[], size: number): Map<string, { x: number; y: number }> {
-  const placed: { x: number; y: number }[] = [];
-  const positions = new Map<string, { x: number; y: number }>();
-  const minGap = GRAPH_GEOMETRY.artistMinGap;
-  const golden = Math.PI * (3 - Math.sqrt(5));
+type Orbits = { deviceOrbit: number; deviceRingGap: number; screenOrbit: number };
 
-  for (const artist of [...artists].sort((a, b) => a.artistKey.localeCompare(b.artistKey))) {
-    const origin = pointToWorld(artist.seedPoint, size);
-    const phase = (stableHash32(`phase:${artist.artistKey}`) / 0x1_0000_0000) * Math.PI * 2;
-    let candidate = origin;
-    for (let attempt = 0; attempt < 32; attempt++) {
-      if (!placed.some((point) => Math.hypot(point.x - candidate.x, point.y - candidate.y) < minGap)) break;
-      const radius = minGap * (0.55 + Math.sqrt(attempt + 1));
-      const angle = phase + attempt * golden;
-      candidate = { x: origin.x + Math.cos(angle) * radius, y: origin.y + Math.sin(angle) * radius };
-    }
-    placed.push(candidate);
-    positions.set(artist.artistKey, candidate);
-  }
+/** Rayon occupé par un artiste : bulle + appareils (+ anneaux supplémentaires) + écrans + libellés. */
+function artistFootprint(artist: ArtistGroup, orbits: Orbits): number {
+  const count = artist.devices.length;
+  const rings = count <= 8 ? 1 : 2 + Math.floor((count - 9) / 14);
+  return orbits.deviceOrbit + (rings - 1) * orbits.deviceRingGap + 8 + orbits.screenOrbit + GRAPH_GEOMETRY.screenRadius + 50;
+}
+
+const wrapPi = (a: number) => Math.atan2(Math.sin(a), Math.cos(a));
+
+/**
+ * Petit réseau : les artistes sont RÉPARTIS autour du core au lieu d'être semés au hasard dans un carré.
+ *   • angle de base = hash(artistKey) (clé stable, comme avant) ;
+ *   • les artistes, triés par angle de base, sont attirés vers des créneaux régulièrement espacés (rotation moyenne choisie pour minimiser le déplacement),
+ *     d'au plus 20 % d'un créneau : l'ordre est conservé et la clé garde une influence, mais jamais deux artistes ne se retrouvent côte à côte ;
+ *   • rayon assez grand pour que les appareils et écrans de deux voisins ne se touchent pas ; au-delà de 6 artistes, anneaux intérieur/extérieur en quinconce.
+ * Mêmes clés ⇒ mêmes coordonnées, quel que soit l'ordre d'entrée.
+ */
+function resolveArtistPositions(artists: ArtistGroup[], orbits: Orbits): Map<string, { x: number; y: number }> {
+  const positions = new Map<string, { x: number; y: number }>();
+  const n = artists.length;
+  if (n === 0) return positions;
+  const TAU = Math.PI * 2;
+  const items = artists
+    .map((artist) => ({ artist, base: (stableHash32(`angle:${artist.artistKey}`) / 0x1_0000_0000) * TAU }))
+    .sort((a, b) => a.base - b.base || a.artist.artistKey.localeCompare(b.artist.artistKey));
+  const step = TAU / n;
+  let sinSum = 0, cosSum = 0;
+  items.forEach((item, i) => { sinSum += Math.sin(item.base - step * i); cosSum += Math.cos(item.base - step * i); });
+  const rotation = Math.atan2(sinSum, cosSum);
+
+  const footprint = Math.max(...artists.map((artist) => artistFootprint(artist, orbits)));
+  const stagger = n > 6;
+  const perRing = stagger ? Math.ceil(n / 2) : n;
+  const sinHalf = Math.sin(Math.PI / Math.max(2, perRing));
+  const radius = Math.max(footprint + 200, (footprint * 0.62) / (0.6 * sinHalf));
+
+  items.forEach((item, i) => {
+    const slot = step * i + rotation;
+    const angle = slot + Math.max(-step * 0.2, Math.min(step * 0.2, wrapPi(item.base - slot) * 0.25));
+    const jitter = ((stableHash32(`radius:${item.artist.artistKey}`) / 0x1_0000_0000) - 0.5) * 0.1;
+    const r = radius * (stagger ? (i % 2 === 0 ? 0.82 : 1.2) : 1) * (1 + jitter);
+    // la page est panoramique : l'ellipse profite de la largeur
+    positions.set(item.artist.artistKey, { x: Math.cos(angle) * r * 1.15, y: Math.sin(angle) * r * 0.92 });
+  });
   return positions;
 }
 
@@ -95,11 +124,11 @@ function orderedByStableHash<T>(items: T[], key: (item: T) => string): T[] {
 }
 
 /** Place les zones de densité autour du core puis leurs artistes dans la zone. */
-function resolveHierarchyPositions(hierarchy: NetworkHierarchy, size: number) {
+function resolveHierarchyPositions(hierarchy: NetworkHierarchy, size: number, orbits: Orbits) {
   const artistPositions = new Map<string, { x: number; y: number }>();
   const clusterPositions = new Map<string, { x: number; y: number }>();
   if (!hierarchy.children.some((child) => child.kind === "cluster")) {
-    return { artistPositions: resolveArtistPositions(hierarchy.artists, size), clusterPositions };
+    return { artistPositions: resolveArtistPositions(hierarchy.artists, orbits), clusterPositions };
   }
 
   const arrange = (children: HierarchyChild[], center: { x: number; y: number }, parentKey: string, depth: number) => {
@@ -136,7 +165,7 @@ function resolveHierarchyPositions(hierarchy: NetworkHierarchy, size: number) {
   return { artistPositions, clusterPositions };
 }
 
-function devicePosition(artist: ArtistGroup, device: NetworkDevice, index: number, center: { x: number; y: number }) {
+function devicePosition(artist: ArtistGroup, device: NetworkDevice, index: number, center: { x: number; y: number }, orbits: Orbits) {
   const firstCapacity = 8;
   const ring = index < firstCapacity ? 0 : 1 + Math.floor((index - firstCapacity) / 14);
   const before = ring === 0 ? 0 : firstCapacity + (ring - 1) * 14;
@@ -144,7 +173,7 @@ function devicePosition(artist: ArtistGroup, device: NetworkDevice, index: numbe
   const inRing = index - before;
   const phase = (stableHash32(`orbit:${artist.artistKey}`) / 0x1_0000_0000) * Math.PI * 2;
   const angle = phase + (Math.PI * 2 * inRing) / Math.max(1, capacity);
-  const radius = GRAPH_GEOMETRY.deviceOrbit + ring * GRAPH_GEOMETRY.deviceRingGap;
+  const radius = orbits.deviceOrbit + ring * orbits.deviceRingGap;
   const jitter = (stableHash32(device.publicId) % 17) - 8;
   return { x: center.x + Math.cos(angle) * (radius + jitter), y: center.y + Math.sin(angle) * (radius + jitter) };
 }
@@ -156,7 +185,10 @@ function devicePosition(artist: ArtistGroup, device: NetworkDevice, index: numbe
 export function layoutNetwork(hierarchy: NetworkHierarchy): GraphLayout {
   const artistCount = Math.max(1, hierarchy.artistCount);
   const size = Math.max(GRAPH_GEOMETRY.minWorldSize, Math.sqrt(artistCount) * GRAPH_GEOMETRY.worldSizePerArtist);
-  const { artistPositions, clusterPositions } = resolveHierarchyPositions(hierarchy, size);
+  const spacious = !hierarchy.children.some((child) => child.kind === "cluster");
+  const orbits: Orbits = spacious ? SPACIOUS_GEOMETRY : GRAPH_GEOMETRY;
+  const nodeScale = spacious ? SPACIOUS_GEOMETRY.nodeScale : 1;
+  const { artistPositions, clusterPositions } = resolveHierarchyPositions(hierarchy, size, orbits);
   const nodes: LayoutNode[] = [{
     id: CORE_NODE_ID,
     kind: "core",
@@ -190,7 +222,7 @@ export function layoutNetwork(hierarchy: NetworkHierarchy): GraphLayout {
 
     artist.devices.forEach((device, deviceIndex) => {
       const deviceId = deviceNodeId(device.publicId);
-      const devicePos = devicePosition(artist, device, deviceIndex, position);
+      const devicePos = devicePosition(artist, device, deviceIndex, position, orbits);
       nodes.push({
         id: deviceId,
         kind: "device",
@@ -213,8 +245,8 @@ export function layoutNetwork(hierarchy: NetworkHierarchy): GraphLayout {
           id: screenId,
           kind: "screen",
           parentId: deviceId,
-          x: devicePos.x + Math.cos(angle) * GRAPH_GEOMETRY.screenOrbit,
-          y: devicePos.y + Math.sin(angle) * GRAPH_GEOMETRY.screenOrbit,
+          x: devicePos.x + Math.cos(angle) * orbits.screenOrbit,
+          y: devicePos.y + Math.sin(angle) * orbits.screenOrbit,
           radius: GRAPH_GEOMETRY.screenRadius,
           depth: depth + 2,
           weight: 1,
@@ -271,6 +303,7 @@ export function layoutNetwork(hierarchy: NetworkHierarchy): GraphLayout {
   const maxY = Math.max(...ys, size / 2) + padding;
 
   return {
+    nodeScale,
     nodes,
     links,
     nodeIndex: new Map(nodes.map((node) => [node.id, node])),

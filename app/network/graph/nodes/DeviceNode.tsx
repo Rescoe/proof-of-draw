@@ -8,15 +8,16 @@ type Props = {
   hitRadius: number;
   detailed: boolean;
   active: boolean;
+  scale?: number;
   onSelect: () => void;
   onFocus: () => void;
 };
 
-export function DeviceNode({ node, device, selected, hitRadius, detailed, active, onSelect, onFocus }: Props) {
+export function DeviceNode({ node, device, selected, hitRadius, detailed, active, scale = 1, onSelect, onFocus }: Props) {
   const icon = device.hardware === "uno-r4" ? "R4" : device.hardware === "esp8266" ? "ESP" : "?";
   return (
     <g className={`ng-node ng-device${selected ? " is-selected" : ""}${device.isOnline ? " is-online" : " is-offline"}${active ? " is-active" : ""}`}
-      transform={`translate(${node.x} ${node.y})`} role="button" tabIndex={0} aria-label={`Appareil ${device.publicId}, ${device.isOnline ? "en ligne" : "hors ligne"}`}
+      transform={`translate(${node.x} ${node.y}) scale(${scale})`} role="button" tabIndex={0} aria-label={`Appareil ${device.publicId}, ${device.isOnline ? "en ligne" : "hors ligne"}`}
       onClick={onSelect} onDoubleClick={onFocus} onKeyDown={(event) => { if (event.key === "Enter") onSelect(); }}>
       <circle className="ng-hit" r={hitRadius} />
       {active && <circle className="ng-device__activity" r={node.radius + 9} />}

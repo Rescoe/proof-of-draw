@@ -39,6 +39,18 @@ export const GRAPH_GEOMETRY = {
   screenOrbit: 58,
 } as const;
 
+/**
+ * Petit réseau (≤ 12 artistes, donc sans zones de navigation) : tout tient dans la vue, on peut donc se permettre de l'espace.
+ * Les orbites sont plus larges (l'appareil ne colle plus à la bulle de l'artiste, l'écran ne colle plus à l'appareil) et les nœuds sont dessinés `nodeScale` fois plus gros
+ * pour rester lisibles quand tout le réseau est cadré. Les coordonnées restent déterministes (clés stables) : seule l'échelle de dessin change.
+ */
+export const SPACIOUS_GEOMETRY = {
+  deviceOrbit: 330,
+  deviceRingGap: 150,
+  screenOrbit: 150,
+  nodeScale: 1.8,
+} as const;
+
 export const ZOOM_LEVEL = {
   clusters: 0.34,
   artists: 0.52,

@@ -4,7 +4,8 @@ import { useState, useCallback, useEffect } from "react";
 import type { NetworkSnapshot, NetworkDevice } from "@/lib/networkSnapshot";
 import { NetworkStage } from "./NetworkStage";
 import { Graph, type GraphSelection } from "./graph";
-import { CORE_NODE_ID, deviceNodeId, screenNodeId } from "./model";
+import { CORE_NODE_ID, artistNodeId, deviceNodeId, flattenArtists, screenNodeId } from "./model";
+import { ArtistPanel } from "./ArtistPanel";
 import { SidePanel } from "./SidePanel";
 import { ServerInfoPanel } from "./ServerInfoPanel";
 import { GlobalTerminalPanel, useNetworkEventStream } from "./GlobalTerminal";
@@ -19,6 +20,8 @@ type ViewMode = "classic" | "diagram";
 export function NetworkMap({ snapshot, fixture }: Props) {
   const [selected, setSelected] = useState<GraphSelection | null>(null);
   const [viewMode, setViewMode] = useState<ViewMode>("classic");
+  // Isolation d'un artiste dans la Constellation (clé stable) : le reste du réseau s'estompe
+  const [isolatedKey, setIsolatedKey] = useState<string | null>(null);
   // Ce que chaque écran affiche réellement (ACK firmware) — une requête partagée par la section « en direct » et le panneau appareil
   const live = useLiveDisplays(fixture);
   // Une seule boucle d'événements pour le terminal ET la vue expérimentale :
@@ -32,6 +35,7 @@ export function NetworkMap({ snapshot, fixture }: Props) {
 
   const switchView = useCallback((mode: ViewMode) => {
     setViewMode(mode);
+    if (mode !== "diagram") setIsolatedKey(null);
     const url = new URL(window.location.href);
     if (mode === "diagram") url.searchParams.set("networkView", "diagram");
     else url.searchParams.delete("networkView");
@@ -102,6 +106,8 @@ export function NetworkMap({ snapshot, fixture }: Props) {
           events={eventStream.events}
           selectedId={selected?.nodeId}
           onSelect={handleGraphSelect}
+          isolatedArtistKey={isolatedKey}
+          onClearIsolation={() => setIsolatedKey(null)}
         />
       )}
 
@@ -116,11 +122,16 @@ export function NetworkMap({ snapshot, fixture }: Props) {
         ) : selected?.kind === "core" ? (
           <ServerInfoPanel snapshot={snapshot} onClose={() => setSelected(null)} />
         ) : selected?.kind === "artist" ? (
-          <div className="nv2-panel nv2-panel--terminal" style={{ padding: "1.25rem" }}>
-            <div className="nv2-panel__section-label">Artiste</div>
-            <h2>{selected.artist.label}</h2>
-            <p>{selected.artist.devices.length} appareil(s) · {selected.artist.screenCount} écran(s) · {selected.artist.onlineCount} en ligne</p>
-            <p style={{ color: "#718198", fontSize: 12 }}>La fiche détaillée et l’isolation arrivent au jalon suivant.</p>
+          <div className="nv2-panel nv2-panel--terminal">
+            <ArtistPanel
+              key={selected.artist.artistKey}
+              artist={selected.artist}
+              displays={live.data?.displays ?? null}
+              isolated={isolatedKey === selected.artist.artistKey}
+              onToggleIsolation={() => { const key = selected.artist.artistKey; setIsolatedKey((prev) => (prev === key ? null : key)); }}
+              onSelectDevice={(device) => handleSelect(device)}
+              onClose={() => setSelected(null)}
+            />
           </div>
         ) : selected?.kind === "cluster" ? (
           <div className="nv2-panel nv2-panel--terminal" style={{ padding: "1.25rem" }}>
@@ -128,6 +139,16 @@ export function NetworkMap({ snapshot, fixture }: Props) {
             <h2>{selected.cluster.deviceCount} appareils</h2>
             <p>{selected.cluster.deviceCount} appareil(s) · {selected.cluster.onlineCount} en ligne</p>
             <p>{selected.cluster.artistCount} artiste(s) dans cette zone de détail.</p>
+            <div className="nv2-panel__section-label" style={{ marginTop: 14 }}>Artistes de cette zone</div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 6, marginTop: 6 }}>
+              {flattenArtists(selected.cluster).map((artist) => (
+                <button key={artist.artistKey} type="button" onClick={() => handleGraphSelect({ kind: "artist", nodeId: artistNodeId(artist.artistKey), artist })}
+                  style={{ display: "flex", justifyContent: "space-between", gap: 10, minHeight: 44, padding: "8px 12px", border: "1px solid rgba(148,163,184,.16)", borderRadius: 10, background: "rgba(15,23,42,.55)", color: "#e2e8f0", cursor: "pointer", textAlign: "left", fontSize: 13 }}>
+                  <b style={{ fontWeight: 600 }}>{artist.label}</b>
+                  <span style={{ color: artist.onlineCount ? "#4ade80" : "#718198", fontSize: 11 }}>{artist.onlineCount}/{artist.devices.length} en ligne</span>
+                </button>
+              ))}
+            </div>
             <p style={{ color: "#718198", fontSize: 12 }}>Cette zone sert uniquement à naviguer dans les détails ; elle ne représente pas un groupe d’artistes.</p>
           </div>
         ) : (
