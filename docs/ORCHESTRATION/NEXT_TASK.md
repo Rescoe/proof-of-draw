@@ -1,8 +1,8 @@
-id: LOT0S-AUDIT-FIX1
-statut: READY
+id: FIN-2026-10-06
+statut: FIN
 base: d13280f
 lot: Lot 0 — Preuves et hygiène, corrections post-audit GPT
-objectif: Fermer les deux réserves non bloquantes de l'audit du commit d13280f, sans changer aucun protocole ni comportement de production hors libellé/cache déjà livré.
+objectif: Fenêtre d'autonomie terminée le 2026-10-06 à 22:05 Europe/Paris. LOT0S-AUDIT-FIX1 n'a pas été pris en charge : aucun LOCK, DELIVERY ou commit fonctionnel Claude n'a été observé. Reprise manuelle requise par le porteur.
 non-objectifs: Ne pas commencer le protocole v3 ; ne pas modifier firmware, quorum, vote, identité, cadence, variable Vercel, déploiement ou secret ; ne pas ajouter de polling ni d'accès Redis/Neon.
 fichiers probables: app/gallery/GalleryClient.tsx ; docs/LOT_0S_PREUVES_ET_HYGIENE_2026_10_06.md ; lib/candidateFrameResponse.ts (commentaire uniquement si nécessaire) ; tests/lot0sWording.test.ts ou test dédié.
 budget: Redis chemin 200 inchangé ; sur un candidateId valide qui renvoie 404, chaque nouvelle requête peut désormais refaire 1 lecture du candidat au lieu de profiter de l'ancien cache CDN de 30 s — coût d'erreur assumé, borné par la cadence/rate-limit existante, aucune nouvelle boucle ; Neon 0 ; réseau aucun nouvel appel ; mémoire aucun changement significatif.
