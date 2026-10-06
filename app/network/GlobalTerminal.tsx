@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState, useCallback } from "react";
 import { usePolling } from "@/lib/usePolling";
 
-export type LogEventType = "BLOCK_MINED" | "VALIDATION_PENDING" | "VALIDATION_VOTE" | "ANIMATION" | "CHAIN_EMPTY";
+export type LogEventType = "BLOCK_MINED" | "VALIDATION_PENDING" | "VALIDATION_VOTE" | "ANIMATION" | "CHAIN_EMPTY" | "PRESENCE" | "FRAME_SENT";
 
 export type LogEvent = {
   id: string;
@@ -111,6 +111,25 @@ function EventLine({ ev }: { ev: LogEvent }) {
           <span className="gterm__tag" style={{ color: "#a78bfa" }}>VOTE</span>
           {ev.screen && <span className="gterm__tag" style={{ color: sc! }}>{ev.screen}</span>}
           <span className="gterm__seg gterm__seg--dim">{ev.message.replace(/^VOTE\s*·?\s*/, "")}</span>
+        </>
+      );
+      break;
+
+    case "PRESENCE":
+      content = (
+        <>
+          <span className="gterm__tag" style={{ color: "#60a5fa" }}>PULL*</span>
+          <span className="gterm__seg gterm__seg--dim">{ev.message.replace(/^PRESENCE\*\s*·?\s*/, "")}</span>
+        </>
+      );
+      break;
+
+    case "FRAME_SENT":
+      content = (
+        <>
+          <span className="gterm__tag" style={{ color: "#4ade80" }}>FRAME*</span>
+          {ev.screen && <span className="gterm__tag" style={{ color: sc! }}>{ev.screen}</span>}
+          <span className="gterm__seg gterm__seg--dim">{ev.message.replace(/^FRAME\*\s*·?\s*/, "")}</span>
         </>
       );
       break;

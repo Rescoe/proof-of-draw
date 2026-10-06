@@ -1,10 +1,10 @@
 "use client";
 
-import { useState, useCallback, useEffect } from "react";
+import { useState, useCallback, useEffect, useMemo } from "react";
 import type { NetworkSnapshot, NetworkDevice } from "@/lib/networkSnapshot";
 import { NetworkStage } from "./NetworkStage";
 import { Graph, type GraphSelection } from "./graph";
-import { CORE_NODE_ID, artistNodeId, deviceNodeId, flattenArtists, screenNodeId } from "./model";
+import { CORE_NODE_ID, artistNodeId, buildNetworkHierarchy, buildObservedFlows, deviceNodeId, flattenArtists, reconstructedLogEvents, screenNodeId } from "./model";
 import { ArtistPanel } from "./ArtistPanel";
 import { SidePanel } from "./SidePanel";
 import { ServerInfoPanel } from "./ServerInfoPanel";
@@ -27,6 +27,20 @@ export function NetworkMap({ snapshot, fixture }: Props) {
   // Une seule boucle d'événements pour le terminal ET la vue expérimentale :
   // activer LAB ne crée aucune requête supplémentaire vers Redis.
   const eventStream = useNetworkEventStream(fixture);
+  // Lignes RECONSTITUÉES (présences, diffusions de blocs) ajoutées au journal : calculées côté navigateur à partir du snapshot et du flux déjà chargés (aucune requête).
+  // Calculées après le montage (Date.now) pour ne jamais diverger du rendu serveur.
+  const [reconEvents, setReconEvents] = useState<ReturnType<typeof reconstructedLogEvents>>([]);
+  const liveDisplays = live.data?.displays ?? null;
+  useEffect(() => {
+    if (!snapshot) { setReconEvents([]); return; }
+    const hierarchy = buildNetworkHierarchy(snapshot.devices);
+    const flows = buildObservedFlows({ devices: snapshot.devices, artists: hierarchy.artists, displays: liveDisplays, events: eventStream.events, now: Date.now(), reconstruct: true });
+    setReconEvents(reconstructedLogEvents(flows));
+  }, [snapshot, liveDisplays, eventStream.events]);
+  const terminalStream = useMemo(() => ({
+    connected: eventStream.connected,
+    events: [...eventStream.events, ...reconEvents.filter((e) => !eventStream.events.some((x) => x.id === e.id))].sort((a, b) => a.ts - b.ts).slice(-200),
+  }), [eventStream, reconEvents]);
 
   useEffect(() => {
     const requested = new URLSearchParams(window.location.search).get("networkView");
@@ -85,7 +99,7 @@ export function NetworkMap({ snapshot, fixture }: Props) {
           </button>
         </div>
       </div>
-      <p>{viewMode === "classic" ? "Vue historique conservée" : "Carte spatiale · niveaux de détail · flux réellement observés"}</p>
+      <p>{viewMode === "classic" ? "Vue historique conservée" : "Carte spatiale · niveaux de détail · flux observés et reconstitués*"}</p>
     </div>
     {/* Le panel est toujours présent — console par défaut, device info si sélectionné */}
     <div className="nv2-layout nv2-layout--panel">
@@ -156,7 +170,8 @@ export function NetworkMap({ snapshot, fixture }: Props) {
             <div className="nv2-panel__section-label" style={{ padding: "1rem 1.25rem 0", marginBottom: 0 }}>
               Journal réseau
             </div>
-            <GlobalTerminalPanel stream={eventStream} />
+            <GlobalTerminalPanel stream={terminalStream} />
+            <p className="nv2-footnote">* ligne reconstituée à partir des blocs, présences et votes publiés — ce n&apos;est pas le Serial réel des cartes.</p>
           </div>
         )}
       </aside>
@@ -310,6 +325,8 @@ export function NetworkMap({ snapshot, fixture }: Props) {
           .nv2-view-switch { padding: 8px; }
           .nv2-view-switch__buttons button { padding: 7px 8px; }
         }
+
+        .nv2-footnote { margin: 0; padding: 6px 14px 10px; color: #5b6b82; font: 500 10px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; }
 
         /* Empty state */
         .nv2-empty {

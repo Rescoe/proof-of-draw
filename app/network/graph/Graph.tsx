@@ -94,7 +94,7 @@ export function Graph({ variant, snapshot, displays = null, events = [], selecte
   const artists = useMemo(() => new Map(hierarchy.artists.map((artist) => [artist.artistKey, artist])), [hierarchy.artists]);
   const clusters = useMemo(() => new Map(flattenClusters(hierarchy).map((cluster) => [cluster.id, cluster])), [hierarchy]);
   const devices = useMemo(() => new Map(snapshot.devices.map((device) => [device.publicId, device])), [snapshot.devices]);
-  const flows = useMemo(() => buildObservedFlows({ devices: snapshot.devices, artists: hierarchy.artists, displays, events, now }), [displays, events, hierarchy.artists, now, snapshot.devices]);
+  const flows = useMemo(() => buildObservedFlows({ devices: snapshot.devices, artists: hierarchy.artists, displays, events, now, reconstruct: true }), [displays, events, hierarchy.artists, now, snapshot.devices]);
   const activeIds = useMemo(() => new Set(flows.flatMap((flow) => flow.path)), [flows]);
 
   const detailScale = viewport.view.scale / Math.max(0.001, viewport.view.fitScale);
@@ -221,7 +221,7 @@ export function Graph({ variant, snapshot, displays = null, events = [], selecte
                 // Un échange = une piste pointillée discrète sur tout le trajet + un COURANT continu de points qui la parcourt tant que l'échange est actif
                 // (plus d'impulsion isolée toutes les quelques secondes) ; il s'éteint en fondu à la fin de la fenêtre d'observation.
                 return (
-                  <g key={flow.id} className={`ng-flow-group ng-flow-group--${flow.kind}`} style={{ color: flow.color, opacity: flow.opacity }}>
+                  <g key={flow.id} className={`ng-flow-group ng-flow-group--${flow.kind} ng-flow-group--${flow.origin}`} style={{ color: flow.color, opacity: flow.opacity }}>
                     <path className="ng-flow-trail" d={d} />
                     <path className="ng-flow" d={d}><title>{flow.label}{flow.detail ? ` · ${flow.detail}` : ""}</title></path>
                   </g>
@@ -266,6 +266,8 @@ export function Graph({ variant, snapshot, displays = null, events = [], selecte
         <span><i className="is-device" />appareil</span>
         <span><i className="is-screen" />écran</span>
         <span><i className="is-flow" />flux observé</span>
+        <span><i className="is-flow is-recon" />flux reconstitué*</span>
+        <small className="ng-footnote">* reconstitué à partir des blocs, des présences et des votes publiés (ce que le trajet devrait avoir été) — non mesuré directement.</small>
       </div>
       {showMinimap && <div className={`ng-minimap${minimapOpen ? " is-open" : ""}`}>
         <button type="button" onClick={() => setMinimapOpen((value) => !value)}>{minimapOpen ? "Réduire" : "Carte"}</button>
@@ -302,6 +304,8 @@ const GRAPH_STYLES = `
   .ng-flow-trail{fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;stroke-dasharray:.1 9;opacity:.38;vector-effect:non-scaling-stroke}
   .ng-flow{fill:none;stroke:currentColor;stroke-width:4.2;stroke-linecap:round;stroke-dasharray:.1 17;vector-effect:non-scaling-stroke;animation:ng-stream 1.15s linear infinite}
   .ng-flow-group--validation .ng-flow,.ng-flow-group--vote .ng-flow{animation-duration:.8s}.ng-flow-group--block .ng-flow{stroke-width:5}
+  .ng-flow-group--reconstructed .ng-flow{stroke-width:3;stroke-dasharray:.1 24;animation-duration:1.7s}.ng-flow-group--reconstructed .ng-flow-trail{opacity:.22;stroke-dasharray:.1 13}
+  .ng-legend .is-recon{border-style:dotted}.ng-footnote{flex-basis:100%;color:#5b6b82;font:500 8px/1.35 ui-monospace,monospace;white-space:normal}
   .ng-isolation{position:absolute;z-index:5;top:70px;left:14px;display:flex;align-items:center;gap:10px;padding:6px 6px 6px 12px;border:1px solid rgba(192,132,252,.35);border-radius:11px;background:rgba(14,9,26,.88);color:#d8c9f5;font:600 11px/1 system-ui,sans-serif;backdrop-filter:blur(10px)}
   .ng-isolation b{color:#fff}.ng-isolation button{height:32px;padding:0 10px;border:0;border-radius:8px;background:rgba(192,132,252,.16);color:#e9d5ff;font:700 11px/1 system-ui,sans-serif;cursor:pointer}.ng-isolation button:hover{background:rgba(192,132,252,.3)}
   .ng-spacious .ng-artist__name{font-size:12px}.ng-spacious .ng-artist__meta{font-size:9px}.ng-spacious .ng-device__label{font-size:8px}

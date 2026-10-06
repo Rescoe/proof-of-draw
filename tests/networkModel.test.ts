@@ -5,6 +5,7 @@ import {
   CORE_NODE_ID,
   FLOW_ACTIVE_MS,
   FLOW_FADE_MS,
+  MAX_RECONSTRUCTED_FLOWS,
   MAX_VISIBLE_FLOWS,
   artistNodeId,
   buildNetworkHierarchy,
@@ -15,6 +16,7 @@ import {
   flowLifetime,
   groupDevicesByArtist,
   layoutNetwork,
+  reconstructedLogEvents,
   screenNodeId,
   stablePointForKey,
   summarizeArtist,
@@ -267,4 +269,70 @@ test("fiche artiste : en ligne d'abord, œuvres confirmées triées du plus réc
   assert.equal(s.recentWorks.length, 1);
   assert.equal(s.recentWorks[0].title, "Récent");
   assert.equal(summarizeArtist(artist, null).recentWorks.length, 0, "aucun ACK ⇒ aucune œuvre affichée");
+});
+
+// ── Flux reconstitués (présences, diffusions de blocs) : toujours marqués, plafonnés, jamais devant l'observé ───────────────────────────────
+
+const blockEvent = (id: string, ts: number, screen: string) => ({ id, type: "BLOCK_MINED" as const, ts, screen, blockIndex: 7, workTitle: "Forêt", message: "BLOC #7" });
+
+test("reconstitué : désactivé par défaut (aucun flux sans demande explicite)", () => {
+  const devices = [makeDevice(0, { lastPing: NOW - 10_000 })];
+  assert.equal(buildObservedFlows({ devices, artists: groupDevicesByArtist(devices), now: NOW }).length, 0);
+});
+
+test("reconstitué : une présence récente ➜ flux pull appareil → artiste → core, marqué reconstructed ; pas de présence ➜ rien", () => {
+  const devices = [makeDevice(0, { lastPing: NOW - 20_000, lastSeen: NOW - 20_000 }), makeDevice(1, { lastPing: 0, lastSeen: 0 })];
+  const flows = buildObservedFlows({ devices, artists: groupDevicesByArtist(devices), now: NOW, reconstruct: true });
+  assert.equal(flows.length, 1);
+  assert.equal(flows[0].kind, "pull");
+  assert.equal(flows[0].origin, "reconstructed");
+  assert.deepEqual(flows[0].path, [deviceNodeId(devices[0].publicId), artistNodeId(devices[0].artistKey), CORE_NODE_ID]);
+  assert.match(flows[0].label, /\*$/, "le libellé porte l'astérisque");
+});
+
+test("reconstitué : un bloc miné ➜ diffusion core → artiste → appareil → écran, seulement vers les appareils EN LIGNE ayant cet écran", () => {
+  const devices = [
+    makeDevice(0, { lastPing: 0, lastSeen: 0 }),
+    makeDevice(1, { lastPing: 0, lastSeen: 0, isOnline: false }),
+    makeDevice(2, { lastPing: 0, lastSeen: 0, screens: [{ screen: "oled096", label: "OLED", description: "" }] }),
+  ];
+  const flows = buildObservedFlows({ devices, artists: groupDevicesByArtist(devices), now: NOW, reconstruct: true, events: [blockEvent("b1", NOW - 5_000, "tft18")] });
+  const frames = flows.filter((f) => f.kind === "frame");
+  assert.equal(frames.length, 1, "hors ligne et autre type d'écran exclus");
+  assert.deepEqual(frames[0].path, [CORE_NODE_ID, artistNodeId(devices[0].artistKey), deviceNodeId(devices[0].publicId), screenNodeId(devices[0].publicId, "tft18")]);
+  assert.equal(frames[0].origin, "reconstructed");
+});
+
+test("reconstitué : l'ACK observé après le bloc remplace la diffusion reconstituée (pas de doublon)", () => {
+  const devices = [makeDevice(0, { lastPing: 0, lastSeen: 0 })];
+  const displays = { [devices[0].deviceId]: { tft18: { frameId: "f", screen: "tft18", shownAt: NOW - 1_000, kind: "consensus", hasImage: true } as never } };
+  const flows = buildObservedFlows({ devices, artists: groupDevicesByArtist(devices), now: NOW, reconstruct: true, displays, events: [blockEvent("b1", NOW - 5_000, "tft18")] });
+  assert.equal(flows.filter((f) => f.kind === "frame").length, 0);
+  assert.equal(flows.filter((f) => f.kind === "delivery" && f.origin === "observed").length, 1);
+});
+
+test("reconstitué : plafonné, après l'observé, et les flux observés ne sont jamais déplacés par lui", () => {
+  const devices = Array.from({ length: 60 }, (_, i) => makeDevice(i, { lastPing: NOW - i * 500, lastSeen: NOW - i * 500 }));
+  const flows = buildObservedFlows({ devices, artists: groupDevicesByArtist(devices), now: NOW, reconstruct: true });
+  assert.ok(flows.length <= MAX_RECONSTRUCTED_FLOWS);
+  assert.ok(flows.every((f) => f.origin === "reconstructed"));
+  const mixed = buildObservedFlows({ devices, artists: groupDevicesByArtist(devices), now: NOW, reconstruct: true, events: [{ id: "v1", type: "BLOCK_MINED", ts: NOW - 1000, message: "x" }] });
+  const firstRecon = mixed.findIndex((f) => f.origin === "reconstructed");
+  assert.ok(mixed.slice(0, firstRecon).every((f) => f.origin === "observed"), "l'observé précède toujours le reconstitué");
+});
+
+test("reconstitué : une présence ancienne expire comme les autres flux (5 min + 30 s)", () => {
+  const devices = [makeDevice(0, { lastPing: NOW - FLOW_ACTIVE_MS - FLOW_FADE_MS - 1, lastSeen: NOW - FLOW_ACTIVE_MS - FLOW_FADE_MS - 1 })];
+  assert.equal(buildObservedFlows({ devices, artists: groupDevicesByArtist(devices), now: NOW, reconstruct: true }).length, 0);
+});
+
+test("reconstitué : lignes de journal marquées d'un astérisque, identifiants stables", () => {
+  const devices = [makeDevice(0, { lastPing: NOW - 1000, lastSeen: NOW - 1000 })];
+  const args = { devices, artists: groupDevicesByArtist(devices), now: NOW, reconstruct: true, events: [blockEvent("b1", NOW - 5_000, "tft18")] };
+  const a = reconstructedLogEvents(buildObservedFlows(args));
+  const b = reconstructedLogEvents(buildObservedFlows({ ...args, now: NOW + 1_000 }));
+  assert.deepEqual(a.map((e) => e.id), b.map((e) => e.id));
+  assert.ok(a.length >= 2);
+  assert.ok(a.every((e) => e.message.includes("*")));
+  assert.deepEqual(a.map((e) => e.type).sort(), ["FRAME_SENT", "PRESENCE"]);
 });

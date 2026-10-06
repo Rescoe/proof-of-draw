@@ -83,14 +83,14 @@ function toEspLines(ev: LogEvent): EspLine[] {
           ts: ev.ts,
           tag: "PULL",
           tagColor: TAG_COLOR.PULL,
-          text: `${esp} ▸ Nouveau bloc #${ev.blockIndex} hash=${hash}…${ev.votesLabel ? ` · ${ev.votesLabel}` : ""}`,
+          text: `${esp} ▸ Nouveau bloc #${ev.blockIndex} hash=${hash}…${ev.votesLabel ? ` · ${ev.votesLabel}` : ""} *`,
         },
         {
           id: `${ev.id}-fetch`,
           ts: ev.ts + 1,
           tag: "FETCHFRAME",
           tagColor: TAG_COLOR.FETCHFRAME,
-          text: `${esp} ▸ ✅ affichée frameId=${ev.id.slice(0, 14)}… source=consensus`,
+          text: `${esp} ▸ ✅ affichée frameId=${ev.id.slice(0, 14)}… source=consensus *`,
         },
       ];
     }
@@ -237,6 +237,9 @@ export function EspActivityFeed() {
           ))}
           <div className="esp-feed__line esp-feed__line--muted">
             <span className="esp-feed__cursor">█</span>
+          </div>
+          <div className="esp-feed__line esp-feed__line--muted">
+            * ligne reconstituée à partir des blocs publiés — ce n&apos;est pas le Serial réel des cartes (les lignes VOTE, elles, viennent de vrais votes).
           </div>
         </div>
       )}

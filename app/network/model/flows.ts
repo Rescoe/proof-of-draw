@@ -5,6 +5,7 @@ import {
   FLOW_ACTIVE_MS,
   FLOW_FADE_MS,
   FLOW_PULSE_PERIOD_MS,
+  MAX_RECONSTRUCTED_FLOWS,
   MAX_VISIBLE_FLOWS,
   SCREEN_COLOR,
 } from "./constants";
@@ -15,7 +16,7 @@ export type DisplaysMapLike = Record<string, Record<string, PublicShown>>;
 
 export type NetworkEventLike = {
   id: string;
-  type: "BLOCK_MINED" | "VALIDATION_PENDING" | "VALIDATION_VOTE" | "ANIMATION" | "CHAIN_EMPTY";
+  type: "BLOCK_MINED" | "VALIDATION_PENDING" | "VALIDATION_VOTE" | "ANIMATION" | "CHAIN_EMPTY" | "PRESENCE" | "FRAME_SENT";
   ts: number;
   screen?: string;
   deviceRef?: string;
@@ -27,7 +28,13 @@ export type NetworkEventLike = {
   message: string;
 };
 
-export type FlowKind = "delivery" | "vote" | "validation" | "block" | "animation";
+export type FlowKind = "delivery" | "vote" | "validation" | "block" | "animation" | "pull" | "frame";
+/**
+ * observed      : un ACK d'écran, un vote ou un événement de la chaîne a réellement été relevé ;
+ * reconstructed : déduit de données publiées (dernière présence d'un appareil, bloc miné ➜ appareils du pool de cet écran) — c'est ce que le trajet DEVRAIT avoir été,
+ *                 pas une mesure. Toujours signalé par un astérisque dans l'interface.
+ */
+export type FlowOrigin = "observed" | "reconstructed";
 export type FlowPhase = "active" | "fading" | "expired";
 
 export type FlowLifetime = {
@@ -39,6 +46,7 @@ export type FlowLifetime = {
 export type ObservedFlow = {
   id: string;
   kind: FlowKind;
+  origin: FlowOrigin;
   timestamp: number;
   path: string[];
   /** Un trajet d'un seul noeud produit un halo réel, jamais une fausse impulsion. */
@@ -66,13 +74,14 @@ export function flowLifetime(timestamp: number, now: number): FlowLifetime {
 }
 
 function toObserved(
-  base: Omit<ObservedFlow, "phase" | "ageMs" | "opacity" | "pulsePeriodMs" | "moving">,
+  base: Omit<ObservedFlow, "phase" | "ageMs" | "opacity" | "pulsePeriodMs" | "moving" | "origin"> & { origin?: FlowOrigin },
   now: number,
 ): ObservedFlow | null {
   const lifetime = flowLifetime(base.timestamp, now);
   if (lifetime.phase === "expired") return null;
   return {
     ...base,
+    origin: base.origin ?? "observed",
     moving: base.path.length > 1,
     phase: lifetime.phase,
     ageMs: lifetime.ageMs,
@@ -100,6 +109,8 @@ export function buildObservedFlows(input: {
   events?: readonly NetworkEventLike[];
   now?: number;
   maxFlows?: number;
+  /** Ajoute les flux RECONSTITUÉS (présences, diffusions de blocs), marqués `origin: "reconstructed"`. Désactivé par défaut. */
+  reconstruct?: boolean;
 }): ObservedFlow[] {
   const now = input.now ?? Date.now();
   const maxFlows = input.maxFlows ?? MAX_VISIBLE_FLOWS;
@@ -199,9 +210,103 @@ export function buildObservedFlows(input: {
     }
   }
 
-  const priority: Record<FlowKind, number> = { delivery: 5, vote: 4, validation: 3, block: 2, animation: 1 };
-  return raw
+  const priority: Record<FlowKind, number> = { delivery: 5, vote: 4, validation: 3, block: 2, animation: 1, frame: 1, pull: 0 };
+  const observed = raw
     .sort((a, b) => b.timestamp - a.timestamp || priority[b.kind] - priority[a.kind] || a.id.localeCompare(b.id))
     .slice(0, Math.max(0, maxFlows));
+  if (!input.reconstruct) return observed;
+  return [...observed, ...buildReconstructedFlows({ ...input, now, shownOf: (deviceId, screen) => input.displays?.[deviceId]?.[screen] })];
+}
+
+/**
+ * Flux RECONSTITUÉS : ce que les données publiées permettent de déduire, sans mesure directe.
+ *   • pull    : la dernière présence d'un appareil (ping/pull) ➜ appareil → artiste → core. Réécrite au plus toutes les ≈ 12 min côté serveur (quota Redis) :
+ *               c'est donc une présence récente, pas chaque requête ;
+ *   • frame   : un bloc miné est diffusé aux appareils EN LIGNE de son type d'écran (le pool) ➜ core → artiste → appareil → écran ; omis dès que l'écran a confirmé
+ *               l'affichage par un ACK (le flux observé de livraison prend le relais).
+ * Aucune donnée ⇒ aucun flux. Plafonné (MAX_RECONSTRUCTED_FLOWS) : le reconstitué ne noie jamais l'observé.
+ */
+export function buildReconstructedFlows(input: {
+  devices: readonly NetworkDevice[];
+  events?: readonly NetworkEventLike[];
+  now: number;
+  shownOf?: (deviceId: string, screen: string) => PublicShown | undefined;
+  max?: number;
+}): ObservedFlow[] {
+  const out: ObservedFlow[] = [];
+  const now = input.now;
+
+  for (const device of input.devices) {
+    const timestamp = Math.max(device.lastPing || 0, device.lastSeen || 0);
+    if (!timestamp) continue;
+    const flow = toObserved({
+      id: `recon:pull:${device.publicId}:${timestamp}`,
+      kind: "pull",
+      origin: "reconstructed",
+      timestamp,
+      path: [deviceNodeId(device.publicId), artistNodeId(device.artistKey), CORE_NODE_ID],
+      color: "#60a5fa",
+      label: "présence / pull*",
+      detail: `dernière présence ${new Date(timestamp).toISOString()}`,
+      artistKey: device.artistKey,
+      publicId: device.publicId,
+    }, now);
+    if (flow) out.push(flow);
+  }
+
+  const blocks = (input.events ?? []).filter((event) => event.type === "BLOCK_MINED" && event.screen).sort((a, b) => b.ts - a.ts).slice(0, 3);
+  for (const block of blocks) {
+    const targets = input.devices
+      .filter((device) => device.isOnline && device.screens.some((screen) => screen.screen === block.screen))
+      .sort((a, b) => a.publicId.localeCompare(b.publicId))
+      .slice(0, 6);
+    for (const device of targets) {
+      const confirmed = input.shownOf?.(device.deviceId, block.screen!);
+      if (confirmed && confirmed.shownAt >= block.ts) continue;   // l'ACK a été observé : le flux de livraison observé s'en charge
+      const flow = toObserved({
+        id: `recon:frame:${block.id}:${device.publicId}`,
+        kind: "frame",
+        origin: "reconstructed",
+        timestamp: block.ts,
+        path: [CORE_NODE_ID, artistNodeId(device.artistKey), deviceNodeId(device.publicId), screenNodeId(device.publicId, block.screen!)],
+        color: SCREEN_COLOR[block.screen!] ?? "#60a5fa",
+        label: `bloc #${block.blockIndex ?? "?"} diffusé*`,
+        detail: block.workTitle,
+        artistKey: device.artistKey,
+        publicId: device.publicId,
+        screen: block.screen,
+      }, now);
+      if (flow) out.push(flow);
+    }
+  }
+
+  return out
+    .sort((a, b) => b.timestamp - a.timestamp || a.id.localeCompare(b.id))
+    .slice(0, Math.max(0, input.max ?? MAX_RECONSTRUCTED_FLOWS));
+}
+
+export type ReconstructedLogEvent = {
+  id: string;
+  type: "PRESENCE" | "FRAME_SENT";
+  ts: number;
+  screen?: string;
+  deviceRef?: string;
+  blockIndex?: number;
+  workTitle?: string;
+  message: string;
+};
+
+/** Les flux reconstitués sous forme de lignes de journal (terminal de la page Réseau) : mêmes identifiants stables, toujours marquées d'un astérisque. */
+export function reconstructedLogEvents(flows: readonly ObservedFlow[]): ReconstructedLogEvent[] {
+  const out: ReconstructedLogEvent[] = [];
+  for (const flow of flows) {
+    if (flow.origin !== "reconstructed" || !flow.publicId) continue;
+    if (flow.kind === "pull") {
+      out.push({ id: flow.id, type: "PRESENCE", ts: flow.timestamp, deviceRef: flow.publicId, message: `PRESENCE* · ${flow.publicId.slice(0, 12)} · pull/ping reçu` });
+    } else if (flow.kind === "frame") {
+      out.push({ id: flow.id, type: "FRAME_SENT", ts: flow.timestamp, deviceRef: flow.publicId, screen: flow.screen, workTitle: flow.detail, message: `FRAME* · ${flow.label.replace(/\*$/, "")} → ${flow.publicId.slice(0, 12)}` });
+    }
+  }
+  return out.sort((a, b) => a.ts - b.ts);
 }
 

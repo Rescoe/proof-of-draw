@@ -19,12 +19,26 @@ traits pleins et des impulsions espacées, meilleure répartition autour du core
 **Coût Redis : aucun.** Tout vient du snapshot et des affichages déjà chargés (`useLiveDisplays`, `useNetworkEventStream`), aucune requête ni polling ajouté.
 Tests : `tests/networkModel.test.ts` (+5 : répartition angulaire, distances artiste/appareil/écran, déterminisme, grand réseau inchangé, résumé d'artiste).
 
+## Flux et lignes RECONSTITUÉS (ajout du même jour, demande du porteur : « plus on a de logs, mieux c'est »)
+Principe : tout ce qui est **déduit** de données publiées plutôt que **mesuré** apparaît désormais, mais marqué d'un astérisque et d'une note.
+
+| Flux reconstitué* | Déduit de | Trajet | Limites |
+|---|---|---|---|
+| `pull` « présence / pull* » | dernière présence (`lastPing`/`lastSeen`) de chaque appareil | appareil → artiste → core | le serveur ne réécrit la présence que toutes les ≈ 12 min (quota Redis) : c'est une présence récente, pas chaque requête |
+| `frame` « bloc #N diffusé* » | les 3 derniers blocs minés + appareils EN LIGNE ayant cet type d'écran (≤ 6 par bloc) | core → artiste → appareil → écran | omis dès qu'un ACK observé postérieur au bloc existe (le flux de livraison observé le remplace) |
+
+- Les flux **observés** (ACK d'écran, votes, validations, blocs) restent prioritaires ; le reconstitué est plafonné (`MAX_RECONSTRUCTED_FLOWS` = 14) et placé après.
+- Graphe : style distinct (points plus espacés, piste plus pâle), entrée de légende « flux reconstitué* » et note « * reconstitué à partir des blocs, des présences et des votes publiés… non mesuré directement ».
+- Terminal de la page Réseau : lignes `PULL*` et `FRAME*` fusionnées au flux des événements (calcul côté navigateur après montage, aucune requête), avec la même note.
+- Journal ESP de l'accueil : les lignes PULL/FETCHFRAME portent « * » et une note (les lignes VOTE, elles, viennent de vrais votes).
+- `reconstruct` est **désactivé par défaut** dans `buildObservedFlows` : sans demande explicite, aucune observation ⇒ aucun mouvement (test conservé).
+- Tests : 7 de plus (`tests/networkModel.test.ts`).
+
 ## Vérifié / non vérifié
 - Vérifié dans le navigateur (données de simulation `?fixture=`, jamais Redis) : 5, 12 et 100 appareils, bureau et mobile 375 px, clic artiste ➜ fiche, isolation, clic zone ➜ artiste.
 - **Non vérifié** : avec le vrai snapshot de production (3 artistes, 5 appareils) et un écran large ; les flux réels (ils n'existent que si un ACK ou un vote récent existe).
 
 ## Reste à faire (trouvé en reprenant les notes)
-1. **Journal ESP du Réseau (`EspActivityFeed`)** : les lignes `PULL` / `FETCHFRAME` / `ACK` sont SYNTHÉTISÉES à partir des blocs (en-tête du fichier) ; elles ne prouvent pas qu'une carte a affiché quoi que ce soit. À étiqueter « reconstitué » ou à retirer (règle : pas de « preuve » au-delà du niveau atteint).
 2. Bouton « Centrer sur cet artiste » dans la fiche (le viewport expose `focusPoint`, non branché au panneau).
 3. Liens profonds `?artist=…` / `?device=…` (brief § 9) : non faits.
 4. Vignettes des écrans dans la fiche artiste (composant `ShownThumb` disponible ; volontairement non chargées : elles coûtent des requêtes d'image).

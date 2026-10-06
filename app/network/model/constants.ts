@@ -10,6 +10,8 @@ export const FLOW_ACTIVE_MS = 5 * 60_000;
 export const FLOW_FADE_MS = 30_000;
 export const FLOW_PULSE_PERIOD_MS = 4_000;
 export const MAX_VISIBLE_FLOWS = 24;
+/** Flux RECONSTITUÉS (présences, diffusions de blocs) affichés EN PLUS des flux observés : plafonnés pour ne jamais noyer ce qui a été réellement observé. */
+export const MAX_RECONSTRUCTED_FLOWS = 14;
 
 export const SCREEN_COLOR: Readonly<Record<string, string>> = {
   eink29bwr: "#f87171",
