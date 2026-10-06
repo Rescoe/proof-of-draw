@@ -1,5 +1,5 @@
 ﻿// esp_eink_2.7BW.ino
-// Proof-of-Draw — Firmware e-ink 2.7" BW v2.1 (validation réelle : vote v2 — le serveur n'est plus recopié)
+// Proof-of-Draw — Firmware e-ink 2.7" BW v2.0
 //
 // Identique au firmware multiscreen (oled+eink2.7BW) dans sa logique,
 // mais sans OLED — un seul écran E-ink 2.7" noir/blanc.
@@ -27,7 +27,6 @@
 #include "epd2in7_V2.h"
 #include "epdif.h"
 #include <Ed25519.h>       // Bibliothèque Crypto (rhempel) — ED25519 réel
-#include "pod_vote_esp.h"  // validation réelle (vote v2) : SHA-256 + métriques entières en flux, sans tampon d'image (copie de esp8266/_shared)
 
 // ─── CONFIG ────────────────────────────────────────────────────────────────
 // Wi-Fi : copier secrets.h.example en secrets.h (ignoré par git : les identifiants ne doivent JAMAIS être commités), puis renseigner SSID / mot de passe (2,4 GHz).
@@ -42,7 +41,7 @@
 
 #define SERVER_URL       "https://proof-of-draw.vercel.app"
 #define SCREEN_TYPE      "eink27bw"
-#define FIRMWARE_VERSION "eink27bw-2.1"
+#define FIRMWARE_VERSION "eink27bw-2.0"
 
 #define PULL_INTERVAL      60000UL   // 1 min
 #define VALIDATE_INTERVAL  30000UL   // 30s — check si candidat en attente
@@ -960,60 +959,6 @@ bool doObsConfirm() {
   return ok;
 }
 
-// ─── VALIDATION RÉELLE (vote v2) ─────────────────────────────────────────────
-// Le serveur annonce le candidat (écran, taille, SHA-256) ; l'ESP lit le contenu BRUT en flux, recalcule hash + métriques entières, décide d'un verdict objectif, le signe (Ed25519)
-// et vote. Il relit un candidat de N'IMPORTE QUEL écran (pas seulement l'e-ink 2,7") : le tampon que demandent l'OLED (1 024 o) et l'e-ink 2,9" (4 736 o) est alloué (malloc) juste avant
-// la requête et libéré aussitôt après ; aucun tampon statique (règles ESP8266 de CLAUDE.md). Même code que le multiscreen (multiscreen-2.5), validé sur le matériel.
-bool doValidateV2(const String& candidateId, const String& screenName, size_t bytes, const String& announcedHash) {
-  PodScreenKind kind;
-  if (!podKindFromName(screenName, &kind)) { Serial.println("[VALIDATE2] écran inconnu: " + screenName); return false; }
-  logHeapState("VALIDATE2-BEFORE");
-  PodCheck chk;
-  uint8_t* scratch = nullptr;
-  size_t scratchLen = 0;
-  if (kind == POD_OLED096 || kind == POD_EINK29BWR) {
-    scratchLen = POD_SCRATCH_BYTES;
-    scratch = (uint8_t*)malloc(scratchLen);
-    if (!scratch) { Serial.println(F("[VALIDATE2] malloc scratch impossible")); return false; }
-  }
-  bool ok = podFetchAndCheck(String(SERVER_URL) + "/api/candidate-frame?candidateId=" + candidateId, kind, bytes, scratch, scratchLen, &chk);
-  free(scratch);
-  if (!ok) {
-    Serial.printf_P(PSTR("[VALIDATE2] lecture/calcul impossible (http=%d, %u/%u octets)\n"), chk.http, (unsigned)chk.bytes, (unsigned)bytes);
-    return false;
-  }
-
-  bool accept = false;
-  const char* reason = podVerdict(chk, announcedHash, &accept);
-  Serial.printf_P(PSTR("[VALIDATE2] %s %u o en %lu ms | e=%lu t=%lu r=%lu s=%lu | verdict=%s %s\n"), screenName.c_str(), (unsigned)chk.bytes, (unsigned long)chk.ms,
-                (unsigned long)chk.m.e, (unsigned long)chk.m.t, (unsigned long)chk.m.r, (unsigned long)chk.m.s, accept ? "accept" : "reject", reason);
-  Serial.println(String("[VALIDATE2] hash=") + chk.hash);
-
-  String msg = podVoteMessage(deviceId, candidateId, chk.hash, chk.m, accept);
-  uint8_t sig[64];
-  Ed25519::sign(sig, privateKey, publicKey, (const uint8_t*)msg.c_str(), msg.length());
-
-  String body = String("{\"v\":2,\"deviceId\":\"") + deviceId + "\",\"candidateId\":\"" + candidateId + "\",\"rawHash\":\"" + chk.hash + "\","
-                "\"e\":" + String((unsigned long)chk.m.e) + ",\"t\":" + String((unsigned long)chk.m.t) + ",\"r\":" + String((unsigned long)chk.m.r) + ","
-                "\"verdict\":\"" + (accept ? "accept" : "reject") + "\"" + (accept ? String("") : String(",\"reason\":\"") + reason + "\"") +
-                ",\"signature\":\"" + bytesToHex(sig, 64) + "\"}";
-
-  String vResp;
-  bool vOk = httpPost("/api/validation-result", body, vResp);
-  bool mined = false;
-  if (vOk) {
-    Serial.println(F("[VALIDATE2] Vote OK"));
-    if (vResp.indexOf("\"blockMined\":true") >= 0) { Serial.println(F("[VALIDATE2] BLOC MINE")); mined = true; }
-    if (vResp.indexOf("\"rejectObserved\":true") >= 0) Serial.println(F("[VALIDATE2] refus enregistré par le serveur (non bloquant)"));
-  } else {
-    Serial.println("[VALIDATE2] Echec vote (403 signature, 422 hash/métriques différents du serveur) : " + vResp);
-    // 403 Signature invalide → clé publique désynchronisée : on se ré-enregistre pour la renvoyer (comme le chemin v1), le prochain cycle votera.
-    if (vResp.indexOf("Signature") >= 0) { Serial.println(F("[VALIDATE2] Re-register pour resynchroniser publicKey...")); doRegister(); }
-  }
-  logHeapState("VALIDATE2-AFTER");
-  return mined;
-}
-
 // ─── VALIDATION ────────────────────────────────────────────────────────────
 // Retourne true si un bloc vient d'être miné (quorum atteint).
 bool doValidate() {
@@ -1035,7 +980,7 @@ bool doValidate() {
     return false;
   }
 
-  DynamicJsonDocument doc(768);   // 512 avant la validation réelle : la réponse porte aussi { v2: écran, taille, hash } (≈ 110 o)
+  DynamicJsonDocument doc(512);
   DeserializationError err = deserializeJson(doc, resp);
   resp = "";
 
@@ -1068,16 +1013,6 @@ bool doValidate() {
     pendingCandidateId = "";
     logHeapState("VALIDATE-AFTER");
     return false;
-  }
-
-  // Validation RÉELLE : si le serveur annonce { v2 }, on revérifie le contenu au lieu de recopier son score (anciens serveurs / animations : chemin v1 ci-dessous).
-  if (!cand["v2"].isNull()) {
-    String v2screen = cand["v2"]["screen"] | "";
-    size_t v2bytes  = cand["v2"]["bytes"] | 0;
-    String v2hash   = cand["v2"]["hash"] | "";
-    pendingCandidateId = "";
-    doc.clear();
-    return doValidateV2(candidateId, v2screen, v2bytes, v2hash);
   }
 
   float score = cand["score_server"] | 0.5f;
@@ -1123,7 +1058,7 @@ bool doValidate() {
 // ─── SETUP ─────────────────────────────────────────────────────────────────
 void setup() {
   Serial.begin(115200);
-  Serial.println("\n[BOOT] Proof-of-Draw eink27bw v2.1");
+  Serial.println("\n[BOOT] Proof-of-Draw eink27bw v2.0");
 
   eepromInit();
 
