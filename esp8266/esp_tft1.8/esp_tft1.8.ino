@@ -88,7 +88,7 @@
 
 #define SERVER_URL        "https://proof-of-draw.vercel.app"
 #define SCREEN_TYPE       "tft18"
-#define FIRMWARE_VERSION  "tft18-2.3"
+#define FIRMWARE_VERSION  "tft18-2.4"
 #define PULL_INTERVAL     60000UL   // 1 min
 #define VALIDATE_INTERVAL 30000UL   // 30s
 
@@ -200,7 +200,7 @@ bool qrDisplayed = false;  // true quand le QR d'onboarding est à l'écran
 
 // ─── DEBUG HEAP ────────────────────────────────────────────────────────────
 void logHeapState(const char* tag) {
-  Serial.printf("[%s] heap=%u maxBlock=%u frag=%u%%\n",
+  Serial.printf_P(PSTR("[%s] heap=%u maxBlock=%u frag=%u%%\n"),
                 tag, ESP.getFreeHeap(),
                 ESP.getMaxFreeBlockSize(),
                 ESP.getHeapFragmentation());
@@ -234,11 +234,11 @@ void loadKeysFromEEPROM() {
   uint8_t derived[32];
   Ed25519::derivePublicKey(derived, privateKey);
   if (memcmp(derived, publicKey, 32) != 0) {
-    Serial.println("[KEYS] Clé publique EEPROM incohérente → recalcul depuis clé privée");
+    Serial.println(F("[KEYS] Clé publique EEPROM incohérente → recalcul depuis clé privée"));
     memcpy(publicKey, derived, 32);
     for (int i = 0; i < 32; i++) EEPROM.write(EEPROM_PUBKEY_OFF + i, publicKey[i]);
     EEPROM.commit();
-    Serial.println("[KEYS] Clé publique corrigée et sauvegardée");
+    Serial.println(F("[KEYS] Clé publique corrigée et sauvegardée"));
   }
   keysLoaded = true;
 }
@@ -285,7 +285,7 @@ void saveOwnedBlockHashEEPROM(const String& fullHash) {
     for (int j = 0; j < OWNED_HASH_LEN && match; j++) {
       if ((char)EEPROM.read(off + j) != h[j]) match = false;
     }
-    if (match) { Serial.println("[OWNED] EEPROM: déjà présent, skip"); return; }
+    if (match) { Serial.println(F("[OWNED] EEPROM: déjà présent, skip")); return; }
   }
 
   int slotOff = EEPROM_OWNED_SLOTS_OFF + head * OWNED_HASH_LEN;
@@ -298,7 +298,7 @@ void saveOwnedBlockHashEEPROM(const String& fullHash) {
   EEPROM.write(EEPROM_OWNED_COUNT_OFF, count);
   EEPROM.commit();
 
-  Serial.printf("[OWNED] EEPROM: %s... (%u/%u slots)\n",
+  Serial.printf_P(PSTR("[OWNED] EEPROM: %s... (%u/%u slots)\n"),
                 h.substring(0, 8).c_str(), count, OWNED_SLOTS_MAX);
 }
 
@@ -361,10 +361,10 @@ void initSD() {
   spiForSD();
   sdAvailable = SD.begin(SD_CS);
   if (sdAvailable) {
-    Serial.println("[SD] Carte OK");
+    Serial.println(F("[SD] Carte OK"));
     if (!SD.exists(SD_DIR)) SD.mkdir(SD_DIR);
   } else {
-    Serial.println("[SD] Pas de carte — fonctionnement sans SD");
+    Serial.println(F("[SD] Pas de carte — fonctionnement sans SD"));
   }
   // Toujours restaurer le software SPI TFT après SD.begin()
   spiForTFT();
@@ -379,9 +379,9 @@ void saveFrameToSD(const uint8_t* buf) {
   if (f) {
     f.write(buf, TFT_BUF_SIZE);
     f.close();
-    Serial.println("[SD] frame.bin sauvegardé");
+    Serial.println(F("[SD] frame.bin sauvegardé"));
   } else {
-    Serial.println("[SD] Impossible d'ouvrir frame.bin");
+    Serial.println(F("[SD] Impossible d'ouvrir frame.bin"));
   }
   spiForTFT();
 }
@@ -398,7 +398,7 @@ bool loadFrameFromSD(uint8_t* buf) {
   f.read(buf, TFT_BUF_SIZE);
   f.close();
   spiForTFT();
-  Serial.println("[SD] frame.bin restauré");
+  Serial.println(F("[SD] frame.bin restauré"));
   return true;
 }
 
@@ -413,7 +413,7 @@ void saveOwnedHashToSD(const String& fullHash) {
     f.print(",");
     f.println(millis());
     f.close();
-    Serial.printf("[SD] owned.txt: %s...\n", h.substring(0, 12).c_str());
+    Serial.printf_P(PSTR("[SD] owned.txt: %s...\n"), h.substring(0, 12).c_str());
   }
   spiForTFT();
 }
@@ -427,7 +427,7 @@ void saveOwnedBlockHash(const String& fullHash) {
 // ─── Génération de clés ED25519 réelle ───────────────────────────────────────
 
 void generateKeys() {
-  Serial.println("[KEYS] Génération paire ED25519...");
+  Serial.println(F("[KEYS] Génération paire ED25519..."));
   randomSeed(analogRead(A0) ^ millis() ^ (uint32_t)WiFi.RSSI());
   for (int i = 0; i < 32; i++) {
     privateKey[i] = (uint8_t)(random(256) ^ (analogRead(A0) & 0xFF));
@@ -436,7 +436,7 @@ void generateKeys() {
   Ed25519::derivePublicKey(publicKey, privateKey);
   keysLoaded = true;
   saveKeysToEEPROM();
-  Serial.println("[KEYS] Paire ED25519 générée et sauvegardée");
+  Serial.println(F("[KEYS] Paire ED25519 générée et sauvegardée"));
   Serial.println("[KEYS] PubKey: " + bytesToHex(publicKey, 32));
 }
 
@@ -474,7 +474,7 @@ bool httpPost(const String& path, const String& body, String& resp) {
   Serial.println("[HTTP POST] body len: " + String(body.length()));
 
   if (!http.begin(client, url)) {
-    Serial.println("[HTTP POST] begin() failed");
+    Serial.println(F("[HTTP POST] begin() failed"));
     return false;
   }
   http.addHeader("Content-Type", "application/json");
@@ -482,7 +482,7 @@ bool httpPost(const String& path, const String& body, String& resp) {
 
   int code = http.POST(body);
   resp = (code > 0) ? http.getString() : "";
-  Serial.printf("[HTTP POST] %s → %d\n", path.c_str(), code);
+  Serial.printf_P(PSTR("[HTTP POST] %s → %d\n"), path.c_str(), code);
   if (code > 0) Serial.println("[HTTP POST] resp: " + resp);
   http.end();
   return code == 200;
@@ -494,7 +494,7 @@ bool httpGet(const String& path, String& resp, int* codeOut = nullptr) {
   HTTPClient http;
 
   if (!http.begin(client, String(SERVER_URL) + path)) {
-    Serial.println("[HTTP GET] begin() failed");
+    Serial.println(F("[HTTP GET] begin() failed"));
     return false;
   }
   http.setTimeout(20000);
@@ -502,7 +502,7 @@ bool httpGet(const String& path, String& resp, int* codeOut = nullptr) {
   if (codeOut) *codeOut = code;
   resp = (code > 0) ? http.getString() : "";
   http.end();
-  Serial.printf("[HTTP GET] %s → %d (%u bytes)\n", path.c_str(), code, resp.length());
+  Serial.printf_P(PSTR("[HTTP GET] %s → %d (%u bytes)\n"), path.c_str(), code, resp.length());
   return code == 200 || code == 429;
 }
 
@@ -518,7 +518,7 @@ void initTFT() {
   tft.initR(INITR_BLACKTAB);
   tft.setRotation(0);  // portrait, câble en bas
   tft.fillScreen(C_BLACK);
-  Serial.println("[TFT] initialisé 128×160 (BLACKTAB, offset corrigé)");
+  Serial.println(F("[TFT] initialisé 128×160 (BLACKTAB, offset corrigé)"));
 }
 
 // Affiche un message de status centré — utilisé pendant le boot et les erreurs.
@@ -667,7 +667,7 @@ void displayKeyMaterialOnce() {
   String privHex = bytesToHex(privateKey, 32);
 
   // NE PAS imprimer la clé privée sur Serial — reste strictement dans l'EEPROM
-  Serial.println("[KEYS] Affichage clé publique (une seule fois)");
+  Serial.println(F("[KEYS] Affichage clé publique (une seule fois)"));
   Serial.println("[KEYS] PubKey: " + pubHex);
 
   tft.fillScreen(C_WHITE);
@@ -694,9 +694,9 @@ void displayKeyMaterialOnce() {
   tft.setTextColor(C_BLACK, C_WHITE);
   tft.println("SAVE PRIVATE KEY !");
 
-  Serial.println("[KEYS] Clés affichées — 60s pour noter");
+  Serial.println(F("[KEYS] Clés affichées — 60s pour noter"));
   delay(60000);
-  Serial.println("[KEYS] Délai écoulé");
+  Serial.println(F("[KEYS] Délai écoulé"));
 }
 
 void displayOnboardingTFT(const String& onboardUrl, const String& code, const String& mac) {
@@ -728,11 +728,11 @@ void displayOnboardingTFT(const String& onboardUrl, const String& code, const St
   int qrResult = -1;
   for (int ver = 3; ver <= 7 && qrResult < 0; ver++) {
     qrResult = qrcode_initText(&qrcode, qrcodeData, ver, ECC_LOW, onboardUrl.c_str());
-    Serial.printf("[ONBOARD] QR v%d ECC_LOW → %d\n", ver, qrResult);
+    Serial.printf_P(PSTR("[ONBOARD] QR v%d ECC_LOW → %d\n"), ver, qrResult);
   }
 
   if (qrResult >= 0) {
-    Serial.printf("[ONBOARD] QR OK — size=%d modules\n", qrcode.size);
+    Serial.printf_P(PSTR("[ONBOARD] QR OK — size=%d modules\n"), qrcode.size);
 
     // Zone QR : y=21..122 (101px) — fond blanc pour lisibilité scanner
     const int QR_ZONE_Y = 21;
@@ -780,7 +780,7 @@ void displayOnboardingTFT(const String& onboardUrl, const String& code, const St
 
   } else {
     // ── Fallback texte : QR impossible — affiche code pair en grand ──────────
-    Serial.println("[ONBOARD] QR FAIL — fallback texte");
+    Serial.println(F("[ONBOARD] QR FAIL — fallback texte"));
 
     tft.setTextColor(C_GREY, C_NAVY);
     tft.setTextSize(1);
@@ -821,7 +821,7 @@ void displayOnboardingTFT(const String& onboardUrl, const String& code, const St
   }
 
   qrDisplayed = true;  // flag : ne pas effacer lors des re-checks d'appairage
-  Serial.println("[ONBOARD] Affichage terminé");
+  Serial.println(F("[ONBOARD] Affichage terminé"));
 }
 
 // ─── OBS-CONFIRM ───────────────────────────────────────────────────────────
@@ -836,7 +836,7 @@ bool doObsConfirm() {
 
   String resp;
   bool ok = httpPost("/api/obs-confirm", body, resp);
-  Serial.printf("[OBS-CONFIRM] ok=%d resp=%s\n", ok, resp.c_str());
+  Serial.printf_P(PSTR("[OBS-CONFIRM] ok=%d resp=%s\n"), ok, resp.c_str());
   pendingObsHashes = "";
   pendingObsTarget = "";
   return ok;
@@ -851,7 +851,7 @@ bool ackFrame(const String& frameId, const char* mode = nullptr) {
   body += "}";
   String resp;
   bool ok = httpPost("/api/ack-frame", body, resp);
-  Serial.printf("[ACK] frameId=%s → %s\n", frameId.c_str(), ok ? "OK" : "FAIL");
+  Serial.printf_P(PSTR("[ACK] frameId=%s → %s\n"), frameId.c_str(), ok ? "OK" : "FAIL");
   return ok;
 }
 
@@ -872,23 +872,23 @@ bool doRegister() {
                 "\"ownedHashes\":" + ownedHashes + "}";
   String resp;
 
-  Serial.printf("[REGISTER] heap avant: %u\n", ESP.getFreeHeap());
+  Serial.printf_P(PSTR("[REGISTER] heap avant: %u\n"), ESP.getFreeHeap());
   // Ne pas écraser le QR d'onboarding si déjà affiché (re-check appairage)
   if (!qrDisplayed) {
     tftStatus("Enregistrement...", "");
   }
 
   if (!httpPost("/api/register", body, resp)) {
-    Serial.println("[REGISTER] Echec HTTP");
+    Serial.println(F("[REGISTER] Echec HTTP"));
     tftStatus("Register echoue", "Retry 5s...", 0xF800);
     return false;
   }
 
-  Serial.printf("[REGISTER] heap après: %u\n", ESP.getFreeHeap());
+  Serial.printf_P(PSTR("[REGISTER] heap après: %u\n"), ESP.getFreeHeap());
 
   DynamicJsonDocument doc(768);
   if (deserializeJson(doc, resp)) {
-    Serial.println("[REGISTER] JSON error");
+    Serial.println(F("[REGISTER] JSON error"));
     return false;
   }
 
@@ -907,15 +907,15 @@ bool doRegister() {
     String onboardUrl = String(SERVER_URL) + "/onboard?code=" + pairCode;
     displayOnboardingTFT(onboardUrl, pairCode, mac);
     setOnboardingShown();
-    Serial.println("[REGISTER] Onboarding affiché — restart dans 3s");
+    Serial.println(F("[REGISTER] Onboarding affiché — restart dans 3s"));
     delay(3000);
     ESP.restart();
   } else if (!paired) {
     // Boots suivants non appairés : ré-afficher QR (clé publique déjà vue)
-    Serial.println("[REGISTER] Non appairé — ré-affichage QR code...");
+    Serial.println(F("[REGISTER] Non appairé — ré-affichage QR code..."));
     displayOnboardingTFT(String(SERVER_URL) + "/onboard?code=" + pairCode, pairCode, mac);
   } else {
-    Serial.println("[REGISTER] Déjà appairé");
+    Serial.println(F("[REGISTER] Déjà appairé"));
     qrDisplayed = false;
     tftStatus("Connecte", deviceId.length() > 0 ? deviceId : "");
   }
@@ -942,24 +942,24 @@ bool doFetchFrame(const String& frameId, const String& frameSource) {
                + "&screen=" + String(SCREEN_TYPE) + "&fmt=bin";
 
   if (!http.begin(client, url)) {
-    Serial.println("[FETCHFRAME] begin() failed");
+    Serial.println(F("[FETCHFRAME] begin() failed"));
     return false;
   }
   http.setTimeout(25000);
   http.useHTTP10(true);
 
   int code = http.GET();
-  Serial.printf("[HTTP GET] /api/pull-frame (tft18 RGB565 %uB) → %d\n",
+  Serial.printf_P(PSTR("[HTTP GET] /api/pull-frame (tft18 RGB565 %uB) → %d\n"),
                 (unsigned)TFT_BUF_SIZE, code);
 
   if (code == 404) {
     http.end();
-    Serial.println("[FETCHFRAME] Pas de frame disponible");
+    Serial.println(F("[FETCHFRAME] Pas de frame disponible"));
     return true;
   }
   if (code != 200) {
     http.end();
-    Serial.printf("[FETCHFRAME] HTTP error: %d\n", code);
+    Serial.printf_P(PSTR("[FETCHFRAME] HTTP error: %d\n"), code);
     return false;
   }
 
@@ -988,7 +988,7 @@ bool doFetchFrame(const String& frameId, const String& frameSource) {
     }
 
     if (rowRead != (size_t)TFT_ROW_BYTES) {
-      Serial.printf("[FETCHFRAME] ligne %d: lu=%u/%u — timeout\n",
+      Serial.printf_P(PSTR("[FETCHFRAME] ligne %d: lu=%u/%u — timeout\n"),
                     y, rowRead, TFT_ROW_BYTES);
       success = false;
       break;
@@ -1012,12 +1012,12 @@ bool doFetchFrame(const String& frameId, const String& frameSource) {
   http.end();
   }   // TLS fermé
 
-  Serial.printf("[FETCHFRAME] lu=%u/%u en %lums — %s\n",
+  Serial.printf_P(PSTR("[FETCHFRAME] lu=%u/%u en %lums — %s\n"),
                 totalRead, (unsigned)TFT_BUF_SIZE, millis() - t0,
                 success ? "OK" : "INCOMPLET");
 
   if (!success) {
-    Serial.println("[FETCHFRAME] stream incomplet — frame partielle abandonnée");
+    Serial.println(F("[FETCHFRAME] stream incomplet — frame partielle abandonnée"));
     return false;
   }
 
@@ -1031,7 +1031,7 @@ bool doFetchFrame(const String& frameId, const String& frameSource) {
 
   ackFrame(frameId);
 
-  Serial.printf("[FETCHFRAME] ✅ frameId=%s source=%s\n",
+  Serial.printf_P(PSTR("[FETCHFRAME] ✅ frameId=%s source=%s\n"),
                 frameId.c_str(), frameSource.c_str());
   logHeapState("FETCHFRAME-AFTER");
   return true;
@@ -1053,12 +1053,12 @@ bool fetchScenePackage(const String& artifactId, size_t announcedBytes, uint8_t*
 
   int code = http.GET();
   *httpCode = code;
-  Serial.printf("[HTTP GET] /api/pull-frame kind=scene (%u B annoncés) → %d\n", (unsigned)announcedBytes, code);
+  Serial.printf_P(PSTR("[HTTP GET] /api/pull-frame kind=scene (%u B annoncés) → %d\n"), (unsigned)announcedBytes, code);
   if (code != 200) { http.end(); return false; }
 
   const int declared = http.getSize();   // Content-Length
   if (declared > 0 && (size_t)declared != announcedBytes) {
-    Serial.printf("[SCENE] Content-Length %d ≠ %u annoncés — paquet refusé\n", declared, (unsigned)announcedBytes);
+    Serial.printf_P(PSTR("[SCENE] Content-Length %d ≠ %u annoncés — paquet refusé\n"), declared, (unsigned)announcedBytes);
     http.end();
     return false;
   }
@@ -1072,7 +1072,7 @@ bool fetchScenePackage(const String& artifactId, size_t announcedBytes, uint8_t*
     else delay(5);
   }
   http.end();
-  Serial.printf("[SCENE] reçu %u/%u octets en %lums\n", (unsigned)total, (unsigned)announcedBytes, millis() - t0);
+  Serial.printf_P(PSTR("[SCENE] reçu %u/%u octets en %lums\n"), (unsigned)total, (unsigned)announcedBytes, millis() - t0);
   return total == announcedBytes;
 }
 
@@ -1082,7 +1082,7 @@ bool playScene(const anascene::Scene& sc) {
   const size_t fbBytes = anascene::Fb::bytesFor(TFT_W, TFT_H);
   uint8_t* fbMem = (uint8_t*)malloc(fbBytes);
   if (!fbMem) {
-    Serial.printf("[SCENE] malloc(%u) impossible — repli image fixe\n", (unsigned)fbBytes);
+    Serial.printf_P(PSTR("[SCENE] malloc(%u) impossible — repli image fixe\n"), (unsigned)fbBytes);
     logHeapState("SCENE-NOMEM");
     return false;
   }
@@ -1093,7 +1093,7 @@ bool playScene(const anascene::Scene& sc) {
   const int fps = anascene::effectiveFps(sc, SCENE_MAX_FPS);
   const unsigned long frameMs = 1000UL / (unsigned long)fps;
   const int total = (int)sc.durationTicks * (int)sc.loopCount;
-  Serial.printf("[SCENE] lecture: %d ticks × %d boucle(s), %d FPS (scène %d, écran max %d), %lums/frame\n",
+  Serial.printf_P(PSTR("[SCENE] lecture: %d ticks × %d boucle(s), %d FPS (scène %d, écran max %d), %lums/frame\n"),
                 sc.durationTicks, sc.loopCount, fps, sc.tickRate, SCENE_MAX_FPS, frameMs);
   logHeapState("SCENE-PLAY-START");
 
@@ -1138,8 +1138,8 @@ bool playScene(const anascene::Scene& sc) {
 
   free(fbMem);
   const unsigned long elapsed = millis() - start;
-  Serial.printf("[SCENE] terminé: %d frames en %lums (cible %lums) — rendu moy/max %lu/%lu us, envoi TFT moy/max %lu/%lu us, "
-                "pixels poussés %lu (plein écran = %lu), dépassements %d, tas min %u\n",
+  Serial.printf_P(PSTR("[SCENE] terminé: %d frames en %lums (cible %lums) — rendu moy/max %lu/%lu us, envoi TFT moy/max %lu/%lu us, "
+                "pixels poussés %lu (plein écran = %lu), dépassements %d, tas min %u\n"),
                 total, elapsed, (unsigned long)total * frameMs, renderSum / total, renderMax, pushSum / total, pushMax,
                 pushedPixels, (unsigned long)total * TFT_W * TFT_H, overruns, heapMin);
   logHeapState("SCENE-PLAY-END");
@@ -1152,19 +1152,19 @@ bool playScene(const anascene::Scene& sc) {
 //                                                            après SCENE_MAX_FAILS échecs pour ce frameId → image fixe.
 bool doFetchScene(const String& frameId, const String& frameSource, const String& artifactId, size_t announcedBytes, const String& hash16) {
   if (artifactId.length() == 0 || announcedBytes < anascene::HEADER_BYTES + 4 || announcedBytes > SCENE_MAX_PACKAGE) {
-    Serial.println("[SCENE] pointeur de scène inexploitable — image fixe");
+    Serial.println(F("[SCENE] pointeur de scène inexploitable — image fixe"));
     return doFetchFrame(frameId, frameSource);
   }
   if (sceneFailFrameId != frameId) { sceneFailFrameId = frameId; sceneFailCount = 0; }
   if (sceneFailCount >= SCENE_MAX_FAILS) {
-    Serial.println("[SCENE] trop d'échecs de paquet — image fixe");
+    Serial.println(F("[SCENE] trop d'échecs de paquet — image fixe"));
     return doFetchFrame(frameId, frameSource);
   }
 
   logHeapState("SCENE-BEFORE");
   uint8_t* pkg = (uint8_t*)malloc(announcedBytes);
   if (!pkg) {
-    Serial.println("[SCENE] malloc(paquet) impossible — image fixe");
+    Serial.println(F("[SCENE] malloc(paquet) impossible — image fixe"));
     return doFetchFrame(frameId, frameSource);
   }
 
@@ -1172,7 +1172,7 @@ bool doFetchScene(const String& frameId, const String& frameSource, const String
   const bool received = fetchScenePackage(artifactId, announcedBytes, pkg, &httpCode);   // TLS fermé au retour
   if (httpCode == 404) {
     free(pkg);
-    Serial.println("[SCENE] 404 — pas de scène pour cet appareil, image fixe");
+    Serial.println(F("[SCENE] 404 — pas de scène pour cet appareil, image fixe"));
     return doFetchFrame(frameId, frameSource);
   }
 
@@ -1187,7 +1187,7 @@ bool doFetchScene(const String& frameId, const String& frameSource, const String
   if (perr != anascene::OK) {
     free(pkg);
     sceneFailCount++;
-    Serial.printf("[SCENE] paquet refusé (%s, échec %d/%d) — affichage conservé, aucun ACK\n",
+    Serial.printf_P(PSTR("[SCENE] paquet refusé (%s, échec %d/%d) — affichage conservé, aucun ACK\n"),
                   received ? anascene::errName(perr) : "réception incomplète", sceneFailCount, SCENE_MAX_FAILS);
     return false;
   }
@@ -1206,7 +1206,7 @@ bool doFetchScene(const String& frameId, const String& frameSource, const String
   sceneFailCount        = 0;
 
   ackFrame(frameId, "scene");
-  Serial.printf("[SCENE] ✅ frameId=%s source=%s\n", frameId.c_str(), frameSource.c_str());
+  Serial.printf_P(PSTR("[SCENE] ✅ frameId=%s source=%s\n"), frameId.c_str(), frameSource.c_str());
   return true;
 }
 
@@ -1273,14 +1273,14 @@ bool doPull() {
 
     String url = String(SERVER_URL) + "/api/pull?deviceId=" + deviceId;
     if (!http.begin(client, url)) {
-      Serial.println("[PULL] begin() failed");
+      Serial.println(F("[PULL] begin() failed"));
       return false;
     }
     http.setTimeout(20000);
     http.useHTTP10(true);
 
     int code = http.GET();
-    Serial.printf("[HTTP GET] /api/pull → %d\n", code);
+    Serial.printf_P(PSTR("[HTTP GET] /api/pull → %d\n"), code);
 
     if (code == 429) {
       String rresp = http.getString();
@@ -1289,7 +1289,7 @@ bool doPull() {
       DynamicJsonDocument rateDoc(256);
       if (deserializeJson(rateDoc, rresp) == DeserializationError::Ok)
         retrySec = max(1, (int)(rateDoc["retryAfter"] | 60));
-      Serial.printf("[PULL] 429 retryAfter=%ds\n", retrySec);
+      Serial.printf_P(PSTR("[PULL] 429 retryAfter=%ds\n"), retrySec);
       unsigned long retryMs = (unsigned long)retrySec * 1000UL;
       if (retryMs > PULL_INTERVAL) retryMs = PULL_INTERVAL;
       lastPullMs = millis() - (PULL_INTERVAL - retryMs);
@@ -1298,7 +1298,7 @@ bool doPull() {
 
     if (code != 200) {
       http.end();
-      Serial.printf("[PULL] HTTP error: %d\n", code);
+      Serial.printf_P(PSTR("[PULL] HTTP error: %d\n"), code);
       return false;
     }
 
@@ -1307,7 +1307,7 @@ bool doPull() {
     http.end();
 
     if (err) {
-      Serial.print("[PULL] JSON error: "); Serial.println(err.c_str());
+      Serial.print(F("[PULL] JSON error: ")); Serial.println(err.c_str());
       return false;
     }
 
@@ -1353,7 +1353,7 @@ bool doPull() {
       pendingArtistName = cm["drawArtistName"] | "";
       pendingDisplayTs  = cm["displayTs"]      | "";
       currentBlockIndex = cm["blockIndex"]     | currentBlockIndex;
-      Serial.printf("[PULL] cartel: title=%s artist=%s ts=%s bloc=%d\n",
+      Serial.printf_P(PSTR("[PULL] cartel: title=%s artist=%s ts=%s bloc=%d\n"),
                     pendingWorkTitle.c_str(), pendingArtistName.c_str(),
                     pendingDisplayTs.c_str(), currentBlockIndex);
     }
@@ -1371,7 +1371,7 @@ bool doPull() {
         hashArr += "]";
         pendingObsHashes = hashArr;
         pendingObsTarget = obs["targetBlockHash"] | "";
-        Serial.printf("[PULL] obsTask hashes=%u\n", hArr.size());
+        Serial.printf_P(PSTR("[PULL] obsTask hashes=%u\n"), hArr.size());
       }
     }
 
@@ -1390,14 +1390,14 @@ bool doPull() {
   nextPullIntervalMs = (newFrameSource == "none" && newCandId.length() == 0)
                      ? (unsigned long)pullRetryAfter * 1000UL
                      : PULL_INTERVAL;
-  Serial.printf("[PULL] nextInterval=%lus\n", nextPullIntervalMs / 1000UL);
+  Serial.printf_P(PSTR("[PULL] nextInterval=%lus\n"), nextPullIntervalMs / 1000UL);
 
   // Nouveau bloc chaîne
   if (newBlockHash.length() > 0 && newBlockHash != currentBlockHash) {
     currentBlockHash  = newBlockHash;
     currentBlockIndex = newBlockIndex;
     saveBlockHashToEEPROM(currentBlockHash);
-    Serial.printf("[PULL] Nouveau bloc #%d hash=%s...\n",
+    Serial.printf_P(PSTR("[PULL] Nouveau bloc #%d hash=%s...\n"),
                   currentBlockIndex, currentBlockHash.substring(0, 12).c_str());
   }
 
@@ -1407,18 +1407,18 @@ bool doPull() {
   }
 
   if (newFrameSource == "none" || newFrameId.length() == 0) {
-    Serial.println("[PULL] Aucune frame");
+    Serial.println(F("[PULL] Aucune frame"));
     return true;
   }
 
   if (newFrameId == lastFrameId) {
-    Serial.println("[PULL] Frame déjà affichée");
+    Serial.println(F("[PULL] Frame déjà affichée"));
     if (nextPullIntervalMs < (unsigned long)pullRetryAfter * 1000UL && newCandId.length() == 0) nextPullIntervalMs = (unsigned long)pullRetryAfter * 1000UL;   // image déjà affichée : rythme de repos du serveur (quota Redis)
     if (g_anim.pendingHash.length() == 64) { setAnimCartel(); podanimesp::acquire(g_anim, String(SERVER_URL)); }
     return true;
   }
 
-  Serial.printf("[PULL] Nouvelle frame frameId=%s source=%s\n",
+  Serial.printf_P(PSTR("[PULL] Nouvelle frame frameId=%s source=%s\n"),
                 newFrameId.c_str(), newFrameSource.c_str());
 
   if (newKind == "scene") doFetchScene(newFrameId, newFrameSource, sceneArtifactId, sceneBytes, sceneHash16);
@@ -1445,20 +1445,20 @@ bool doValidateV2(const String& candidateId, const String& screenName, size_t by
   if (kind == POD_OLED096 || kind == POD_EINK29BWR) {
     scratchLen = POD_SCRATCH_BYTES;
     scratch = (uint8_t*)malloc(scratchLen);
-    if (!scratch) { Serial.println("[VALIDATE2] malloc scratch impossible"); return false; }
+    if (!scratch) { Serial.println(F("[VALIDATE2] malloc scratch impossible")); return false; }
   }
   logHeapState("VALIDATE2-BEFORE");
   PodCheck chk;
   bool ok = podFetchAndCheck(String(SERVER_URL) + "/api/candidate-frame?candidateId=" + candidateId, kind, bytes, scratch, scratchLen, &chk);
   free(scratch);
   if (!ok) {
-    Serial.printf("[VALIDATE2] lecture/calcul impossible (http=%d, %u/%u octets)\n", chk.http, (unsigned)chk.bytes, (unsigned)bytes);
+    Serial.printf_P(PSTR("[VALIDATE2] lecture/calcul impossible (http=%d, %u/%u octets)\n"), chk.http, (unsigned)chk.bytes, (unsigned)bytes);
     return false;
   }
 
   bool accept = false;
   const char* reason = podVerdict(chk, announcedHash, &accept);
-  Serial.printf("[VALIDATE2] %s %u o en %lu ms | e=%lu t=%lu r=%lu s=%lu | verdict=%s %s\n", screenName.c_str(), (unsigned)chk.bytes, (unsigned long)chk.ms,
+  Serial.printf_P(PSTR("[VALIDATE2] %s %u o en %lu ms | e=%lu t=%lu r=%lu s=%lu | verdict=%s %s\n"), screenName.c_str(), (unsigned)chk.bytes, (unsigned long)chk.ms,
                 (unsigned long)chk.m.e, (unsigned long)chk.m.t, (unsigned long)chk.m.r, (unsigned long)chk.m.s, accept ? "accept" : "reject", reason);
   Serial.println(String("[VALIDATE2] hash=") + chk.hash);
 
@@ -1475,13 +1475,13 @@ bool doValidateV2(const String& candidateId, const String& screenName, size_t by
   bool vOk = httpPost("/api/validation-result", body, vResp);
   bool mined = false;
   if (vOk) {
-    Serial.println("[VALIDATE2] Vote OK");
-    if (vResp.indexOf("\"blockMined\":true") >= 0) { Serial.println("[VALIDATE2] BLOC MINE"); mined = true; }
-    if (vResp.indexOf("\"rejectObserved\":true") >= 0) Serial.println("[VALIDATE2] refus enregistré par le serveur (non bloquant)");
+    Serial.println(F("[VALIDATE2] Vote OK"));
+    if (vResp.indexOf("\"blockMined\":true") >= 0) { Serial.println(F("[VALIDATE2] BLOC MINE")); mined = true; }
+    if (vResp.indexOf("\"rejectObserved\":true") >= 0) Serial.println(F("[VALIDATE2] refus enregistré par le serveur (non bloquant)"));
   } else {
     Serial.println("[VALIDATE2] Echec vote (403 signature, 422 hash/métriques différents du serveur) : " + vResp);
     // 403 Signature invalide → clé publique désynchronisée : on se ré-enregistre pour la renvoyer (comme le chemin v1), le prochain cycle votera.
-    if (vResp.indexOf("Signature") >= 0) { Serial.println("[VALIDATE2] Re-register pour resynchroniser publicKey..."); doRegister(); }
+    if (vResp.indexOf("Signature") >= 0) { Serial.println(F("[VALIDATE2] Re-register pour resynchroniser publicKey...")); doRegister(); }
   }
   logHeapState("VALIDATE2-AFTER");
   return mined;
@@ -1500,26 +1500,26 @@ bool doValidate() {
   bool ok = httpGet("/api/validate-candidate?deviceId=" + deviceId, resp);
 
   if (!ok || resp.length() == 0) {
-    Serial.println("[VALIDATE] Echec HTTP");
+    Serial.println(F("[VALIDATE] Echec HTTP"));
     pendingCandidateId = "";
     return false;
   }
 
   DynamicJsonDocument doc(768);   // 512 avant la validation réelle : la réponse porte aussi { v2: écran, taille, hash } (≈ 110 o)
   if (deserializeJson(doc, resp)) {
-    Serial.println("[VALIDATE] JSON error");
+    Serial.println(F("[VALIDATE] JSON error"));
     pendingCandidateId = "";
     return false;
   }
 
   if (doc["alreadyVoted"] | false) {
-    Serial.println("[VALIDATE] Déjà voté");
+    Serial.println(F("[VALIDATE] Déjà voté"));
     pendingCandidateId = "";
     return false;
   }
 
   if (doc["candidate"].isNull()) {
-    Serial.println("[VALIDATE] Pas de candidat actif");
+    Serial.println(F("[VALIDATE] Pas de candidat actif"));
     pendingCandidateId = "";
     return false;
   }
@@ -1543,7 +1543,7 @@ bool doValidate() {
   }
 
   float score = cand["score_server"] | 0.5f;
-  Serial.printf("[VALIDATE] candidateId=%s score=%.3f\n", candidateId.c_str(), score);
+  Serial.printf_P(PSTR("[VALIDATE] candidateId=%s score=%.3f\n"), candidateId.c_str(), score);
 
   String signature = signED25519(candidateId, score);
   char   scoreStr[8];
@@ -1564,19 +1564,19 @@ bool doValidate() {
   bool blockMined = false;
 
   if (vOk) {
-    Serial.println("[VALIDATE] Vote OK");
+    Serial.println(F("[VALIDATE] Vote OK"));
     if (vResp.indexOf("\"blockMined\":true") >= 0) {
-      Serial.println("[VALIDATE] BLOC MINE");
+      Serial.println(F("[VALIDATE] BLOC MINE"));
       blockMined = true;
     }
   } else {
-    Serial.println("[VALIDATE] Echec vote");
+    Serial.println(F("[VALIDATE] Echec vote"));
     // 403 Signature invalide → clé publique désynchronisée sur le serveur.
     // Pas de buffer pixel persistant sur TFT → heap OK pour re-register (TLS).
     if (vResp.indexOf("Signature") >= 0) {
-      Serial.println("[VALIDATE] Re-register pour resynchroniser publicKey...");
+      Serial.println(F("[VALIDATE] Re-register pour resynchroniser publicKey..."));
       doRegister();
-      Serial.println("[VALIDATE] Re-register terminé — retry au prochain cycle");
+      Serial.println(F("[VALIDATE] Re-register terminé — retry au prochain cycle"));
     }
   }
 
@@ -1587,7 +1587,7 @@ bool doValidate() {
 // ─── SETUP ──────────────────────────────────────────────────────────────────
 void setup() {
   Serial.begin(115200);
-  Serial.println("\n[BOOT] Proof-of-Draw TFT 1.8\" v2.0 (scene-v1)");
+  Serial.println(F("\n[BOOT] Proof-of-Draw TFT 1.8\" v2.0 (scene-v1)"));
 
   eepromInit();
 
@@ -1597,10 +1597,10 @@ void setup() {
 
   WiFi.mode(WIFI_STA);
   WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
-  Serial.print("[WIFI] Connexion");
+  Serial.print(F("[WIFI] Connexion"));
   int i = 0;
   while (WiFi.status() != WL_CONNECTED && i++ < 40) {
-    delay(500); Serial.print(".");
+    delay(500); Serial.print(F("."));
   }
   Serial.println();
 
@@ -1608,19 +1608,19 @@ void setup() {
     Serial.println("[WIFI] IP: " + WiFi.localIP().toString());
     tftStatus("WiFi OK", WiFi.localIP().toString());
   } else {
-    Serial.println("[WIFI] Echec connexion");
+    Serial.println(F("[WIFI] Echec connexion"));
     tftStatus("WiFi FAIL", "Redemarrage...", 0xF800);
     delay(3000);
     ESP.restart();
   }
-  Serial.printf("[HEAP] après WiFi: %u bytes\n", ESP.getFreeHeap());
+  Serial.printf_P(PSTR("[HEAP] après WiFi: %u bytes\n"), ESP.getFreeHeap());
 
   // SD card — après TFT, avant le premier fetch réseau
   initSD();
 
   // Migration V1 → ED25519 réel
   if (EEPROM.read(EEPROM_FLAG_OFF) == 0x01) {
-    Serial.println("[KEYS] Clés V1 détectées — migration vers ED25519 réel");
+    Serial.println(F("[KEYS] Clés V1 détectées — migration vers ED25519 réel"));
     EEPROM.write(EEPROM_FLAG_OFF,       0x00);
     EEPROM.write(EEPROM_ONBOARDING_OFF, 0x00);
     EEPROM.commit();
@@ -1659,7 +1659,7 @@ void setup() {
   //     if (loadFrameFromSD(restoreBuf)) {
   //       renderFrameToTFT(restoreBuf);
   //       hasDisplayedFrame = true;
-  //       Serial.println("[BOOT] Frame restaurée depuis SD");
+  //       Serial.println(F("[BOOT] Frame restaurée depuis SD"));
   //     }
   //     free(restoreBuf);
   //   }
@@ -1674,7 +1674,7 @@ void setup() {
   if (paired) {
     g_animPresenter.resident = true;
     podanimesp::begin(g_anim);                      // flash LittleFS : une animation rangée reprend
-    Serial.println("[BOOT] Premier pull immédiat...");
+    Serial.println(F("[BOOT] Premier pull immédiat..."));
     doPull();
   }
 
@@ -1699,7 +1699,7 @@ void loop() {
       doRegister();
       lastPullMs = millis();
       if (!wasPaired && paired) {
-        Serial.println("[PAIRING] Appairage → restart");
+        Serial.println(F("[PAIRING] Appairage → restart"));
         delay(1000); ESP.restart();
       }
     }
@@ -1714,7 +1714,7 @@ void loop() {
     lastPullMs = millis();
 
     if (pendingCandidateId.length() > 0 && pendingCandidateId != prevCandidateId) {
-      Serial.println("[LOOP] Nouveau candidat — reset timer validation");
+      Serial.println(F("[LOOP] Nouveau candidat — reset timer validation"));
       lastValidateMs = millis();
     }
   }
@@ -1739,7 +1739,7 @@ void loop() {
     lastValidateMs = millis();
 
     if (blockMined) {
-      Serial.println("[LOOP] Bloc miné — pull immédiat");
+      Serial.println(F("[LOOP] Bloc miné — pull immédiat"));
       delay(2000);  // laisse BearSSL libérer ses buffers TLS
       doPull();
       lastPullMs = millis();

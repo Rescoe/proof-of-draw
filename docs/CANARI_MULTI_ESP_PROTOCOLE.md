@@ -8,8 +8,8 @@ on compare leurs résultats. ⚠ Tout ce qui suit est **compilé, jamais exécut
 | Appareil | Dossier | Version annoncée | RAM statique (compilée) | Lit un candidat de… |
 |---|---|---|---|---|
 | ESP8266 + e-ink 2,9″ | `esp8266/esp_eink_2.9BWR` | `2.2` | 34 808 / 80 192 o | n'importe quel écran (tampon 4 736 o alloué avant le TLS) |
-| ESP8266 + TFT 1,8″ | `esp8266/esp_tft1.8` | `tft18-2.3` | 42 016 / 80 192 o | n'importe quel écran (tampon alloué avant le TLS, seulement pour OLED / e-ink 2,9″) |
-| ESP8266 multiscreen e-ink 2,7″ + OLED | `esp8266/esp_eink_2.7BW_OLED` | `multiscreen-2.4` | 47 128 / 80 192 o | n'importe quel écran (tampon statique `g_e27Buf`) |
+| ESP8266 + TFT 1,8″ | `esp8266/esp_tft1.8` | `tft18-2.4` | 36 064 / 80 192 o | n'importe quel écran (tampon alloué avant le TLS, seulement pour OLED / e-ink 2,9″) |
+| ESP8266 multiscreen e-ink 2,7″ + OLED | `esp8266/esp_eink_2.7BW_OLED` | `multiscreen-2.5` | 35 200 / 80 192 o | n'importe quel écran (tampon alloué avant le TLS, seulement OLED / e-ink 2,9″) |
 | UNO R4 WiFi + e-ink 2,9″ | `arduino_uno_r4/pod_uno_r4_eink29` | `r4eink29-1.1` | 22 768 / 32 768 o | n'importe quel écran (tampon `blackBuf`) |
 | UNO R4 WiFi + TFT 2,8″ tactile | `arduino_uno_r4/pod_uno_r4` | `r4tft28-2.5` | 21 444 / 32 768 o | n'importe quel écran (tampon statique 4 736 o) ; compilé avec la bibliothèque SD 1.3.0 |
 
@@ -17,6 +17,9 @@ Les trois autres ports R4 (`pod_uno_r4_eink27`, `…_eink27_oled`, `…_tft18`, 
 
 **Règle commune** : un appareil relit le candidat COURANT quel que soit le type d'écran du dessin (le serveur annonce `v2 {écran, octets, hash}` à tout appareil actif). Avant la correction du
 06/10 de l'après-midi, chaque firmware refusait les écrans qui n'étaient pas les siens : un dessin e-ink 2,9″ n'aurait été relu que par les 2,9″. Garde-fou : `tests/podHeaderCopies.test.ts`.
+
+## ⚠ Multiscreen : relever `[HEAP] après WiFi`
+La v2.4 du multiscreen n'arrivait plus à s'enregistrer (`/api/register → -1`, puis Exception 29) : 30 Ko de tas. Corrigé en 2.5 (voir `NOTE_MULTISCREEN_TAS_2026_10_06.md`). **Attendu : `[HEAP] après WiFi` ≥ 38 000 et `/api/register → 200`.** Si ce n'est pas le cas, m'envoyer ces lignes avant tout autre essai.
 
 ## Avant de téléverser
 1. **Pousser** (`git push`) et attendre le déploiement Vercel : le serveur doit annoncer `v2`, accepter `screen` dans l'ACK, compter les votes atomiquement.

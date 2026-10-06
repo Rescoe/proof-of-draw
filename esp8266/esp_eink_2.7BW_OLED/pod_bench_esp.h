@@ -49,7 +49,7 @@ inline bool pollOnce(const String& serverUrl, const String& deviceId, bool& mode
   http.setTimeout(10000);
   http.useHTTP10(true);
   const int code = http.GET();
-  if (code != 200) { http.end(); if (code != 429) Serial.printf("[BENCH] poll en erreur (%d)\n", code); return false; }
+  if (code != 200) { http.end(); if (code != 429) Serial.printf_P(PSTR("[BENCH] poll en erreur (%d)\n"), code); return false; }
   DynamicJsonDocument doc(512);
   const DeserializationError err = deserializeJson(doc, http.getStream());
   http.end();
@@ -83,7 +83,7 @@ inline bool download(const String& serverUrl, const String& deviceId, const Stri
         }
         ok = (total == announced);
       }
-    } else Serial.printf("[BENCH] clip : HTTP %d\n", code);
+    } else Serial.printf_P(PSTR("[BENCH] clip : HTTP %d\n"), code);
     http.end();
   }
   ms = millis() - t0;
@@ -109,7 +109,7 @@ inline void postResult(const String& serverUrl, const String& deviceId, const St
   http.setTimeout(15000);
   const int code = http.POST(body);
   http.end();
-  Serial.printf("[BENCH] mesures envoyées → %d\n", code);
+  Serial.printf_P(PSTR("[BENCH] mesures envoyées → %d\n"), code);
 }
 
 enum Stop : uint8_t { S_DONE = 0, S_CHECK, S_CAP };
@@ -117,15 +117,15 @@ enum Stop : uint8_t { S_DONE = 0, S_CHECK, S_CAP };
 /** Télécharge, valide, joue (mesuré), renvoie les mesures, restaure l'affichage. */
 template <class Presenter>
 inline void playClip(State& st, Presenter& P, const String& serverUrl, const String& deviceId, const String& clipId, size_t announced) {
-  Serial.printf("[BENCH] clip %s : %u octets annoncés\n", clipId.c_str(), (unsigned)announced);
+  Serial.printf_P(PSTR("[BENCH] clip %s : %u octets annoncés\n"), clipId.c_str(), (unsigned)announced);
   st.lastClipId = clipId;                                      // jamais rejoué en boucle, même en cas d'échec
   if (announced < (size_t)(podbench::HEADER_BYTES + 5 + podbench::FRAME_BYTES) || announced > MAX_CLIP) {
-    Serial.printf("[BENCH] taille refusée (%u)\n", (unsigned)announced);
+    Serial.printf_P(PSTR("[BENCH] taille refusée (%u)\n"), (unsigned)announced);
     postResult(serverUrl, deviceId, clipId, 0, 0, 0, 0, 0, 0, 0, 0, 0, announced, false, "taille refusee");
     return;
   }
   if (ESP.getMaxFreeBlockSize() < MIN_FREE_BLOCK) {
-    Serial.printf("[BENCH] mémoire insuffisante (plus gros bloc libre %u)\n", (unsigned)ESP.getMaxFreeBlockSize());
+    Serial.printf_P(PSTR("[BENCH] mémoire insuffisante (plus gros bloc libre %u)\n"), (unsigned)ESP.getMaxFreeBlockSize());
     postResult(serverUrl, deviceId, clipId, 0, 0, 0, 0, 0, 0, 0, 0, 0, announced, false, "memoire");
     return;
   }
@@ -133,7 +133,7 @@ inline void playClip(State& st, Presenter& P, const String& serverUrl, const Str
   uint8_t* cur = (uint8_t*)malloc(podbench::FRAME_BYTES);
   if (!clip || !cur) {
     free(clip); free(cur);
-    Serial.println("[BENCH] malloc impossible");
+    Serial.println(F("[BENCH] malloc impossible"));
     postResult(serverUrl, deviceId, clipId, 0, 0, 0, 0, 0, 0, 0, 0, 0, announced, false, "memoire");
     return;
   }
@@ -143,13 +143,13 @@ inline void playClip(State& st, Presenter& P, const String& serverUrl, const Str
   podbench::Clip pc;
   podbench::Err perr = got ? podbench::parse(clip, announced, pc, cur) : podbench::ERR_SIZE;
   if (!got || perr != podbench::OK) {
-    Serial.printf("[BENCH] clip refusé (%s)\n", got ? podbench::errName(perr) : "téléchargement incomplet");
+    Serial.printf_P(PSTR("[BENCH] clip refusé (%s)\n"), got ? podbench::errName(perr) : "téléchargement incomplet");
     free(clip); free(cur);
     postResult(serverUrl, deviceId, clipId, 0, 0, 0, 0, 0, 0, 0, 0, downloadMs, announced, false, got ? "clip invalide" : "telechargement");
     return;
   }
   const bool infinite = (pc.loops == 0);
-  Serial.printf("[BENCH] reçu en %lu ms — %u images, %s, lecture\n", downloadMs, (unsigned)pc.frames, infinite ? "EN BOUCLE" : "boucles finies");
+  Serial.printf_P(PSTR("[BENCH] reçu en %lu ms — %u images, %s, lecture\n"), downloadMs, (unsigned)pc.frames, infinite ? "EN BOUCLE" : "boucles finies");
 
   P.begin(pc);
   uint32_t frames = 0, overruns = 0;
@@ -183,7 +183,7 @@ inline void playClip(State& st, Presenter& P, const String& serverUrl, const Str
     if (why != S_CHECK) break;
     // Clip en boucle : le serveur veut-il toujours CE clip ? (un nouvel envoi ou l'arrêt du mode interrompt la boucle)
     if (ESP.getMaxFreeBlockSize() < MIN_TLS_BLOCK) {             // pas assez de mémoire pour une connexion TLS tant que le clip est en RAM
-      Serial.printf("[BENCH] mémoire trop juste pour contrôler le serveur (bloc libre %u) — boucle limitée à 5 min\n", (unsigned)ESP.getMaxFreeBlockSize());
+      Serial.printf_P(PSTR("[BENCH] mémoire trop juste pour contrôler le serveur (bloc libre %u) — boucle limitée à 5 min\n"), (unsigned)ESP.getMaxFreeBlockSize());
       lastCheck = millis();
       if (millis() - tStart > NO_CHECK_MAX_MS) break;
       continue;
@@ -191,12 +191,12 @@ inline void playClip(State& st, Presenter& P, const String& serverUrl, const Str
     bool mode = true; String id; size_t b = 0;
     const bool ok = pollOnce(serverUrl, deviceId, mode, id, b);
     lastCheck = millis();
-    if (ok && !mode) { st.mode = false; Serial.println("[BENCH] mode terminé côté serveur : fin de la boucle"); break; }
-    if (ok && id.length() > 0 && id != clipId) { Serial.printf("[BENCH] nouveau clip %s : fin de la boucle\n", id.c_str()); break; }
+    if (ok && !mode) { st.mode = false; Serial.println(F("[BENCH] mode terminé côté serveur : fin de la boucle")); break; }
+    if (ok && id.length() > 0 && id != clipId) { Serial.printf_P(PSTR("[BENCH] nouveau clip %s : fin de la boucle\n"), id.c_str()); break; }
   }
   P.end();
   const long slackOut = (minSlack == 0x7FFFFFFF) ? 0L : minSlack;
-  Serial.printf("[BENCH] lecture terminée : %lu images en %lu ms (prévu %lu) — travail moy %lu us, max %lu us, retards de démarrage %lu (max %lu ms), marge min %ld ms, tas %u\n",
+  Serial.printf_P(PSTR("[BENCH] lecture terminée : %lu images en %lu ms (prévu %lu) — travail moy %lu us, max %lu us, retards de démarrage %lu (max %lu ms), marge min %ld ms, tas %u\n"),
                 (unsigned long)frames, elapsedMs, expectedMs, frames ? workSum / frames : 0UL, workMax, (unsigned long)overruns, maxLate, slackOut, (unsigned)ESP.getFreeHeap());
   free(clip); free(cur);                                       // libérés AVANT d'ouvrir une connexion TLS pour les mesures
   postResult(serverUrl, deviceId, clipId, frames, expectedMs, elapsedMs, workSum, workMax, overruns, maxLate, slackOut, downloadMs, announced, false, nullptr);
@@ -204,8 +204,8 @@ inline void playClip(State& st, Presenter& P, const String& serverUrl, const Str
 
 /** À appeler quand /api/pull annonce (ou n'annonce plus) `benchMode`. */
 inline void onPull(State& st, bool newMode) {
-  if (newMode && !st.mode) { st.modeSince = millis(); st.lastPoll = 0; Serial.printf("[BENCH] mode banc d'essai ACTIVÉ par l'app (contrôle toutes les %lu s)\n", POLL_MS / 1000UL); }
-  if (!newMode && st.mode) Serial.println("[BENCH] mode banc d'essai désactivé");
+  if (newMode && !st.mode) { st.modeSince = millis(); st.lastPoll = 0; Serial.printf_P(PSTR("[BENCH] mode banc d'essai ACTIVÉ par l'app (contrôle toutes les %lu s)\n"), POLL_MS / 1000UL); }
+  if (!newMode && st.mode) Serial.println(F("[BENCH] mode banc d'essai désactivé"));
   st.mode = newMode;
 }
 
@@ -214,12 +214,12 @@ template <class Presenter>
 inline void service(State& st, Presenter& P, const String& serverUrl, const String& deviceId) {
   if (!st.mode) return;
   const unsigned long now = millis();
-  if (now - st.modeSince > MODE_MAX_MS) { st.mode = false; Serial.println("[BENCH] mode expiré (31 min)"); return; }
+  if (now - st.modeSince > MODE_MAX_MS) { st.mode = false; Serial.println(F("[BENCH] mode expiré (31 min)")); return; }
   if (now - st.lastPoll < POLL_MS) return;
   st.lastPoll = now;
   bool mode = true; String id; size_t bytes = 0;
   if (!pollOnce(serverUrl, deviceId, mode, id, bytes)) return;
-  if (!mode) { st.mode = false; Serial.println("[BENCH] mode terminé côté serveur"); return; }
+  if (!mode) { st.mode = false; Serial.println(F("[BENCH] mode terminé côté serveur")); return; }
   if (id.length() > 0 && id != st.lastClipId) playClip(st, P, serverUrl, deviceId, id, bytes);
   st.lastPoll = millis();
 }

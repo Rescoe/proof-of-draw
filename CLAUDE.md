@@ -82,7 +82,13 @@ L'ESP8266 a ~47KB de heap après WiFi. BearSSL consomme ~16KB par connexion TLS 
 5. /api/pull ne retourne JAMAIS black/red
 6. DynamicJsonDocument petit (512-1024) pour les réponses légères
 7. Pour les buffers pixel : readFull() en boucle, jamais readBytes() seul
+8. RAM STATIQUE : un tampon « statique » n'est PAS gratuit (ESP8266 = 80 Ko au total, BearSSL veut ≈ 35 Ko de tas après le Wi-Fi). Lire « Variables and constants in RAM »
+   à chaque compilation d'un firmware TLS : viser ≤ 40 000 o. Aucun gros tampon (> 2 Ko) statique ni vivant pendant le TLS : flash (LittleFS) ou malloc APRÈS la fermeture du TLS
+9. Messages Serial en flash : F("…") / printf_P(PSTR("…")) (sinon chaque littéral occupe de la RAM)
+10. Après tout changement : relever « [HEAP] après WiFi » (≈ 38 Ko = OK ; 30 Ko = « /api/register → -1 » puis Exception 29)
 ```
+
+Incident du 06/10/2026 (multiscreen : tampons statiques + vote v2 ⇒ 30 Ko de tas ⇒ TLS impossible) : `docs/NOTE_MULTISCREEN_TAS_2026_10_06.md`.
 
 ### Pourquoi readFull() est obligatoire
 

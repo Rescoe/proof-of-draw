@@ -1,15 +1,5 @@
 // esp_eink_2.7BW_OLED.ino
-// Proof-of-Draw — Firmware multiscreen v2.5
-//
-// ⚠ v2.5 (06/10/2026) — CORRECTIF « le device n'arrive plus à s'enregistrer » (http POST /api/register → -1, puis Exception 29) — NON TESTÉ sur le matériel.
-//    CAUSE : la v2.3 avait remplacé les malloc/free des tampons d'image par des tampons STATIQUES (g_e27Buf 5 808 o + g_oledArt 1 024 o) et la v2.4 avait ajouté le vote v2 :
-//    RAM statique 39 420 → 47 160 o, donc seulement ≈ 30 Ko de tas après le Wi-Fi (« [HEAP] après WiFi: 30336 ») ; BearSSL (TLS) a besoin d'environ 35 Ko : connexion impossible, puis un malloc
-//    qui renvoie NULL dans BearSSL ⇒ plantage. Une RAM statique plus grande RÉDUIT le tas : « statique » n'est pas gratuit sur ESP8266 (80 Ko au total).
-//    CORRECTION : (1) plus aucun gros tampon statique ; l'image e-ink est téléchargée dans la FLASH (LittleFS, par morceaux de 256 o) puis le tampon de 5 808 o n'est alloué qu'APRÈS la fermeture
-//    du TLS et libéré aussitôt (règles 1 et 2 du CLAUDE.md) ; sans système de fichiers, ancien chemin (malloc avant le TLS) ; (2) les messages Serial sont en mémoire FLASH (F()/PSTR()) :
-//    ≈ 6 Ko de RAM rendus ; (3) le tas libre et le plus gros bloc sont journalisés AVANT chaque requête TLS (« [MEM] avant TLS »). Voir docs/NOTE_MULTISCREEN_TAS_2026_10_06.md.
-//
-// Proof-of-Draw — (historique) Firmware multiscreen v2.4
+// Proof-of-Draw — Firmware multiscreen v2.4
 //
 // ⚠ v2.4 (06/10/2026) — VALIDATION RÉELLE (vote v2) — NON TESTÉ sur le matériel : relit le dessin candidat en flux (e-ink 2,7" ou OLED, selon l'écran annoncé), recalcule SHA-256 + métriques
 //    entières, signe son verdict et vote ; repli sur le vote v1 sans `candidate.v2`. Tampon de lecture OLED = g_e27Buf (statique). Voir docs/CANARI_MULTI_ESP_PROTOCOLE.md.
@@ -78,7 +68,7 @@
 #endif
 
 #define SERVER_URL       "https://proof-of-draw.vercel.app"
-#define FIRMWARE_VERSION "multiscreen-2.5"
+#define FIRMWARE_VERSION "multiscreen-2.4"
 #define SCREEN_OLED      "oled096"
 #define SCREEN_E27       "eink27bw"
 
@@ -184,11 +174,11 @@ String pendingObsTarget  = "";   // hash du bloc cible (contient les entrées re
 // Le ticker tourne en boucle infinie via tickerStep() appelé dans loop().
 // Quand un nouveau frame arrive, setOLEDFrame() remplace le contenu.
 // ─── TAMPONS STATIQUES (même solution que le sketch OLED_ESP_v10_Eink_Fin : einkRenderBuffer[] / lastRendered[] globaux) ───
-// ⚠ v2.5 : seul g_oledArt (1 Ko) reste statique. g_e27Buf (5,8 Ko) a été SUPPRIMÉ : il faisait tomber le tas libre sous ce que demande le TLS (voir l'en-tête du fichier).
-// (Ancien raisonnement, conservé pour mémoire :) Un malloc/free de 5,8 Ko (e-ink) ou 1 Ko (OLED) AUTOUR de chaque connexion TLS fragmente le tas de l'ESP8266 : BearSSL, qui veut ≈ 17 Ko d'un seul bloc, finit
+// Un malloc/free de 5,8 Ko (e-ink) ou 1 Ko (OLED) AUTOUR de chaque connexion TLS fragmente le tas de l'ESP8266 : BearSSL, qui veut ≈ 17 Ko d'un seul bloc, finit
 // par ne plus en trouver (http.GET() → -1) et l'écran « ne reçoit plus rien ». Les tampons vivent donc dans la RAM statique (≈ 6,8 Ko pris UNE fois pour toutes,
 // hors du tas) : le tas ne sert plus qu'au TLS, au clip d'animation (alloué puis libéré) et aux Strings.
 static uint8_t g_oledArt[OLED_BUF_SIZE];      // artwork OLED persistant (ticker, restauration après l'animation)
+static uint8_t g_e27Buf[E27_BUF_SIZE];        // réception d'une frame e-ink (cartel compris) OU d'une frame OLED (1 Ko) : un seul tampon pour les deux
 uint8_t*      oledArtBuf    = nullptr;   // artwork persistant : nullptr tant qu'aucune frame, sinon g_oledArt
 String        oledTicker    = "";        // texte en cours de défilement
 int           oledTickStep  = 0;         // position courante (px, 0 = texte à droite)
@@ -198,7 +188,7 @@ unsigned long lastTickMs    = 0;         // timestamp dernier pas (throttle 35ms
 
 // ─── DEBUG HEAP ─────────────────────────────────────────────────────────────
 void logHeapState(const char* tag) {
-  Serial.printf_P(PSTR("[%s] heap=%u maxBlock=%u frag=%u%%\n"),
+  Serial.printf("[%s] heap=%u maxBlock=%u frag=%u%%\n",
                 tag, ESP.getFreeHeap(),
                 ESP.getMaxFreeBlockSize(),
                 ESP.getHeapFragmentation());
@@ -209,7 +199,7 @@ void logHeapState(const char* tag) {
 // http.begin()/GET() échouent alors à chaque pull et l'écran « ne reçoit plus rien ». Seul remède fiable sur ESP8266 : redémarrer.
 // Tout ce qui compte survit (clés et affiche OLED en EEPROM, clip en flash LittleFS). Garde-fous : Wi-Fi connecté, 2 échecs d'affilée, bloc libre
 // mesuré AVANT la tentative < 20 Ko, 2 minutes de fonctionnement minimum (pas de boucle de redémarrages si c'est le serveur ou le Wi-Fi qui est en panne).
-#define HEAL_BLOCK_MIN   32000UL   // v2.5 : le TLS a échoué (puis planté) avec ≈ 29,9 Ko de plus gros bloc libre ; 20 000 n'aurait jamais déclenché la reprise
+#define HEAL_BLOCK_MIN   20000UL
 #define HEAL_FAILS       2
 #define HEAL_MIN_UPTIME  120000UL
 uint8_t g_netFails = 0;
@@ -217,10 +207,10 @@ uint8_t g_netFails = 0;
 void noteNet(bool ok, uint32_t blockBefore, const char* what) {
   if (ok) { g_netFails = 0; return; }
   g_netFails++;
-  Serial.printf_P(PSTR("[HEAL] échec réseau #%u (%s) — bloc libre avant: %u, maintenant: %u\n"),
+  Serial.printf("[HEAL] échec réseau #%u (%s) — bloc libre avant: %u, maintenant: %u\n",
                 g_netFails, what, (unsigned)blockBefore, (unsigned)ESP.getMaxFreeBlockSize());
   if (g_netFails >= HEAL_FAILS && WiFi.status() == WL_CONNECTED && blockBefore < HEAL_BLOCK_MIN && millis() > HEAL_MIN_UPTIME) {
-    Serial.println(F("[HEAL] tas fragmenté : redémarrage de secours"));
+    Serial.println("[HEAL] tas fragmenté : redémarrage de secours");
     delay(300);
     ESP.restart();
   }
@@ -261,11 +251,11 @@ void loadKeysFromEEPROM() {
   uint8_t derived[32];
   Ed25519::derivePublicKey(derived, privateKey);
   if (memcmp(derived, publicKey, 32) != 0) {
-    Serial.println(F("[KEYS] Clé publique EEPROM incohérente → recalcul depuis clé privée"));
+    Serial.println("[KEYS] Clé publique EEPROM incohérente → recalcul depuis clé privée");
     memcpy(publicKey, derived, 32);
     for (int i = 0; i < 32; i++) EEPROM.write(EEPROM_PUBKEY_OFF + i, publicKey[i]);
     EEPROM.commit();
-    Serial.println(F("[KEYS] Clé publique corrigée et sauvegardée"));
+    Serial.println("[KEYS] Clé publique corrigée et sauvegardée");
   }
   keysLoaded = true;
 }
@@ -294,7 +284,7 @@ String loadBlockHashFromEEPROM() {
 // Le E-ink n'en a pas besoin (rétention sans alimentation).
 
 void saveOLEDFrameToEEPROM(const uint8_t* buf, const String& ticker) {
-  Serial.println(F("[EEPROM] Sauvegarde frame OLED..."));
+  Serial.println("[EEPROM] Sauvegarde frame OLED...");
   // Buffer pixel (1024 octets)
   for (int i = 0; i < OLED_BUF_SIZE; i++) {
     EEPROM.write(EEPROM_OLED_BUF_OFF + i, buf[i]);
@@ -308,7 +298,7 @@ void saveOLEDFrameToEEPROM(const uint8_t* buf, const String& ticker) {
   // Flag en dernier (valide uniquement si écriture complète)
   EEPROM.write(EEPROM_OLED_FLAG_OFF, OLED_FRAME_SAVED_FLAG);
   EEPROM.commit();
-  Serial.printf_P(PSTR("[EEPROM] Frame OLED sauvegardée (%d bytes buf, ticker: \"%s\")\n"),
+  Serial.printf("[EEPROM] Frame OLED sauvegardée (%d bytes buf, ticker: \"%s\")\n",
                 OLED_BUF_SIZE, ticker.c_str());
 }
 
@@ -318,7 +308,7 @@ void saveOLEDFrameToEEPROM(const uint8_t* buf, const String& ticker) {
 
 bool loadOLEDFrameFromEEPROM(uint8_t* buf, String& ticker) {
   if (EEPROM.read(EEPROM_OLED_FLAG_OFF) != OLED_FRAME_SAVED_FLAG) {
-    Serial.println(F("[EEPROM] Pas de frame OLED sauvegardée"));
+    Serial.println("[EEPROM] Pas de frame OLED sauvegardée");
     return false;
   }
   for (int i = 0; i < OLED_BUF_SIZE; i++) {
@@ -331,7 +321,7 @@ bool loadOLEDFrameFromEEPROM(uint8_t* buf, String& ticker) {
     if (c == '\0') break;
     ticker += c;
   }
-  Serial.printf_P(PSTR("[EEPROM] Frame OLED restaurée — ticker: \"%s\"\n"), ticker.c_str());
+  Serial.printf("[EEPROM] Frame OLED restaurée — ticker: \"%s\"\n", ticker.c_str());
   return true;
 }
 
@@ -363,7 +353,7 @@ void saveOwnedBlockHash(const String& fullHash) {
       if ((char)EEPROM.read(off + j) != h[j]) match = false;
     }
     if (match) {
-      Serial.println(F("[OWNED] Hash déjà stocké, skip"));
+      Serial.println("[OWNED] Hash déjà stocké, skip");
       return;
     }
   }
@@ -380,7 +370,7 @@ void saveOwnedBlockHash(const String& fullHash) {
   EEPROM.write(EEPROM_OWNED_COUNT_OFF, count);
   EEPROM.commit();
 
-  Serial.printf_P(PSTR("[OWNED] Bloc sauvegardé: %s... (%u/%u slots)\n"),
+  Serial.printf("[OWNED] Bloc sauvegardé: %s... (%u/%u slots)\n",
                 h.substring(0, 8).c_str(), count, OWNED_SLOTS_MAX);
 }
 
@@ -417,7 +407,7 @@ String loadOwnedHashesJson() {
 // ─── Génération de clés ED25519 réelle ───────────────────────────────────────
 
 void generateKeys() {
-  Serial.println(F("[KEYS] Génération paire ED25519..."));
+  Serial.println("[KEYS] Génération paire ED25519...");
   randomSeed(analogRead(A0) ^ millis() ^ (uint32_t)WiFi.RSSI());
   for (int i = 0; i < 32; i++) {
     privateKey[i] = (uint8_t)(random(256) ^ (analogRead(A0) & 0xFF));
@@ -426,7 +416,7 @@ void generateKeys() {
   Ed25519::derivePublicKey(publicKey, privateKey);
   keysLoaded = true;
   saveKeysToEEPROM();
-  Serial.println(F("[KEYS] Paire ED25519 générée et sauvegardée"));
+  Serial.println("[KEYS] Paire ED25519 générée et sauvegardée");
   Serial.println("[KEYS] PubKey: " + bytesToHex(publicKey, 32));
 }
 
@@ -497,7 +487,6 @@ size_t base64Decode(const char* src, size_t srcLen, uint8_t* dst, size_t dstMax)
 
 // ─── HTTP HELPERS ──────────────────────────────────────────────────────────
 bool httpPost(const String& path, const String& body, String& resp) {
-  Serial.printf_P(PSTR("[MEM] avant TLS: libre=%u plus gros bloc=%u\n"), ESP.getFreeHeap(), ESP.getMaxFreeBlockSize());
   WiFiClientSecure client;
   client.setInsecure();
   HTTPClient http;
@@ -507,7 +496,7 @@ bool httpPost(const String& path, const String& body, String& resp) {
   Serial.println("[HTTP POST] body len: " + String(body.length()));
 
   if (!http.begin(client, url)) {
-    Serial.println(F("[HTTP POST] begin() failed"));
+    Serial.println("[HTTP POST] begin() failed");
     return false;
   }
   http.addHeader("Content-Type", "application/json");
@@ -515,20 +504,19 @@ bool httpPost(const String& path, const String& body, String& resp) {
 
   int code = http.POST(body);
   resp = (code > 0) ? http.getString() : "";
-  Serial.printf_P(PSTR("[HTTP POST] %s → %d\n"), path.c_str(), code);
+  Serial.printf("[HTTP POST] %s → %d\n", path.c_str(), code);
   if (code > 0) Serial.println("[HTTP POST] resp: " + resp);
   http.end();
   return code == 200;
 }
 
 bool httpGet(const String& path, String& resp) {
-  Serial.printf_P(PSTR("[MEM] avant TLS: libre=%u plus gros bloc=%u\n"), ESP.getFreeHeap(), ESP.getMaxFreeBlockSize());
   WiFiClientSecure client;
   client.setInsecure();
   HTTPClient http;
 
   if (!http.begin(client, String(SERVER_URL) + path)) {
-    Serial.println(F("[HTTP GET] begin() failed"));
+    Serial.println("[HTTP GET] begin() failed");
     return false;
   }
   http.setTimeout(20000);
@@ -536,7 +524,7 @@ bool httpGet(const String& path, String& resp) {
   int code = http.GET();
   resp = (code > 0) ? http.getString() : "";
   http.end();
-  Serial.printf_P(PSTR("[HTTP GET] %s → %d (%u bytes)\n"), path.c_str(), code, resp.length());
+  Serial.printf("[HTTP GET] %s → %d (%u bytes)\n", path.c_str(), code, resp.length());
   return code == 200 || code == 429;
 }
 
@@ -830,18 +818,18 @@ bool ensureOLEDReady() {
 
   oledReady = oled.begin(SSD1306_SWITCHCAPVCC, 0x3C);
   if (!oledReady) {
-    Serial.println(F("[OLED] init failed"));
+    Serial.println("[OLED] init failed");
     return false;
   }
   oled.clearDisplay();
   oled.display();
-  Serial.println(F("[OLED] ready"));
+  Serial.println("[OLED] ready");
   return true;
 }
 
 bool displayOLED(const uint8_t* buf, size_t len) {
   if (len != OLED_BUF_SIZE) {
-    Serial.printf_P(PSTR("[OLED] taille invalide: %u attendu %u\n"), len, OLED_BUF_SIZE);
+    Serial.printf("[OLED] taille invalide: %u attendu %u\n", len, OLED_BUF_SIZE);
     return false;
   }
 
@@ -861,7 +849,7 @@ bool displayOLED(const uint8_t* buf, size_t len) {
   // Re-init du contrôleur SSD1306
   // Nécessaire si on a coupé l'alimentation ou switché le bus
   if (!oled.begin(SSD1306_SWITCHCAPVCC, 0x3C)) {
-    Serial.println(F("[OLED] begin() failed"));
+    Serial.println("[OLED] begin() failed");
     oledReady = false;
     return false;
   }
@@ -872,7 +860,7 @@ bool displayOLED(const uint8_t* buf, size_t len) {
   memcpy(oled.getBuffer(), buf, OLED_BUF_SIZE);
   oled.display();
 
-  Serial.println(F("[OLED] displayed"));
+  Serial.println("[OLED] displayed");
   return true;
 }
 
@@ -900,7 +888,7 @@ void setOLEDFrame(const uint8_t* artBuf, const String& ticker) {
   oledTickTotal    = OLED_WIDTH + (int)ticker.length() * CHAR_W;
   oledTickActive   = (ticker.length() > 0);
 
-  Serial.printf_P(PSTR("[TICKER] setOLEDFrame ticker=\"%s\" total=%d\n"),
+  Serial.printf("[TICKER] setOLEDFrame ticker=\"%s\" total=%d\n",
                 ticker.c_str(), oledTickTotal);
 }
 
@@ -953,7 +941,7 @@ bool initE27ForRefresh() {
   unsigned long elapsed = millis() - lastE27RefreshMs;
   if (elapsed < E27_MIN_REFRESH_MS) {
     unsigned long wait = E27_MIN_REFRESH_MS - elapsed;
-    Serial.printf_P(PSTR("[E27] attente refresh %lums\n"), wait);
+    Serial.printf("[E27] attente refresh %lums\n", wait);
     delay(wait);
   }
 
@@ -964,7 +952,7 @@ bool initE27ForRefresh() {
   ESP.wdtFeed();
 
   if (epd27.Init() != 0) {
-    Serial.println(F("[E27] Init failed"));
+    Serial.println("[E27] Init failed");
     SPI.endTransaction();
     SPI.end();
     lastScreenWasSPI = false;
@@ -988,7 +976,7 @@ bool displayE27Buffer(const uint8_t* buf) {
   oledReady = false;
 
   lastE27RefreshMs = millis();
-  Serial.println(F("[E27] displayed"));
+  Serial.println("[E27] displayed");
   return true;
 }
 
@@ -998,7 +986,7 @@ void displayKeyMaterialOnce() {
   String privHex = bytesToHex(privateKey, 32);
 
   // NE PAS imprimer la clé privée sur Serial — reste strictement dans l'EEPROM
-  Serial.println(F("[KEYS] Affichage clé publique (une seule fois)"));
+  Serial.println("[KEYS] Affichage clé publique (une seule fois)");
   Serial.println("[KEYS] PubKey: " + pubHex);
 
   // ── OLED : clé publique ──
@@ -1044,9 +1032,9 @@ void displayKeyMaterialOnce() {
     free(buf);
   }
 
-  Serial.println(F("[KEYS] Clés affichées — 60s pour noter"));
+  Serial.println("[KEYS] Clés affichées — 60s pour noter");
   delay(60000);
-  Serial.println(F("[KEYS] Délai écoulé"));
+  Serial.println("[KEYS] Délai écoulé");
 }
 
 // ─── QR ONBOARDING ─────────────────────────────────────────────────────────
@@ -1068,12 +1056,12 @@ void displayOnboardingOLED(const String& code, const String& mac) {
   macShort.toUpperCase();
   oled.println("MAC:" + macShort);
   oled.display();
-  Serial.println(F("[OLED] onboarding displayed"));
+  Serial.println("[OLED] onboarding displayed");
 }
 
 void displayOnboardingE27(const String& onboardUrl, const String& code, const String& mac) {
   uint8_t* buf = (uint8_t*)malloc(E27_BUF_SIZE);
-  if (!buf) { Serial.println(F("[E27] onboarding malloc failed")); return; }
+  if (!buf) { Serial.println("[E27] onboarding malloc failed"); return; }
   memset(buf, 0xFF, E27_BUF_SIZE);
 
   QRCode qrcode;
@@ -1117,7 +1105,7 @@ void displayOnboardingE27(const String& onboardUrl, const String& code, const St
 
   displayE27Buffer(buf);
   free(buf);
-  Serial.println(F("[E27] onboarding displayed"));
+  Serial.println("[E27] onboarding displayed");
 }
 
 // ─── ACK ───────────────────────────────────────────────────────────────────
@@ -1127,7 +1115,7 @@ bool ackFrame(const String& frameId, const char* screen) {
   String body = "{\"deviceId\":\"" + deviceId + "\",\"frameId\":\"" + frameId + "\",\"screen\":\"" + String(screen) + "\"}";
   String resp;
   bool ok = httpPost("/api/ack-frame", body, resp);
-  Serial.printf_P(PSTR("[ACK] frameId=%s → %s\n"), frameId.c_str(), ok ? "OK" : "FAIL");
+  Serial.printf("[ACK] frameId=%s → %s\n", frameId.c_str(), ok ? "OK" : "FAIL");
   return ok;
 }
 
@@ -1146,18 +1134,18 @@ bool doRegister() {
     "\"ownedHashes\":" + ownedHashes + "}";
 
   String resp;
-  Serial.printf_P(PSTR("[REGISTER] heap avant: %u\n"), ESP.getFreeHeap());
+  Serial.printf("[REGISTER] heap avant: %u\n", ESP.getFreeHeap());
 
   if (!httpPost("/api/register", body, resp)) {
-    Serial.println(F("[REGISTER] Echec HTTP"));
+    Serial.println("[REGISTER] Echec HTTP");
     return false;
   }
 
-  Serial.printf_P(PSTR("[REGISTER] heap après: %u\n"), ESP.getFreeHeap());
+  Serial.printf("[REGISTER] heap après: %u\n", ESP.getFreeHeap());
 
   DynamicJsonDocument doc(768);
   if (deserializeJson(doc, resp)) {
-    Serial.println(F("[REGISTER] JSON error"));
+    Serial.println("[REGISTER] JSON error");
     return false;
   }
 
@@ -1179,16 +1167,16 @@ bool doRegister() {
     displayOnboardingE27(onboardUrl, pairCode, mac);
 
     setOnboardingShown();
-    Serial.println(F("[REGISTER] Onboarding affiché. En attente d'appairage..."));
+    Serial.println("[REGISTER] Onboarding affiché. En attente d'appairage...");
 
   } else if (!paired) {
     // Boots suivants non appairés : ré-afficher QR (clé publique déjà vue)
-    Serial.println(F("[REGISTER] Non appairé — ré-affichage QR code..."));
+    Serial.println("[REGISTER] Non appairé — ré-affichage QR code...");
     String onboardUrl = String(SERVER_URL) + "/onboard?code=" + pairCode;
     displayOnboardingOLED(pairCode, mac);
     displayOnboardingE27(onboardUrl, pairCode, mac);
   } else {
-    Serial.println(F("[REGISTER] Déjà appairé"));
+    Serial.println("[REGISTER] Déjà appairé");
   }
 
   return true;
@@ -1198,17 +1186,12 @@ bool doRegister() {
 
 
 // ─── FETCH FRAME OLED ──────────────────────────────────────────────────────
-// Même pattern que E27 : fetch binaire séparé via /api/pull-frame. Tampon de 1 Ko : alloué AVANT le TLS (petit), libéré avant l'ACK.
+// Même pattern que E27 : fetch binaire séparé via /api/pull-frame
 bool doFetchFrameOLED(const String& frameId, const String& frameSource) {
   logHeapState("FETCHFRAME-OLED-BEFORE");
   const uint32_t blockBefore = ESP.getMaxFreeBlockSize();
 
-  uint8_t* oledBuf = (uint8_t*)malloc(OLED_BUF_SIZE);
-  if (!oledBuf) {
-    Serial.println(F("[FETCHFRAME-OLED] malloc failed"));
-    noteNet(false, blockBefore, "malloc OLED");
-    return false;
-  }
+  uint8_t* oledBuf = g_e27Buf;   // statique, PARTAGÉ avec la frame e-ink (jamais utilisés en même temps : doPull est séquentiel) — aucun malloc avant le TLS
   memset(oledBuf, 0x00, OLED_BUF_SIZE);
 
   {
@@ -1220,8 +1203,7 @@ bool doFetchFrameOLED(const String& frameId, const String& frameSource) {
     String url = String(SERVER_URL) + "/api/pull-frame?deviceId=" + deviceId
                  + "&screen=" + String(SCREEN_OLED) + "&fmt=bin";
     if (!http.begin(client, url)) {
-      Serial.println(F("[FETCHFRAME-OLED] begin() failed"));
-      free(oledBuf);
+      Serial.println("[FETCHFRAME-OLED] begin() failed");
       noteNet(false, blockBefore, "begin OLED");
       return false;
     }
@@ -1229,19 +1211,17 @@ bool doFetchFrameOLED(const String& frameId, const String& frameSource) {
     http.useHTTP10(true);
 
     int code = http.GET();
-    Serial.printf_P(PSTR("[HTTP GET] /api/pull-frame (OLED) → %d\n"), code);
+    Serial.printf("[HTTP GET] /api/pull-frame (OLED) → %d\n", code);
     noteNet(code > 0, blockBefore, "GET pull-frame OLED");   // code <= 0 : connexion TLS impossible (mémoire, Wi-Fi) ; un 4xx/5xx n'est pas un souci de tas
 
     if (code == 404) {
       http.end();
-      Serial.println(F("[FETCHFRAME-OLED] Pas de frame"));
-      free(oledBuf);
+      Serial.println("[FETCHFRAME-OLED] Pas de frame");
       return true;
     }
     if (code != 200) {
       http.end();
-      Serial.printf_P(PSTR("[FETCHFRAME-OLED] HTTP error: %d\n"), code);
-      free(oledBuf);
+      Serial.printf("[FETCHFRAME-OLED] HTTP error: %d\n", code);
       return false;
     }
 
@@ -1261,23 +1241,21 @@ bool doFetchFrameOLED(const String& frameId, const String& frameSource) {
     size_t bRead = readFull(stream, oledBuf, OLED_BUF_SIZE);
     http.end();
 
-    Serial.printf_P(PSTR("[FETCHFRAME-OLED] lu=%u expected=%u\n"), bRead, OLED_BUF_SIZE);
+    Serial.printf("[FETCHFRAME-OLED] lu=%u expected=%u\n", bRead, OLED_BUF_SIZE);
 
     if (bRead != OLED_BUF_SIZE) {
-      Serial.println(F("[FETCHFRAME-OLED] lecture incomplète"));
-      free(oledBuf);
+      Serial.println("[FETCHFRAME-OLED] lecture incomplète");
       return false;
     }
   }
   // TLS fermé
 
   if (!displayOLED(oledBuf, OLED_BUF_SIZE)) {
-    Serial.println(F("[FETCHFRAME-OLED] display failed — frame conservée serveur"));
-    free(oledBuf);
+    Serial.println("[FETCHFRAME-OLED] display failed — frame conservée serveur");
     return false;
   }
 
-  // ── Composition du ticker ───────────────────────────────────────────────
+  // ── Composition du ticker ────────────────────────────────────────────────────
   // Format : "TITRE  |  ARTISTE  #N  DD/MM HH:MM"
   // Toujours calculé même si certains champs sont vides.
   {
@@ -1300,7 +1278,6 @@ bool doFetchFrameOLED(const String& frameId, const String& frameSource) {
     saveOLEDFrameToEEPROM(oledBuf, ticker);
   }
 
-  free(oledBuf);  // le buffer local est libéré ; oledArtBuf (global) garde sa copie
 
   lastFrameIdOLED       = frameId;
   hasDisplayedFrame     = true;
@@ -1308,48 +1285,20 @@ bool doFetchFrameOLED(const String& frameId, const String& frameSource) {
   pendingCandidateId    = "";
   ackFrame(frameId, SCREEN_OLED);
 
-  Serial.printf_P(PSTR("[FETCHFRAME-OLED] ✅ frameId=%s source=%s\n"),
+  Serial.printf("[FETCHFRAME-OLED] ✅ frameId=%s source=%s\n",
                 frameId.c_str(), frameSource.c_str());
   logHeapState("FETCHFRAME-OLED-AFTER");
   return true;
 }
 
 // ─── FETCH FRAME E27 ───────────────────────────────────────────────────────
-// Le tampon e-ink (5 808 o) ne doit JAMAIS vivre pendant une connexion TLS (BearSSL a besoin de presque tout le tas) :
-//   1. le flux est écrit dans un fichier LittleFS par morceaux de 256 o (aucun gros tampon pendant le TLS) ;
-//   2. une fois le TLS FERMÉ, le tampon est alloué, rempli depuis le fichier (puis le fichier est effacé), le cartel est gravé et l'écran rafraîchi ;
-//   3. le tampon est libéré AVANT l'ACK (autre connexion TLS).
-// Sans système de fichiers (IDE : Flash Size sans FS), ancien chemin : malloc avant le TLS (moins robuste).
-extern podanimesp::State g_anim;                       // défini plus bas (état de l'animation résidente) ; fsOk = LittleFS monté
-static const char* E27_TMP = "/e27.tmp";
-
 bool doFetchFrameE27(const String& frameId, const String& frameSource) {
   logHeapState("FETCHFRAME-E27-BEFORE");
   const uint32_t blockBefore = ESP.getMaxFreeBlockSize();
 
-  bool useFile = g_anim.fsOk;
-  File tmp;
-  if (useFile) {
-    tmp = LittleFS.open(E27_TMP, "w");
-    if (!tmp) { Serial.println(F("[FETCHFRAME-E27] fichier temporaire impossible — repli sur la RAM")); useFile = false; }
-  }
-  uint8_t* e27Buf = nullptr;
-  if (!useFile) {
-    e27Buf = (uint8_t*)malloc(E27_BUF_SIZE);
-    if (!e27Buf) {
-      Serial.println(F("[FETCHFRAME-E27] malloc failed"));
-      noteNet(false, blockBefore, "malloc E27");
-      return false;
-    }
-    memset(e27Buf, 0xFF, E27_BUF_SIZE);
-  }
-  auto cleanup = [&]() {
-    if (tmp) tmp.close();
-    if (useFile && LittleFS.exists(E27_TMP)) LittleFS.remove(E27_TMP);
-    if (e27Buf) { free(e27Buf); e27Buf = nullptr; }
-  };
+  uint8_t* e27Buf = g_e27Buf;   // statique : plus de malloc de 5,8 Ko juste avant la connexion TLS
+  memset(e27Buf, 0xFF, E27_BUF_SIZE);
 
-  size_t bRead = 0;
   {
     WiFiClientSecure client;
     client.setInsecure();
@@ -1359,8 +1308,7 @@ bool doFetchFrameE27(const String& frameId, const String& frameSource) {
     String url = String(SERVER_URL) + "/api/pull-frame?deviceId=" + deviceId
                  + "&screen=" + String(SCREEN_E27) + "&fmt=bin";
     if (!http.begin(client, url)) {
-      Serial.println(F("[FETCHFRAME-E27] begin() failed"));
-      cleanup();
+      Serial.println("[FETCHFRAME-E27] begin() failed");
       noteNet(false, blockBefore, "begin E27");
       return false;
     }
@@ -1368,70 +1316,44 @@ bool doFetchFrameE27(const String& frameId, const String& frameSource) {
     http.useHTTP10(true);
 
     int code = http.GET();
-    Serial.printf_P(PSTR("[HTTP GET] /api/pull-frame (E27) → %d\n"), code);
-    noteNet(code > 0, blockBefore, "GET pull-frame E27");   // code <= 0 : TLS impossible (mémoire, Wi-Fi)
+    Serial.printf("[HTTP GET] /api/pull-frame (E27) → %d\n", code);
+    noteNet(code > 0, blockBefore, "GET pull-frame E27");   // code <= 0 : TLS impossible (le tampon E27 de 5,8 Ko est pris AVANT la connexion : le plus exposé)
 
     if (code == 404) {
       http.end();
-      Serial.println(F("[FETCHFRAME-E27] Pas de frame"));
-      cleanup();
+      Serial.println("[FETCHFRAME-E27] Pas de frame");
       return true;
     }
     if (code != 200) {
       http.end();
-      Serial.printf_P(PSTR("[FETCHFRAME-E27] HTTP error: %d\n"), code);
-      cleanup();
+      Serial.printf("[FETCHFRAME-E27] HTTP error: %d\n", code);
       return false;
     }
+
+    auto readFull = [](WiFiClient* s, uint8_t* dst, size_t len) -> size_t {
+      size_t total = 0;
+      unsigned long t0 = millis();
+      while (total < len && millis() - t0 < 15000) {
+        if (s->available()) {
+          size_t got = s->readBytes(dst + total, len - total);
+          if (got > 0) total += got;
+        } else { delay(10); }
+      }
+      return total;
+    };
 
     WiFiClient* stream = http.getStreamPtr();
-    unsigned long t0 = millis();
-    if (useFile) {
-      uint8_t chunk[256];                              // un flux TLS rend souvent MOINS que demandé : on boucle jusqu'au compte exact (readFull)
-      while (bRead < E27_BUF_SIZE && millis() - t0 < 15000) {
-        if (stream->available()) {
-          size_t want = E27_BUF_SIZE - bRead;
-          if (want > sizeof(chunk)) want = sizeof(chunk);
-          size_t got = stream->readBytes(chunk, want);
-          if (got > 0) {
-            if (tmp.write(chunk, got) != got) { Serial.println(F("[FETCHFRAME-E27] écriture flash impossible")); break; }
-            bRead += got;
-          }
-        } else { delay(10); }
-      }
-    } else {
-      while (bRead < E27_BUF_SIZE && millis() - t0 < 15000) {
-        if (stream->available()) {
-          size_t got = stream->readBytes(e27Buf + bRead, E27_BUF_SIZE - bRead);
-          if (got > 0) bRead += got;
-        } else { delay(10); }
-      }
-    }
+    size_t bRead = readFull(stream, e27Buf, E27_BUF_SIZE);
     http.end();
 
-    Serial.printf_P(PSTR("[FETCHFRAME-E27] lu=%u expected=%u (%s)\n"), bRead, E27_BUF_SIZE, useFile ? "via flash" : "via RAM");
-  }
-  // TLS fermé : le tas est de nouveau disponible
-  if (tmp) tmp.close();
+    Serial.printf("[FETCHFRAME-E27] lu=%u expected=%u\n", bRead, E27_BUF_SIZE);
 
-  if (bRead != E27_BUF_SIZE) {
-    Serial.println(F("[FETCHFRAME-E27] lecture incomplète"));
-    cleanup();
-    return false;
-  }
-
-  if (useFile) {
-    e27Buf = (uint8_t*)malloc(E27_BUF_SIZE);           // APRÈS le TLS : aucune connexion ouverte
-    File rd = e27Buf ? LittleFS.open(E27_TMP, "r") : File();
-    size_t got = (e27Buf && rd) ? rd.read(e27Buf, E27_BUF_SIZE) : 0;
-    if (rd) rd.close();
-    LittleFS.remove(E27_TMP);
-    if (!e27Buf || got != E27_BUF_SIZE) {
-      Serial.println(F("[FETCHFRAME-E27] relecture de la flash impossible"));
-      cleanup();
+    if (bRead != E27_BUF_SIZE) {
+      Serial.println("[FETCHFRAME-E27] lecture incomplète");
       return false;
     }
   }
+  // TLS fermé
 
   // ── Cartel e-ink PAYSAGE (câble à gauche) : brûler AVANT l'affichage ────────
   // Bande supérieure paysage : timestamp + "Block #N"
@@ -1439,7 +1361,7 @@ bool doFetchFrameE27(const String& frameId, const String& frameSource) {
   // Texte rotationné 90° sens horaire pour être lisible en paysage.
   if (pendingWorkTitle.length() > 0 || pendingArtistName.length() > 0
       || pendingDisplayTs.length() > 0 || currentBlockIndex >= 0) {
-    Serial.printf_P(PSTR("[E27] Cartel landscape: ts=%s artist=%s title=%s bloc=%d\n"),
+    Serial.printf("[E27] Cartel landscape: ts=%s artist=%s title=%s bloc=%d\n",
                   pendingDisplayTs.c_str(), pendingArtistName.c_str(),
                   pendingWorkTitle.c_str(), currentBlockIndex);
     burnEinkCartel_landscape(e27Buf, pendingWorkTitle, pendingArtistName,
@@ -1447,13 +1369,10 @@ bool doFetchFrameE27(const String& frameId, const String& frameSource) {
   }
 
   if (!displayE27Buffer(e27Buf)) {
-    Serial.println(F("[FETCHFRAME-E27] display failed — frame conservée serveur"));
-    cleanup();
+    Serial.println("[FETCHFRAME-E27] display failed — frame conservée serveur");
     return false;
   }
 
-  free(e27Buf);                                        // libéré AVANT l'ACK (nouvelle connexion TLS)
-  e27Buf = nullptr;
 
   lastFrameIdE27        = frameId;
   hasDisplayedFrame     = true;
@@ -1461,7 +1380,7 @@ bool doFetchFrameE27(const String& frameId, const String& frameSource) {
   pendingCandidateId    = "";
   ackFrame(frameId, SCREEN_E27);
 
-  Serial.printf_P(PSTR("[FETCHFRAME-E27] ✅ frameId=%s source=%s\n"),
+  Serial.printf("[FETCHFRAME-E27] ✅ frameId=%s source=%s\n",
                 frameId.c_str(), frameSource.c_str());
   logHeapState("FETCHFRAME-E27-AFTER");
   return true;
@@ -1495,7 +1414,7 @@ struct BenchOledPresenter {
     Wire.setClock(400000);
     delay(10);
     oledReady = oled.begin(SSD1306_SWITCHCAPVCC, 0x3C);
-    if (!oledReady) Serial.println(F("[BENCH] OLED : init impossible"));
+    if (!oledReady) Serial.println("[BENCH] OLED : init impossible");
   }
   template <class Hook> bool play(const podbench::Clip& c, uint8_t* cur, Hook&& hook) {
     BenchOledSink sink;
@@ -1545,7 +1464,7 @@ bool doPull() {
 
     String url = String(SERVER_URL) + "/api/pull?deviceId=" + deviceId;
     if (!http.begin(client, url)) {
-      Serial.println(F("[PULL] begin() failed"));
+      Serial.println("[PULL] begin() failed");
       noteNet(false, blockBefore, "begin pull");
       return true;
     }
@@ -1553,7 +1472,7 @@ bool doPull() {
     http.useHTTP10(true);
 
     int code = http.GET();
-    Serial.printf_P(PSTR("[HTTP GET] /api/pull → %d\n"), code);
+    Serial.printf("[HTTP GET] /api/pull → %d\n", code);
     noteNet(code > 0, blockBefore, "GET pull");   // code <= 0 : connexion TLS impossible ; un 4xx/5xx n'est pas un souci de tas
 
     if (code == 429) {
@@ -1563,7 +1482,7 @@ bool doPull() {
       DynamicJsonDocument rateDoc(256);
       if (deserializeJson(rateDoc, rresp) == DeserializationError::Ok)
         retrySec = max(1, (int)(rateDoc["retryAfter"] | 60));
-      Serial.printf_P(PSTR("[PULL] 429 retryAfter=%ds\n"), retrySec);
+      Serial.printf("[PULL] 429 retryAfter=%ds\n", retrySec);
       unsigned long retryMs = (unsigned long)retrySec * 1000UL;
       if (retryMs > PULL_INTERVAL) retryMs = PULL_INTERVAL;
       lastPullMs = millis() - (PULL_INTERVAL - retryMs);
@@ -1572,7 +1491,7 @@ bool doPull() {
 
     if (code != 200) {
       http.end();
-      Serial.printf_P(PSTR("[PULL] HTTP error: %d\n"), code);
+      Serial.printf("[PULL] HTTP error: %d\n", code);
       return true;
     }
 
@@ -1582,7 +1501,7 @@ bool doPull() {
     http.end();
 
     if (err) {
-      Serial.print(F("[PULL] JSON error: "));
+      Serial.print("[PULL] JSON error: ");
       Serial.println(err.c_str());
       return true;
     }
@@ -1623,7 +1542,7 @@ bool doPull() {
         else                   pendingArtistName = "";
         if (strlen(dt) > 0)    pendingDisplayTs  = String(dt);
         if (bi >= 0)           currentBlockIndex = bi;
-        Serial.printf_P(PSTR("[PULL] cartel: title=%s artist=%s ts=%s bloc=%d\n"),
+        Serial.printf("[PULL] cartel: title=%s artist=%s ts=%s bloc=%d\n",
                       wt, an, dt, bi);
       }
     }
@@ -1688,7 +1607,7 @@ bool doPull() {
     // Activité détectée (frame ou candidat) → retour au rythme nominal
     nextPullIntervalMs = PULL_INTERVAL;
   }
-  Serial.printf_P(PSTR("[PULL] nextInterval=%lus (retryAfter=%d)\n"),
+  Serial.printf("[PULL] nextInterval=%lus (retryAfter=%d)\n",
                 nextPullIntervalMs / 1000UL, pullRetryAfter);
 
   // ── Mise à jour état chaîne ──
@@ -1696,7 +1615,7 @@ bool doPull() {
     currentBlockHash  = newBlockHash;
     currentBlockIndex = newBlockIndex;
     saveBlockHashToEEPROM(currentBlockHash);
-    Serial.printf_P(PSTR("[PULL] Nouveau bloc #%d hash=%s...\n"),
+    Serial.printf("[PULL] Nouveau bloc #%d hash=%s...\n",
                   currentBlockIndex, currentBlockHash.substring(0, 12).c_str());
   }
 
@@ -1707,7 +1626,7 @@ bool doPull() {
 
   // ── Pas de frame ──
   if (newFrameSource == "none" || newFrameId.length() == 0) {
-    Serial.println(F("[PULL] Aucune frame"));
+    Serial.println("[PULL] Aucune frame");
     logHeapState("PULL-DONE-NONE");
     return true;
   }
@@ -1715,11 +1634,11 @@ bool doPull() {
   // ── Frame déjà affichée (id mémorisé PAR écran ; écran absent du JSON = e-ink, comme le dispatch plus bas) ──
   const bool forOLED = (newScreen == SCREEN_OLED);
   if (newFrameId == (forOLED ? lastFrameIdOLED : lastFrameIdE27)) {
-    Serial.println(F("[PULL] Frame déjà affichée"));
+    Serial.println("[PULL] Frame déjà affichée");
     // Une frame du consensus déjà affichée mais encore EN ATTENTE sur le serveur = son ACK s'est perdu. Elle resterait en tête de file (jusqu'à 2 h pour une
     // animation) et masquerait les frames de l'autre écran : on la ré-acquitte (1 requête, seulement dans ce cas anormal). Une frame personnelle n'est jamais supprimée par l'ACK.
     if (newFrameSource == "consensus") {
-      Serial.println(F("[PULL] frame du consensus encore en attente malgré l'affichage → ré-ACK"));
+      Serial.println("[PULL] frame du consensus encore en attente malgré l'affichage → ré-ACK");
       ackFrame(newFrameId, forOLED ? SCREEN_OLED : SCREEN_E27);
     }
     if (nextPullIntervalMs < (unsigned long)pullRetryAfter * 1000UL && newCandId.length() == 0) nextPullIntervalMs = (unsigned long)pullRetryAfter * 1000UL;   // image déjà affichée : rythme de repos du serveur (quota Redis)
@@ -1729,7 +1648,7 @@ bool doPull() {
 
   // ── Dispatch vers le bon fetch ──
   if (newScreen == SCREEN_OLED) {
-    Serial.printf_P(PSTR("[PULL] Nouvelle frame OLED frameId=%s source=%s → fetch\n"),
+    Serial.printf("[PULL] Nouvelle frame OLED frameId=%s source=%s → fetch\n",
                   newFrameId.c_str(), newFrameSource.c_str());
     const bool shownOLED = doFetchFrameOLED(newFrameId, newFrameSource) && lastFrameIdOLED == newFrameId;
     if (shownOLED) {
@@ -1741,7 +1660,7 @@ bool doPull() {
   }
 
   if (newScreen == SCREEN_E27) {
-    Serial.printf_P(PSTR("[PULL] Nouvelle frame E27 frameId=%s source=%s → fetch\n"),
+    Serial.printf("[PULL] Nouvelle frame E27 frameId=%s source=%s → fetch\n",
                   newFrameId.c_str(), newFrameSource.c_str());
     doFetchFrameE27(newFrameId, newFrameSource);
     return true;
@@ -1750,7 +1669,7 @@ bool doPull() {
   // Screen absent du JSON → on essaie E27 par défaut si frameSource != none
   // (cas où le serveur ne retourne pas le champ screen)
   if (newScreen.length() == 0 && newFrameSource != "none") {
-    Serial.println(F("[PULL] screen absent — tentative E27 par défaut"));
+    Serial.println("[PULL] screen absent — tentative E27 par défaut");
     doFetchFrameE27(newFrameId, newFrameSource);
     return true;
   }
@@ -1781,7 +1700,7 @@ bool doObsConfirm() {
   String resp;
   bool ok = httpPost("/api/obs-confirm", body, resp);
 
-  Serial.printf_P(PSTR("[OBS] confirm → %s resp: %s\n"), ok ? "OK" : "FAIL", resp.c_str());
+  Serial.printf("[OBS] confirm → %s resp: %s\n", ok ? "OK" : "FAIL", resp.c_str());
   pendingObsHashes = "";   // toujours vider, même en cas d'échec
   pendingObsTarget = "";
   return ok;
@@ -1813,7 +1732,7 @@ static void oledBufRestoreAfterTLS() {
   if (oledArtBuf) {
     memcpy(oledArtBuf, _oledSave, OLED_BUF_SIZE);
   } else {
-    Serial.println(F("[VALIDATE] malloc oledArtBuf restore failed — ticker suspendu"));
+    Serial.println("[VALIDATE] malloc oledArtBuf restore failed — ticker suspendu");
   }
   free(_oledSave);
   _oledSave = nullptr;
@@ -1821,30 +1740,23 @@ static void oledBufRestoreAfterTLS() {
 
 // ─── VALIDATION RÉELLE (vote v2) ─────────────────────────────────────────────
 // ⚠ NON TESTÉ sur le matériel. Le serveur annonce le candidat (écran, taille, SHA-256) ; l'ESP lit le contenu BRUT en flux, recalcule hash + métriques entières, décide d'un verdict objectif,
-// le signe (Ed25519) et vote. Il relit un candidat de N'IMPORTE QUEL écran (pas seulement les siens) : le tampon que demandent l'OLED (1 024 o) et l'e-ink 2,9" (4 736 o) est alloué
-// (malloc) juste avant la requête et libéré aussitôt après (v2.5 : plus de tampon statique).
+// le signe (Ed25519) et vote. Il relit un candidat de N'IMPORTE QUEL écran (pas seulement les siens) : le tampon que demandent l'OLED (1 024 o) et l'e-ink 2,9" (4 736 o) est g_e27Buf
+// (5 808 o, statique, libre à cet instant).
 bool doValidateV2(const String& candidateId, const String& screenName, size_t bytes, const String& announcedHash) {
   PodScreenKind kind;
   if (!podKindFromName(screenName, &kind)) { Serial.println("[VALIDATE2] écran inconnu: " + screenName); return false; }
   logHeapState("VALIDATE2-BEFORE");
   PodCheck chk;
-  uint8_t* scratch = nullptr;
-  size_t scratchLen = 0;
-  if (kind == POD_OLED096 || kind == POD_EINK29BWR) {
-    scratchLen = POD_SCRATCH_BYTES;
-    scratch = (uint8_t*)malloc(scratchLen);
-    if (!scratch) { Serial.println(F("[VALIDATE2] malloc scratch impossible")); return false; }
-  }
-  bool ok = podFetchAndCheck(String(SERVER_URL) + "/api/candidate-frame?candidateId=" + candidateId, kind, bytes, scratch, scratchLen, &chk);
-  free(scratch);
+  bool ok = podFetchAndCheck(String(SERVER_URL) + "/api/candidate-frame?candidateId=" + candidateId, kind, bytes,
+                             g_e27Buf, (size_t)E27_BUF_SIZE, &chk);
   if (!ok) {
-    Serial.printf_P(PSTR("[VALIDATE2] lecture/calcul impossible (http=%d, %u/%u octets)\n"), chk.http, (unsigned)chk.bytes, (unsigned)bytes);
+    Serial.printf("[VALIDATE2] lecture/calcul impossible (http=%d, %u/%u octets)\n", chk.http, (unsigned)chk.bytes, (unsigned)bytes);
     return false;
   }
 
   bool accept = false;
   const char* reason = podVerdict(chk, announcedHash, &accept);
-  Serial.printf_P(PSTR("[VALIDATE2] %s %u o en %lu ms | e=%lu t=%lu r=%lu s=%lu | verdict=%s %s\n"), screenName.c_str(), (unsigned)chk.bytes, (unsigned long)chk.ms,
+  Serial.printf("[VALIDATE2] %s %u o en %lu ms | e=%lu t=%lu r=%lu s=%lu | verdict=%s %s\n", screenName.c_str(), (unsigned)chk.bytes, (unsigned long)chk.ms,
                 (unsigned long)chk.m.e, (unsigned long)chk.m.t, (unsigned long)chk.m.r, (unsigned long)chk.m.s, accept ? "accept" : "reject", reason);
   Serial.println(String("[VALIDATE2] hash=") + chk.hash);
 
@@ -1861,13 +1773,13 @@ bool doValidateV2(const String& candidateId, const String& screenName, size_t by
   bool vOk = httpPost("/api/validation-result", body, vResp);
   bool mined = false;
   if (vOk) {
-    Serial.println(F("[VALIDATE2] Vote OK"));
-    if (vResp.indexOf("\"blockMined\":true") >= 0) { Serial.println(F("[VALIDATE2] BLOC MINE")); mined = true; }
-    if (vResp.indexOf("\"rejectObserved\":true") >= 0) Serial.println(F("[VALIDATE2] refus enregistré par le serveur (non bloquant)"));
+    Serial.println("[VALIDATE2] Vote OK");
+    if (vResp.indexOf("\"blockMined\":true") >= 0) { Serial.println("[VALIDATE2] BLOC MINE"); mined = true; }
+    if (vResp.indexOf("\"rejectObserved\":true") >= 0) Serial.println("[VALIDATE2] refus enregistré par le serveur (non bloquant)");
   } else {
     Serial.println("[VALIDATE2] Echec vote (403 signature, 422 hash/métriques différents du serveur) : " + vResp);
     // 403 Signature invalide → clé publique désynchronisée : on se ré-enregistre pour la renvoyer (comme le chemin v1), le prochain cycle votera.
-    if (vResp.indexOf("Signature") >= 0) { Serial.println(F("[VALIDATE2] Re-register pour resynchroniser publicKey...")); doRegister(); }
+    if (vResp.indexOf("Signature") >= 0) { Serial.println("[VALIDATE2] Re-register pour resynchroniser publicKey..."); doRegister(); }
   }
   logHeapState("VALIDATE2-AFTER");
   return mined;
@@ -1886,7 +1798,7 @@ bool doValidate() {
   bool ok = httpGet("/api/validate-candidate?deviceId=" + deviceId, resp);
 
   if (!ok || resp.length() == 0) {
-    Serial.println(F("[VALIDATE] Echec HTTP"));
+    Serial.println("[VALIDATE] Echec HTTP");
     pendingCandidateId = "";
     oledBufRestoreAfterTLS();
     return false;
@@ -1897,21 +1809,21 @@ bool doValidate() {
   resp = "";
 
   if (err) {
-    Serial.print(F("[VALIDATE] JSON err: ")); Serial.println(err.c_str());
+    Serial.print("[VALIDATE] JSON err: "); Serial.println(err.c_str());
     pendingCandidateId = "";
     oledBufRestoreAfterTLS();
     return false;
   }
 
   if (doc["alreadyVoted"] | false) {
-    Serial.println(F("[VALIDATE] Déjà voté"));
+    Serial.println("[VALIDATE] Déjà voté");
     pendingCandidateId = "";
     oledBufRestoreAfterTLS();
     return false;
   }
 
   if (doc["candidate"].isNull()) {
-    Serial.println(F("[VALIDATE] Pas de candidat actif"));
+    Serial.println("[VALIDATE] Pas de candidat actif");
     pendingCandidateId = "";
     oledBufRestoreAfterTLS();
     return false;
@@ -1921,7 +1833,7 @@ bool doValidate() {
   String candidateId = cand["candidateId"] | "";
 
   if (candidateId.length() == 0) {
-    Serial.println(F("[VALIDATE] candidateId absent"));
+    Serial.println("[VALIDATE] candidateId absent");
     pendingCandidateId = "";
     oledBufRestoreAfterTLS();
     return false;
@@ -1940,7 +1852,7 @@ bool doValidate() {
   }
 
   float score = cand["score_server"] | 0.5f;
-  Serial.printf_P(PSTR("[VALIDATE] candidateId=%s score=%.3f\n"), candidateId.c_str(), score);
+  Serial.printf("[VALIDATE] candidateId=%s score=%.3f\n", candidateId.c_str(), score);
 
   String signature = signED25519(candidateId, score);
   char   scoreStr[8];
@@ -1961,21 +1873,21 @@ bool doValidate() {
   bool blockMined = false;
 
   if (vOk) {
-    Serial.println(F("[VALIDATE] Vote OK"));
+    Serial.println("[VALIDATE] Vote OK");
     if (vResp.indexOf("\"blockMined\":true") >= 0) {
-      Serial.println(F("[VALIDATE] BLOC MINE"));
+      Serial.println("[VALIDATE] BLOC MINE");
       blockMined = true;
     }
   } else {
-    Serial.println(F("[VALIDATE] Echec vote"));
+    Serial.println("[VALIDATE] Echec vote");
     // 403 Signature invalide → clé publique désynchronisée sur le serveur.
     // Re-register immédiatement pour envoyer la clé publique correcte.
     // Le prochain cycle pull+validate votera avec succès.
     // (oledArtBuf est déjà libéré → heap disponible pour une 3e connexion TLS)
     if (vResp.indexOf("Signature") >= 0) {
-      Serial.println(F("[VALIDATE] Re-register pour resynchroniser publicKey..."));
+      Serial.println("[VALIDATE] Re-register pour resynchroniser publicKey...");
       doRegister();
-      Serial.println(F("[VALIDATE] Re-register terminé — retry au prochain cycle"));
+      Serial.println("[VALIDATE] Re-register terminé — retry au prochain cycle");
     }
   }
 
@@ -1988,24 +1900,24 @@ bool doValidate() {
 // ─── SETUP ─────────────────────────────────────────────────────────────────
 void setup() {
   Serial.begin(115200);
-  Serial.println(F("\n[BOOT] Proof-of-Draw multiscreen v2.0"));
+  Serial.println("\n[BOOT] Proof-of-Draw multiscreen v2.0");
 
   eepromInit();
 
   WiFi.mode(WIFI_STA);
   WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
-  Serial.print(F("[WIFI] Connexion"));
+  Serial.print("[WIFI] Connexion");
   int i = 0;
   while (WiFi.status() != WL_CONNECTED && i++ < 40) {
-    delay(500); Serial.print(F(".")); yield();
+    delay(500); Serial.print("."); yield();
   }
   Serial.println();
   Serial.println("[WIFI] IP: " + WiFi.localIP().toString());
-  Serial.printf_P(PSTR("[HEAP] après WiFi: %u bytes\n"), ESP.getFreeHeap());
+  Serial.printf("[HEAP] après WiFi: %u bytes\n", ESP.getFreeHeap());
 
   // Migration V1 → ED25519 réel
   if (EEPROM.read(EEPROM_FLAG_OFF) == 0x01) {
-    Serial.println(F("[KEYS] Clés V1 détectées — migration vers ED25519 réel"));
+    Serial.println("[KEYS] Clés V1 détectées — migration vers ED25519 réel");
     EEPROM.write(EEPROM_FLAG_OFF,       0x00);
     EEPROM.write(EEPROM_ONBOARDING_OFF, 0x00);
     EEPROM.commit();
@@ -2016,7 +1928,7 @@ void setup() {
     generateKeys();
   } else {
     loadKeysFromEEPROM();
-    Serial.println(F("[KEYS] Clés ED25519 chargées depuis EEPROM"));
+    Serial.println("[KEYS] Clés ED25519 chargées depuis EEPROM");
     Serial.println("[KEYS] PubKey: " + bytesToHex(publicKey, 32));
   }
 
@@ -2051,13 +1963,13 @@ void setup() {
       if (savedBuf) {
         String savedTicker = "";
         if (loadOLEDFrameFromEEPROM(savedBuf, savedTicker)) {
-          Serial.println(F("[BOOT] Restauration frame OLED depuis EEPROM"));
+          Serial.println("[BOOT] Restauration frame OLED depuis EEPROM");
           displayOLED(savedBuf, OLED_BUF_SIZE);     // affichage immédiat
           setOLEDFrame(savedBuf, savedTicker);       // démarre le ticker infini
         }
         free(savedBuf);  // local freed ; setOLEDFrame a copié dans oledArtBuf
       } else {
-        Serial.println(F("[BOOT] malloc EEPROM restore échoué — skip"));
+        Serial.println("[BOOT] malloc EEPROM restore échoué — skip");
       }
     }
 
@@ -2065,7 +1977,7 @@ void setup() {
     podanimesp::begin(g_anim);                      // flash LittleFS : une animation rangée reprend (le ticker reste éteint)
     if (g_anim.on) oledTickActive = false;
 
-    Serial.println(F("[BOOT] Premier pull immédiat..."));
+    Serial.println("[BOOT] Premier pull immédiat...");
     doPull();
   }
 
@@ -2091,12 +2003,12 @@ void loop() {
   // ── Attente appairage ──
   if (!paired) {
     if (now - lastPullMs >= 300000UL) {
-      Serial.println(F("[PAIRING] recheck register..."));
+      Serial.println("[PAIRING] recheck register...");
       bool wasPaired = paired;
       doRegister();
       lastPullMs = millis();
       if (!wasPaired && paired) {
-        Serial.println(F("[PAIRING] appairage détecté → restart"));
+        Serial.println("[PAIRING] appairage détecté → restart");
         delay(1000);
         ESP.restart();
       }
@@ -2112,7 +2024,7 @@ void loop() {
     lastPullMs = millis();
 
     if (pendingCandidateId.length() > 0 && pendingCandidateId != prevCandidateId) {
-      Serial.println(F("[LOOP] Nouveau candidat, reset timer validation"));
+      Serial.println("[LOOP] Nouveau candidat, reset timer validation");
       lastValidateMs = millis();
     }
   }
@@ -2141,7 +2053,7 @@ void loop() {
     // Pull immédiat uniquement si ce vote a déclenché le quorum
     // (inutile sinon — préserve le budget rate-limit pull)
     if (blockMined) {
-      Serial.println(F("[LOOP] Bloc miné — pull immédiat"));
+      Serial.println("[LOOP] Bloc miné — pull immédiat");
       delay(2000);  // laisse BearSSL libérer ses buffers TLS
       doPull();
       lastPullMs = millis();

@@ -18,10 +18,10 @@ const COPIES = {
   "pod_bench.h": ["esp8266/esp_tft1.8/pod_bench.h", "esp8266/esp_eink_2.7BW_OLED/pod_bench.h"],
   "pod_bench_esp.h": ["esp8266/esp_tft1.8/pod_bench_esp.h", "esp8266/esp_eink_2.7BW_OLED/pod_bench_esp.h"],
   "pod_anim_esp.h": ["esp8266/esp_tft1.8/pod_anim_esp.h", "esp8266/esp_eink_2.7BW_OLED/pod_anim_esp.h"],
-  // Validation réelle : déployée d'abord sur l'e-ink 2,9" BWR (P3) ; les autres firmwares suivent après l'essai matériel
-  "pod_metrics.h": ["esp8266/esp_eink_2.9BWR/pod_metrics.h"],
-  "pod_metrics_table.h": ["esp8266/esp_eink_2.9BWR/pod_metrics_table.h"],
-  "pod_vote_esp.h": ["esp8266/esp_eink_2.9BWR/pod_vote_esp.h"],
+  // Validation réelle : e-ink 2,9" BWR, TFT 1,8" et multiscreen (ESP8266)
+  "pod_metrics.h": ["esp8266/esp_eink_2.9BWR/pod_metrics.h", "esp8266/esp_tft1.8/pod_metrics.h", "esp8266/esp_eink_2.7BW_OLED/pod_metrics.h"],
+  "pod_metrics_table.h": ["esp8266/esp_eink_2.9BWR/pod_metrics_table.h", "esp8266/esp_tft1.8/pod_metrics_table.h", "esp8266/esp_eink_2.7BW_OLED/pod_metrics_table.h"],
+  "pod_vote_esp.h": ["esp8266/esp_eink_2.9BWR/pod_vote_esp.h", "esp8266/esp_tft1.8/pod_vote_esp.h", "esp8266/esp_eink_2.7BW_OLED/pod_vote_esp.h"],
 };
 module.exports = { MASTERS, COPIES };
 
