@@ -162,11 +162,32 @@ export function buildAnimVectors() {
     const ruleCode = codes[i % codes.length], accept = ruleCode === "ok", noCalc = ruleCode === "format" || ruleCode === "hash";
     const v: AnimVote = {
       deviceId: dev(), candidateId: uuid(), parentHash: h64(), metricsVersion: 2, rulesVersion: 2, clipHash: h64(), animRoot: h64(), saltedHash: h64(),
-      frames: ruleCode === "format" && i === 9 ? 0 : randInt(rng, 2, 64),   // frames = 0 : SEULE exception, un rejet `format` dont N est inconnu
+      frames: ruleCode === "format" ? 0 : randInt(rng, 2, 64),   // `format` ⇒ TOUJOURS 0 ; tous les autres motifs ⇒ 2..64 (6B1-FIX1)
       E: noCalc ? 0 : Math.floor(rng() * 1_000_001), T: noCalc ? 0 : Math.floor(rng() * 1_000_001), R: noCalc ? 0 : Math.floor(rng() * 1_000_001), S: noCalc ? 0 : Math.floor(rng() * 1_000_001),
       verdict: accept ? "accept" : "reject", ruleCode, vclass: VCLASS[i % 3],
     };
     push("avote", v.deviceId, v.candidateId, v.parentHash, v.metricsVersion, v.rulesVersion, v.clipHash, v.animRoot, v.saltedHash, v.frames, v.E, v.T, v.R, v.S, v.ruleCode, v.vclass, animVoteMessage(v));
+  }
+  // messages NON canoniques : un même rejet n'a qu'UNE représentation valide (6B1-FIX1) — TS et C++ doivent tous deux refuser
+  const bad: Array<Partial<AnimVote>> = [
+    { verdict: "reject", ruleCode: "format", frames: 5, E: 0, T: 0, R: 0, S: 0 },      // format avec N déclaré
+    { verdict: "reject", ruleCode: "format", frames: 2, E: 0, T: 0, R: 0, S: 0 },
+    { verdict: "reject", ruleCode: "format", frames: 64, E: 0, T: 0, R: 0, S: 0 },
+    { verdict: "reject", ruleCode: "format", frames: 0, E: 1, T: 0, R: 0, S: 0 },      // format avec métriques
+    { verdict: "reject", ruleCode: "format", frames: 0, E: 0, T: 0, R: 0, S: 7 },
+    { verdict: "reject", ruleCode: "hash", frames: 0, E: 0, T: 0, R: 0, S: 0 },        // hash avec N inconnu
+    { verdict: "reject", ruleCode: "hash", frames: 1, E: 0, T: 0, R: 0, S: 0 },
+    { verdict: "reject", ruleCode: "hash", frames: 65, E: 0, T: 0, R: 0, S: 0 },
+    { verdict: "reject", ruleCode: "hash", frames: 8, E: 1, T: 0, R: 0, S: 0 },        // hash avec métriques
+    { verdict: "reject", ruleCode: "static", frames: 0 }, { verdict: "reject", ruleCode: "noise", frames: 0 }, { verdict: "accept", ruleCode: "ok", frames: 0 }, { verdict: "reject", ruleCode: "rules", frames: 0 },
+    { verdict: "accept", ruleCode: "ok", frames: 1 }, { verdict: "accept", ruleCode: "ok", frames: 65 },
+    { verdict: "accept", ruleCode: "ok", frames: 10, E: 1_000_001 }, { verdict: "accept", ruleCode: "ok", frames: 10, S: 1_000_001 },
+    { verdict: "accept", ruleCode: "ok", frames: 10, metricsVersion: 1 }, { verdict: "accept", ruleCode: "ok", frames: 10, metricsVersion: 3 },
+    { verdict: "accept", ruleCode: "ok", frames: 10, rulesVersion: 1 }, { verdict: "accept", ruleCode: "ok", frames: 10, rulesVersion: 3 },
+  ];
+  for (const b of bad) {
+    const v: AnimVote = { deviceId: dev(), candidateId: uuid(), parentHash: h64(), metricsVersion: 2, rulesVersion: 2, clipHash: h64(), animRoot: h64(), saltedHash: h64(), frames: 12, E: 5, T: 6, R: 7, S: 8, verdict: "accept", ruleCode: "ok", vclass: "C0", ...b };
+    push("avotebad", v.deviceId, v.candidateId, v.parentHash, v.metricsVersion, v.rulesVersion, v.clipHash, v.animRoot, v.saltedHash, v.frames, v.E, v.T, v.R, v.S, v.ruleCode, v.vclass);
   }
   // bloc v2 : rulesVersion VARIABLE (1 = image fixe, 2 = animation) ; une valeur inconnue est refusée
   for (let i = 0; i < 12; i++) {

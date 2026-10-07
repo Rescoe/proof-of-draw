@@ -227,14 +227,29 @@ struct PodAnimVote {
   const char *deviceId, *candidateId, *parentHash;
   uint32_t metricsVersion, rulesVersion;
   const char *clipHash, *animRoot, *saltedHash;
-  uint32_t frames;               // 2..64 ; 0 SEULEMENT pour un rejet `format` dont N est inconnu
+  uint32_t frames;               // `format` ⇒ 0 (toujours) ; sinon 2..64
   uint32_t E, T, R, S;
   PodAnimRule rule;              // POD_ANIM_OK ⇔ accept
   const char* vclass;            // "C0" | "C1" | "C2"
 };
 
-/** pod-vote-v3-anim|deviceId|candidateId|parentHash|mv|rv|clipHash|animRoot|saltedHash|frames|E|T|R|S|verdict|ruleCode|vclass — longueur, ou −1 (tampon ≥ 512 octets conseillé). */
+/**
+ * REPRÉSENTATION UNIQUE de chaque rejet (6B1-FIX1) : `format` ⇒ frames = 0 et E = T = R = S = 0 ; `hash` ⇒ frames 2..64 et métriques nulles ; `static`, `noise`, `ok`, `rules` ⇒ frames 2..64.
+ * Versions : metricsVersion = 2 et rulesVersion = 2 ; métriques ≤ 10⁶. Identique à animVoteShapeOk() de lib/animV3.ts.
+ */
+static inline bool pod_anim_vote_valid(const PodAnimVote& v) {
+  if (v.metricsVersion != POD_METRICS_VERSION || v.rulesVersion != POD_ANIM_RULES_VERSION) return false;
+  if (v.E > 1000000UL || v.T > 1000000UL || v.R > 1000000UL || v.S > 1000000UL) return false;
+  const bool zero = v.E == 0 && v.T == 0 && v.R == 0 && v.S == 0;
+  const bool inRange = v.frames >= POD_ANIM_MIN_FRAMES && v.frames <= POD_ANIM_MAX_FRAMES;
+  if (v.rule == POD_ANIM_FORMAT) return v.frames == 0 && zero;
+  if (v.rule == POD_ANIM_HASH) return inRange && zero;
+  return inRange;
+}
+
+/** pod-vote-v3-anim|deviceId|candidateId|parentHash|mv|rv|clipHash|animRoot|saltedHash|frames|E|T|R|S|verdict|ruleCode|vclass — longueur, ou −1 (message non canonique ou tampon trop petit ; ≥ 512 octets conseillés). */
 static inline int pod_anim_vote_message(char* out, size_t cap, const PodAnimVote& v) {
+  if (!pod_anim_vote_valid(v)) return -1;
   PodOut o(out, cap);
   o.str("pod-vote-v3-anim|"); o.str(v.deviceId); o.ch('|'); o.str(v.candidateId); o.ch('|'); o.str(v.parentHash); o.ch('|');
   o.u64(v.metricsVersion); o.ch('|'); o.u64(v.rulesVersion); o.ch('|'); o.str(v.clipHash); o.ch('|'); o.str(v.animRoot); o.ch('|'); o.str(v.saltedHash); o.ch('|');

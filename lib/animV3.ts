@@ -120,7 +120,7 @@ export interface AnimVote {
   deviceId: string; candidateId: string; parentHash: string;
   metricsVersion: number; rulesVersion: number;
   clipHash: string; animRoot: string; saltedHash: string;
-  /** 2..64 ; 0 SEULEMENT pour un rejet `format` dont N est inconnu (clip illisible) */
+  /** `format` ⇒ 0 (toujours) ; sinon 2..64 (voir `animVoteShapeOk`) */
   frames: number;
   E: number; T: number; R: number; S: number;
   verdict: Verdict; ruleCode: AnimRuleCode; vclass: VoteClass;
@@ -146,12 +146,20 @@ export function parseAnimVoteMessage(msg: string): AnimVote | null {
   if (verdict !== "accept" && verdict !== "reject") return null;
   if (!(ANIM_RULE_CODES as readonly string[]).includes(ruleCode) || !(VOTE_CLASSES as readonly string[]).includes(vclass)) return null;
   if ((verdict === "accept") !== (ruleCode === "ok")) return null;
-  // frames : 2..64, sauf l'exception UNIQUE d'un rejet `format` dont N est inconnu
-  if (v.frames === 0) { if (!(verdict === "reject" && ruleCode === "format")) return null; }
-  else if (!Number.isInteger(v.frames) || v.frames < ANIM_V3.minFrames || v.frames > ANIM_V3.maxFrames) return null;
-  // refus sans calcul complet : E = T = R = S = 0
-  if ((ruleCode === "format" || ruleCode === "hash") && (v.E !== 0 || v.T !== 0 || v.R !== 0 || v.S !== 0)) return null;
+  if (!animVoteShapeOk(v)) return null;
   return animVoteMessage(v) === msg ? v : null;
+}
+
+/**
+ * REPRÉSENTATION UNIQUE de chaque rejet (6B1-FIX1, docs/SPEC_PODANIM_V3.md § 3 bis) : `format` ⇒ frames = 0 et E = T = R = S = 0 TOUJOURS (le nombre d'images n'est jamais déclaré) ;
+ * `hash` ⇒ clip lisible : frames 2..64 et métriques nulles ; `static`, `noise`, `ok`, `rules` ⇒ frames 2..64. Même règle dans le constructeur C++ (`pod_anim_vote_valid`).
+ */
+export function animVoteShapeOk(v: Pick<AnimVote, "frames" | "E" | "T" | "R" | "S" | "ruleCode">): boolean {
+  const zero = v.E === 0 && v.T === 0 && v.R === 0 && v.S === 0;
+  const inRange = Number.isInteger(v.frames) && v.frames >= ANIM_V3.minFrames && v.frames <= ANIM_V3.maxFrames;
+  if (v.ruleCode === "format") return v.frames === 0 && zero;
+  if (v.ruleCode === "hash") return inRange && zero;
+  return inRange;
 }
 
 /**

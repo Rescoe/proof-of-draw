@@ -4,7 +4,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { createHash } from "node:crypto";
 import { CLIP, decodeClip } from "../lib/bench/clip";
-import { ANIM_RULE_CODES, ANIM_V3, analyzeClip, animRejectIsObjective, animRootOf, animVoteMessage, evaluateAnimRules, frameLeaf, frameMetrics, parseAnimVoteMessage, type AnimVote } from "../lib/animV3";
+import { ANIM_RULE_CODES, ANIM_V3, analyzeClip, animRejectIsObjective, animRootOf, animVoteMessage, evaluateAnimRules, frameLeaf, frameMetrics, animVoteShapeOk, parseAnimVoteMessage, type AnimVote } from "../lib/animV3";
 import { metricsFromRaw } from "../lib/podMetrics";
 import { blockCanonicalV2, blockHashV2, merkleRoot, parseVoteMessageV3, sha256Hex, voteMessageV3, type BlockCanonicalV2 } from "../lib/podProtocolV3";
 import { blankFrame, buildAnimClips, buildAnimVectors, enc, fixCrc } from "./helpers/animV3Vectors";
@@ -154,7 +154,11 @@ test("message de vote d'animation : domaine PROPRE, 17 éléments, forme canoniq
   const zero = { E: 0, T: 0, R: 0, S: 0 };
   assert.deepEqual(parseAnimVoteMessage(animVoteMessage(vote({ ...zero, verdict: "reject", ruleCode: "hash" }))), vote({ ...zero, verdict: "reject", ruleCode: "hash" }));
   assert.deepEqual(parseAnimVoteMessage(animVoteMessage(vote({ ...zero, frames: 0, verdict: "reject", ruleCode: "format" })))?.frames, 0, "frames = 0 : rejet `format` d'un clip illisible");
-  assert.deepEqual(parseAnimVoteMessage(animVoteMessage(vote({ ...zero, frames: 5, verdict: "reject", ruleCode: "format" })))?.frames, 5);
+  // 6B1-FIX1 : `format` ⇒ TOUJOURS frames = 0 et E = T = R = S = 0 (représentation unique) ; `hash` ⇒ clip lisible, frames 2..64
+  assert.equal(parseAnimVoteMessage(animVoteMessage(vote({ ...zero, frames: 5, verdict: "reject", ruleCode: "format" }))), null, "format avec N déclaré : non canonique");
+  assert.equal(parseAnimVoteMessage(animVoteMessage(vote({ ...zero, frames: 0, S: 1, verdict: "reject", ruleCode: "format" }))), null);
+  assert.equal(parseAnimVoteMessage(animVoteMessage(vote({ ...zero, frames: 2, verdict: "reject", ruleCode: "hash" })))?.frames, 2);
+  assert.equal(parseAnimVoteMessage(animVoteMessage(vote({ ...zero, frames: 64, verdict: "reject", ruleCode: "hash" })))?.frames, 64);
   const bad = (v: Partial<AnimVote>) => assert.equal(parseAnimVoteMessage(animVoteMessage(vote(v))), null, JSON.stringify(v));
   bad({ frames: 0 });                                                             // accept avec frames = 0
   bad({ frames: 0, verdict: "reject", ruleCode: "static" }); bad({ frames: 0, ...zero, verdict: "reject", ruleCode: "hash" }); bad({ frames: 0, verdict: "reject", ruleCode: "noise" });
@@ -167,6 +171,29 @@ test("message de vote d'animation : domaine PROPRE, 17 éléments, forme canoniq
   const ok = animVoteMessage(vote());
   for (const m of [ok.replace("|12|", "|012|"), ok.replace("|C0", "|C0|"), ` ${ok}`, `${ok} `, ok.replace("|accept|", "| accept|"), ok.split("|").slice(0, 16).join("|"), `${ok}|x`, ok.replace("pod-vote-v3-anim", "pod-vote-v3-anim ")]) assert.equal(parseAnimVoteMessage(m), null, m);
   assert.equal(parseAnimVoteMessage(""), null);
+});
+
+test("6B1-FIX1 — UN rejet = UN message : la table (format | hash | autres) est appliquée par le parseur ET par `animVoteShapeOk` ; les vecteurs « avotebad » sont tous refusés côté TypeScript", () => {
+  const z = { E: 0, T: 0, R: 0, S: 0 };
+  for (const [ruleCode, frames, zero, expected] of [
+    ["format", 0, true, true], ["format", 2, true, false], ["format", 64, true, false], ["format", 0, false, false],
+    ["hash", 0, true, false], ["hash", 1, true, false], ["hash", 2, true, true], ["hash", 64, true, true], ["hash", 65, true, false], ["hash", 8, false, false],
+    ["static", 0, false, false], ["static", 2, false, true], ["noise", 64, false, true], ["noise", 65, false, false], ["ok", 1, false, false], ["ok", 12, false, true], ["rules", 0, false, false], ["rules", 12, false, true],
+  ] as const) {
+    const base = zero ? z : { E: 5, T: 6, R: 7, S: 8 };
+    assert.equal(animVoteShapeOk({ ruleCode, frames, ...base }), expected, `${ruleCode} frames=${frames} zero=${zero}`);
+    const v = vote({ ruleCode, frames, ...base, verdict: ruleCode === "ok" ? "accept" : "reject" });
+    assert.equal(parseAnimVoteMessage(animVoteMessage(v)) !== null, expected, `parse ${ruleCode} frames=${frames} zero=${zero}`);
+  }
+  // l'analyse de référence produit déjà la forme canonique : N = 0 et métriques nulles pour tout échec de format
+  const a = analyzeClip(new Uint8Array(10)); assert.equal(a.N, 0); assert.deepEqual([a.E, a.T, a.R, a.S], [0, 0, 0, 0]);
+  const bads = read("consensus-pod/test-vectors/anim-vectors.txt").split("\n").filter((l) => l.startsWith("avotebad "));
+  assert.ok(bads.length >= 20, String(bads.length));
+  for (const l of bads) {
+    const t = l.split(" "), rule = t[14];
+    const msg = ["pod-vote-v3-anim", t[1], t[2], t[3], t[4], t[5], t[6], t[7], t[8], t[9], t[10], t[11], t[12], t[13], rule === "ok" ? "accept" : "reject", rule, t[15]].join("|");
+    assert.equal(parseAnimVoteMessage(msg), null, l);
+  }
 });
 
 test("DOMAINES SÉPARÉS : un message d'animation n'est pas lisible comme message d'image, et inversement", () => {

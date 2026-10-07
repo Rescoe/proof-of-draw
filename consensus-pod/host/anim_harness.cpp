@@ -83,6 +83,12 @@ int main(int argc, char** argv) {
                         (uint32_t)std::strtoul(t[9].c_str(), 0, 10), (uint32_t)std::strtoul(t[10].c_str(), 0, 10), (uint32_t)std::strtoul(t[11].c_str(), 0, 10), (uint32_t)std::strtoul(t[12].c_str(), 0, 10), (uint32_t)std::strtoul(t[13].c_str(), 0, 10), rule, t[15].c_str() };
       char m[640]; int n = pod_anim_vote_message(m, sizeof(m), v); check(ln, "avote", "message de vote d'animation", t[16], n < 0 ? "(tampon trop petit)" : m);
       char tiny[12]; check(ln, "avote", "tampon trop petit détecté", "-1", std::to_string(pod_anim_vote_message(tiny, sizeof(tiny), v)));
+    } else if (c == "avotebad" && t.size() == 16) {
+      // messages NON canoniques (un même rejet n'a qu'UNE représentation) : le constructeur refuse (−1)
+      PodAnimRule rule = POD_ANIM_OK; for (int r = 0; r <= POD_ANIM_RULES; r++) if (t[14] == pod_anim_rule_name((PodAnimRule)r)) rule = (PodAnimRule)r;
+      PodAnimVote v = { t[1].c_str(), t[2].c_str(), t[3].c_str(), (uint32_t)std::strtoul(t[4].c_str(), 0, 10), (uint32_t)std::strtoul(t[5].c_str(), 0, 10), t[6].c_str(), t[7].c_str(), t[8].c_str(),
+                        (uint32_t)std::strtoul(t[9].c_str(), 0, 10), (uint32_t)std::strtoul(t[10].c_str(), 0, 10), (uint32_t)std::strtoul(t[11].c_str(), 0, 10), (uint32_t)std::strtoul(t[12].c_str(), 0, 10), (uint32_t)std::strtoul(t[13].c_str(), 0, 10), rule, t[15].c_str() };
+      char m[640]; check(ln, "avotebad", "message non canonique refusé", "-1", std::to_string(pod_anim_vote_message(m, sizeof(m), v))); check(ln, "avotebad", "validité", "0", pod_anim_vote_valid(v) ? "1" : "0");
     } else if (c == "ablock" && t.size() == 19) {
       // jetons : 1 rulesVersion, 2 parent, 3 image, 4 actions, 5 contenu, 6 appareil, 7 écran, 8 validateurs, 9 score, 10 minedAt, 11 animRoot, 12 votesRoot, 13 mode, 14 K, 15 committeeRoot, 16 minerRoot, 17 texte, 18 hash
       std::vector<std::string> vv; if (t[8] != "-") { std::string s = t[8]; size_t p = 0; while (p <= s.size()) { size_t q = s.find(',', p); if (q == std::string::npos) q = s.size(); vv.push_back(s.substr(p, q - p)); p = q + 1; } }

@@ -62,8 +62,16 @@ pod-vote-v3-anim|deviceId|candidateId|parentHash|metricsVersion|rulesVersion|cli
 - **17 éléments** séparés par `|` (préfixe + 16 champs). `metricsVersion = 2`, `rulesVersion = 2` (jeu A1 : un message d'animation dont `rulesVersion ≠ 2` est **invalide**) ; `frames` = N (2..64) ; `E, T, R, S` entiers 0…1 000 000 ; hashes en hexadécimal minuscule de 64 caractères ; `verdict`, `ruleCode`, `vclass` comme spec v3 § 3, avec `ruleCode` ∈ {`ok`, `format`, `hash`, `static`, `noise`, `rules`} (**pas** `uniform`, § 6).
 - **Domaine séparé** : le **premier élément** (`pod-vote-v3-anim`) diffère de `pod-vote-v3` ; chaque parseur n'accepte **que** son préfixe exact et la forme **canonique** (le message reconstruit doit être identique). Un message d'image ne peut donc pas être rejoué comme message d'animation, ni l'inverse (test 6B-T8 : parse croisé = refus, 0 faux positif sur les vecteurs).
 - **`S` est signé** (audit GPT) : `S = ⌊Σ s_i / N⌋` n'est **pas** reconstructible depuis `E, T, R` seuls (la moyenne des `s_i` plafonnés n'est pas une fonction des moyennes). Le serveur compare **les quatre** (`E, T, R, S`) à sa référence, comme pour une image fixe ; un écart rend un `accept` **invalide**.
-- **`frames`** : entier **2..64** pour tout vote, **sauf** un rejet `ruleCode = format` lorsque le clip est **illisible** et que N est **inconnu** (R2 · point 3) : alors **`frames = 0`** est **la seule exception**. Tout autre message avec `frames = 0`, ou `frames` ∉ {0} ∪ [2, 64], est **invalide** ; un `accept` ou un refus `hash`/`static`/`noise` avec `frames = 0` est invalide.
-- **Refus sans calcul complet** (`format`, `hash`) : `E = T = R = S = 0` (et `frames = 0` seulement dans l'exception ci-dessus) ; `clipHash` = hash des octets **effectivement lus** ; `animRoot` = la racine **annoncée** par le candidat (le vote reste lié au candidat) ; `saltedHash` = hash salé des octets lus. Le détail binaire est figé en 6B-1 (vecteurs).
+- **Représentation UNIQUE de chaque rejet (6B1-FIX1, audit GPT)** — un même rejet n'a qu'UN message valide :
+
+  | `ruleCode` | `frames` | `E, T, R, S` |
+  |---|---|---|
+  | `format` | **toujours 0** (le nombre d'images n'est jamais déclaré, même s'il était lisible dans l'en-tête) | **toujours 0** |
+  | `hash` | **2..64** (le clip est lisible : il a un format valide) | **0** |
+  | `static`, `noise`, `ok`, `rules` | **2..64** | recalculés (0…10⁶) |
+
+  Tout autre message — `frames = 0` hors `format`, `format` avec `frames ≠ 0` ou métriques non nulles, `hash` avec `frames = 0` ou métriques non nulles, `frames` ∉ [2, 64] pour les autres — est **invalide** (refusé par le parseur TypeScript ET par le constructeur C++, qui retourne −1). Cela correspond au comportement naturel des références (`analyzeClip` renvoie `N = 0` pour tout échec de format).
+- **Refus sans calcul complet** (`format`, `hash`) : `E = T = R = S = 0` ; `clipHash` = hash des octets **effectivement lus** ; `animRoot` = la racine **annoncée** par le candidat (le vote reste lié au candidat) ; `saltedHash` = hash salé des octets lus. Le détail binaire est figé en 6B-1 (vecteurs).
 - **Hash salé** : `saltedHash = SHA-256(nonce ‖ octets du clip)`, `nonce = SHA-256("pod-nonce-v3|" candidateId "|" parentHash "|" deviceId)` (spec v3 § 5, **inchangé**).
 - La signature Ed25519 porte sur l'UTF-8 du message, **obligatoire**, comme en v3.
 - **Reçus** : `message|signature|clé` (feuille de Merkle des votes, spec v3 § 6, **inchangée**) ; le vérificateur reconnaît le type par le **préfixe** du message.

@@ -47,6 +47,9 @@ Redis : **0**. Neon : 0. Polling : 0. Cadence firmware : inchangée. Mémoire d'
 4. **Les 4 derniers octets d'un clip sont la CRC** : un test qui « corrige la CRC » après avoir modifié ces octets rétablit le clip d'origine (cas traité dans T4).
 5. `ruleCode = rules` est accepté par le parseur du message (code des règles inconnues) mais n'est jamais objectif (`animRejectIsObjective`).
 
+## 5 bis. 6B1-FIX1 (audit GPT de `f445ea6`) — un rejet = un message
+La référence renvoyait `N = 0` pour tout échec de format alors que le parseur acceptait aussi `format` avec `frames = 2..64` : un même rejet avait plusieurs représentations. Règle fixée : **`format` ⇒ `frames = 0` et `E = T = R = S = 0` TOUJOURS** ; **`hash` ⇒ clip lisible : `frames` 2..64, métriques nulles** ; `static`/`noise`/`ok`/`rules` ⇒ `frames` 2..64. Appliquée par `animVoteShapeOk` (TypeScript, utilisée par `parseAnimVoteMessage`) **et** `pod_anim_vote_valid` (C++ : `pod_anim_vote_message` retourne −1 pour un message non canonique). 21 vecteurs `avotebad` (format avec N déclaré, format avec métriques, hash avec N inconnu ou hors 2..64, hash avec métriques, motifs avec `frames` 0, versions et bornes) sont refusés des deux côtés. Les vecteurs des images fixes (`vectors.txt`) sont **inchangés**.
+
 ## 6. Rollback
 Fichiers ajoutés seulement + `rulesVersion?` optionnel dans `BlockCanonicalV2` et un champ de plus dans `PodBlockV2` (valeur explicite passée par le harnais existant). `git revert` du commit suffit ; aucun état, aucune donnée, aucune variable à défaire.
 
