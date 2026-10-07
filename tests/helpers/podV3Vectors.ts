@@ -5,7 +5,7 @@
 
 import { createPrivateKey, createPublicKey, sign } from "node:crypto";
 import {
-  PROTOCOL, blockCanonicalV2, blockHashV2, classifyVote, committeeRank, committeeWindow, decide, drawMiner, evaluateRules, merkleProof, merkleRoot, minerSeed, parseVoteMessageV3,
+  PROTOCOL, blockCanonicalV2, blockHashV2, classifyVote, committeeRank, committeeSeed, committeeWindow, decide, drawMiner, evaluateRules, merkleProof, merkleRoot, minerSeed, parseVoteMessageV3,
   saltNonce, saltedHash, selectCommittee, sha256Hex, voteLeaf, voteMessageV3, type BlockCanonicalV2, type VoteV3, type Verdict,
 } from "../../lib/podProtocolV3";
 
@@ -21,6 +21,8 @@ export function testKeypair() {
 export const CANDIDATE_ID = "123e4567-e89b-42d3-a456-426614174000";
 export const PARENT_HASH = sha256Hex("pod-test-parent");
 export const DEVICE_ID = "dev_AB12CD34";
+/** contenu des vecteurs : 1 024 octets du motif (i·31+7) — son SHA-256 est le rawHash du vote ET le contentHash du comité. */
+export const CONTENT_HASH = sha256Hex(Uint8Array.from({ length: 1024 }, (_, i) => (i * 31 + 7) & 0xff));
 
 const pattern = (n: number, mul: number) => Uint8Array.from({ length: n }, (_, i) => (i * mul + 7) & 0xff);
 
@@ -54,9 +56,9 @@ export function buildVectors() {
 
   // ── comité ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
   const profiles = ["art_alice", "art_bob", "art_carol", "art_dave", "art_erin", "art_frank", "art_grace", "art_heidi", "art_ivan"];
-  const c9 = selectCommittee({ eligibleProfiles: profiles, authorProfileId: "art_carol", candidateId: CANDIDATE_ID, parentHash: PARENT_HASH });
-  const c2 = selectCommittee({ eligibleProfiles: ["art_alice", "art_bob", "art_carol"], authorProfileId: "art_carol", candidateId: CANDIDATE_ID, parentHash: PARENT_HASH });
-  const c0 = selectCommittee({ eligibleProfiles: ["art_carol"], authorProfileId: "art_carol", candidateId: CANDIDATE_ID, parentHash: PARENT_HASH });
+  const c9 = selectCommittee({ eligibleProfiles: profiles, authorProfileId: "art_carol", contentHash: CONTENT_HASH, parentHash: PARENT_HASH });
+  const c2 = selectCommittee({ eligibleProfiles: ["art_alice", "art_bob", "art_carol"], authorProfileId: "art_carol", contentHash: CONTENT_HASH, parentHash: PARENT_HASH });
+  const c0 = selectCommittee({ eligibleProfiles: ["art_carol"], authorProfileId: "art_carol", contentHash: CONTENT_HASH, parentHash: PARENT_HASH });
   const voteMap = (acc: number, rej: number, c = c9): Map<string, Verdict> => {
     const m = new Map<string, Verdict>(); const w = committeeWindow(c, 1);
     w.slice(0, acc).forEach((p) => m.set(p, "accept")); w.slice(acc, acc + rej).forEach((p) => m.set(p, "reject")); return m;
@@ -65,11 +67,12 @@ export function buildVectors() {
 
   // ── mineur ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
   const accepted = [{ profileId: "art_bob", minedBlocks: 0 }, { profileId: "art_alice", minedBlocks: 3 }, { profileId: "art_dave", minedBlocks: 12 }];
-  const miner = { seed: minerSeed(CANDIDATE_ID, PARENT_HASH), accepted, winner: drawMiner({ candidateId: CANDIDATE_ID, parentHash: PARENT_HASH, accepted }) };
+  const votesRootForMiner = merkleRoot(leaves(3));
+  const miner = { votesRoot: votesRootForMiner, seed: minerSeed(committeeSeed(PARENT_HASH, CONTENT_HASH), votesRootForMiner), accepted, winner: drawMiner({ parentHash: PARENT_HASH, contentHash: CONTENT_HASH, votesRoot: votesRootForMiner, accepted }) };
 
   // ── bloc v2 ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
   const block: BlockCanonicalV2 = {
-    parentHash: PARENT_HASH, imageHash: rawHash, actionsHash: sha256Hex("pod-test-actions"), deviceId: DEVICE_ID, poolScreen: "oled096",
+    parentHash: PARENT_HASH, imageHash: rawHash, actionsHash: sha256Hex("pod-test-actions"), contentHash: CONTENT_HASH, deviceId: DEVICE_ID, poolScreen: "oled096",
     validatorProfileIds: ["art_bob", "art_alice"], scorePpm: 587_000, minedAt: 1_791_300_000_000, votesRoot: merkleRoot(leaves(2)), committeeMode: "committee", committeeK: 7,
   };
 
@@ -98,7 +101,8 @@ export function buildVectors() {
     merkle,
     committee: {
       profiles, author: "art_carol",
-      ranks: Object.fromEntries(profiles.map((p) => [p, committeeRank(CANDIDATE_ID, PARENT_HASH, p)])),
+      seed: committeeSeed(PARENT_HASH, CONTENT_HASH),
+      ranks: Object.fromEntries(profiles.map((p) => [p, committeeRank(committeeSeed(PARENT_HASH, CONTENT_HASH), p)])),
       c9: { ...c9, window1: committeeWindow(c9, 1), window2: committeeWindow(c9, 2) },
       bootstrap2: c2, none: c0, decisions,
     },

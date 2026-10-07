@@ -198,49 +198,50 @@
       "art_ivan"
     ],
     "author": "art_carol",
+    "seed": "e478a393b485d14f14f07e4ebd0cb77e91b5adce53519216a04616cfc08b6936",
     "ranks": {
-      "art_alice": "8884cf7bc1ab6f43a23517824ae95471c9d5c05a7529deba84e9d725a66c183e",
-      "art_bob": "de8be0679d9ff51b8659232d3ae344f16ee40e1e202598eb0ed5ecbfab8f58f0",
-      "art_carol": "9296dd57092a10ce027b4f863214dc0a9962a02c8a30e1d67da29b605c6dd16a",
-      "art_dave": "4ca792d135e04734bf4011a62629aebd43ec0da79685a0821cdc678306c6e027",
-      "art_erin": "c21661de3c64e38c0a59bfec94cf1918912ad1112cf5a4bf2c019c57ee2584db",
-      "art_frank": "b81c36a826f9270d42a174da1f3d6d256b1be5df4cd41a93fb736bb1e909d2e3",
-      "art_grace": "1a16f45cc463ee2922fad20a93f21a618c515994998e01e5543f8b0ea5dd60f8",
-      "art_heidi": "5c8f36773bc3fef7333b935567a66f93a8f2e2c31f84a735333c3c931c61033c",
-      "art_ivan": "d59f8af9779896c3c70cb126983d4d81e127b67c02effaa2465cf45701f7729e"
+      "art_alice": "c2dd617531b76be1335372f3b569c060492c05168d574a929292c508d025801c",
+      "art_bob": "d398fa5e8938b67f42f577786a8205802e1e791deaf3cd4e73ac13dd0d3ddaaa",
+      "art_carol": "de608dc982a9689b6d1982dd2033b475749bfa31a35436687929e41b13ec6cee",
+      "art_dave": "1b2ed61b445200794fc3bf97972816008a08d150b14e707e67bda7e53b155c4b",
+      "art_erin": "ef363a081bc3bdd5725d9c07e184ce7f64a87d4561e050252b70e47e8595e554",
+      "art_frank": "ba30f8179a8d72d210a70349431a61a110d179133df5f104db4ce4eae60849af",
+      "art_grace": "6cfa46565599165c932faafdc7bcf07f8ee3c0acf44b9a2db2e6c4adbb6d6be6",
+      "art_heidi": "35c01d9dd2473256d9d1af95001cfdd8741b53844304a66d9f586d0ce2f99369",
+      "art_ivan": "3aa5b1039bf0eb018f55da358a98447b13d90abcacd407ec08769512a3b79772"
     },
     "c9": {
       "mode": "committee",
       "K": 7,
       "threshold": 5,
       "ranked": [
-        "art_grace",
         "art_dave",
         "art_heidi",
-        "art_alice",
-        "art_frank",
-        "art_erin",
         "art_ivan",
-        "art_bob"
+        "art_grace",
+        "art_frank",
+        "art_alice",
+        "art_bob",
+        "art_erin"
       ],
       "window1": [
-        "art_grace",
         "art_dave",
         "art_heidi",
-        "art_alice",
+        "art_ivan",
+        "art_grace",
         "art_frank",
-        "art_erin",
-        "art_ivan"
+        "art_alice",
+        "art_bob"
       ],
       "window2": [
-        "art_grace",
         "art_dave",
         "art_heidi",
-        "art_alice",
-        "art_frank",
-        "art_erin",
         "art_ivan",
-        "art_bob"
+        "art_grace",
+        "art_frank",
+        "art_alice",
+        "art_bob",
+        "art_erin"
       ]
     },
     "bootstrap2": {
@@ -310,7 +311,8 @@
     ]
   },
   "miner": {
-    "seed": "602ab392aa1f1bace058ed7a4c119c87d398db70cbe0ee0caa4646b549f465da",
+    "votesRoot": "41e5a389b9dfec5af66b2b6bf9ea881de0beabf6eae739f60ac59f9a75b2e8c6",
+    "seed": "414d8fc0d4c8c1dd5726c09ec329dff9cb01d90e9d47aa9dbf0504ed9981189b",
     "accepted": [
       {
         "profileId": "art_bob",
@@ -332,6 +334,7 @@
       "parentHash": "b708882bd916ecc71a1af2ea292892918b5e2dcd4eb5e588046b9ae8093e6a6d",
       "imageHash": "8d7e566766f6bd1bb4cac87cadfde681197f9243f4d2692a0fd12674092212a7",
       "actionsHash": "972dd261231c9a1ef7a3f81e3565254cd70e04b1928a30d1520bc216bce0b15a",
+      "contentHash": "8d7e566766f6bd1bb4cac87cadfde681197f9243f4d2692a0fd12674092212a7",
       "deviceId": "dev_AB12CD34",
       "poolScreen": "oled096",
       "validatorProfileIds": [
@@ -344,8 +347,8 @@
       "committeeMode": "committee",
       "committeeK": 7
     },
-    "canonical": "{\"blockVersion\":2,\"metricsVersion\":2,\"rulesVersion\":1,\"parentHash\":\"b708882bd916ecc71a1af2ea292892918b5e2dcd4eb5e588046b9ae8093e6a6d\",\"imageHash\":\"8d7e566766f6bd1bb4cac87cadfde681197f9243f4d2692a0fd12674092212a7\",\"actionsHash\":\"972dd261231c9a1ef7a3f81e3565254cd70e04b1928a30d1520bc216bce0b15a\",\"deviceId\":\"dev_AB12CD34\",\"poolScreen\":\"oled096\",\"validatorProfileIds\":[\"art_alice\",\"art_bob\"],\"scorePpm\":587000,\"minedAt\":1791300000000,\"votesRoot\":\"c34e39ed014675761c81b7430575a28d16d7bc1a81a170ace0f502dd6dda5a85\",\"committeeMode\":\"committee\",\"committeeK\":7}",
-    "hash": "133d395ac5804cf04210336f8bf99bc60d1675df1edd6da7fd307aa08e1a808c"
+    "canonical": "{\"blockVersion\":2,\"metricsVersion\":2,\"rulesVersion\":1,\"parentHash\":\"b708882bd916ecc71a1af2ea292892918b5e2dcd4eb5e588046b9ae8093e6a6d\",\"imageHash\":\"8d7e566766f6bd1bb4cac87cadfde681197f9243f4d2692a0fd12674092212a7\",\"actionsHash\":\"972dd261231c9a1ef7a3f81e3565254cd70e04b1928a30d1520bc216bce0b15a\",\"contentHash\":\"8d7e566766f6bd1bb4cac87cadfde681197f9243f4d2692a0fd12674092212a7\",\"deviceId\":\"dev_AB12CD34\",\"poolScreen\":\"oled096\",\"validatorProfileIds\":[\"art_alice\",\"art_bob\"],\"scorePpm\":587000,\"minedAt\":1791300000000,\"votesRoot\":\"c34e39ed014675761c81b7430575a28d16d7bc1a81a170ace0f502dd6dda5a85\",\"committeeMode\":\"committee\",\"committeeK\":7}",
+    "hash": "e247585a290be7c6db5d1020f8df50634f5bf443c6073b9bcf9b87e7a4322501"
   },
   "reputation": [
     {

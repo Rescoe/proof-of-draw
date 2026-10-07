@@ -27,8 +27,9 @@
 | Règles | **1** | — |
 | Bloc | **2** | — |
 | Nonce | — | `pod-nonce-v3\|` |
-| Rang de comité | — | `pod-committee-v3\|` |
-| Graine du mineur | — | `pod-miner-v3\|` |
+| Graine du comité | — | `pod-committee-seed-v3\|` (parentHash, contentHash) |
+| Rang de comité | — | `pod-committee-v3\|` (graine, profileId) |
+| Graine du mineur | — | `pod-miner-v3\|` (graine du comité, votesRoot) |
 | Merkle | — | octets `0x00` (feuille) / `0x01` (nœud) ; vide : `pod-merkle-v3-empty` |
 
 Tout changement d'un de ces éléments incrémente sa version et **régénère les vecteurs** (changement volontaire, visible dans le diff).
@@ -80,10 +81,11 @@ vide    = SHA-256("pod-merkle-v3-empty")
 
 Hachage canonique : `JSON.stringify` d'un objet dont l'**ordre des clés est figé** :
 ```
-blockVersion, metricsVersion, rulesVersion, parentHash, imageHash, actionsHash, deviceId, poolScreen,
+blockVersion, metricsVersion, rulesVersion, parentHash, imageHash, actionsHash, contentHash, deviceId, poolScreen,
 validatorProfileIds (triés), scorePpm (ENTIER), minedAt, [animRoot], votesRoot, committeeMode, committeeK
 ```
 - **`scorePpm` entier** (plus de flottant : une implémentation C++ ou Python doit reproduire le même texte).
+- **`contentHash`** (`rawHash` ou `animRoot`) est **dans le bloc** pour qu'un tiers recalcule la graine du comité et celle du mineur sans accès au serveur.
 - Les blocs v1 gardent leur format et leur hash ; un vérificateur choisit la règle selon `blockVersion`.
 - Le bloc affiche son **niveau d'assurance** : `committeeMode` ∈ {`committee`, `bootstrap`, `none`}, `committeeK`, et le décompte accept/reject des reçus.
 
@@ -99,7 +101,8 @@ Fonction unique `isEligibleVoter(device, candidate, now)`, utilisée par le **po
 ## 9. Comité, seuil, vagues [C]
 
 - **Éligibles** = profils (dédoublonnés) − profil de l'auteur.
-- **Rang** = `SHA-256("pod-committee-v3|" candidateId "|" parentHash "|" profileId)`, tri croissant (puis `profileId`). Imprévisible avant la publication du candidat ; rejouable par tout tiers.
+- **Graine** = `SHA-256("pod-committee-seed-v3|" parentHash "|" contentHash)` où `contentHash` = `rawHash` (image fixe) ou `animRoot` (animation) ; **rang** = `SHA-256("pod-committee-v3|" graine "|" profileId)`, tri croissant (puis `profileId`). **La graine ne dépend ni du `candidateId` (UUID que le serveur choisit : il aurait pu en essayer plusieurs) ni d'un horodatage** (correction demandée par GPT) : elle dérive de la **chaîne** et du **contenu** que les appareils recalculent ; tout tiers qui a le bloc précédent et l'image la retrouve (test : aucune des fonctions de graine ne mentionne `candidateId`) [C].
+- **Grinding de l'auteur (limite assumée)** : l'auteur peut modifier quelques pixels pour changer la graine et donc le comité. Il est **exclu du comité**, ne connaît pas d'avance quels profils éligibles sont complices, et chaque essai coûte un dessin ; la parade est l'**éligibilité** (appairage vérifié, ancienneté 24 h, réputation), pas la cryptographie. Une balise aléatoire publique externe (type drand) fermerait cette porte mais ajoute une dépendance réseau : **[?] point ouvert**.
 - **K = min(7, n)** ; **seuil T = ⌈2K/3⌉** (K=7 → 5 ; K=3 → 2) ; tolérance de refus = **K − T**.
 - **Mode** : `none` (aucun éligible : pas de bloc) ; **`bootstrap`** si n < 3 (**T = K** : tous les membres doivent approuver ; bloc étiqueté « validation partielle », jamais « validé par le réseau ») ; `committee` sinon.
 - **Vague 1** = les K premiers rangs. **Vague 2** (repli séquentiel après un délai sans décision, **proposé : 10 min**, le TTL du candidat étant de 30 min) = jusqu'à **2K** premiers rangs. **Aucun vote hors fenêtre ne compte** : le coût est **borné à 2K = 14 votes** quel que soit le nombre d'appareils (testé avec 500 profils).
@@ -110,11 +113,11 @@ Fonction unique `isEligibleVoter(device, candidate, now)`, utilisée par le **po
 ## 10. Mineur déterministe [C]
 
 ```
-graine = SHA-256("pod-miner-v3|" candidateId "|" parentHash)
+graine = SHA-256("pod-miner-v3|" graineDuComité "|" votesRoot)     — dépend des REÇUS finalisés
 poids(profil) = ⌊ 1 000 000 / (blocsMinés + 1) ⌋          (équité conservée : poids inverse)
 tirage : u = (8 premiers octets de la graine) mod Σ poids ; parcours des profils ayant APPROUVÉ, triés par profileId
 ```
-Aucun `Math.random`, aucun horodatage (vérifié par test). Le bloc enregistre `blocsMinés` de chaque approbateur au moment du tirage (vérifiable par un nœud qui réplique la chaîne).
+Aucun `Math.random`, aucun horodatage (vérifié par test). La graine inclut `votesRoot` : ni le serveur ni l'auteur ne peuvent viser un mineur avant que les votes existent [C]. Le bloc enregistre `blocsMinés` de chaque approbateur au moment du tirage (vérifiable par un nœud qui réplique la chaîne).
 
 ## 11. Réputation (événements démontrables uniquement) [C]
 
@@ -162,7 +165,55 @@ Total ≈ 28. Aucun polling, aucun `SCAN` ; contenu et preuves servis par le CDN
 7. **Stockage des reçus** : +2,7 Ko par bloc dans Redis (blocs permanents) : acceptable vis-à-vis du stockage Upstash, ou reçus sur stockage froid avec seule racine dans Redis ?
 8. **Migration du type `Block`** : champs additifs `blockVersion`, `votes`, `votesRoot` (le code de lecture actuel les ignore).
 9. **Nom du motif** : `uniform` (proposé) remplace `blank` **uniquement** en v3.
+10. **Grinding de l'auteur** : balise aléatoire externe (drand) ou acceptation de la limite (§ 9) ?
+11. **Ensemble éligible** : engager une racine de Merkle de l'instantané des profils éligibles dans le bloc (§ 16, point 1) ?
+12. **v3 = v2 pour le quorum pendant E2** : valider que le serveur traite un vote v3 conforme comme un vote v2 conforme (§ 18).
 
-## 16. Ce que ce brouillon ne fait pas
+## 16. Ce qui est vérifiable par un tiers — avant et après la v3
+
+« Vérifiable » = un tiers qui dispose du bloc, de l'image et des actions peut le contrôler **sans faire confiance au serveur**.
+
+| Propriété | Blocs v1 (historique) | Aujourd'hui (vote v2, bloc v1) | Bloc v2 (v3) |
+|---|---|---|---|
+| Chaînage `parentHash` → `blockHash` | ✔ recalculable | ✔ | ✔ |
+| `imageHash` correspond à l'image | ✔ | ✔ | ✔ (+ `contentHash`) |
+| `actionsHash` correspond aux actions ; le **replay** redonne l'image | ✔ (moteur pur ; vérification du geste N3 par n'importe qui, pas par le réseau) | ✔ | ✔ |
+| **Qui** a validé | ✘ identifiants non signés | ✘ identifiants + simple décompte (`votesSummary`, hors hash) | ✔ **reçus signés**, engagés dans `votesRoot` |
+| Le contenu de chaque vote (hash, e/t/r, verdict, motif) | ✘ | ✘ (supprimés après le minage) | ✔ |
+| Le **quorum** a bien été atteint | ✘ | ✘ | ✔ (rejouable depuis les reçus : seuil ⌈2K/3⌉, refus ≤ K−T) |
+| Le comité et le **mineur** ont été tirés selon la règle | ✘ (`Math.random` serveur) | ✘ | ✔ (graine = chaîne + contenu + reçus) |
+| Un vote n'a pas été **rejoué** sur une autre position | — | ✘ | ✔ (`parentHash` signé) |
+| Le motif d'un refus n'a pas été **modifié** | — | ✘ | ✔ (`ruleCode` signé) |
+
+**Reste CENTRALISÉ même après la v3 (à dire publiquement)** :
+1. **L'ensemble des profils éligibles** : le serveur atteste la liste ; un tiers vérifie que les membres du comité sont **cohérents entre eux** (rangs) mais pas qu'**aucun meilleur rang n'a été omis**. Piste : engager une racine de Merkle de l'ensemble éligible (instantané) dans le bloc **[?]**.
+2. **L'identité** : une clé publique n'est pas la preuve d'un appareil réel (aucun élément sécurisé sur ces cartes) ; elle est liée à un profil appairé, c'est tout.
+3. **L'ordre des blocs et la disponibilité** : un seul registre ; un serveur peut refuser d'écrire ou **omettre** un bloc (il ne peut pas en falsifier un sans les clés de 2/3 du comité). Réponse : ancrage externe et nœuds miroirs (lots ultérieurs).
+4. **Le geste** : N3 reste refaisable par un tiers mais **pas attesté par le réseau**.
+
+Tant que ces quatre points ne sont pas traités, la formulation reste : « chaîne **centralisée** liée par hachage, avec attestations distribuées **signées et vérifiables** » (R5 du plan de collaboration).
+
+## 17. Simulation : ordre simulateur / nœud hôte
+
+Le plan initial faisait dépendre le simulateur du nœud hôte (`podnode`). **Décision proposée** : deux niveaux, dans cet ordre.
+- **S1 — simulateur en mémoire** (TypeScript, Lot « comité ») : n profils/appareils simulés appelant directement `lib/podProtocolV3.ts` (comité, vote, décision, reçus, mineur, réputation), avec une fraction f de comportements malhonnêtes (hash faux, métriques fausses, clones, silence, double vote, auteur votant) et des tailles 3/10/100/500. **Sans réseau, sans Redis, sans nœud hôte** : il produit les **vrais chiffres** de tolérance et de coût (nombre de votes comptés ≤ 2K) avant tout reflash.
+- **S2 — nœud hôte `podnode`** (Lot « noyau ») : même protocole, **bout en bout** contre un serveur de test ; sert de test de **non-régression** et de validateur sans écran. Il ne bloque pas S1.
+Conséquence : aucune dépendance du Lot « comité » envers le Lot « noyau ».
+
+## 18. Déploiement du firmware v3 par étapes canari
+
+Contraintes : **un seul grand reflash** (plan, lot 8), mémoire ESP8266 serrée (pas de double requête TLS), retour arrière par la sauvegarde `firmware-backups/` et par variables serveur.
+
+| Étape | Qui | Serveur | Condition de passage |
+|---|---|---|---|
+| **E0** | personne | T0 (vote v2) | spécification gelée, vecteurs passants sur TypeScript, C++ hôte et **seconde implémentation (GPT)** |
+| **E1 « ombre serveur »** | personne | **T1** : accepte et stocke les votes v3 reçus ; comité **calculé et journalisé**, non contraignant | simulateur S1 concluant ; budget Redis mesuré |
+| **E2 canari carte** | porteur : **une carte par famille** (jusqu'à 9 variantes), flashée par câble | le serveur accepte un vote **v3 comme équivalent d'un vote v2** pour le quorum (mêmes hash et métriques vérifiés **exactement**) : **aucune double requête** de la carte | trace archivée par carte ; `[HEAP] après WiFi` ≥ 38 Ko ; aucun 4xx sur ses votes pendant 24 h |
+| **E3 famille** | porteur : toutes les cartes d'une famille | idem | idem sur 48 h ; aucune régression d'affichage |
+| **E4 comité** | — | **T2** : le comité v3 devient contraignant **pour les appareils `voteVersion ≥ 3`** ; les v2 votent « hérité » (hors comité) ; rejets bloquants | au moins 3 profils éligibles v3 non-auteurs, sinon `bootstrap` étiqueté |
+| **E5 strict** | porteur | **T3** : v2 refusé | tout le parc compatible ; décision explicite du porteur |
+Chaque étape est **réversible** par une variable d'environnement (retour à l'étape précédente sans reflash) ; le retour **matériel** se fait par réflashage de la sauvegarde. Aucune étape n'est automatisée ; l'OTA n'intervient qu'après le premier reflash universel (lot 8) et ne s'applique pas à E2.
+
+## 19. Ce que ce brouillon ne fait pas
 
 Aucune route, aucun firmware, aucun format stocké n'est modifié ; le vote v2 et le quorum actuel fonctionnent comme avant. Les vecteurs d'or servent à **GPT** (seconde implémentation indépendante), au C++ hôte et aux firmwares du lot « noyau `consensusPoD` ».

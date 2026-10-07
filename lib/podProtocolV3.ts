@@ -124,8 +124,16 @@ export function verifyMerkleProof(leaf: Buffer, proof: MerkleStep[], rootHex: st
 export const COMMITTEE_MAX = 7;
 export const BOOTSTRAP_BELOW = 3;   // moins de 3 profils éligibles non-auteurs ⇒ mode « bootstrap » (validation partielle, étiquetée)
 
-/** rang = SHA-256("pod-committee-v3|" candidateId "|" parentHash "|" profileId) ; tri croissant (hex), puis profileId. Imprévisible avant la publication du candidat. */
-export const committeeRank = (candidateId: string, parentHash: string, profileId: string): string => sha256Hex(`pod-committee-v3|${candidateId}|${parentHash}|${profileId}`);
+/**
+ * GRAINE du comité = SHA-256("pod-committee-seed-v3|" parentHash "|" contentHash). Elle dérive de la CHAÎNE (parentHash) et du CONTENU (rawHash d'une image fixe, animRoot d'une animation) :
+ * elle ne dépend PAS du candidateId (un UUID que le serveur choisit : il aurait pu en essayer plusieurs) ni d'un horodatage. Le contenu est celui que les appareils recalculent : toute
+ * personne qui a le bloc précédent et l'image retrouve la même graine.
+ * Limite assumée (grinding) : l'AUTEUR peut modifier quelques pixels pour changer la graine ; il ne peut ni voter (exclu), ni connaître d'avance les profils malveillants
+ * éligibles sans les avoir déjà ; la parade est l'éligibilité (appairage, ancienneté), pas la cryptographie (docs/SPEC_PROTOCOLE_V3.md § 9).
+ */
+export const committeeSeed = (parentHash: string, contentHash: string): string => sha256Hex(`pod-committee-seed-v3|${parentHash}|${contentHash}`);
+/** rang = SHA-256("pod-committee-v3|" graine "|" profileId) ; tri croissant (hex), puis profileId. */
+export const committeeRank = (seed: string, profileId: string): string => sha256Hex(`pod-committee-v3|${seed}|${profileId}`);
 export const threshold = (K: number): number => Math.ceil((2 * K) / 3);
 
 export interface Committee {
@@ -136,9 +144,10 @@ export interface Committee {
   ranked: string[];
 }
 
-export function selectCommittee(input: { eligibleProfiles: readonly string[]; authorProfileId: string | null; candidateId: string; parentHash: string }): Committee {
+export function selectCommittee(input: { eligibleProfiles: readonly string[]; authorProfileId: string | null; contentHash: string; parentHash: string }): Committee {
+  const seed = committeeSeed(input.parentHash, input.contentHash);
   const pool = [...new Set(input.eligibleProfiles)].filter((p) => p !== input.authorProfileId);
-  const ranked = pool.map((p) => ({ p, r: committeeRank(input.candidateId, input.parentHash, p) })).sort((a, b) => (a.r < b.r ? -1 : a.r > b.r ? 1 : a.p < b.p ? -1 : a.p > b.p ? 1 : 0)).map((x) => x.p);
+  const ranked = pool.map((p) => ({ p, r: committeeRank(seed, p) })).sort((a, b) => (a.r < b.r ? -1 : a.r > b.r ? 1 : a.p < b.p ? -1 : a.p > b.p ? 1 : 0)).map((x) => x.p);
   if (ranked.length === 0) return { mode: "none", K: 0, threshold: 0, ranked };
   const K = Math.min(COMMITTEE_MAX, ranked.length);
   return { mode: ranked.length < BOOTSTRAP_BELOW ? "bootstrap" : "committee", K, threshold: ranked.length < BOOTSTRAP_BELOW ? K : threshold(K), ranked };
@@ -164,29 +173,33 @@ export function decide(c: Committee, wave: 1 | 2, votes: ReadonlyMap<string, Ver
 }
 
 // ─── Mineur déterministe (équité conservée : poids inverse du nombre de blocs déjà minés) ─────────────────────────────────────────────────
-export const minerSeed = (candidateId: string, parentHash: string): string => sha256Hex(`pod-miner-v3|${candidateId}|${parentHash}`);
+/** graine du mineur = SHA-256("pod-miner-v3|" graine du comité "|" votesRoot) : elle dépend des REÇUS FINALISÉS (que ni le serveur ni l'auteur ne peuvent choisir avant le vote). */
+export const minerSeed = (seed: string, votesRoot: string): string => sha256Hex(`pod-miner-v3|${seed}|${votesRoot}`);
 export const minerWeight = (minedBlocks: number): number => Math.floor(PPM / (minedBlocks + 1));
 
 /** Parmi les profils ayant approuvé (liste triée par profileId pour être canonique) : tirage = (8 premiers octets de la graine) mod somme des poids. */
-export function drawMiner(input: { candidateId: string; parentHash: string; accepted: readonly { profileId: string; minedBlocks: number }[] }): string | null {
+export function drawMiner(input: { parentHash: string; contentHash: string; votesRoot: string; accepted: readonly { profileId: string; minedBlocks: number }[] }): string | null {
   const list = [...input.accepted].sort((a, b) => (a.profileId < b.profileId ? -1 : a.profileId > b.profileId ? 1 : 0));
   if (list.length === 0) return null;
   const total = list.reduce((s, x) => s + BigInt(minerWeight(x.minedBlocks)), BigInt(0));
-  let u = BigInt("0x" + minerSeed(input.candidateId, input.parentHash).slice(0, 16)) % total;
+  let u = BigInt("0x" + minerSeed(committeeSeed(input.parentHash, input.contentHash), input.votesRoot).slice(0, 16)) % total;
   for (const x of list) { const w = BigInt(minerWeight(x.minedBlocks)); if (u < w) return x.profileId; u -= w; }
   return list[list.length - 1].profileId;   // inatteignable (u < total)
 }
 
 // ─── Bloc v2 : hachage canonique (ordre des clés FIGÉ ; score en ppm ENTIER, plus de flottant) ──────────────────────────────────────────
 export interface BlockCanonicalV2 {
-  parentHash: string; imageHash: string; actionsHash: string; deviceId: string; poolScreen: string;
+  parentHash: string; imageHash: string; actionsHash: string;
+  /** rawHash (image fixe) ou animRoot (animation) : permet à un tiers de RECALCULER la graine du comité et du mineur. */
+  contentHash: string;
+  deviceId: string; poolScreen: string;
   validatorProfileIds: string[]; scorePpm: number; minedAt: number; animRoot?: string;
   votesRoot: string; committeeMode: Committee["mode"]; committeeK: number;
 }
 export function blockCanonicalV2(b: BlockCanonicalV2): string {
   return JSON.stringify({
     blockVersion: PROTOCOL.blockVersion, metricsVersion: PROTOCOL.metricsVersion, rulesVersion: PROTOCOL.rulesVersion,
-    parentHash: b.parentHash, imageHash: b.imageHash, actionsHash: b.actionsHash, deviceId: b.deviceId, poolScreen: b.poolScreen,
+    parentHash: b.parentHash, imageHash: b.imageHash, actionsHash: b.actionsHash, contentHash: b.contentHash, deviceId: b.deviceId, poolScreen: b.poolScreen,
     validatorProfileIds: [...b.validatorProfileIds].sort(), scorePpm: b.scorePpm, minedAt: b.minedAt,
     ...(b.animRoot ? { animRoot: b.animRoot } : {}),
     votesRoot: b.votesRoot, committeeMode: b.committeeMode, committeeK: b.committeeK,

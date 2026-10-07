@@ -164,7 +164,7 @@ Contenu à trancher et à écrire :
 | 4.3 Mineur déterministe | calculable par un tiers, vérifié par `podVerify` |
 | 4.4 Réputation | compteurs par profil (`validAccept`, `validReject`, `falseAccept`, `falseReject`, `invalidSignature`, `timeout`), **agrégés une fois à la finalisation** (un seul script/hash Redis), échantillon minimal, décroissance dans le temps ; aucun effet bloquant avant observation |
 | 4.5 Rejets bloquants | `ENFORCE_V2_REJECTIONS` devient la règle **dans un comité exclusivement ≥ v2** |
-| 4.6 **Simulateur** | nœud hôte (Lot 5) × n appareils contre un serveur de test : fraction f de profils malhonnêtes (hash faux, métriques fausses, clones, MAC rejouées, silence) ; sorties : fausses acceptations, blocages, commandes Redis/bloc |
+| 4.6 **Simulateur S1 (en mémoire, sans nœud hôte)** — décision du 07/10 : voir `SPEC_PROTOCOLE_V3.md` § 17 ; le nœud hôte (S2, Lot 5) ne sert qu'à la non-régression bout en bout | n profils simulés appelant `lib/podProtocolV3.ts` : fraction f de profils malhonnêtes (hash faux, métriques fausses, clones, MAC rejouées, silence) ; sorties : fausses acceptations, blocages, commandes Redis/bloc |
 | 4.7 Interface | bloc et galerie : « validé par k/K profils (vérifiable) » ou « validation partielle » |
 
 **Acceptation (mesurée)** : pour K = 7, f = 20 % : fausse acceptation ≤ 0,5 % et blocage résolu par repli (valeurs théoriques du § 3.3 de la note Claude, **à confirmer par simulation** avant toute promesse publique). Budget ≤ 30 commandes/bloc. **Reflash** : non. **Condition de bascule** : `ENFORCE…`/comité activés par variable d'environnement, avec retour arrière.
@@ -191,7 +191,7 @@ consensus-pod/
 | 5.1 Extraire le noyau sans changer le comportement | à partir de `pod_metrics.h` + messages de vote ; tests de parité inchangés |
 | 5.2 Vecteurs d'or | buffers, SHA-256, métriques, message et signature attendus ; exécutés en **TypeScript, C++ hôte, ESP8266 (compilation croisée), R4** |
 | 5.3 Adaptateurs de chiffrement | un par plateforme (ESP8266 BearSSL, R4 `SHA256`/`Ed25519`, POSIX) |
-| 5.4 Nœud hôte `podnode` | validateur **sans écran** (rôle `validator`, `screens: []`) + serveur de test ; sert au Lot 4.6 |
+| 5.4 Nœud hôte `podnode` | validateur **sans écran** (rôle `validator`, `screens: []`) + serveur de test ; sert à la non-régression bout en bout (S2), plus au simulateur S1 |
 | 5.5 Serveur : rôle `validator` | `register` accepte `screens: []`, exclu des diffusions d'images, compté par profil |
 | 5.6 Remplacer les copies d'en-têtes | les 9 firmwares incluent le noyau ; **copies identiques synchronisées par script** jusqu'à la publication (règle « dossier autonome » conservée) |
 | 5.7 Contrôle mémoire | `espStaticRam`, relevé `[HEAP]` : le noyau ne doit pas augmenter la RAM statique |

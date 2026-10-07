@@ -5,9 +5,9 @@ import path from "node:path";
 import { verifyEd25519 } from "../lib/ed25519";
 import {
   BOOTSTRAP_BELOW, COMMITTEE_MAX, classifyVote, committeeWindow, decide, drawMiner, evaluateRules, merkleProof, merkleRoot, minerWeight, parseVoteMessageV3, saltNonce, saltedHash,
-  selectCommittee, sha256Hex, threshold, verifyMerkleProof, voteLeaf, voteMessageV3, blockHashV2, type Verdict, type VoteV3,
+  selectCommittee, sha256Hex, threshold, verifyMerkleProof, voteLeaf, voteMessageV3, blockHashV2, committeeSeed, type Verdict, type VoteV3,
 } from "../lib/podProtocolV3";
-import { buildVectors, CANDIDATE_ID, DEVICE_ID, PARENT_HASH } from "./helpers/podV3Vectors";
+import { buildVectors, CANDIDATE_ID, CONTENT_HASH, DEVICE_ID, PARENT_HASH } from "./helpers/podV3Vectors";
 
 // Protocole v3 — BROUILLON (docs/SPEC_PROTOCOLE_V3.md) : implémentation de référence + vecteurs d'or. Rien n'est branché sur une route ni un firmware.
 const root = path.join(__dirname, "..");
@@ -75,26 +75,26 @@ test("Merkle : racines stables, preuves d'inclusion valides, preuve refusée si 
 
 test("comité : auteur exclu, un profil une fois, K ≤ 7, seuil ⌈2K/3⌉, bootstrap sous 3 profils, rang déterministe et indépendant de l'ordre d'entrée", () => {
   const P = ["art_alice", "art_bob", "art_carol", "art_dave", "art_erin", "art_frank", "art_grace", "art_heidi", "art_ivan"];
-  const a = selectCommittee({ eligibleProfiles: P, authorProfileId: "art_carol", candidateId: CANDIDATE_ID, parentHash: PARENT_HASH });
-  const b = selectCommittee({ eligibleProfiles: [...P].reverse().concat(P), authorProfileId: "art_carol", candidateId: CANDIDATE_ID, parentHash: PARENT_HASH });
+  const a = selectCommittee({ eligibleProfiles: P, authorProfileId: "art_carol", contentHash: CONTENT_HASH, parentHash: PARENT_HASH });
+  const b = selectCommittee({ eligibleProfiles: [...P].reverse().concat(P), authorProfileId: "art_carol", contentHash: CONTENT_HASH, parentHash: PARENT_HASH });
   assert.deepEqual(a, b, "doublons et ordre sans effet");
   assert.ok(!a.ranked.includes("art_carol"), "auteur exclu");
   assert.equal(a.ranked.length, 8); assert.equal(a.K, COMMITTEE_MAX); assert.equal(a.threshold, 5); assert.equal(a.mode, "committee");
   assert.equal(committeeWindow(a, 1).length, 7); assert.equal(committeeWindow(a, 2).length, 8, "vague 2 bornée par 2K et par les éligibles");
-  const other = selectCommittee({ eligibleProfiles: P, authorProfileId: "art_carol", candidateId: CANDIDATE_ID, parentHash: sha256Hex("autre parent") });
+  const other = selectCommittee({ eligibleProfiles: P, authorProfileId: "art_carol", contentHash: CONTENT_HASH, parentHash: sha256Hex("autre parent") });
   assert.notDeepEqual(a.ranked, other.ranked, "le tirage dépend du bloc précédent");
   for (const [K, T] of [[1, 1], [2, 2], [3, 2], [4, 3], [5, 4], [6, 4], [7, 5]]) assert.equal(threshold(K), T, `K=${K}`);
-  assert.equal(selectCommittee({ eligibleProfiles: ["art_alice", "art_bob"], authorProfileId: null, candidateId: CANDIDATE_ID, parentHash: PARENT_HASH }).mode, "bootstrap");
+  assert.equal(selectCommittee({ eligibleProfiles: ["art_alice", "art_bob"], authorProfileId: null, contentHash: CONTENT_HASH, parentHash: PARENT_HASH }).mode, "bootstrap");
   assert.equal(BOOTSTRAP_BELOW, 3);
-  const none = selectCommittee({ eligibleProfiles: ["art_carol"], authorProfileId: "art_carol", candidateId: CANDIDATE_ID, parentHash: PARENT_HASH });
+  const none = selectCommittee({ eligibleProfiles: ["art_carol"], authorProfileId: "art_carol", contentHash: CONTENT_HASH, parentHash: PARENT_HASH });
   assert.equal(none.mode, "none"); assert.equal(decide(none, 1, new Map()).state, "pending");
-  const big = selectCommittee({ eligibleProfiles: Array.from({ length: 500 }, (_, i) => `art_${i}`), authorProfileId: null, candidateId: CANDIDATE_ID, parentHash: PARENT_HASH });
+  const big = selectCommittee({ eligibleProfiles: Array.from({ length: 500 }, (_, i) => `art_${i}`), authorProfileId: null, contentHash: CONTENT_HASH, parentHash: PARENT_HASH });
   assert.equal(committeeWindow(big, 2).length, 14, "500 profils : jamais plus de 14 votes comptés (coût borné)");
 });
 
 test("décision : accepter exige ≥ T approbations ET ≤ K−T refus ; refuser dès K−T+1 refus ; les votes hors fenêtre sont ignorés", () => {
   const P = Array.from({ length: 9 }, (_, i) => `art_${i}`);
-  const c = selectCommittee({ eligibleProfiles: P, authorProfileId: null, candidateId: CANDIDATE_ID, parentHash: PARENT_HASH });   // K = 7, T = 5, tolérance 2 refus
+  const c = selectCommittee({ eligibleProfiles: P, authorProfileId: null, contentHash: CONTENT_HASH, parentHash: PARENT_HASH });   // K = 7, T = 5, tolérance 2 refus
   const w = committeeWindow(c, 1);
   const votes = (acc: number, rej: number): Map<string, Verdict> => { const m = new Map<string, Verdict>(); w.slice(0, acc).forEach((p) => m.set(p, "accept")); w.slice(acc, acc + rej).forEach((p) => m.set(p, "reject")); return m; };
   assert.equal(decide(c, 1, votes(4, 0)).state, "pending");
@@ -105,7 +105,7 @@ test("décision : accepter exige ≥ T approbations ET ≤ K−T refus ; refuser
   assert.equal(decide(c, 1, new Map([...votes(3, 0), ...c.ranked.slice(7).map((p) => [p, "accept"] as [string, Verdict])])).state, "pending", "des approbations hors fenêtre ne comptent pas en vague 1");
   assert.equal(decide(c, 2, new Map([...votes(3, 0), ...c.ranked.slice(7).map((p) => [p, "accept"] as [string, Verdict])])).state, "accept", "vague 2 (repli séquentiel) : les suppléants des rangs 8-9 comptent : 3 + 2 = 5 ≥ T");
   assert.equal(decide(c, 2, new Map([...votes(3, 0), ["art_inconnu", "accept" as Verdict]])).state, "pending", "un profil hors classement ne compte jamais");
-  const bootstrap = selectCommittee({ eligibleProfiles: ["art_a", "art_b"], authorProfileId: null, candidateId: CANDIDATE_ID, parentHash: PARENT_HASH });
+  const bootstrap = selectCommittee({ eligibleProfiles: ["art_a", "art_b"], authorProfileId: null, contentHash: CONTENT_HASH, parentHash: PARENT_HASH });
   assert.equal(decide(bootstrap, 1, new Map([["art_a", "accept" as Verdict]])).state, "pending", "bootstrap : tous les membres doivent approuver");
   assert.equal(decide(bootstrap, 1, new Map([["art_a", "accept" as Verdict], ["art_b", "accept" as Verdict]])).state, "accept");
   assert.equal(decide(bootstrap, 1, new Map([["art_a", "reject" as Verdict]])).state, "reject");
@@ -113,15 +113,16 @@ test("décision : accepter exige ≥ T approbations ET ≤ K−T refus ; refuser
 
 test("mineur : déterministe, rejouable, pondéré en sens inverse du nombre de blocs ; aucun appel à Math.random ni Date.now dans le module", () => {
   const accepted = [{ profileId: "art_dave", minedBlocks: 12 }, { profileId: "art_bob", minedBlocks: 0 }, { profileId: "art_alice", minedBlocks: 3 }];
-  const w1 = drawMiner({ candidateId: CANDIDATE_ID, parentHash: PARENT_HASH, accepted });
-  const w2 = drawMiner({ candidateId: CANDIDATE_ID, parentHash: PARENT_HASH, accepted: [...accepted].reverse() });
+  const base = { parentHash: PARENT_HASH, contentHash: CONTENT_HASH, votesRoot: sha256Hex("reçus") };
+  const w1 = drawMiner({ ...base, accepted });
+  const w2 = drawMiner({ ...base, accepted: [...accepted].reverse() });
   assert.equal(w1, w2, "l'ordre d'entrée est sans effet");
-  assert.equal(drawMiner({ candidateId: CANDIDATE_ID, parentHash: PARENT_HASH, accepted: [] }), null);
-  assert.equal(drawMiner({ candidateId: CANDIDATE_ID, parentHash: PARENT_HASH, accepted: [{ profileId: "art_solo", minedBlocks: 9 }] }), "art_solo");
+  assert.equal(drawMiner({ ...base, accepted: [] }), null);
+  assert.equal(drawMiner({ ...base, accepted: [{ profileId: "art_solo", minedBlocks: 9 }] }), "art_solo");
   assert.equal(minerWeight(0), 1_000_000); assert.equal(minerWeight(3), 250_000); assert.equal(minerWeight(12), 76_923);
-  // équité statistique : sur 3000 tirages (candidats différents), le profil sans bloc gagne nettement plus que celui qui en a 12
+  // équité statistique : sur 3000 tirages (reçus différents), le profil sans bloc gagne nettement plus que celui qui en a 12
   const wins: Record<string, number> = {};
-  for (let i = 0; i < 3000; i++) { const id = drawMiner({ candidateId: `c${i}`, parentHash: PARENT_HASH, accepted })!; wins[id] = (wins[id] ?? 0) + 1; }
+  for (let i = 0; i < 3000; i++) { const id = drawMiner({ ...base, votesRoot: sha256Hex(`reçus${i}`), accepted })!; wins[id] = (wins[id] ?? 0) + 1; }
   assert.ok(wins.art_bob > wins.art_alice && wins.art_alice > wins.art_dave, JSON.stringify(wins));
   const src = fs.readFileSync(path.join(root, "lib", "podProtocolV3.ts"), "utf8").replace(/\/\/.*$/gm, "");
   assert.doesNotMatch(src, /Math\.random|Date\.now|new Date/);
@@ -160,4 +161,22 @@ test("le module de référence n'est branché sur AUCUNE route ni aucun firmware
   for (const d of ["app", "lib", "esp8266", "arduino_uno_r4"]) walk(d);
   assert.deepEqual(offenders.filter((f) => f !== "lib/podProtocolV3.ts"), []);
   assert.ok(DEVICE_ID.startsWith("dev_"));
+});
+
+test("graine du comité : issue de la CHAÎNE et du CONTENU (jamais du candidatId choisi par le serveur) ; le mineur dépend en plus des REÇUS finalisés", () => {
+  const P = ["art_alice", "art_bob", "art_carol", "art_dave", "art_erin", "art_frank", "art_grace", "art_heidi", "art_ivan"];
+  const pick = (content: string, parent: string) => selectCommittee({ eligibleProfiles: P, authorProfileId: null, contentHash: content, parentHash: parent }).ranked;
+  assert.deepEqual(pick(CONTENT_HASH, PARENT_HASH), pick(CONTENT_HASH, PARENT_HASH), "rejouable");
+  assert.notDeepEqual(pick(CONTENT_HASH, PARENT_HASH), pick(sha256Hex("autre image"), PARENT_HASH), "un autre contenu change le tirage");
+  assert.notDeepEqual(pick(CONTENT_HASH, PARENT_HASH), pick(CONTENT_HASH, sha256Hex("autre parent")), "un autre bloc précédent change le tirage");
+  assert.equal(committeeSeed(PARENT_HASH, CONTENT_HASH), fixture.committee.seed);
+  assert.equal(committeeSeed.length, 2, "la graine ne prend que (parentHash, contentHash) : aucun candidatId");
+  const src = fs.readFileSync(path.join(root, "lib", "podProtocolV3.ts"), "utf8").replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/.*$/gm, "");
+  const fnBodies = src.match(/export const (?:committeeSeed|committeeRank|minerSeed)[^\n]*/g) ?? [];
+  assert.equal(fnBodies.length, 3);
+  for (const f of fnBodies) assert.doesNotMatch(f, /candidateId/, f);
+  // le miner change si les reçus changent (le serveur ne peut pas viser un mineur avant d'avoir les votes)
+  const accepted = P.slice(0, 5).map((profileId) => ({ profileId, minedBlocks: 0 }));
+  const winners = new Set(Array.from({ length: 40 }, (_, i) => drawMiner({ parentHash: PARENT_HASH, contentHash: CONTENT_HASH, votesRoot: sha256Hex(`r${i}`), accepted })));
+  assert.ok(winners.size > 1, "le tirage varie avec les reçus");
 });
