@@ -41,7 +41,9 @@ export async function candidateClipResponse(o: ClipResponseOptions): Promise<Nex
   if (q.exp * 1000 <= o.now) return fail("ticket expiré", 410);
 
   const candidate = await o.loadCurrent();
-  log(`[candidate-clip] MISS candidate=${q.candidateId.slice(0, 8)}`);
+  // journal des défauts de cache (AUCUN compteur Redis) : `votersExpected` = taille de l'électorat figé du candidat (profils ; borne haute des demandeurs), sinon son poolSize, sinon « ? »
+  const voters = candidate?.eligibility?.profileIds?.length ?? candidate?.poolSize;
+  log(`[candidate-clip] MISS candidate=${q.candidateId.slice(0, 8)} votersExpected=${typeof voters === "number" ? voters : "?"}`);
   if (!candidate || candidate.candidateId !== q.candidateId || !candidate.anim || clipTicketExp(candidate.expiresAt) !== q.exp) return fail("candidat introuvable", 404);
 
   let body: Uint8Array;

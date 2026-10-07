@@ -2,9 +2,12 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { createPrivateKey, createPublicKey, createHash, sign } from "node:crypto";
 import { analyzeClip, animVoteMessage, type AnimVote } from "../lib/animV3";
+import { buildAnimSubmissionFromClip } from "../lib/anim/block";
 import { receiptsRoot, validatorKeysOf, type Receipt, type ReceiptsDoc } from "../lib/blockReceipts";
+import { animValidatorDevices, animValidatorKeys } from "../lib/podVerifyAnim";
+import type { Block } from "../lib/chain";
 import { blockHashV2, committeeRoot, minerRoot, quorumCommitteeRoot, type BlockCanonicalV2 } from "../lib/podProtocolV3";
-import { levelLabel, verifyBlock, type ProofBlock } from "../lib/podVerify";
+import { blockHashV1, levelLabel, toProofBlock, verifyBlock, type ProofBlock } from "../lib/podVerify";
 import { blankFrame, enc } from "./helpers/animV3Vectors";
 
 // Lot 6B-2 — vérificateur d'un bloc ANIMATION v3 (rulesVersion 2) : vraies signatures Ed25519 (clés de TEST), vrais messages `pod-vote-v3-anim`, vrai clip PBC1 ; puis FALSIFICATIONS.
@@ -20,11 +23,13 @@ const CAND = "123e4567-e89b-42d3-a456-426614174000", PARENT = sha("parent-anim")
 const scene = (k: number) => { const f = blankFrame(); for (let y = 0; y < 12; y++) for (let x = 0; x < 8 + 5 * k; x++) f[(y + 2 * k) * 16 + (x >> 3)] |= 0x80 >> (x & 7); return f; };
 const clip = enc([scene(0), scene(1), scene(2), scene(3)], [100, 120, 140, 160], 0xf800, 0x07e0);
 const A = analyzeClip(clip);
+/** ancienne racine v1 (JSON de flottants) : conservée dans imageHash par compatibilité (A3) */
+const v1Root = (bin: Uint8Array) => { try { return buildAnimSubmissionFromClip(bin, "oled096").part.root; } catch { return sha("image-v1-root"); } };
 const KP = [keypair(11), keypair(12), keypair(13)];
 const DEVS = ["dev_AAAA0001", "dev_BBBB0002", "dev_CCCC0003"];
 
 interface Opts {
-  clipBin?: Uint8Array; K?: number; parent?: string; scoreOverride?: number; committee?: boolean; withMiner?: boolean; rulesVersion?: number; contentOverride?: string;
+  clipBin?: Uint8Array; K?: number; parent?: string; scoreOverride?: number; committee?: boolean; withMiner?: boolean; rulesVersion?: number; contentOverride?: string; imageHash?: string; includeEchoValidators?: boolean;
   votes?: Array<Partial<AnimVote> & { dev?: number; echo?: boolean; tamper?: (m: string) => string; v?: 1 | 2 | 3 }>;
 }
 function build(o: Opts = {}) {
@@ -45,7 +50,7 @@ function build(o: Opts = {}) {
   const doc: ReceiptsDoc = { v: 1, candidateId: CAND, poolSize: o.K ?? 3, receipts };
   const K = o.K ?? 3;
   const canonical: BlockCanonicalV2 = {
-    parentHash: PARENT, imageHash: sha("image-v1-root"), actionsHash: sha("actions"), contentHash: content, deviceId: "dev_AUTHOR01", poolScreen: "oled096", validatorProfileIds: validatorKeysOf(doc),
+    parentHash: PARENT, imageHash: o.imageHash ?? v1Root(o.clipBin ?? clip), actionsHash: sha("actions"), contentHash: content, deviceId: "dev_AUTHOR01", poolScreen: "oled096", validatorProfileIds: o.includeEchoValidators ? validatorKeysOf(doc) : animValidatorKeys(doc),
     scorePpm: o.scoreOverride ?? a.S, minedAt: MINED, animRoot: content, votesRoot: receiptsRoot(doc),
     committeeMode: o.committee ? "committee" : "quorum", committeeK: K,
     committeeRoot: o.committee ? committeeRoot({ mode: "committee", K, threshold: 2, wave: 1, ranked: ["art_a", "art_b"] }) : quorumCommitteeRoot(K),
@@ -53,7 +58,7 @@ function build(o: Opts = {}) {
   };
   const block: ProofBlock = {
     blockHash: blockHashV2(canonical), parentHash: PARENT, imageHash: canonical.imageHash, actionsHash: canonical.actionsHash, deviceId: "dev_AUTHOR01", poolScreen: "oled096",
-    validatorIds: [...new Set(receipts.filter((r) => r.verdict === "accept").map((r) => r.deviceId))].sort(), score: canonical.scorePpm / 1e6, minedAt: MINED,
+    validatorIds: o.includeEchoValidators ? [...new Set(receipts.filter((r) => r.verdict === "accept").map((r) => r.deviceId))].sort() : animValidatorDevices(doc), score: canonical.scorePpm / 1e6, minedAt: MINED,
     blockVersion: 2, contentHash: content, scorePpm: canonical.scorePpm, votesRoot: canonical.votesRoot, committeeMode: canonical.committeeMode as "quorum", committeeK: K, receiptsCount: receipts.length,
     committeeRoot: canonical.committeeRoot, minerRoot: canonical.minerRoot, rulesVersion: o.rulesVersion ?? 2, ...(o.withMiner ? { miner: { profileId: DEVS[0], accepted: [{ profileId: DEVS[0], minedBlocks: 0 }] } } : {}),
   };
@@ -154,6 +159,64 @@ test("AUCUN comité ni tirage de mineur déterministe pour une animation (grindi
   const h = build();
   assert.equal(st(verifyBlock({ block: { ...h.block, committeeRoot: "0".repeat(64) }, receipts: h.doc }), "hash"), "fail", "committeeRoot est dans le hash");
   assert.equal(st(verifyBlock({ block: { ...h.block, committeeK: 4 }, receipts: h.doc }), "hash"), "fail");
+});
+
+test("6B2-FIX1 (1) — les échos restent dans votesRoot (audit) mais ne sont JAMAIS validateurs d'une animation : 2 votes animation + 1 écho ⇒ bloc recevable, avertissement, écho absent de validatorIds ET de validatorProfileIds", () => {
+  const b = build({ votes: [{ dev: 0 }, { dev: 1 }, { dev: 2, echo: true }] });
+  assert.deepEqual(b.block.validatorIds, [DEVS[0], DEVS[1]], "l'écho n'est pas un validateur");
+  assert.equal(b.block.receiptsCount, 3, "mais le reçu de l'écho reste dans le document de reçus");
+  assert.ok(b.doc.receipts.some((r) => r.deviceId === DEVS[2] && r.v === 1), "écho conservé pour l'audit");
+  const r = verifyBlock({ block: b.block, receipts: b.doc, parent: { blockHash: PARENT }, clip });
+  assert.equal(r.ok, true, JSON.stringify(r.checks.filter((c) => c.status === "fail")));
+  assert.equal(st(r, "anim-receipts-class"), "warn"); assert.equal(st(r, "validators"), "ok"); assert.equal(st(r, "votes-root"), "ok"); assert.equal(r.level, "content");
+  assert.deepEqual(animValidatorDevices(b.doc), [DEVS[0], DEVS[1]]); assert.deepEqual(animValidatorKeys(b.doc), [DEVS[0], DEVS[1]]);
+  // un producteur fautif qui présente l'écho comme validateur (hash construit AVEC lui) est REFUSÉ
+  const wrong = build({ votes: [{ dev: 0 }, { dev: 1 }, { dev: 2, echo: true }], includeEchoValidators: true });
+  assert.deepEqual(wrong.block.validatorIds, DEVS, "bloc fautif : trois validateurs");
+  const rw = verifyBlock({ block: wrong.block, receipts: wrong.doc });
+  assert.equal(rw.ok, false); assert.equal(st(rw, "validators"), "fail"); assert.equal(st(rw, "hash"), "fail", "validatorProfileIds du hash ≠ approbations d'animation");
+  // l'écho retiré des validateurs annoncés mais gardé dans le hash fautif : toujours refusé
+  assert.equal(verifyBlock({ block: { ...b.block, validatorIds: DEVS }, receipts: b.doc }).ok, false);
+});
+
+test("6B2-FIX1 (2) — `toProofBlock` d'un VRAI objet Block : rulesVersion 2 ⇒ animRoot = contentHash (racine v3), la racine v1 reste dans imageHash ; comportement historique v1 préservé", () => {
+  const h = build({ votes: [{ dev: 0 }, { dev: 1 }, { dev: 2 }] });
+  const v1 = v1Root(clip);
+  assert.equal(h.block.imageHash, v1); assert.notEqual(v1, h.a.animRoot, "deux racines différentes");
+  const real = {
+    blockIndex: 7, blockHash: h.block.blockHash, parentHash: PARENT, imageHash: v1, actionsHash: h.block.actionsHash, drawScore: 3, deviceId: h.block.deviceId, minerDeviceId: DEVS[0], ownerDeviceId: DEVS[0],
+    artistName: "x", poolScreen: "oled096", validatorIds: h.block.validatorIds, score: h.block.score, displayTime: 60, minedAt: MINED, frameId: "f", revalidated: [], obsConfirmed: false, kind: "animation",
+    anim: { frames: h.a.N, loops: 0, playMs: 1, bytes: clip.length, root: v1 },   // `anim.root` = racine v1 historique
+    blockVersion: 2, contentHash: h.a.animRoot, scorePpm: h.block.scorePpm, votesRoot: h.block.votesRoot, committeeMode: "quorum", committeeK: 3, committeeRoot: h.block.committeeRoot, minerRoot: h.block.minerRoot, receiptsCount: 3, rulesVersion: 2,
+  } as unknown as Block;
+  const proof = toProofBlock(real);
+  assert.equal(proof.animRoot, h.a.animRoot, "animRoot du hash = contentHash (et NON anim.root v1)"); assert.equal(proof.rulesVersion, 2); assert.equal(proof.imageHash, v1);
+  const r = verifyBlock({ block: proof, receipts: h.doc, parent: { blockHash: PARENT }, clip });
+  assert.equal(r.ok, true, JSON.stringify(r.checks.filter((c) => c.status === "fail"))); assert.equal(r.level, "content");
+  // v1 historique : un bloc d'animation SANS rulesVersion garde animRoot = anim.root et son hash v1
+  const legacy = { blockHash: "", parentHash: PARENT, imageHash: v1, actionsHash: sha("a"), deviceId: "dev_AUTHOR01", poolScreen: "oled096", validatorIds: ["dev_X0000001"], score: 0.37254901960784315, minedAt: MINED, anim: { frames: 4, loops: 0, playMs: 1, bytes: 1, root: v1 } } as unknown as Block;
+  const lp = toProofBlock(legacy); assert.equal(lp.animRoot, v1, "bloc v1 : racine v1 inchangée");
+  lp.blockHash = blockHashV1(lp);
+  assert.equal(verifyBlock({ block: lp, receipts: null }).ok, true, "le hash v1 d'un bloc d'animation existant se vérifie toujours");
+  // v2 « image fixe » avec une animation v1 (rulesVersion absent) : racine v1
+  assert.equal(toProofBlock({ ...legacy, blockVersion: 2, contentHash: sha("c") } as unknown as Block).animRoot, v1);
+  // rulesVersion 2 sans contentHash : pas de racine inventée
+  assert.equal(toProofBlock({ ...real, contentHash: undefined } as unknown as Block).animRoot, undefined);
+});
+
+test("6B2-FIX1 (3) — avec le clip, imageHash est comparé à la racine v1 RECALCULÉE (conformément à la spec A3) ; sans clip : non vérifiable, jamais « ok » implicite", () => {
+  const h = build();
+  const withClip = verifyBlock({ block: h.block, receipts: h.doc, clip });
+  assert.equal(st(withClip, "anim-image-hash"), "ok"); assert.equal(withClip.level, "content");
+  assert.equal(verifyBlock({ block: h.block, receipts: h.doc }).checks.find((c) => c.id === "anim-image-hash"), undefined, "sans clip : aucun contrôle annoncé");
+  const bad = build({ imageHash: sha("racine-v1-inventée") });
+  assert.equal(verifyBlock({ block: bad.block, receipts: bad.doc }).ok, true, "sans clip rien ne contredit imageHash");
+  const rb = verifyBlock({ block: bad.block, receipts: bad.doc, clip });
+  assert.equal(st(rb, "anim-image-hash"), "fail"); assert.equal(rb.ok, false); assert.notEqual(rb.level, "content");
+  // l'image d'une AUTRE animation
+  const other = enc([scene(0), scene(1), scene(2), scene(4)], [100, 120, 140, 160], 0xf800, 0x07e0);
+  const wrongImg = build({ imageHash: v1Root(other) });
+  assert.equal(st(verifyBlock({ block: wrongImg.block, receipts: wrongImg.doc, clip }), "anim-image-hash"), "fail");
 });
 
 test("les blocs d'IMAGES FIXES ne sont pas affectés : un bloc sans rulesVersion passe toujours par le vérificateur historique (aucune régression)", () => {

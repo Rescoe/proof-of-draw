@@ -22,7 +22,7 @@ const NOW = 1_800_000_000_000, EXPIRES = NOW + 20 * 60_000;
 
 const scene = (k: number) => { const f = blankFrame(); for (let y = 0; y < 10; y++) for (let x = 0; x < 6 + k; x++) f[(y + k) * 16 + (x >> 3)] |= 0x80 >> (x & 7); return f; };
 const clipBin = enc([scene(1), scene(2), scene(3)], [100, 100, 100], 0xf800, 0x07e0);
-const candidate = (over: Partial<Candidate> = {}): Candidate => ({ candidateId: CAND, expiresAt: EXPIRES, anim: { clip: Buffer.from(clipBin).toString("base64") }, ...over } as unknown as Candidate);
+const candidate = (over: Partial<Candidate> = {}): Candidate => ({ candidateId: CAND, expiresAt: EXPIRES, poolSize: 9, eligibility: { profileIds: ["a", "b", "c", "d", "e"] }, anim: { clip: Buffer.from(clipBin).toString("base64") }, ...over } as unknown as Candidate);
 const query = (over: { candidateId?: string; exp?: number; t?: string } = {}) => {
   const id = over.candidateId ?? CAND, exp = over.exp ?? clipTicketExp(EXPIRES);
   return `?${clipUrl(id, exp, over.t ?? clipTicket(SECRET, id, exp)).split("?")[1]}`;
@@ -98,7 +98,11 @@ test("route /api/candidate-clip : INACTIVE sans mode shadow ou sans CLIP_TICKET_
   assert.equal(h.calls.loads, 0, "AUCUNE lecture Redis pour une requête sans ticket valide (le rate-limit de validate-candidate ne protège pas un appel direct : le ticket, si)");
   const ok = await h.run({ rawSearch: query() });
   assert.equal(ok.status, 200); assert.equal(h.calls.loads, 1, "UNE lecture par exécution (défaut de cache)");
-  assert.deepEqual(h.logs, [`[candidate-clip] MISS candidate=${CAND.slice(0, 8)}`], "une ligne de journal par défaut de cache, aucun compteur Redis");
+  assert.deepEqual(h.logs, [`[candidate-clip] MISS candidate=${CAND.slice(0, 8)} votersExpected=5`], "une ligne de journal par défaut de cache (électorat figé : 5 profils), aucun compteur Redis");
+  // votersExpected : électorat figé, sinon poolSize, sinon « ? » (candidat absent) — toujours SANS commande de plus
+  const h2 = harness(); await h2.run({ rawSearch: query(), cand: { ...candidate(), eligibility: undefined } as unknown as Candidate }); await h2.run({ rawSearch: query(), cand: null });
+  assert.deepEqual(h2.logs, [`[candidate-clip] MISS candidate=${CAND.slice(0, 8)} votersExpected=9`, `[candidate-clip] MISS candidate=${CAND.slice(0, 8)} votersExpected=?`]);
+  assert.equal(h2.calls.loads, 2, "une lecture par exécution : le journal n'en ajoute AUCUNE");
 });
 
 test("réponse 200 : octets EXACTS du clip, cache immuable borné par l'expiration, en-têtes de contrôle ; les cas « candidat absent / autre / sans clip / autre expiration » sont des 404 no-store (1 lecture)", async () => {

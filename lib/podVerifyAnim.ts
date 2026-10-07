@@ -11,7 +11,8 @@
 
 import { verifyEd25519 } from "@/lib/ed25519";
 import { analyzeClip, parseAnimVoteMessage, type AnimVote } from "@/lib/animV3";
-import { receiptsRoot, validatorKeysOf, type Receipt } from "@/lib/blockReceipts";
+import { buildAnimSubmissionFromClip } from "@/lib/anim/block";
+import { receiptsRoot, type Receipt, type ReceiptsDoc } from "@/lib/blockReceipts";
 import { voterKey } from "@/lib/eligibility";
 import { blockHashV2, minerRoot, quorumCommitteeRoot, type BlockCanonicalV2 } from "@/lib/podProtocolV3";
 import type { Check, CheckStatus, VerifyInput, VerifyLevel, VerifyReport } from "@/lib/podVerify";
@@ -20,6 +21,11 @@ const HEX64 = /^[0-9a-f]{64}$/;
 const ANIM_PREFIX = "pod-vote-v3-anim|";
 const add = (checks: Check[], id: string, label: string, status: CheckStatus, detail?: string) => { checks.push({ id, label, status, ...(detail ? { detail } : {}) }); };
 const isAnimReceipt = (r: Receipt) => r.v === 3 || r.message.startsWith(ANIM_PREFIX);
+
+/** Clés de vote (profil, sinon appareil) distinctes des approbations d'ANIMATION, triées : `validatorProfileIds` du hash canonique d'un bloc animation v3 (le producteur futur DOIT utiliser cette fonction). */
+export const animValidatorKeys = (doc: ReceiptsDoc): string[] => [...new Set(doc.receipts.filter((r) => isAnimReceipt(r) && r.verdict === "accept").map((r) => voterKey(r)))].sort();
+/** Appareils distincts des approbations d'animation, triés : `validatorIds` du bloc. */
+export const animValidatorDevices = (doc: ReceiptsDoc): string[] => [...new Set(doc.receipts.filter((r) => isAnimReceipt(r) && r.verdict === "accept").map((r) => r.deviceId))].sort();
 
 export function verifyAnimBlock(input: VerifyInput): VerifyReport {
   const { block, receipts } = input;
@@ -34,7 +40,7 @@ export function verifyAnimBlock(input: VerifyInput): VerifyReport {
   else {
     const canonical: BlockCanonicalV2 = {
       parentHash: block.parentHash, imageHash: block.imageHash, actionsHash: block.actionsHash, contentHash: block.contentHash!, deviceId: block.deviceId, poolScreen: block.poolScreen,
-      validatorProfileIds: validatorKeysOf(receipts), scorePpm: block.scorePpm!, minedAt: block.minedAt, animRoot: block.contentHash!,
+      validatorProfileIds: animValidatorKeys(receipts), scorePpm: block.scorePpm!, minedAt: block.minedAt, animRoot: block.contentHash!,
       votesRoot: receiptsRoot(receipts), committeeMode: block.committeeMode ?? "quorum", committeeK: block.committeeK!, committeeRoot: block.committeeRoot!, minerRoot: block.minerRoot!, rulesVersion: 2,
     };
     hashOk = blockHashV2(canonical) === block.blockHash && (block.animRoot === undefined || block.animRoot === block.contentHash);
@@ -88,8 +94,10 @@ export function verifyAnimBlock(input: VerifyInput): VerifyReport {
     const accepts = [...groups.values()].filter((e) => e.a && !e.r).length, needed = Math.max(1, Math.ceil((block.committeeK ?? 0) * 0.51));
     add(checks, "quorum", `Quorum historique d'animation (⌈0,51 × ${block.committeeK ?? "?"}⌉ = ${needed}) — reçus d'animation seulement`, accepts >= needed ? "ok" : "fail", `${accepts} approbation(s) distincte(s) de classe animation`);
 
-    const fromReceipts = [...new Set(receipts.receipts.filter((r) => r.verdict === "accept").map((r) => r.deviceId))].sort();
-    add(checks, "validators", "Validateurs du bloc = appareils des reçus approuvés", JSON.stringify(fromReceipts) === JSON.stringify([...block.validatorIds].sort()) ? "ok" : "fail");
+    // les reçus d'une autre classe restent dans votesRoot (audit) mais ne sont JAMAIS présentés comme validateurs d'une animation (ni dans validatorIds, ni dans validatorProfileIds du hash)
+    const fromReceipts = animValidatorDevices(receipts);
+    add(checks, "validators", "Validateurs du bloc = appareils des reçus d'animation approuvés (les échos v1/v2/v3-image n'en font pas partie)", JSON.stringify(fromReceipts) === JSON.stringify([...block.validatorIds].sort()) ? "ok" : "fail",
+      JSON.stringify(fromReceipts) === JSON.stringify([...block.validatorIds].sort()) ? undefined : "validateurs annoncés ≠ appareils des reçus d'animation approuvés");
     add(checks, "anim-rules", "Jeu de règles A1 (rulesVersion 2) ⇔ racine d'animation ⇔ reçus pod-vote-v3-anim", block.rulesVersion === 2 && animCount > 0 && HEX64.test(block.contentHash ?? "") ? "ok" : "fail");
     receiptsOk = ["receipts-count", "votes-root", "binding", "signatures-v3-anim", "position", "committee-commit", "miner-commit", "quorum", "validators", "anim-rules"].every((id) => checks.find((c) => c.id === id)?.status === "ok");
   }
@@ -109,7 +117,12 @@ export function verifyAnimBlock(input: VerifyInput): VerifyReport {
       add(checks, "anim-rule", "La règle A1 calculée sur le clip est « ok » (ni statique, ni bruit)", a.ruleCode === "ok" ? "ok" : "fail", `règle calculée : ${a.ruleCode}`);
       if (input.posterIndex !== undefined) add(checks, "anim-poster", "Indice de l'affiche = premier maximum du score par image", input.posterIndex === a.posterIndex ? "ok" : "fail");
       else add(checks, "anim-poster", "Indice de l'affiche", "na", "indice non fourni");
-      contentOk = a.animRoot === block.contentHash && clipHashes && metricsOk && block.scorePpm === a.S && a.ruleCode === "ok";
+      // imageHash : l'ANCIENNE racine v1 (JSON de flottants, lib/anim/block.ts) est conservée uniquement par compatibilité (A3) ; elle se recalcule depuis le même clip — un imageHash qui ne la redonne pas est un échec
+      let v1Root = "", v1Detail: string | undefined;
+      try { v1Root = buildAnimSubmissionFromClip(input.clip, "oled096").part.root; } catch (e) { v1Detail = e instanceof Error ? e.message : "racine v1 non calculable"; }
+      const imageOk = v1Root !== "" && block.imageHash === v1Root;
+      add(checks, "anim-image-hash", "imageHash = ancienne racine v1 recalculée depuis le clip (compatibilité, ne fait pas foi : contentHash fait foi)", imageOk ? "ok" : "fail", imageOk ? undefined : v1Detail ?? "imageHash ≠ racine v1 recalculée");
+      contentOk = a.animRoot === block.contentHash && clipHashes && metricsOk && block.scorePpm === a.S && a.ruleCode === "ok" && imageOk;
     }
   } else add(checks, "anim-clip", "Clip recalculé", "na", "clip non fourni");
 

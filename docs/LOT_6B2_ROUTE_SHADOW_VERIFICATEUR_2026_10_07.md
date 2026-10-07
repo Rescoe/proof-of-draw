@@ -51,6 +51,14 @@ Mode (valeurs, `enforce` impossible) · ticket (recalcul indépendant, temps con
 3. **Ticket en clair dans l'URL** (pas de cookie, pas d'en-tête) : requis pour qu'une URL = une entrée de cache ; divulguer le ticket n'ouvre que le téléchargement d'un contenu appelé à devenir public.
 4. **`CLIP_TICKET_SECRET`** : à créer **par le porteur** (≥ 32 caractères aléatoires) ; rotation = tickets en cours invalidés (30 min au plus).
 
+## 5 bis. 6B2-FIX1 (audit GPT de `184cbb5`) — incohérences de bordure
+| # | Constat | Correction | Preuve |
+|---|---|---|---|
+| 1 | Les échos v1/v2 étaient exclus du quorum mais figuraient dans `validatorProfileIds` (hash) et `validatorIds`. | `animValidatorKeys` / `animValidatorDevices` : seules les approbations d'**animation** sont validateurs ; les échos restent **dans `votesRoot`** (audit). Le vérificateur recalcule le hash avec ces clés. | 2 votes animation + 1 écho : bloc recevable, avertissement, écho absent des validateurs, reçu conservé ; un bloc fautif qui présente l'écho comme validateur est refusé (hash **et** `validators`). |
+| 2 | `toProofBlock` reprenait `block.anim.root` (racine v1) pour `animRoot` : un futur bloc v3 aurait été refusé par son propre vérificateur. | `rulesVersion = 2` ⇒ `animRoot = contentHash` ; comportement historique inchangé sinon (bloc v1, v2 image avec animation v1). | test sur un **vrai objet `Block`** (avec `anim.root` v1 ≠ `contentHash`) puis `verifyBlock` niveau `contenu` ; bloc v1 historique : hash v1 toujours vérifié. |
+| 3 | La spec annonçait que la racine v1 de `imageHash` était recalculée : ce n'était pas fait. | Contrôle **`anim-image-hash`** (avec le clip : `buildAnimSubmissionFromClip(clip).part.root` = `imageHash`) ; il entre dans la condition du niveau `contenu`. | `imageHash` inventé ou d'une autre animation : échec ; sans clip : contrôle non annoncé. |
+| 4 | `votersExpected` absent du journal MISS ; spec : valeur inconnue de `ANIM_V3_MODE`. | `[candidate-clip] MISS candidate=… votersExpected=N` (électorat figé, sinon `poolSize`, sinon `?`), **sans commande Redis** ; spec corrigée : `enforce` seul → `shadow`, toute autre valeur inconnue → `off`. | tests du journal (3 cas, `loads` inchangé) ; spec § 8. |
+
 ## 6. Reste / limites
 | # | Point |
 |---|---|

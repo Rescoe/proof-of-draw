@@ -32,7 +32,9 @@ export interface ProofBlock {
 export function toProofBlock(b: import("@/lib/chain").Block): ProofBlock {
   return {
     blockHash: b.blockHash, parentHash: b.parentHash, imageHash: b.imageHash, actionsHash: b.actionsHash, deviceId: b.deviceId, poolScreen: b.poolScreen,
-    validatorIds: [...b.validatorIds].sort(), score: b.score, minedAt: b.minedAt, ...(b.anim?.root ? { animRoot: b.anim.root } : {}),
+    validatorIds: [...b.validatorIds].sort(), score: b.score, minedAt: b.minedAt,
+    // bloc v1 / image fixe : racine d'animation v1 historique (hash inchangé). Animation v3 (rulesVersion 2) : `animRoot` du hash canonique = contentHash (racine v3) ; `anim.root` (v1) reste dans imageHash (A3).
+    ...(b.rulesVersion === 2 ? (b.contentHash ? { animRoot: b.contentHash } : {}) : b.anim?.root ? { animRoot: b.anim.root } : {}),
     ...(b.blockVersion === 2 ? { blockVersion: 2 as const, contentHash: b.contentHash, scorePpm: b.scorePpm, votesRoot: b.votesRoot, committeeMode: b.committeeMode, committeeK: b.committeeK, committeeRoot: b.committeeRoot, minerRoot: b.minerRoot, receiptsCount: b.receiptsCount, ...(b.rulesVersion !== undefined ? { rulesVersion: b.rulesVersion } : {}), ...(b.miner ? { miner: b.miner, minerDeviceId: b.minerDeviceId } : {}) } : {}),
   };
 }
