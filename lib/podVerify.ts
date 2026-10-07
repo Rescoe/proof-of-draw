@@ -11,11 +11,13 @@ import { createHash } from "node:crypto";
 import { verifyEd25519 } from "@/lib/ed25519";
 import { receiptsRoot, validatorKeysOf, type ReceiptsDoc } from "@/lib/blockReceipts";
 import { isPodScreen, metricsFromRaw } from "@/lib/podMetrics";
-import { blockHashV2, committeeRank, committeeRoot, committeeSeed, committeeWindow, decide, drawMiner, minerRoot, quorumCommitteeRoot, threshold, type BlockCanonicalV2, type Committee, type Verdict } from "@/lib/podProtocolV3";
+import { blockHashV2, minerDeviceFor, committeeRank, committeeRoot, committeeSeed, committeeWindow, decide, drawMiner, minerRoot, quorumCommitteeRoot, threshold, type BlockCanonicalV2, type Committee, type Verdict } from "@/lib/podProtocolV3";
 
 export interface ProofBlock {
   blockHash: string; parentHash: string; imageHash: string; actionsHash: string; deviceId: string; poolScreen: string;
   validatorIds: string[]; score: number; minedAt: number; animRoot?: string;
+  /** appareil qui a reçu le bloc (hors hash) : pour un tirage déterministe, il doit être celui que les reçus désignent */
+  minerDeviceId?: string;
   blockVersion?: 2; contentHash?: string; scorePpm?: number; votesRoot?: string; committeeMode?: "quorum" | "committee" | "bootstrap"; committeeK?: number; receiptsCount?: number;
   /** engagements du hash : comité (mode, K, seuil, vague, liste ordonnée) et tirage du mineur (résultat + entrées) */
   committeeRoot?: string; minerRoot?: string;
@@ -28,7 +30,7 @@ export function toProofBlock(b: import("@/lib/chain").Block): ProofBlock {
   return {
     blockHash: b.blockHash, parentHash: b.parentHash, imageHash: b.imageHash, actionsHash: b.actionsHash, deviceId: b.deviceId, poolScreen: b.poolScreen,
     validatorIds: [...b.validatorIds].sort(), score: b.score, minedAt: b.minedAt, ...(b.anim?.root ? { animRoot: b.anim.root } : {}),
-    ...(b.blockVersion === 2 ? { blockVersion: 2 as const, contentHash: b.contentHash, scorePpm: b.scorePpm, votesRoot: b.votesRoot, committeeMode: b.committeeMode, committeeK: b.committeeK, committeeRoot: b.committeeRoot, minerRoot: b.minerRoot, receiptsCount: b.receiptsCount, ...(b.miner ? { miner: b.miner } : {}) } : {}),
+    ...(b.blockVersion === 2 ? { blockVersion: 2 as const, contentHash: b.contentHash, scorePpm: b.scorePpm, votesRoot: b.votesRoot, committeeMode: b.committeeMode, committeeK: b.committeeK, committeeRoot: b.committeeRoot, minerRoot: b.minerRoot, receiptsCount: b.receiptsCount, ...(b.miner ? { miner: b.miner, minerDeviceId: b.minerDeviceId } : {}) } : {}),
   };
 }
 
@@ -48,6 +50,8 @@ export interface Check { id: string; label: string; status: CheckStatus; detail?
 export type VerifyLevel = "none" | "chain" | "receipts" | "content";
 
 export interface VerifyReport {
+  /** le chaînage (parentHash = hash du bloc précédent FOURNI) a été réellement contrôlé et confirmé */
+  chainLinked: boolean;
   blockHash: string;
   blockVersion: 1 | 2;
   checks: Check[];
@@ -117,6 +121,11 @@ function verifyCommittee(checks: Check[], block: ProofBlock, doc: ReceiptsDoc, m
     const winner = drawMiner({ parentHash: block.parentHash, contentHash: block.contentHash ?? "", votesRoot: block.votesRoot ?? "", accepted: block.miner.accepted });
     add(checks, "miner", "Mineur : tirage déterministe rejoué (graine = chaîne + contenu + racine des reçus)", sameSet && winner === block.miner.profileId && approvers.has(block.miner.profileId) ? "ok" : "fail",
       `profil tiré : ${winner ?? "aucun"}${block.miner.accepted.length ? " ; nombres de blocs minés déclarés par le serveur (non vérifiables sans réplication de la chaîne)" : ""}`);
+    // l'APPAREIL qui reçoit le bloc doit être celui que les reçus du profil tiré désignent (audit GPT FIX2 : seul le profil était engagé)
+    const expectedDevice = minerDeviceFor(block.miner.profileId, doc.receipts);
+    const deviceOk = expectedDevice !== null && block.minerDeviceId === expectedDevice;
+    add(checks, "miner-device", "L'appareil qui reçoit le bloc est celui d'un reçu approuvé du profil tiré (plus petit identifiant)", deviceOk ? "ok" : "fail",
+      deviceOk ? undefined : `attendu : ${expectedDevice ?? "aucun"} ; bloc : ${block.minerDeviceId ?? "absent"}`);
   } else add(checks, "miner", "Mineur : tirage déterministe rejoué", "na", "bloc sans tirage déterministe");
 }
 
@@ -202,7 +211,7 @@ export function verifyBlock(input: VerifyInput): VerifyReport {
     // validateurs du bloc = appareils des reçus approuvés
     const fromReceipts = [...new Set(receipts.receipts.filter((r) => r.verdict === "accept").map((r) => r.deviceId))].sort();
     add(checks, "validators", "Validateurs du bloc = appareils des reçus approuvés", JSON.stringify(fromReceipts) === JSON.stringify([...block.validatorIds].sort()) ? "ok" : "fail");
-    receiptsOk = checks.filter((c) => ["receipts-count", "votes-root", "binding", "signatures-v2", "quorum", "validators", "committee-commit", "miner-commit", "committee-ranks", "committee-members", "committee-decision", "miner"].includes(c.id)).every((c) => c.status === "ok" || (c.id === "miner" && c.status === "na"));
+    receiptsOk = checks.filter((c) => ["receipts-count", "votes-root", "binding", "signatures-v2", "quorum", "validators", "committee-commit", "miner-commit", "committee-ranks", "committee-members", "committee-decision", "miner", "miner-device"].includes(c.id)).every((c) => c.status === "ok" || (c.id === "miner" && c.status === "na"));
   }
 
   // ── 4. ce qui n'est PAS vérifiable (dit explicitement) ─────────────────────────────────────────────────────────────────────────────────
@@ -231,12 +240,18 @@ export function verifyBlock(input: VerifyInput): VerifyReport {
   if (hashOk && ok) level = "chain";
   if (level === "chain" && isV2 && receiptsOk && anyV2Valid) level = "receipts";
   if (level === "receipts" && contentOk) level = "content";
-  return { blockHash: block.blockHash, blockVersion: isV2 ? 2 : 1, checks, ok, level, stats };
+  return { blockHash: block.blockHash, chainLinked: !!input.parent && input.parent.blockHash === block.parentHash, blockVersion: isV2 ? 2 : 1, checks, ok, level, stats };
 }
 
 export const LEVEL_LABEL: Record<VerifyLevel, string> = {
   none: "Rien de vérifié (échec)",
-  chain: "Intégrité du bloc seulement (hash et chaînage)",
+  chain: "Intégrité du bloc seulement (hash recalculé)",
   receipts: "Reçus signés vérifiés (au moins un appareil a signé ce contenu pour ce candidat)",
   content: "Contenu recalculé : hash et métriques identiques à ceux signés par les appareils",
 };
+
+/** Libellé du niveau atteint, HONNÊTE sur le chaînage : il n'est annoncé que si le bloc précédent a été fourni ET correspond (sinon : « NON vérifié »). */
+export function levelLabel(r: Pick<VerifyReport, "level" | "chainLinked">): string {
+  if (r.level !== "chain") return LEVEL_LABEL[r.level];
+  return r.chainLinked ? "Intégrité du bloc seulement (hash recalculé et chaînage au bloc précédent fourni)" : "Intégrité du bloc seulement (hash recalculé ; chaînage NON vérifié : bloc précédent non fourni)";
+}

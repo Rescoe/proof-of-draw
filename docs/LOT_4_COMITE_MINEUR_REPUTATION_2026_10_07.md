@@ -66,7 +66,7 @@ Modes et délais ; plan (K ≤ 7, 500 profils → 14 mémorisés, bootstrap forc
 | R2 | **Complétude des éligibles** non vérifiable par un tiers (un serveur pourrait omettre un profil mieux classé) : engager une racine de Merkle de l'ensemble éligible (spec § 16). |
 | R3 | **`minedBlocks`** du tirage du mineur : déclarés par le serveur ; vérifiables seulement par un nœud qui réplique la chaîne. |
 | R4 | **Décroissance de la réputation** et seuils d'exclusion : volontairement non faits (phase d'observation). |
-| R5 | **Animations** : pas de comité tant que `pod-anim-v2` n'existe pas (lot 6). |
+| R5 | **Animations** : pas de comité tant que `pod-anim-v3` n'existe pas (lot 6 ; spécification `docs/SPEC_PODANIM_V3.md`, et pas de comité d'animation tant que le grinding n'est pas traité). |
 | R6 | **Interface** : afficher comité, vague, réputation (aujourd'hui seulement le libellé de validation du lot 2). |
 | R7 | **Essai sur Upstash** du script de réputation (`HINCRBY` dans un hash) et du premier bloc de comité : à constater. |
 | R8 | **`uniform`/`blank`** : le vote v2 nomme encore le motif `blank` ; la réputation et le comité le traduisent (renommage en v3). |

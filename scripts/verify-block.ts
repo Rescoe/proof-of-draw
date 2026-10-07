@@ -6,7 +6,7 @@
 // Sortie : un contrôle par ligne (✔ ok · ✘ échec · ⚠ avertissement · – non vérifiable) et le NIVEAU atteint. Code de sortie 0 si aucun contrôle n'échoue, 1 sinon, 2 si usage incorrect.
 // Le script ne parle qu'à /api/block-proof et /api/block-image (lecture publique, en cache CDN) ; il n'écrit rien.
 import fs from "node:fs";
-import { LEVEL_LABEL, verifyBlock, type VerifyInput } from "../lib/podVerify";
+import { levelLabel, verifyBlock, type VerifyInput } from "../lib/podVerify";
 import { isPodScreen, rawContent } from "../lib/podMetrics";
 
 const arg = (name: string) => { const i = process.argv.indexOf(`--${name}`); return i >= 0 ? process.argv[i + 1] : undefined; };
@@ -44,7 +44,7 @@ async function load(): Promise<VerifyInput> {
   console.log(`Bloc ${report.blockHash}  (format v${report.blockVersion})`);
   for (const c of report.checks) console.log(`  ${SIGN[c.status]} ${c.label}${c.detail ? `  — ${c.detail}` : ""}`);
   console.log(`\nReçus : ${report.stats.receipts} · approbations v2 recalculées : ${report.stats.v2Accepts} · votes hérités (écho) : ${report.stats.v1Echoes} · refus : ${report.stats.rejects} · signatures invalides : ${report.stats.invalidSignatures}`);
-  console.log(`NIVEAU ATTEINT : ${LEVEL_LABEL[report.level]}`);
+  console.log(`NIVEAU ATTEINT : ${levelLabel(report)}`);
   console.log("Ce vérificateur ne prouve PAS l'identité des appareils, la complétude des profils éligibles ni que le geste est humain.");
   process.exit(report.ok ? 0 : 1);
 })().catch((e) => { console.error("erreur :", e instanceof Error ? e.message : e); process.exit(2); });

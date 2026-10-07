@@ -5,7 +5,7 @@ import path from "node:path";
 import { createPrivateKey, createPublicKey, createHash, sign } from "node:crypto";
 import { buildBlockV2, blockReceiptsEnabled, receiptMessage, receiptsRoot, validatorKeysOf, type ReceiptsDoc } from "../lib/blockReceipts";
 import { blockHashV2, type BlockCanonicalV2 } from "../lib/podProtocolV3";
-import { blockHashV1, verifyBlock, type ProofBlock } from "../lib/podVerify";
+import { LEVEL_LABEL, blockHashV1, levelLabel, verifyBlock, type ProofBlock } from "../lib/podVerify";
 import { buildCandidateV2, voteMessageV2 } from "../lib/podVote";
 import { METRIC_GRID, metricsFromRaw, PPM, rawContent } from "../lib/podMetrics";
 import { finalizeBlock, type Candidate, type ValidationVote } from "../lib/chain";
@@ -174,6 +174,14 @@ test("bloc v1 (historique) : le hash se recalcule, aucun reçu (« na »), nivea
   const r = verifyBlock({ block: v1, receipts: null, parent: { blockHash: PARENT } });
   assert.equal(r.ok, true); assert.equal(r.level, "chain"); assert.equal(r.blockVersion, 1);
   assert.equal(statusOf(r, "receipts"), "na");
+  // vocabulaire HONNÊTE (audit GPT FIX2) : « chaînage » n'est annoncé que si le bloc précédent a été fourni et correspond
+  assert.equal(r.chainLinked, true); assert.match(levelLabel(r), /chaînage au bloc précédent fourni/);
+  const alone = verifyBlock({ block: v1, receipts: null });
+  assert.equal(alone.level, "chain"); assert.equal(alone.chainLinked, false);
+  assert.match(levelLabel(alone), /chaînage NON vérifié/); assert.doesNotMatch(LEVEL_LABEL.chain, /chaînage/);
+  const wrongParent = verifyBlock({ block: v1, receipts: null, parent: { blockHash: "f".repeat(64) } });
+  assert.equal(wrongParent.chainLinked, false); assert.equal(wrongParent.ok, false); assert.equal(wrongParent.level, "none");
+  assert.equal(levelLabel({ level: "receipts", chainLinked: false }), LEVEL_LABEL.receipts);
   assert.equal(verifyBlock({ block: { ...v1, score: 0.38 }, receipts: null }).ok, false);
   assert.equal(verifyBlock({ block: { ...v1, animRoot: "z".repeat(64) }, receipts: null }).ok, false);
 });

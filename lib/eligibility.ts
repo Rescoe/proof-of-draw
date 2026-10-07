@@ -126,6 +126,16 @@ export interface CandidateEligibility {
   overflow?: true;
 }
 
+/**
+ * Mode d'éligibilité RÉELLEMENT retenu pour un candidat (audit GPT FIX2). Au-delà de ELECTORATE_MAX profils l'électorat ne peut pas être figé : le contrôle redevient dynamique et le décalage
+ * numérateur/dénominateur réapparaît. Seul le comité « enforce » (fenêtre bornée à 2K profils, décision sur ces seuls profils) l'écarte ; sans lui, « enforce » est donc ramené à « shadow »
+ * pour CE candidat (quorum historique entier, journal seul) plutôt que de laisser un quorum incohérent. Aucun effet quand l'électorat tient dans la liste figée.
+ */
+export function effectiveEligibilityMode(mode: "shadow" | "enforce", plan: PoolPlan, committeeEnforces: boolean): { mode: "shadow" | "enforce"; downgraded: boolean } {
+  if (mode === "enforce" && plan.profiles.length > ELECTORATE_MAX && !committeeEnforces) return { mode: "shadow", downgraded: true };
+  return { mode, downgraded: false };
+}
+
 export function candidateEligibilityOf(mode: "shadow" | "enforce", plan: PoolPlan): CandidateEligibility {
   const frozen = plan.profiles.length <= ELECTORATE_MAX ? { profileIds: [...plan.profiles].sort() } : { overflow: true as const };
   return { mode, plan: plan.kind, authorProfiles: plan.authorProfiles, profiles: plan.profiles.length, independentProfiles: plan.independentProfiles, ...frozen };

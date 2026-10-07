@@ -7,7 +7,7 @@ import { getDevice, getGlobalActiveCount, getPoolSnapshot } from "@/lib/deviceSt
 import { getChainHead } from "@/lib/chain";
 import { committeeEnforceBlockedByGuard, committeeModeFromEnv, planCandidateCommittee, waveDelayMsFromEnv, type CandidateCommittee } from "@/lib/committee";
 import { blockReceiptsEnabled } from "@/lib/blockReceipts";
-import { authorProfilesOf, candidateEligibilityOf, eligibilityConfigFromEnv, eligibilityModeFromEnv, planPool, type CandidateEligibility } from "@/lib/eligibility";
+import { ELECTORATE_MAX, authorProfilesOf, candidateEligibilityOf, effectiveEligibilityMode, eligibilityConfigFromEnv, eligibilityModeFromEnv, planPool, type CandidateEligibility } from "@/lib/eligibility";
 import {
   computeComplexity,
   decodeEinkBuffer,
@@ -208,8 +208,6 @@ export async function POST(req: NextRequest) {
   } else {
     const snap = await getPoolSnapshot();
     const plan = planPool(snap.devices, authorProfilesOf(device, drawArtistName, snap.devices), Date.now(), eligibilityConfigFromEnv());
-    eligibility = candidateEligibilityOf(eligMode, plan);
-    poolSize = eligMode === "enforce" ? plan.poolSize : snap.legacyCount;
     // Comité de validation (Lot 4, COMMITTEE_MODE) : seulement pour une image fixe à contenu v2 ET une éligibilité calculée. « enforce » exige l'éligibilité « enforce » ET les reçus de bloc
     // (BLOCK_RECEIPTS) : sans eux, le comité n'est pas vérifiable et le mineur ne peut pas être rejoué ; le plan reste alors en « shadow » (journal seul). +1 lecture : la tête de chaîne.
     const commMode = committeeModeFromEnv();
@@ -221,7 +219,12 @@ export async function POST(req: NextRequest) {
       committee = planCandidateCommittee({ state, plan, parentHash: head?.blockHash ?? "0".repeat(64), contentHash: v2.rawHash, waveDelayMs: waveDelayMsFromEnv() }) ?? undefined;
       if (committee) console.log(`[committee] ${state.toUpperCase()} mode=${committee.mode} K=${committee.K} seuil=${committee.threshold} rangs=[${committee.ranked.join(",")}] quorumHistorique=${Math.max(1, Math.ceil(snap.legacyCount * 0.51))}`);
     }
-    console.log(`[eligibility] ${eligMode.toUpperCase()} plan=${plan.kind} profils=${plan.profiles.length} indépendants=${plan.independentProfiles} auteur=[${plan.authorProfiles.join(",")}] poolHistorique=${snap.legacyCount} poolRetenu=${poolSize}`);
+    // Électorat trop grand pour être figé (> ELECTORATE_MAX) : sans comité « enforce » le contrôle serait dynamique (décalage numérateur/dénominateur) → ramené à « shadow » pour ce candidat (audit GPT FIX2).
+    const effective = effectiveEligibilityMode(eligMode, plan, committee?.state === "enforce");
+    if (effective.downgraded) console.warn(`[eligibility] ENFORCE ramené à SHADOW pour ce candidat : ${plan.profiles.length} profils > ${ELECTORATE_MAX} (électorat non figeable) et comité « enforce » inactif ; quorum historique conservé`);
+    eligibility = candidateEligibilityOf(effective.mode, plan);
+    poolSize = effective.mode === "enforce" ? plan.poolSize : snap.legacyCount;
+    console.log(`[eligibility] ${eligMode.toUpperCase()}${effective.downgraded ? "→SHADOW" : ""} plan=${plan.kind} profils=${plan.profiles.length} indépendants=${plan.independentProfiles} auteur=[${plan.authorProfiles.join(",")}] poolHistorique=${snap.legacyCount} poolRetenu=${poolSize}`);
   }
   const CANDIDATE_TTL_SEC = parseInt(process.env.CANDIDATE_TTL_SEC ?? "1800");
 

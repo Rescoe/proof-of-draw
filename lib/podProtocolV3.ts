@@ -203,6 +203,15 @@ export function drawMiner(input: { parentHash: string; contentHash: string; vote
   return list[list.length - 1].profileId;   // inatteignable (u < total)
 }
 
+/**
+ * Appareil qui reçoit le bloc : parmi les reçus APPROUVÉS du profil tiré (voterKey = profil, sinon appareil), le plus petit identifiant d'appareil (ordre lexicographique). Règle déterministe,
+ * indépendante de l'ordre d'arrivée des votes : le vérificateur la rejoue depuis les reçus (déjà engagés par votesRoot) — l'appareil n'a donc pas besoin d'un champ de plus dans le hash.
+ */
+export function minerDeviceFor(winnerProfileId: string, receipts: readonly { deviceId: string; profileId?: string; verdict?: string }[]): string | null {
+  const ds = receipts.filter((r) => r.verdict !== "reject" && (r.profileId ?? r.deviceId) === winnerProfileId).map((r) => r.deviceId).sort();
+  return ds[0] ?? null;
+}
+
 // ─── Engagements du comité et du mineur dans le hash du bloc (audit GPT : ils n'étaient que des métadonnées hors hash) ─────────────────────────────────────────────
 export type CommitteeRootMode = "quorum" | "committee" | "bootstrap";
 /**

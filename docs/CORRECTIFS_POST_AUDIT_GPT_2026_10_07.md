@@ -30,6 +30,19 @@ Redis, Neon, polling, cadence : **inchangés** (aucun appel de plus). `reset-key
 ## Validations
 `npm test` **517/517** (g++ présent, 0 ignoré) ; `tsc` 0 ; `git diff --check` 0 ; compilation **arduino-cli** des **9 firmwares** (ESP8266 : 34 240 / 35 200 / 34 808 / 36 064 o de RAM statique — identiques à avant ; R4 : 19 128 / 21 500 / 22 768 / 20 864 / 21 444 o) et des 2 auto-tests du noyau. **Aucun essai sur carte.**
 
+## FIX2 — réserves de l'acceptation de `a677311` (07/10/2026)
+
+Verdict de GPT : **ACCEPTÉ SOUS RÉSERVE** (517/517, tsc, parité C++/TS, Redis/Neon/polling inchangés si éteint, aucun firmware sur le nouveau noyau). Quatre réserves, toutes traitées **sans changement du format du bloc ni des vecteurs C++** :
+
+| # | Réserve | Correction | Preuve |
+|---|---|---|---|
+| **F1** | Au-delà de 64 profils l'électorat redevient dynamique : le décalage numérateur/dénominateur réapparaît si le comité n'est pas « enforce ». | `effectiveEligibilityMode(mode, plan, committeeEnforces)` : si `ELIGIBILITY_MODE=enforce`, électorat > 64 **et** comité « enforce » inactif, **ce candidat** est déposé en **« shadow »** (quorum historique entier, refus seulement journalisés) avec un avertissement. Avec comité « enforce » (fenêtre ≤ 2K) ou électorat ≤ 64 : inchangé. Le comité est planifié **avant** de décider du mode effectif. | `tests/eligibility.test.ts` : 65 profils sans comité → `shadow`/`downgraded` ; avec comité → `enforce` ; 64 profils → `enforce` ; ordre de planification vérifié dans la route. |
+| **F2** | Le profil mineur était engagé, pas l'**appareil** qui reçoit le bloc. | Règle **déterministe** `minerDeviceFor(profil, reçus)` = plus petit identifiant d'appareil parmi les reçus **approuvés** du profil tiré (indépendante de l'ordre d'arrivée) ; `finalizeBlock` l'utilise ; le vérificateur ajoute le contrôle **`miner-device`** (`minerDeviceId` du bloc = appareil attendu). Pas de champ de plus dans le hash : les reçus sont déjà engagés par `votesRoot`. | `tests/committee.test.ts` : bloc attribué à l'appareil d'un autre profil, appareil inconnu ou absent → **échec** ; ordre des reçus sans effet ; un refus ne désigne jamais un appareil. |
+| **F3** | Le niveau `chain` annonçait « hash et chaînage » même sans bloc précédent. | `VerifyReport.chainLinked` + `levelLabel()` : « hash recalculé et chaînage au bloc précédent fourni » **seulement** si le parent a été fourni et correspond, sinon « chaînage **NON** vérifié : bloc précédent non fourni ». `LEVEL_LABEL.chain` ne parle plus de chaînage. La CLI utilise `levelLabel`. | `tests/podVerify.test.ts` (avec parent, sans parent, mauvais parent). |
+| **F4** | `COMMITTEE_GRINDING_ACK` n'élimine pas le grinding. | **Aucun code** : la position est confirmée — le comité reste **expérimental et désactivé en production** tant qu'il n'existe pas de balise postérieure à la soumission (déjà écrit dans le lot 4, la spec § 9, la feuille de route). L'accusé n'est qu'un garde-fou contre l'activation accidentelle. | — |
+
+Validation : `npm test` **519/519**, `tsc` 0, `git diff --check` 0. Aucun firmware, aucun vecteur C++ (le format du bloc n'a pas changé), Redis/Neon/polling inchangés.
+
 ## Reste (non corrigé, assumé)
 | # | Point |
 |---|---|

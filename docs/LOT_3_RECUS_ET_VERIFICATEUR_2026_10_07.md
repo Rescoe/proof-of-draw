@@ -22,7 +22,7 @@
 
 ## 2. Ce que le vérificateur dit — et ne dit pas
 Il ne dit **jamais** « validé » : il liste des contrôles (✔ ok · ✘ échec · ⚠ avertissement · – non vérifiable) et le **niveau atteint** :
-`rien` → `chain` (hash et chaînage) → `receipts` (au moins un appareil a signé CE contenu pour CE candidat) → `content` (l'image fournie redonne le hash et les métriques signés).
+`rien` → `chain` (hash recalculé ; le chaînage n'est annoncé que si le bloc précédent est fourni — `levelLabel`) → `receipts` (au moins un appareil a signé CE contenu pour CE candidat) → `content` (l'image fournie redonne le hash et les métriques signés).
 
 **Il ne prouve pas** (affiché à chaque exécution) : qu'une clé publique est celle d'un **appareil réel** ; que l'ensemble des profils éligibles était **complet** ; que le **geste** est humain ; ni la **position** du vote dans la chaîne (les votes v2 déjà déployés ne signent pas `parentHash` : contrôle « ⚠ non vérifiable »).
 Un **vote hérité** (écho du score du serveur) apparaît en ⚠ : sa signature ne couvre **aucun contenu**. Un bloc mêlant votes v2 et hérités vérifie, mais n'est **jamais** présenté comme entièrement recalculé (le décompte `v2 / hérités / refus` est toujours affiché).

@@ -40,7 +40,7 @@ import { summarizeVotes, type VotesSummary } from "@/lib/validationSummary";
 import { voterKey, type CandidateEligibility } from "@/lib/eligibility";
 import { blockReceiptsEnabled, prepareBlockV2, sealBlockV2, type MinerCommit, type ReceiptsDoc } from "@/lib/blockReceipts";
 import type { CandidateCommittee } from "@/lib/committee";
-import { drawMiner } from "@/lib/podProtocolV3";
+import { drawMiner, minerDeviceFor } from "@/lib/podProtocolV3";
 
 export interface Block {
   blockIndex: number;
@@ -578,7 +578,7 @@ export async function finalizeBlock(
     }));
     const winner = drawMiner({ parentHash, contentHash: prep.contentHash, votesRoot: prep.votesRoot, accepted });
     if (winner) {
-      deterministicMiner = approvers.find((x) => voterKey(x) === winner)?.deviceId ?? null;
+      deterministicMiner = minerDeviceFor(winner, votes);   // règle déterministe (plus petit appareil approuvant du profil tiré) : rejouable par le vérificateur
       minerInfo = { profileId: winner, accepted };
     }
   }

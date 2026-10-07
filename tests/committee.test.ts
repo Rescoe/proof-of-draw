@@ -12,7 +12,7 @@ import { buildBlockV2, prepareBlockV2, sealBlockV2 } from "../lib/blockReceipts"
 import { verifyBlock, type ProofBlock } from "../lib/podVerify";
 import { buildCandidateV2, voteMessageV2 } from "../lib/podVote";
 import { METRIC_GRID, PPM } from "../lib/podMetrics";
-import { committeeWindow, drawMiner, selectCommittee } from "../lib/podProtocolV3";
+import { committeeWindow, drawMiner, minerDeviceFor, selectCommittee } from "../lib/podProtocolV3";
 import type { Candidate, ValidationVote, VoteMap } from "../lib/chain";
 
 // Lot 4 — comité, mineur déterministe, réputation. Vraies signatures Ed25519 pour le vérificateur ; scénarios hostiles pour la décision.
@@ -200,6 +200,7 @@ function committeeBlock(profiles = PROFILES, nVotes = 5) {
   const block: ProofBlock = {
     blockHash: built.blockHash, parentHash: PARENT, imageHash: candidate.imageHash, actionsHash: candidate.actionsHash, deviceId: candidate.deviceId, poolScreen: "oled096",
     validatorIds: out.votes.map((v) => v.deviceId).sort(), score: 0.4, minedAt: 1_791_300_000_000, ...built.fields, miner: { profileId: winner, accepted },
+    minerDeviceId: minerDeviceFor(winner, out.votes)!,   // même règle que finalizeBlock : appareil désigné par les reçus du profil tiré
   };
   return { block, doc: built.doc, c, out };
 }
@@ -249,6 +250,13 @@ test("FALSIFICATION du comité : le comité et le mineur sont ENGAGÉS dans le h
   assert.equal(status(verifyBlock({ block: rigged, receipts: doc }), "miner-commit"), "fail", "nombres de blocs minés truqués : les ENTRÉES du tirage sont engagées");
   const noMiner = { ...block, miner: undefined };
   assert.equal(status(verifyBlock({ block: noMiner, receipts: doc }), "miner-commit"), "fail", "effacer le tirage ne passe pas : minerRoot l'engage");
+  // APPAREIL mineur (audit GPT FIX2) : seul le profil était engagé ; l'appareil qui reçoit le bloc doit être celui que les reçus du profil tiré désignent
+  assert.equal(status(verifyBlock({ block, receipts: doc }), "miner-device"), "ok");
+  const otherDevice = doc.receipts.find((x) => x.profileId !== block.miner!.profileId)!.deviceId;
+  const wrongDev = verifyBlock({ block: { ...block, minerDeviceId: otherDevice }, receipts: doc });
+  assert.equal(status(wrongDev, "miner-device"), "fail", "le bloc est attribué à l'appareil d'un AUTRE profil : détecté"); assert.equal(wrongDev.ok, false);
+  assert.equal(status(verifyBlock({ block: { ...block, minerDeviceId: "dev_INCONNU" }, receipts: doc }), "miner-device"), "fail", "appareil sans reçu : détecté");
+  assert.equal(status(verifyBlock({ block: { ...block, minerDeviceId: undefined }, receipts: doc }), "miner-device"), "fail", "appareil absent : détecté");
   const few = committeeBlock(PROFILES, 5); few.doc.receipts.splice(4);
   assert.equal(verifyBlock({ block: few.block, receipts: few.doc }).ok, false, "reçus supprimés : racine/hash/décision échouent");
 });
@@ -272,6 +280,16 @@ test("mineur déterministe : même bloc, même résultat ; sans reçus (BLOCK_RE
   const detBlock = src.slice(src.indexOf("let minerInfo"), src.indexOf("const effectiveMiner"));
   assert.doesNotMatch(detBlock, /Math\.random/);
   assert.match(detBlock, /redis\.llen/, "même coût qu'avant : un LLEN par approbateur");
+});
+
+test("appareil mineur : règle DÉTERMINISTE (plus petit appareil approuvant du profil tiré), indépendante de l'ordre d'arrivée ; un refus ne désigne jamais un appareil", () => {
+  const rs = [{ deviceId: "dev_C", profileId: "art_p", verdict: "accept" }, { deviceId: "dev_A", profileId: "art_p", verdict: "reject" }, { deviceId: "dev_B", profileId: "art_p", verdict: "accept" }, { deviceId: "dev_Z", profileId: "art_q", verdict: "accept" }];
+  assert.equal(minerDeviceFor("art_p", rs), "dev_B", "dev_A refuse : exclu ; dev_B < dev_C");
+  assert.equal(minerDeviceFor("art_p", [...rs].reverse()), "dev_B", "ordre d'arrivée sans effet");
+  assert.equal(minerDeviceFor("art_q", rs), "dev_Z");
+  assert.equal(minerDeviceFor("art_absent", rs), null);
+  assert.equal(minerDeviceFor("dev_X", [{ deviceId: "dev_X", verdict: "accept" }]), "dev_X", "sans profil : la clé de vote est l'appareil");
+  assert.match(read("lib/chain.ts"), /deterministicMiner = minerDeviceFor\(winner, votes\)/, "finalizeBlock utilise la même règle que le vérificateur");
 });
 
 // ── câblage et budget ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────

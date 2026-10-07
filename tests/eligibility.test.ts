@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import {
-  DEFAULT_ELIGIBILITY, ELECTORATE_MAX, authorProfilesOf, candidateEligibilityOf, eligibilityConfigFromEnv, eligibilityModeFromEnv, evaluateDevice, planPool, profileIdOf, voteGate, voterKey,
+  DEFAULT_ELIGIBILITY, ELECTORATE_MAX, authorProfilesOf, candidateEligibilityOf, effectiveEligibilityMode, eligibilityConfigFromEnv, eligibilityModeFromEnv, evaluateDevice, planPool, profileIdOf, voteGate, voterKey,
   type CandidateEligibility, type EligibilityConfig,
 } from "../lib/eligibility";
 import { castVoteOn, countAccepts, countRejects, countV2Accepts, countVoters, type Candidate, type ValidationVote, type VoteMap, type VoteRedis } from "../lib/chain";
@@ -165,6 +165,25 @@ test("ÉLECTORAT FIGÉ (audit GPT) : un profil devenu actif APRÈS le dépôt ne
   assert.equal((gate("enforce", dev("N"), boot) as { reason: string }).reason, "not-in-electorate");
 });
 
+test("FIX2 (audit GPT) : électorat > 64 sans comité « enforce » ⇒ « enforce » ramené à « shadow » pour CE candidat (plus de décalage numérateur/dénominateur) ; avec comité enforce ou électorat figé : inchangé", () => {
+  const many = (n: number) => Array.from({ length: n }, (_, i) => dev(`M${String(i).padStart(3, "0")}`));
+  const big = planPool(many(65), [], NOW, cfg), fit = planPool(many(64), [], NOW, cfg);
+  assert.deepEqual(effectiveEligibilityMode("enforce", big, false), { mode: "shadow", downgraded: true });
+  assert.deepEqual(effectiveEligibilityMode("enforce", big, true), { mode: "enforce", downgraded: false }, "le comité (fenêtre ≤ 2K) protège à grande échelle");
+  assert.deepEqual(effectiveEligibilityMode("enforce", fit, false), { mode: "enforce", downgraded: false }, "64 profils : électorat figé, rien à corriger");
+  assert.deepEqual(effectiveEligibilityMode("shadow", big, false), { mode: "shadow", downgraded: false });
+  // conséquence réelle : le candidat dégradé est en « shadow » ⇒ aucun refus d'éligibilité dynamique ; le quorum reste le quorum historique
+  const e = candidateEligibilityOf("shadow", big);
+  assert.equal(e.overflow, true);
+  const g = voteGate({ mode: "enforce", eligibility: e, device: dev("N", { lastPing: NOW - 2 * H }), now: NOW, cfg, priorVoterProfiles: new Set() });
+  assert.notEqual(g.action, "refuse", "aucun refus bloquant : au pire un « shadow-refuse » journalisé");
+  // câblage
+  const sub = read("app/api/submit-candidate/route.ts");
+  assert.match(sub, /effectiveEligibilityMode\(eligMode, plan, committee\?\.state === "enforce"\)/);
+  assert.match(sub, /poolSize = effective\.mode === "enforce" \? plan\.poolSize : snap\.legacyCount/);
+  assert.ok(sub.indexOf("committee = planCandidateCommittee(") < sub.indexOf("effectiveEligibilityMode("), "le comité est planifié AVANT de décider du mode effectif");
+});
+
 test("électorat trop grand (overflow) ou candidat antérieur : le contrôle reste DYNAMIQUE comme avant (compatibilité)", () => {
   const dynamic = elig();   // sans profileIds
   assert.equal(dynamic.profileIds, undefined);
@@ -231,7 +250,7 @@ test("câblage : validate-candidate, validation-result et submit-candidate utili
   const sub = read("app/api/submit-candidate/route.ts");
   assert.match(sub, /eligMode === "off"[\s\S]{0,80}getGlobalActiveCount\(\)/, "mode off : appel historique inchangé");
   assert.match(sub, /getPoolSnapshot\(\)/);
-  assert.match(sub, /eligMode === "enforce" \? plan\.poolSize : snap\.legacyCount/, "shadow : quorum inchangé");
+  assert.match(sub, /effective\.mode === "enforce" \? plan\.poolSize : snap\.legacyCount/, "shadow : quorum inchangé (et mode effectif après ramenée éventuelle d'un électorat > 64)");
   const val = read("app/api/validate-candidate/route.ts"), res = read("app/api/validation-result/route.ts");
   for (const src of [val, res]) { assert.match(src, /voteGate\(/); assert.match(src, /eligibilityModeFromEnv\(\)/); assert.doesNotMatch(src, /\.scan\(|redis\.keys/); }
   assert.match(res, /gate\.status/, "403/409 renvoyés par la porte");
