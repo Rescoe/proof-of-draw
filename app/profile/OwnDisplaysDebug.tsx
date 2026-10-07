@@ -110,6 +110,14 @@ export function OwnDisplaysDebug({ devices }: { devices: OwnedDevice[] }) {
                       <Line k="Confirmé">{new Date(r.shownAt).toLocaleString("fr-FR")} ({ago(r.shownAt)})</Line>
                       <Line k="frameId"><code>{r.frameId}</code></Line>
                       {r.blockIndex != null && <Line k="Bloc chaîne">#{r.blockIndex}</Line>}
+                      {r.render && (
+                        <>
+                          {r.render.artworkHash && <Line k="artworkHash"><code>{r.render.artworkHash.slice(0, 16)}…</code></Line>}
+                          {r.render.renderHash && <Line k="renderHash"><code>{r.render.renderHash.slice(0, 16)}…</code></Line>}
+                          {r.render.layoutVersion != null && <Line k="Mise en page">version {r.render.layoutVersion}{r.render.cartelMode ? " · cartel « " + r.render.cartelMode + " »" : ""}</Line>}
+                          <div style={{ fontSize: "0.7rem", color: "var(--text3)" }}>Témoignage de l&apos;appareil : jamais voté ni vérifié par le serveur.</div>
+                        </>
+                      )}
                       {r.blockHash && <Line k="Bloc galerie ANA"><code>{r.blockHash.slice(0, 16)}…</code></Line>}
                     </>
                   )}

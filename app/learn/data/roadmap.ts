@@ -103,7 +103,7 @@ export const ROADMAP: RoadmapPhase[] = [
     items: [
       { id: "wifi-portal", title: "Identifiants Wi-Fi hors du binaire (portail de configuration)", status: "todo", note: "Condition d’un binaire unique par famille de carte." },
       { id: "ota", title: "Mises à jour à distance signées (manifeste dans /api/pull, anti-retour arrière, déploiement par vagues)", status: "todo", note: "Faisable sur ESP8266 et R4 ; fabrication du fichier R4 et sécurité à vérifier." },
-      { id: "cartel", title: "Cartels e-ink : zone sûre puis réglage par appareil (superposé / cadre / masqué)", status: "todo", note: "Aujourd’hui le cartel efface 22 % de l’e-ink 2,9″." },
+      { id: "cartel", title: "Cartels e-ink : zone sûre puis réglage par appareil (superposé / cadre / masqué)", status: "doing", note: "Livré : l’éditeur hachure les bandes du cartel (ce que l’écran efface) et prévient avant l’envoi. Reste le réglage par appareil (superposé / cadre / masqué), qui demande le grand flash." },
       { id: "keys", title: "Génération des clés avec une source d’aléa matérielle (ESP8266)", status: "todo" },
       { id: "tls", title: "Connexions TLS authentifiées (empreinte ou certificat)", status: "todo" },
       { id: "salted", title: "Hash salé par appareil et signature spatiale de l’image", status: "todo", note: "Recherche : détecter copies et réponses recopiées." },

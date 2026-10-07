@@ -12,6 +12,13 @@
 
 export type DisplayKind = "human" | "ana" | "personal";
 
+/**
+ * RAPPORT DE RENDU (lot 7.5, D9) : ce que l'appareil dit avoir RÉELLEMENT affiché. `artworkHash` = hash de l'œuvre (celle sur laquelle le réseau a voté) ; `renderHash` = hash du tampon FINAL
+ * (cartel gravé compris) ; `layoutVersion` = version des règles de mise en page et de cartel ; `cartelMode` = réglage appliqué. JAMAIS voté, JAMAIS vérifié par le serveur (il ne connaît ni la date ni le
+ * texte gravés par l'appareil) : un simple témoignage consigné pour le débogage du propriétaire. Aucun firmware actuel ne l'envoie (lot 8) : le champ reste absent.
+ */
+export interface RenderReport { artworkHash?: string; renderHash?: string; layoutVersion?: number; cartelMode?: "overlay" | "fit" | "hidden" }
+
 export interface ShownRecord {
   frameId:     string;
   screen:      string;
@@ -23,6 +30,7 @@ export interface ShownRecord {
   blockHash?:  string;     // bloc galerie ANA correspondant
   blockIndex?: number;     // bloc de la chaîne humaine
   mode?:       "frame" | "scene";   // ce que l'appareil a joué (firmware scene-v1 : champ `mode` de l'ACK)
+  render?:     RenderReport;        // rapport de rendu de l'appareil (débogage du propriétaire seulement ; jamais exposé publiquement)
   isAnimation?: boolean;            // l'œuvre est une ANIMATION de bloc (le pointeur `anim` accompagnait la frame) : l'écran la joue en boucle
   hasImage:    boolean;
 }
@@ -48,6 +56,19 @@ type LooseFrame = { frameId?: string; sourceDeviceId?: string; payload?: Record<
 const str = (v: unknown): string | undefined => (typeof v === "string" && v ? v : undefined);
 const int = (v: unknown): number | undefined => (Number.isSafeInteger(v) ? (v as number) : undefined);
 
+/** Lecture STRICTE du rapport de rendu d'un corps d'ACK : champs inconnus ou invalides ignorés (jamais d'erreur : l'ACK doit réussir). `null` si rien d'exploitable. */
+export function sanitizeRenderReport(body: unknown): RenderReport | null {
+  if (!body || typeof body !== "object") return null;
+  const b = body as Record<string, unknown>, out: RenderReport = {};
+  const hex = (v: unknown) => (typeof v === "string" && /^[0-9a-f]{64}$/.test(v) ? v : undefined);
+  const aw = hex(b.artworkHash), rh = hex(b.renderHash);
+  if (aw) out.artworkHash = aw;
+  if (rh) out.renderHash = rh;
+  if (Number.isSafeInteger(b.layoutVersion) && (b.layoutVersion as number) >= 1 && (b.layoutVersion as number) <= 255) out.layoutVersion = b.layoutVersion as number;
+  if (b.cartelMode === "overlay" || b.cartelMode === "fit" || b.cartelMode === "hidden") out.cartelMode = b.cartelMode;
+  return Object.keys(out).length > 0 ? out : null;
+}
+
 export interface ImagePayload { screen: string; black?: string; red?: string; buffer?: string }
 
 /** Buffers de la frame (seuls champs image) — jamais les métadonnées ni le pointeur de scène. */
@@ -64,7 +85,7 @@ export function imagePayloadOf(frame: LooseFrame, screen: string): ImagePayload 
  * diffusée par le pont ANA), "personal" = dessin privé du propriétaire.
  */
 export function buildShownRecord(
-  frame: LooseFrame, screen: string, source: "consensus" | "personal", now: number, mode?: "frame" | "scene",
+  frame: LooseFrame, screen: string, source: "consensus" | "personal", now: number, mode?: "frame" | "scene", render?: RenderReport | null,
 ): ShownRecord | null {
   const frameId = str(frame.frameId);
   if (!frameId || !FRAME_ID_RE.test(frameId)) return null;
@@ -85,6 +106,7 @@ export function buildShownRecord(
     ...(p.anim && typeof p.anim === "object" ? { isAnimation: true } : {}),
     blockIndex: int(block.index),
     ...(mode ? { mode } : {}),
+    ...(render ? { render } : {}),
     hasImage: imagePayloadOf(frame, screen) !== null,
   };
 }
@@ -95,10 +117,10 @@ export function buildShownRecord(
  */
 export async function recordDisplayed(
   kv: DisplayKV, deviceId: string, screen: string, frame: LooseFrame,
-  source: "consensus" | "personal", mode?: "frame" | "scene", now = Date.now(),
+  source: "consensus" | "personal", mode?: "frame" | "scene", now = Date.now(), render?: RenderReport | null,
 ): Promise<ShownRecord | null> {
   try {
-    const rec = buildShownRecord(frame, screen, source, now, mode);
+    const rec = buildShownRecord(frame, screen, source, now, mode, render);
     if (!rec) return null;
     const writes: Promise<unknown>[] = [kv.set(shownKey(deviceId, screen), JSON.stringify(rec), { ex: SHOWN_TTL_SEC })];
     const img = rec.hasImage ? imagePayloadOf(frame, screen) : null;
@@ -122,7 +144,9 @@ function parseRecord(raw: unknown): ShownRecord | null {
 
 export function toPublicShown(rec: ShownRecord): PublicShown {
   if (rec.kind === "personal") return { frameId: null, screen: rec.screen, shownAt: rec.shownAt, kind: "personal", hasImage: false };
-  return rec;
+  const { render: _render, ...visible } = rec;   // le rapport de rendu n'est jamais public (débogage du propriétaire)
+  void _render;
+  return visible;
 }
 
 /** Enregistrements COMPLETS (vue du propriétaire : debug). Une seule commande MGET pour tous les couples (appareil, écran). */

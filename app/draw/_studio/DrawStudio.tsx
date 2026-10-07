@@ -11,6 +11,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useReducer, useRef, u
 import { RotateCw, RotateCcw, ScanLine, X, ZoomIn, ZoomOut, Rotate3d, PanelRightClose, PanelRightOpen, Move } from "lucide-react";
 import "./studio.css";
 import { SCREEN_PROFILES, ScreenId } from "@/lib/screenProfiles";
+import { cartelZonesFor } from "@/lib/cartelZones";
 import {
   DrawSession, MAT_FLIP_H, MAT_FLIP_V, MAT_IDENTITY, MAT_ROT_CW, matMul, modeForProfile, paletteForMode,
   podHints, craftProfile, scoreBreakdown, ACHIEVEMENTS, Pt, isCustomBrush,
@@ -75,6 +76,7 @@ export default function DrawStudio(props: DrawStudioProps) {
   const mode = modeForProfile(profile);
   const W = profile.width, H = profile.height;
   const draftKey = `${deviceId}:${screenId}`;
+  const cartelZones = useMemo(() => cartelZonesFor(screenId), [screenId]);   // null : OLED, TFT 2,8″ (pas de cartel gravé dans l'image)
 
   // ── Préférences, réglages, session ────────────────────────────────────────
   const [prefs, setPrefs] = useState<StudioPrefs>(() => loadPrefs());
@@ -599,7 +601,7 @@ export default function DrawStudio(props: DrawStudioProps) {
       >
         <Stage
           ref={stageApi}
-          session={session} clock={clock} tool={tool} cfgRef={cfgRef} grid={prefs.grid}
+          session={session} clock={clock} tool={tool} cfgRef={cfgRef} grid={prefs.grid} cartel={prefs.cartel ? cartelZones : null}
           frameLabel={frameLabel} model={model} modelEdit={modelEdit} onModelChange={setModel}
           panelOpen={!!panel && !lay.side} onDismissPanel={() => setPanel(null)} penOnly={prefs.penOnly}
           onPickColor={pickedColor} onSelectionChange={force} onFloatCommit={() => endPending("commit")}
@@ -694,6 +696,7 @@ export default function DrawStudio(props: DrawStudioProps) {
             <MenuSection
               toolbox={toolbox} onToolbox={setToolbox}
               grid={prefs.grid} onGrid={(g: GridSettings) => patchPrefs({ grid: g })}
+              cartelZones={cartelZones} showCartel={prefs.cartel} onCartel={(v: boolean) => patchPrefs({ cartel: v })}
               precision={cfg.precision} onPrecision={v => set({ precision: v })}
               penOnly={prefs.penOnly} onPenOnly={v => patchPrefs({ penOnly: v })}
               canFullscreen={typeof document !== "undefined" && !!document.fullscreenEnabled} isFullscreen={isFs}

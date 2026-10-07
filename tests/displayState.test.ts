@@ -161,3 +161,45 @@ test("un échec Redis n'est JAMAIS propagé (l'ACK du firmware doit réussir)", 
   try { assert.equal(await recordDisplayed(kv, "dev_AAAA1111", "tft18", anaFrame, "consensus"), null); }
   finally { console.error = originalError; }
 });
+
+// ── Lot 7.5 : rapport de rendu de l'appareil (artworkHash / renderHash / layoutVersion / cartelMode) — témoignage consigné, jamais voté, jamais public, 0 commande de plus ──
+import fs from "node:fs";
+import path from "node:path";
+import { sanitizeRenderReport } from "../lib/displayState";
+
+test("rapport de rendu : lecture STRICTE (hash hexadécimaux de 64 caractères, version 1..255, mode connu) ; tout le reste est ignoré, jamais d'erreur", () => {
+  const h = "ab".repeat(32);
+  assert.deepEqual(sanitizeRenderReport({ artworkHash: h, renderHash: "cd".repeat(32), layoutVersion: 1, cartelMode: "overlay" }), { artworkHash: h, renderHash: "cd".repeat(32), layoutVersion: 1, cartelMode: "overlay" });
+  assert.deepEqual(sanitizeRenderReport({ renderHash: h }), { renderHash: h });
+  for (const bad of [null, undefined, 5, "x", [], {}, { renderHash: "AB".repeat(32) }, { renderHash: "ab".repeat(31) }, { renderHash: 12 }, { layoutVersion: 0 }, { layoutVersion: 256 }, { layoutVersion: 1.5 }, { layoutVersion: "1" }, { cartelMode: "plein" }, { cartelMode: "OVERLAY" }, { deviceId: "dev_AAAA1111", frameId: "x" }])
+    assert.equal(sanitizeRenderReport(bad), null, JSON.stringify(bad));
+  assert.deepEqual(sanitizeRenderReport({ renderHash: h, layoutVersion: 999, cartelMode: "zz", extra: 1 }), { renderHash: h }, "les champs invalides sont écartés, les valides conservés");
+});
+
+test("le rapport est consigné dans l'enregistrement D'AFFICHAGE existant (mêmes 2 commandes), absent par défaut, JAMAIS dans la vue publique ni pour une frame personnelle", async () => {
+  const render = { artworkHash: "ab".repeat(32), renderHash: "cd".repeat(32), layoutVersion: 1, cartelMode: "overlay" as const };
+  const a = fakeKV();
+  const rec = await recordDisplayed(a.kv, "dev_AAAA1111", "eink29bwr", humanFrame, "consensus", undefined, 99, render);
+  assert.deepEqual(rec!.render, render); assert.equal(a.log.length, 2, "aucune commande de plus");
+  assert.deepEqual(JSON.parse(a.data.get(shownKey("dev_AAAA1111", "eink29bwr"))!).render, render);
+  const b = fakeKV();
+  assert.equal((await recordDisplayed(b.kv, "dev_AAAA1111", "eink29bwr", humanFrame, "consensus", undefined, 99))!.render, undefined, "sans rapport : champ absent (firmwares actuels)");
+  assert.equal("render" in toPublicShown(rec!), false, "jamais public");
+  assert.equal((await readShownMap(a.kv, [{ deviceId: "dev_AAAA1111", screen: "eink29bwr" }])).dev_AAAA1111.eink29bwr.hasImage, true);
+  assert.equal(JSON.stringify(await readShownMap(a.kv, [{ deviceId: "dev_AAAA1111", screen: "eink29bwr" }])).includes("renderHash"), false);
+  assert.equal((await readShownRecords(a.kv, [{ deviceId: "dev_AAAA1111", screen: "eink29bwr" }])).dev_AAAA1111.eink29bwr.render?.renderHash, render.renderHash, "visible pour le propriétaire");
+  const p = fakeKV();
+  const priv = await recordDisplayed(p.kv, "dev_AAAA1111", "tft18", { frameId: "frame-priv-1", payload: { screen: "tft18", buffer: "QQ==" } }, "personal", undefined, 99, render);
+  assert.equal(priv!.render, undefined, "une frame personnelle ne consigne rien de plus que son existence");
+});
+
+test("route d'ACK : lit le rapport par sanitizeRenderReport (jamais bloquant), le transmet à recordDisplayed, n'ajoute aucune commande Redis ; l'interface propriétaire l'affiche comme « jamais voté ni vérifié »", () => {
+  const root = path.join(__dirname, "..");
+  const read = (p: string) => fs.readFileSync(path.join(root, p), "utf8").replace(/\r\n/g, "\n");
+  const ack = read("app/api/ack-frame/route.ts");
+  assert.match(ack, /const render = sanitizeRenderReport\(body\);/);
+  assert.match(ack, /recordDisplayed\(redis as unknown as DisplayKV, deviceId, t\.screen, t\.frame, "consensus", mode, undefined, render\)/);
+  assert.deepEqual([...ack.matchAll(/\bredis\.([a-z]+)[<(]/g)].map((m) => m[1]), ["mget", "del"], "commandes directes de la route inchangées : un MGET et un DEL (+ l'écriture de l'appareil et l'enregistrement d'affichage existants)");
+  assert.match(read("app/profile/OwnDisplaysDebug.tsx"), /jamais voté ni vérifié par le serveur/);
+  assert.doesNotMatch(read("lib/podVerify.ts") + read("lib/chain.ts"), /renderHash|artworkHash/, "le rapport de rendu n'entre ni dans le vote ni dans le bloc");
+});

@@ -14,6 +14,7 @@ import {
 } from "react";
 import { DrawSession, Pt, anchorX, anchorY, brushMask, measureText, selectionEdges } from "@/lib/drawEngine";
 import type { GridSettings, ModelImage, ToolId, ToolSettings } from "./types";
+import type { CartelZones } from "@/lib/cartelZones";
 import type { SessionClock } from "./storage";
 import {
   View, MAX_SCALE, MIN_SCALE, clampView, cssTransform, fitView, rotateViewCw, toScreen, toWorld, zoomAt,
@@ -40,6 +41,8 @@ export interface StageProps {
   tool: ToolId;
   cfgRef: React.MutableRefObject<ToolSettings>;
   grid: GridSettings;
+  /** bandes du cartel à hachurer (null = rien : écran sans cartel gravé ou option désactivée) ; purement visuel, ne modifie jamais l'image */
+  cartel: CartelZones | null;
   frameLabel: string;
   model: ModelImage | null;
   modelEdit: boolean;
@@ -220,7 +223,7 @@ export const Stage = forwardRef<StageApi, StageProps>(function Stage(props, ref)
     return session.subscribe(() => { invalidate(); P.current.onSelectionChange(); });
   }, [session, invalidate]);
 
-  useEffect(() => { invalidate(false, true); }, [props.grid, props.tool, props.frameLabel, props.textDraft, props.model, props.modelEdit, invalidate]);
+  useEffect(() => { invalidate(false, true); }, [props.grid, props.tool, props.frameLabel, props.textDraft, props.model, props.modelEdit, props.cartel, invalidate]);
 
   // "Fourmis marchantes" : animation légère tant qu'une sélection existe
   useEffect(() => {
@@ -748,6 +751,44 @@ export const Stage = forwardRef<StageApi, StageProps>(function Stage(props, ref)
     ctx.lineWidth = 1;
     rectPath(0, 0, W, H);
     ctx.stroke();
+
+    // 1 ter) ZONE DU CARTEL : lignes que le firmware efface pour y graver date, bloc, artiste et titre. Hachures en espace DESSIN (elles suivent zoom et rotation) ; calque purement visuel.
+    const cartel = P.current.cartel;
+    if (cartel) {
+      const z = cartel;
+      const band = (y0: number, y1: number, label: string) => {
+        const bh = y1 - y0 + 1;
+        ctx.save();
+        rectPath(0, y0, W, bh);
+        ctx.fillStyle = "rgba(251,191,36,0.14)";
+        ctx.fill();
+        ctx.clip();
+        ctx.strokeStyle = "rgba(251,191,36,0.50)";
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        for (let k = -bh; k < W; k += 6) { const a = toScreen(v, k, y0), b = toScreen(v, k + bh, y1 + 1); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); }
+        ctx.stroke();
+        ctx.restore();
+        if (v.rot === 0 && v.s * bh >= 11) {
+          const p = toScreen(v, 3, y0 + bh / 2);
+          ctx.save();
+          ctx.font = "600 9.5px 'DM Sans', system-ui, sans-serif";
+          ctx.textBaseline = "middle";
+          ctx.fillStyle = "rgba(251,191,36,0.95)";
+          ctx.fillText(label, p.x + 2, p.y);
+          ctx.restore();
+        }
+      };
+      band(z.top.y0, z.top.y1, "cartel · effacé à l'affichage");
+      band(z.bottom.y0, z.bottom.y1, "cartel · effacé à l'affichage");
+      // limites de la zone sûre : pointillés
+      ctx.save();
+      ctx.setLineDash([5, 4]);
+      ctx.strokeStyle = "rgba(251,191,36,0.85)";
+      ctx.lineWidth = 1;
+      for (const y of [z.safe.y0, z.safe.y1 + 1]) { const a = toScreen(v, 0, y), b = toScreen(v, W, y); ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke(); }
+      ctx.restore();
+    }
 
     // 1 bis) repère du HAUT de l'écran : il tourne avec la vue, pour ne jamais se tromper de sens
     {

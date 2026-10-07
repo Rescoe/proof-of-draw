@@ -12,7 +12,7 @@ import { frameKey, parseStoredFrame, type StoredFrame } from "@/lib/queue";
 import { getIP, forbidden } from "@/lib/rateLimit";
 import { redis } from "@/lib/redis";
 import { SCREEN_IDS } from "@/lib/screenProfiles";
-import { recordDisplayed, DISPLAYS_CACHE_TAG, type DisplayKV } from "@/lib/displayState";
+import { recordDisplayed, sanitizeRenderReport, DISPLAYS_CACHE_TAG, type DisplayKV } from "@/lib/displayState";
 
 const personalKey = (deviceId: string) => `personal:frame:${deviceId}`;
 
@@ -62,9 +62,11 @@ export async function POST(req: NextRequest) {
     // Ce que l'écran affiche maintenant. Jamais bloquant : l'ACK du firmware réussit quoi qu'il arrive.
     // `mode` (facultatif, firmware scene-v1) : "scene" si l'appareil a joué l'animation plutôt que la frame fixe.
     const mode = body.mode === "scene" ? "scene" : undefined;
+    // Rapport de rendu facultatif (lot 7.5 ; aucun firmware ne l'envoie encore) : consigné dans l'enregistrement d'affichage DÉJÀ écrit (0 commande de plus), jamais voté ni vérifié.
+    const render = sanitizeRenderReport(body);
     let shown = null;
     if (t) {
-      shown = await recordDisplayed(redis as unknown as DisplayKV, deviceId, t.screen, t.frame, "consensus", mode);
+      shown = await recordDisplayed(redis as unknown as DisplayKV, deviceId, t.screen, t.frame, "consensus", mode, undefined, render);
     } else {
       // Frame personnelle (dessin privé du propriétaire) : non supprimée par l'ACK, mais bien affichée.
       try {

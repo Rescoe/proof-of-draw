@@ -15,6 +15,7 @@ import Link from "next/link";
 import { SCREEN_PROFILES, ScreenId } from "@/lib/screenProfiles";
 import { rgbaToScreenPayload, ScreenPayload } from "@/lib/canvasToScreen";
 import { screenPayloadToCanvas } from "@/lib/screenToCanvas";
+import { countUnderCartel } from "@/lib/cartelZones";
 import { ACHIEVEMENTS, DrawSession, PodHints, craftProfile, modeForProfile } from "@/lib/drawEngine";
 import { Modal, formatTime } from "./ui";
 import type { StudioSendInput, StudioSendResult } from "./types";
@@ -89,6 +90,12 @@ export function SendFlow(props: SendFlowProps) {
 
   const payload = useMemo<ScreenPayload | null>(() => {
     try { return rgbaToScreenPayload(session.bitmap.toRGBA(), screenId); } catch { return null; }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [session, screenId, session.revision]);
+
+  // pixels dessinés sous les bandes du cartel (le firmware les efface à l'affichage ; l'image du bloc reste complète) : simple information, jamais bloquant
+  const underCartel = useMemo(() => {
+    try { return countUnderCartel(screenId, session.bitmap.toRGBA(), session.bitmap.w, session.bitmap.h); } catch { return null; }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [session, screenId, session.revision]);
 
@@ -267,6 +274,14 @@ export function SendFlow(props: SendFlowProps) {
             <div><span>Techniques utilisées</span><b>{craft.achievements.length}/{ACHIEVEMENTS.length}</b></div>
             <div><span>Temps de dessin</span><b>{formatTime(Math.floor(props.hints.sessionMs / 1000))}</b></div>
           </div>
+          {underCartel && underCartel.underCartel > 0 && (
+            <div className="st-callout st-callout--warn"><TriangleAlert size={18} style={{ flex: "none", marginTop: 2 }} />
+              <span>
+                {underCartel.underCartel} point{underCartel.underCartel > 1 ? "s" : ""} de ton dessin ({Math.max(1, Math.round(underCartel.share * 100))} %) {underCartel.underCartel > 1 ? "sont" : "est"} sous les bandes du cartel : {profile.name} les efface pour écrire la date, le bloc, ton nom et le titre.
+                Le dessin enregistré dans le bloc reste complet. Tu peux quand même envoyer.
+              </span>
+            </div>
+          )}
           {(!props.hints.okSession || !props.hints.okStrokes || !props.hints.okCoverage) && (
             <div className="st-callout st-callout--warn"><TriangleAlert size={18} style={{ flex: "none", marginTop: 2 }} />
               <span>

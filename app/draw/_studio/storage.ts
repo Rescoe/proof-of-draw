@@ -16,6 +16,8 @@ export interface StudioPrefs {
   customBrushes: string[];    // ids "c:WxH:base64"
   customTextures: string[];   // ids "c:<16 hex>"
   grid: GridSettings;
+  /** zone du cartel (hachures des bandes que le firmware efface) : affichée par défaut sur les écrans qui reçoivent un cartel gravé */
+  cartel: boolean;
   penOnly: boolean;
   introSeen: boolean;
   nudges: { studio: boolean; pro: boolean };   // suggestions de boîte à outils déjà montrées
@@ -31,6 +33,7 @@ export const DEFAULT_PREFS: StudioPrefs = {
   customBrushes: [],
   customTextures: [],
   grid: { show: false, step: 8 },
+  cartel: true,
   penOnly: true,
   introSeen: false,
   nudges: { studio: false, pro: false },

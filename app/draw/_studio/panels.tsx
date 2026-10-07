@@ -8,7 +8,7 @@ import { useEffect, useRef, useState } from "react";
 import {
   Check, Eye, EyeOff, Grid3x3, HelpCircle, ImagePlus, Keyboard, Lock, Maximize, Move, Plus,
   Rotate3d, RotateCcw, ScanLine, Smartphone, Star, Trash2, Sparkles, ImageOff, ArrowLeftRight, Pipette, Trophy,
-  FilePlus2, Eraser, Fingerprint,
+  FilePlus2, Eraser, Fingerprint, Frame,
 } from "lucide-react";
 import {
   ACHIEVEMENTS, BRUSH_TYPES, ColorMode, DENSITY_TEXTURES, PodHints, SYMMETRY_MODES, TEXTURES,
@@ -16,6 +16,7 @@ import {
   POD_MIN_COVERAGE, POD_MIN_SESSION_MS, POD_MIN_STROKES, textureLabel,
 } from "@/lib/drawEngine";
 import { TOOLBOXES, Toolbox, ModelImage, GridSettings } from "./types";
+import type { CartelZones } from "@/lib/cartelZones";
 import { BrushPreview, TexturePreview } from "./previews";
 import { Modal, Slider, formatTime } from "./ui";
 
@@ -424,6 +425,8 @@ function MenuItem({ icon, label, hint, onClick, danger, toggle }: { icon: React.
 export function MenuSection(props: {
   toolbox: Toolbox; onToolbox: (t: Toolbox) => void;
   grid: GridSettings; onGrid: (g: GridSettings) => void;
+  /** zones du cartel de l'écran (null : cet écran n'en reçoit pas) */
+  cartelZones: CartelZones | null; showCartel: boolean; onCartel: (v: boolean) => void;
   precision: boolean; onPrecision: (v: boolean) => void;
   penOnly: boolean; onPenOnly: (v: boolean) => void;
   canFullscreen: boolean; isFullscreen: boolean; onFullscreen: () => void;
@@ -454,6 +457,7 @@ export function MenuSection(props: {
             ))}
           </div>
         )}
+        {props.cartelZones && <MenuItem icon={<Frame size={20} />} label="Zone du cartel" hint={`Les bandes hachurées sont effacées à l'affichage : ${props.cartelZones.safe.h} lignes sur ${props.cartelZones.canvasH} restent visibles`} toggle={props.showCartel} onClick={() => props.onCartel(!props.showCartel)} />}
         {props.canFullscreen && <MenuItem icon={<Maximize size={20} />} label={props.isFullscreen ? "Quitter le plein écran" : "Plein écran"} onClick={props.onFullscreen} />}
       </div>
       <div className="st-h">Précision</div>
