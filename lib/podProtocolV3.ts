@@ -245,10 +245,17 @@ export interface BlockCanonicalV2 {
   committeeRoot: string;
   /** engage le résultat et les entrées du tirage du mineur (voir minerRoot) */
   minerRoot: string;
+  /**
+   * Jeu de règles du bloc : 1 = image fixe (N2, défaut : un bloc sans ce champ s'interprète comme 1 et garde son hash historique), 2 = animation (A1, docs/SPEC_PODANIM_V3.md § 4 bis).
+   * Toute autre valeur est REFUSÉE (exception) : aucun jeu de règles inconnu ne peut être engagé dans un hash.
+   */
+  rulesVersion?: number;
 }
 export function blockCanonicalV2(b: BlockCanonicalV2): string {
+  const rulesVersion = b.rulesVersion ?? PROTOCOL.rulesVersion;
+  if (rulesVersion !== 1 && rulesVersion !== 2) throw new Error(`rulesVersion inconnue : ${rulesVersion}`);
   return JSON.stringify({
-    blockVersion: PROTOCOL.blockVersion, metricsVersion: PROTOCOL.metricsVersion, rulesVersion: PROTOCOL.rulesVersion,
+    blockVersion: PROTOCOL.blockVersion, metricsVersion: PROTOCOL.metricsVersion, rulesVersion,
     parentHash: b.parentHash, imageHash: b.imageHash, actionsHash: b.actionsHash, contentHash: b.contentHash, deviceId: b.deviceId, poolScreen: b.poolScreen,
     validatorProfileIds: [...b.validatorProfileIds].sort(), scorePpm: b.scorePpm, minedAt: b.minedAt,
     ...(b.animRoot ? { animRoot: b.animRoot } : {}),

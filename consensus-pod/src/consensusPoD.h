@@ -224,15 +224,17 @@ struct PodBlockV2 {
   const char* animRoot;                              // nullable
   const char *votesRoot, *committeeMode; uint32_t committeeK;
   const char *committeeRoot, *minerRoot;             // engagements (voir pod_committee_root / pod_miner_root)
+  uint32_t rulesVersion;                             // jeu de règles du bloc : 1 = image fixe (N2), 2 = animation (A1). Toute autre valeur est REFUSÉE (−1).
 };
 
 /** Texte canonique EXACT de blockCanonicalV2() (JSON.stringify, ordre des clés figé, score en ppm entier). Retourne la longueur ou −1 (tampon ≥ 1 024 octets conseillé). */
 static inline int pod_block_canonical_v2(char* out, size_t cap, const PodBlockV2& b) {
   if (b.nValidators < 0 || b.nValidators > POD_MAX_SET) return -1;
+  if (b.rulesVersion != 1 && b.rulesVersion != 2) return -1;   // aucun jeu de règles inconnu ne peut être engagé dans un hash
   const char* sorted[POD_MAX_SET];
   for (int i = 0; i < b.nValidators; i++) { int j = i; while (j > 0 && strcmp(sorted[j - 1], b.validators[i]) > 0) { sorted[j] = sorted[j - 1]; j--; } sorted[j] = b.validators[i]; }
   PodOut o(out, cap);
-  o.str("{\"blockVersion\":"); o.u64(POD_BLOCK_VERSION); o.str(",\"metricsVersion\":"); o.u64(POD_METRICS_VERSION); o.str(",\"rulesVersion\":"); o.u64(POD_RULES_VERSION);
+  o.str("{\"blockVersion\":"); o.u64(POD_BLOCK_VERSION); o.str(",\"metricsVersion\":"); o.u64(POD_METRICS_VERSION); o.str(",\"rulesVersion\":"); o.u64(b.rulesVersion);
   o.str(",\"parentHash\":\""); o.str(b.parentHash); o.str("\",\"imageHash\":\""); o.str(b.imageHash); o.str("\",\"actionsHash\":\""); o.str(b.actionsHash);
   o.str("\",\"contentHash\":\""); o.str(b.contentHash); o.str("\",\"deviceId\":\""); o.str(b.deviceId); o.str("\",\"poolScreen\":\""); o.str(b.poolScreen);
   o.str("\",\"validatorProfileIds\":[");
