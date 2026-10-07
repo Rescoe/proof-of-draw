@@ -19,8 +19,8 @@ const COPIES = {
   "pod_bench_esp.h": ["esp8266/esp_tft1.8/pod_bench_esp.h", "esp8266/esp_eink_2.7BW_OLED/pod_bench_esp.h"],
   "pod_anim_esp.h": ["esp8266/esp_tft1.8/pod_anim_esp.h", "esp8266/esp_eink_2.7BW_OLED/pod_anim_esp.h"],
   // Validation réelle : e-ink 2,9" BWR, TFT 1,8", multiscreen et e-ink 2,7" seul (ESP8266)
-  "pod_metrics.h": ["esp8266/esp_eink_2.9BWR/pod_metrics.h", "esp8266/esp_tft1.8/pod_metrics.h", "esp8266/esp_eink_2.7BW_OLED/pod_metrics.h", "esp8266/esp_eink_2.7BW/pod_metrics.h"],
-  "pod_metrics_table.h": ["esp8266/esp_eink_2.9BWR/pod_metrics_table.h", "esp8266/esp_tft1.8/pod_metrics_table.h", "esp8266/esp_eink_2.7BW_OLED/pod_metrics_table.h", "esp8266/esp_eink_2.7BW/pod_metrics_table.h"],
+  "pod_metrics.h": ["esp8266/esp_eink_2.9BWR/pod_metrics.h", "esp8266/esp_tft1.8/pod_metrics.h", "esp8266/esp_eink_2.7BW_OLED/pod_metrics.h", "esp8266/esp_eink_2.7BW/pod_metrics.h", "consensus-pod/src/pod_metrics.h"],
+  "pod_metrics_table.h": ["esp8266/esp_eink_2.9BWR/pod_metrics_table.h", "esp8266/esp_tft1.8/pod_metrics_table.h", "esp8266/esp_eink_2.7BW_OLED/pod_metrics_table.h", "esp8266/esp_eink_2.7BW/pod_metrics_table.h", "consensus-pod/src/pod_metrics_table.h"],
   "pod_vote_esp.h": ["esp8266/esp_eink_2.9BWR/pod_vote_esp.h", "esp8266/esp_tft1.8/pod_vote_esp.h", "esp8266/esp_eink_2.7BW_OLED/pod_vote_esp.h", "esp8266/esp_eink_2.7BW/pod_vote_esp.h"],
 };
 module.exports = { MASTERS, COPIES };

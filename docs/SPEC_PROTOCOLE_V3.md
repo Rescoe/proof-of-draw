@@ -96,6 +96,8 @@ validatorProfileIds (triés), scorePpm (ENTIER), minedAt, [animRoot], votesRoot,
 
 > **Transition (Lot 4, 07/10/2026)** : le comité, la règle des sièges, le refus objectif, le mineur déterministe et la réputation sont **implémentés côté serveur** derrière `COMMITTEE_MODE` (éteint par défaut) — `docs/LOT_4_COMITE_MINEUR_REPUTATION_2026_10_07.md`. Le **vote v2 actuel** siège (le vote v3 n'existe pas encore côté firmware) ; le bloc de comité porte `committeeMode` ∈ {`committee`, `bootstrap`} et `committeeK` dans son hash ; les rangs, le comité et le tirage du mineur sont **rejoués** par `lib/podVerify.ts`. La **réserve sur le grinding** (§ 9) reste entière.
 
+> **Transition (Lot 5, 07/10/2026)** : les calculs de ce protocole existent aussi en **C++ portable** (`consensus-pod/src/consensusPoD.h`, règles, hash salé, message de vote v3, Merkle, graine/rang, sièges, mineur, bloc v2 canonique) et sont **vérifiés bit à bit** contre `lib/podProtocolV3.ts` (1 327 vérifications, `tests/consensusPodCore.test.ts`). Aucun firmware ne l'utilise encore. `docs/LOT_5_NOYAU_CONSENSUSPOD_2026_10_07.md`.
+
 ## 8. Éligibilité (une seule fonction partagée) [?]
 
 Fonction unique `isEligibleVoter(device, candidate, now)`, utilisée par le **pool**, `validate-candidate` et `validation-result` (aujourd'hui incohérents : constat K4) :

@@ -89,9 +89,9 @@ export const ROADMAP: RoadmapPhase[] = [
     title: "5 · Noyau de consensus réutilisable (consensusPoD)",
     summary: "Séparer la gestion des écrans du consensus, pour que d’autres appareils puissent participer.",
     items: [
-      { id: "core-extract", title: "Extraire un noyau portable sans écran ni réseau (flux → hash + métriques + message de vote)", status: "todo", note: "Existe déjà en partie : pod_metrics.h et pod_vote_*.h." },
-      { id: "vectors", title: "Vecteurs de test officiels exécutés sur TypeScript, ESP8266, R4 et PC", status: "doing", note: "Parité C++/TypeScript déjà testée ; à formaliser en vecteurs publiables." },
-      { id: "adapters", title: "Adaptateurs ESP8266, R4, ESP32 et PC/Raspberry Pi", status: "todo" },
+      { id: "core-extract", title: "Extraire un noyau portable sans écran ni réseau (flux → hash + métriques + message de vote)", status: "doing", note: "Noyau C++ livré (règles, hash salé, vote v3, reçus, comité, mineur, bloc) et identique à la référence TypeScript ; aucun firmware ne l’utilise encore, l’adoption se fera au grand reflash." },
+      { id: "vectors", title: "Vecteurs de test officiels exécutés sur TypeScript, ESP8266, R4 et PC", status: "doing", note: "Plus de mille vérifications générées par la référence TypeScript et retrouvées à l’identique par le noyau C++ sur PC ; ESP8266 et R4 : l’auto-test compile, il n’a jamais tourné sur une carte." },
+      { id: "adapters", title: "Adaptateurs ESP8266, R4, ESP32 et PC/Raspberry Pi", status: "doing", note: "Adaptateurs de calcul SHA-256 pour PC, ESP8266 et R4 livrés (compilés, jamais essayés sur carte) ; ESP32 et Raspberry Pi natif restent à faire." },
       { id: "headless", title: "Nœuds de validation sans écran (rôle validator)", status: "todo" },
       { id: "publish", title: "Publication ouverte (spécification, licence, exemples) en version expérimentale", status: "todo", note: "Après gel du protocole v3." },
     ],
