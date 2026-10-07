@@ -35,7 +35,9 @@ import { broadcastAnimation } from "@/lib/anim/broadcast";
 import { invalidateNetworkSnapshot } from "@/lib/networkSnapshot";
 import { checkVoteV2, parseVoteV2, voteMessageV2 } from "@/lib/podVote";
 import { PPM } from "@/lib/podMetrics";
-import { eligibilityConfigFromEnv, eligibilityModeFromEnv, voteGate } from "@/lib/eligibility";
+import { eligibilityConfigFromEnv, eligibilityModeFromEnv, profileIdOf, voteGate } from "@/lib/eligibility";
+import { committeeGate, committeeModeFromEnv, committeeOutcome, currentWave, rejectIsObjective, type CommitteeOutcome } from "@/lib/committee";
+import { applyReputation, reputationEntries } from "@/lib/reputation";
 import { blockReceiptsEnabled } from "@/lib/blockReceipts";
 
 const DEVICE_ID_REGEX = /^dev_[A-Z0-9]{8}$/;
@@ -111,6 +113,20 @@ export async function POST(req: NextRequest) {
       if (gate.action === "allow") voterProfileId = gate.profileId;
     }
 
+    // ── Comité (Lot 4, COMMITTEE_MODE) : « off » = aucun effet ; « shadow » = journal ; « enforce » = seuls les membres de la fenêtre courante votent, en v2. Aucune lecture Redis de plus. ──
+    const commMode = committeeModeFromEnv();
+    const committeeEnforced = commMode === "enforce" && candidate.committee?.state === "enforce";
+    let wave: 1 | 2 = 1;
+    if (commMode !== "off" && candidate.committee) {
+      wave = currentWave(candidate.committee, candidate.submittedAt, Date.now());
+      const cg = committeeGate({ mode: commMode, committee: candidate.committee, profileId: voterProfileId ?? profileIdOf(device), wave, isV2 });
+      if (cg.action === "shadow-refuse") console.warn(`[committee] SHADOW refuserait le vote device=${deviceId} raison=${cg.reason}`);
+      if (cg.action === "refuse") {
+        console.warn(`[committee] REFUS du vote device=${deviceId} raison=${cg.reason}`);
+        return json({ error: cg.reason === "v1-not-admitted" ? "Le comité n'admet que les votes v2 (recalcul du contenu)" : "Profil absent du comité de ce candidat", reason: cg.reason }, cg.status);
+      }
+    }
+
     let espScore = Number(score);
     const serverScore = candidate.score;
     const drift = isV2 ? 0 : Math.abs(espScore - serverScore);
@@ -178,16 +194,34 @@ export async function POST(req: NextRequest) {
           v: 2, verdict: v2Vote.verdict, ...(v2Vote.reason ? { reason: v2Vote.reason } : {}), ...(v2Vote.suspect ? { suspect: true } : {}) }
       : { deviceId: String(deviceId), entropy: Number(entropy), transitions: Number(transitions), rle: Number(rle), score: espScore, signature: String(signature ?? ""), votedAt: Date.now() }),
       ...(voterProfileId ? { profileId: voterProfileId } : {}),
+      // Refus dont le motif n'est pas objectivement vrai (comité « enforce ») : conservé, mais il ne compte pas (SIMULATION § 1)
+      ...(committeeEnforced && candidate.v2 && v2Vote?.verdict === "reject" && !rejectIsObjective({ reason: v2Vote.reason, e: v2Vote.e, t: v2Vote.t, r: v2Vote.r }, candidate.v2) ? { disputed: true as const } : {}),
       // Reçu signé du bloc (BLOCK_RECEIPTS=true seulement) : clé publique au moment du vote et, pour un vote v2, le hash brut signé
       ...(blockReceiptsEnabled() ? { ...(device.publicKey ? { pk: device.publicKey } : {}), ...(isV2 && typeof (body as Record<string, unknown>).rawHash === "string" ? { rawHash: String((body as Record<string, unknown>).rawHash) } : {}) } : {}) };
-    const { quorumReached, voteCount, needed, rejectCount } = await castVote(vote, candidate, prefetchedVotes);
+    const cast = await castVote(vote, candidate, prefetchedVotes);
+    let { quorumReached, voteCount, needed } = cast;
+    const { rejectCount } = cast;
+    let outcome: CommitteeOutcome | null = null;
+    if (committeeEnforced && candidate.committee) {
+      // Le COMITÉ décide (seuil ⌈2K/3⌉, règle des sièges) ; le quorum historique est ignoré. La décision ne se déclenche que sur le vote qui vient d'être AJOUTÉ.
+      outcome = committeeOutcome(candidate.committee, wave, cast.map ?? null);
+      voteCount = outcome.decision.accepts; needed = outcome.decision.needed;
+      quorumReached = outcome.decision.state === "accept" && cast.added === true;
+      if (outcome.decision.state === "reject" && cast.added === true) {
+        if (!(await claimFinalization(candidate.candidateId))) return json({ ok: true, blockMined: false, alreadyFinalized: true }, 200);
+        console.log(`[committee] candidat REFUSÉ par le comité candidate=${candidate.candidateId} refus=${outcome.decision.rejects}/${candidate.committee.K}`);
+        await applyReputation(redis as unknown as { eval(s: string, k: string[], a: string[]): Promise<unknown> }, reputationEntries(candidate, outcome));
+        await clearCandidate();
+        return json({ ok: true, blockMined: false, rejected: true, rejectCount: outcome.decision.rejects, voteCount, needed, committee: true }, 200);
+      }
+    }
 
     // Trop de refus pour que le quorum d'approbations soit encore atteignable : le candidat est refusé par le réseau (vote v2 uniquement).
     // G1 (reprise du 06/10/2026) : pendant le canari, un refus v2 est ENREGISTRÉ et observable (carte des votes + journal + réponse) mais ne supprime PAS le candidat :
     // le comité mélange encore des approbations v1 (écho du score serveur) et v2, ce mélange n'a pas de sémantique sûre. Les rejets ne deviennent bloquants qu'avec
     // ENFORCE_V2_REJECTIONS=true, et seulement pour un comité exclusivement v2 (après P0 et le canari matériel).
     const enforceRejections = process.env.ENFORCE_V2_REJECTIONS === "true";
-    const rejectionsWouldBlock = !quorumReached && rejectCount !== undefined && rejectCount > 0 && candidate.poolSize - rejectCount < Math.max(1, needed);
+    const rejectionsWouldBlock = !committeeEnforced && !quorumReached && rejectCount !== undefined && rejectCount > 0 && candidate.poolSize - rejectCount < Math.max(1, needed);
     if (rejectionsWouldBlock && enforceRejections) {
       console.log(`[validation-result] candidat REFUSÉ par le réseau candidate=${candidate.candidateId} refus=${rejectCount}/${candidate.poolSize}`);
       await clearCandidate();
@@ -212,11 +246,16 @@ export async function POST(req: NextRequest) {
         return json({ ok: true, blockMined: false, alreadyFinalized: true, voteCount, needed }, 200);
       }
       const voteMap = await getVotes();
-      const accepted = voteMap ? Object.values(voteMap.votes).filter((v) => v.verdict !== "reject") : [];
+      // Comité « enforce » : les reçus du bloc sont EXACTEMENT les votants effectifs (≤ K, dans l'ordre des rangs) ; sinon tous les votes (quorum historique).
+      const finalOutcome = committeeEnforced && candidate.committee ? committeeOutcome(candidate.committee, wave, voteMap) : null;
+      const receiptVotes = finalOutcome ? finalOutcome.votes : voteMap ? Object.values(voteMap.votes) : [vote];
+      const accepted = finalOutcome ? finalOutcome.votes.filter((v) => v.verdict !== "reject") : voteMap ? Object.values(voteMap.votes).filter((v) => v.verdict !== "reject") : [];
       const allVotes = accepted.length > 0 ? accepted : [vote];
       const frameId = crypto.randomUUID();
-      // vote.deviceId = l'ESP dont le vote vient d'atteindre le quorum → premier mineur
-      const block = await finalizeBlock(candidate, allVotes, frameId, vote.deviceId, voteMap ? countRejects(voteMap) : 0, voteMap ? Object.values(voteMap.votes) : [vote]);
+      // vote.deviceId = l'ESP dont le vote vient d'atteindre le quorum → premier mineur (sauf comité « enforce » : tirage déterministe dans finalizeBlock)
+      const block = await finalizeBlock(candidate, allVotes, frameId, vote.deviceId, finalOutcome ? finalOutcome.votes.filter((v) => v.verdict === "reject").length : voteMap ? countRejects(voteMap) : 0, receiptVotes);
+      // Réputation : UNE agrégation (1 commande Redis) à la finalisation ; ne bloque jamais le minage.
+      if (finalOutcome) await applyReputation(redis as unknown as { eval(s: string, k: string[], a: string[]): Promise<unknown> }, reputationEntries(candidate, finalOutcome));
 
       if (candidate.anim) {
         // Animation : diffusée à TOUS les écrans dynamiques (TFT 2.8", TFT 1.8", OLED) dont le firmware la joue — affiche à leur géométrie + pointeur du clip.

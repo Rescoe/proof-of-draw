@@ -28,9 +28,13 @@ export interface Receipt {
   signature: string;
 }
 
+/** Comité du candidat tel qu'il a siégé (rangs recalculables : parentHash + contentHash du bloc). Hors hash : le vérificateur le recoupe, il n'en prouve pas la complétude (spec § 16). */
+export interface ReceiptsCommittee { mode: "committee" | "bootstrap"; K: number; threshold: number; ranked: string[] }
+
 export interface ReceiptsDoc {
   v: 1;
   candidateId: string;
+  committee?: ReceiptsCommittee;
   /** électorat figé au dépôt du candidat (quorum historique : ⌈0,51 × poolSize⌉) */
   poolSize: number;
   receipts: Receipt[];
@@ -47,14 +51,21 @@ export function receiptMessage(vote: ValidationVote, candidate: Pick<Candidate, 
   return `${vote.deviceId}:${candidate.candidateId}:${vote.score.toFixed(3)}`;   // vote hérité (même format que app/api/validation-result)
 }
 
-export function buildReceipts(candidate: Pick<Candidate, "candidateId" | "poolSize" | "v2">, allVotes: readonly ValidationVote[]): ReceiptsDoc {
+export function buildReceipts(candidate: Pick<Candidate, "candidateId" | "poolSize" | "v2" | "committee">, allVotes: readonly ValidationVote[]): ReceiptsDoc {
   const receipts: Receipt[] = allVotes.map((v) => ({
     v: v.v === 2 ? 2 : 1, deviceId: v.deviceId, ...(v.profileId ? { profileId: v.profileId } : {}), publicKey: v.pk ?? "",
     verdict: v.verdict === "reject" ? "reject" as const : "accept" as const, message: receiptMessage(v, candidate), signature: v.signature ?? "",
   }));
-  // ordre CANONIQUE (le lot comité le remplacera par l'ordre des rangs) : voterKey, puis appareil
-  receipts.sort((a, b) => { const ka = a.profileId ?? a.deviceId, kb = b.profileId ?? b.deviceId; return ka < kb ? -1 : ka > kb ? 1 : a.deviceId < b.deviceId ? -1 : a.deviceId > b.deviceId ? 1 : 0; });
-  return { v: 1, candidateId: candidate.candidateId, poolSize: candidate.poolSize, receipts };
+  // ordre CANONIQUE : l'ordre des RANGS du comité s'il y en a un (spec § 6), sinon voterKey puis appareil
+  const rank = new Map((candidate.committee?.ranked ?? []).map((p, i) => [p, i]));
+  receipts.sort((a, b) => {
+    const ka = a.profileId ?? a.deviceId, kb = b.profileId ?? b.deviceId;
+    const ra = rank.get(ka) ?? Number.MAX_SAFE_INTEGER, rb = rank.get(kb) ?? Number.MAX_SAFE_INTEGER;
+    if (ra !== rb) return ra - rb;
+    return ka < kb ? -1 : ka > kb ? 1 : a.deviceId < b.deviceId ? -1 : a.deviceId > b.deviceId ? 1 : 0;
+  });
+  const c = candidate.committee;
+  return { v: 1, candidateId: candidate.candidateId, ...(c ? { committee: { mode: c.mode, K: c.K, threshold: c.threshold, ranked: c.ranked } } : {}), poolSize: candidate.poolSize, receipts };
 }
 
 export const receiptLeaf = (r: Receipt): Buffer => voteLeaf(r.message, r.signature, r.publicKey);
@@ -67,7 +78,7 @@ export const validatorKeysOf = (doc: ReceiptsDoc): string[] => [...new Set(doc.r
 export const contentHashOf = (c: Pick<Candidate, "v2" | "anim" | "imageHash">): string => c.v2?.rawHash ?? c.anim?.root ?? c.imageHash;
 
 export interface BlockV2Inputs {
-  candidate: Pick<Candidate, "candidateId" | "poolSize" | "v2" | "anim" | "imageHash" | "actionsHash" | "deviceId" | "poolScreen">;
+  candidate: Pick<Candidate, "candidateId" | "poolSize" | "v2" | "anim" | "imageHash" | "actionsHash" | "deviceId" | "poolScreen" | "committee">;
   allVotes: readonly ValidationVote[];
   parentHash: string;
   finalScore: number;
@@ -82,10 +93,11 @@ export function buildBlockV2(i: BlockV2Inputs) {
     parentHash: i.parentHash, imageHash: i.candidate.imageHash, actionsHash: i.candidate.actionsHash, contentHash: contentHashOf(i.candidate),
     deviceId: i.candidate.deviceId, poolScreen: i.candidate.poolScreen, validatorProfileIds: validatorKeysOf(doc),
     scorePpm: Math.round(i.finalScore * PPM), minedAt: i.minedAt, ...(i.candidate.anim?.root ? { animRoot: i.candidate.anim.root } : {}),
-    votesRoot, committeeMode: "quorum", committeeK: i.candidate.poolSize,
+    // comité « enforce » : mode et K du comité ; sinon quorum historique (électorat = poolSize)
+    votesRoot, committeeMode: i.candidate.committee?.state === "enforce" ? i.candidate.committee.mode : "quorum", committeeK: i.candidate.committee?.state === "enforce" ? i.candidate.committee.K : i.candidate.poolSize,
   };
   return {
     blockHash: blockHashV2(canonical), doc,
-    fields: { blockVersion: 2 as const, contentHash: canonical.contentHash, scorePpm: canonical.scorePpm, votesRoot, committeeMode: "quorum" as const, committeeK: canonical.committeeK, receiptsCount: doc.receipts.length },
+    fields: { blockVersion: 2 as const, contentHash: canonical.contentHash, scorePpm: canonical.scorePpm, votesRoot, committeeMode: canonical.committeeMode as "quorum" | "committee" | "bootstrap", committeeK: canonical.committeeK, receiptsCount: doc.receipts.length },
   };
 }

@@ -4,6 +4,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { redis } from "@/lib/redis";
 import { getDevice, getGlobalActiveCount, getPoolSnapshot } from "@/lib/deviceStore";
+import { getChainHead } from "@/lib/chain";
+import { committeeModeFromEnv, planCandidateCommittee, waveDelayMsFromEnv, type CandidateCommittee } from "@/lib/committee";
+import { blockReceiptsEnabled } from "@/lib/blockReceipts";
 import { authorProfilesOf, candidateEligibilityOf, eligibilityConfigFromEnv, eligibilityModeFromEnv, planPool, type CandidateEligibility } from "@/lib/eligibility";
 import {
   computeComplexity,
@@ -199,6 +202,7 @@ export async function POST(req: NextRequest) {
   const eligMode = eligibilityModeFromEnv();
   let poolSize: number;
   let eligibility: CandidateEligibility | undefined;
+  let committee: CandidateCommittee | undefined;
   if (eligMode === "off") {
     poolSize = await getGlobalActiveCount();
   } else {
@@ -206,6 +210,16 @@ export async function POST(req: NextRequest) {
     const plan = planPool(snap.devices, authorProfilesOf(device, drawArtistName, snap.devices), Date.now(), eligibilityConfigFromEnv());
     eligibility = candidateEligibilityOf(eligMode, plan);
     poolSize = eligMode === "enforce" ? plan.poolSize : snap.legacyCount;
+    // Comité de validation (Lot 4, COMMITTEE_MODE) : seulement pour une image fixe à contenu v2 ET une éligibilité calculée. « enforce » exige l'éligibilité « enforce » ET les reçus de bloc
+    // (BLOCK_RECEIPTS) : sans eux, le comité n'est pas vérifiable et le mineur ne peut pas être rejoué ; le plan reste alors en « shadow » (journal seul). +1 lecture : la tête de chaîne.
+    const commMode = committeeModeFromEnv();
+    if (commMode !== "off" && v2) {
+      const head = await getChainHead();
+      const state = commMode === "enforce" && eligMode === "enforce" && blockReceiptsEnabled() ? "enforce" : "shadow";
+      if (commMode === "enforce" && state === "shadow") console.warn("[committee] COMMITTEE_MODE=enforce ignoré (exige ELIGIBILITY_MODE=enforce ET BLOCK_RECEIPTS=true) : plan calculé en SHADOW");
+      committee = planCandidateCommittee({ state, plan, parentHash: head?.blockHash ?? "0".repeat(64), contentHash: v2.rawHash, waveDelayMs: waveDelayMsFromEnv() }) ?? undefined;
+      if (committee) console.log(`[committee] ${state.toUpperCase()} mode=${committee.mode} K=${committee.K} seuil=${committee.threshold} rangs=[${committee.ranked.join(",")}] quorumHistorique=${Math.max(1, Math.ceil(snap.legacyCount * 0.51))}`);
+    }
     console.log(`[eligibility] ${eligMode.toUpperCase()} plan=${plan.kind} profils=${plan.profiles.length} indépendants=${plan.independentProfiles} auteur=[${plan.authorProfiles.join(",")}] poolHistorique=${snap.legacyCount} poolRetenu=${poolSize}`);
   }
   const CANDIDATE_TTL_SEC = parseInt(process.env.CANDIDATE_TTL_SEC ?? "1800");
@@ -242,6 +256,7 @@ export async function POST(req: NextRequest) {
     expiresAt: Date.now() + CANDIDATE_TTL_SEC * 1000,
     poolSize,
     ...(eligibility ? { eligibility } : {}),
+    ...(committee ? { committee } : {}),
     warning,
   };
 

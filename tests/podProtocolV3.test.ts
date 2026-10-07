@@ -159,8 +159,8 @@ test("le module de référence n'est branché sur AUCUNE route ni aucun firmware
     else if (/\.(tsx?|ino|h)$/.test(e.name) && fs.readFileSync(path.join(root, rel), "utf8").replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/.*$/gm, "").includes("podProtocolV3")) offenders.push(rel.replace(/\\/g, "/"));
   } };
   for (const d of ["app", "lib", "esp8266", "arduino_uno_r4"]) walk(d);
-  // Importeurs AUTORISÉS : le simulateur S1 (hors ligne) et le bloc v2 / vérificateur du lot 3 (derrière BLOCK_RECEIPTS, éteint par défaut). Le MESSAGE DE VOTE v3, le comité et le mineur ne sont branchés nulle part.
-  assert.deepEqual(offenders.filter((f) => !["lib/podProtocolV3.ts", "lib/podSim.ts", "lib/blockReceipts.ts", "lib/podVerify.ts"].includes(f)), []);
+  // Importeurs AUTORISÉS : le simulateur S1 (hors ligne), le bloc v2 / vérificateur (lot 3) et le comité / mineur / réputation (lot 4) — tous derrière des interrupteurs éteints par défaut. Le MESSAGE DE VOTE v3 (voteMessageV3) n'est branché nulle part.
+  assert.deepEqual(offenders.filter((f) => !["lib/podProtocolV3.ts", "lib/podSim.ts", "lib/blockReceipts.ts", "lib/podVerify.ts", "lib/committee.ts", "lib/reputation.ts", "lib/chain.ts"].includes(f)), []);
   assert.ok(DEVICE_ID.startsWith("dev_"));
 });
 

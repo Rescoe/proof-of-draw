@@ -39,6 +39,8 @@ import type { ActionEvent } from "@/lib/types/actions";
 import { summarizeVotes, type VotesSummary } from "@/lib/validationSummary";
 import { voterKey, type CandidateEligibility } from "@/lib/eligibility";
 import { blockReceiptsEnabled, buildBlockV2, type ReceiptsDoc } from "@/lib/blockReceipts";
+import type { CandidateCommittee } from "@/lib/committee";
+import { drawMiner } from "@/lib/podProtocolV3";
 
 export interface Block {
   blockIndex: number;
@@ -100,9 +102,11 @@ export interface Block {
   contentHash?: string;     // rawHash (image fixe) ou racine d'animation : ce que les votes v2 recalculent
   scorePpm?: number;        // score final en ppm ENTIER (le hash v2 ne contient plus de flottant)
   votesRoot?: string;       // racine de Merkle des reçus
-  committeeMode?: "quorum"; // règle de décision : « quorum » = ⌈0,51 × électorat⌉ historique (le comité arrive au lot 4)
+  committeeMode?: "quorum" | "committee" | "bootstrap"; // règle de décision : « quorum » = ⌈0,51 × électorat⌉ historique ; « committee » (K ≤ 7, seuil ⌈2K/3⌉) ; « bootstrap » (réseau trop petit : validation PARTIELLE)
   committeeK?: number;      // taille de l'électorat figé au dépôt du candidat
   receiptsCount?: number;
+  /** Mineur tiré de façon DÉTERMINISTE et rejouable (comité « enforce » + BLOCK_RECEIPTS) : graine = chaîne + contenu + racine des reçus ; `accepted` = profils approbateurs et leur nombre de blocs minés au moment du tirage. Hors hash. */
+  miner?: { profileId: string; accepted: { profileId: string; minedBlocks: number }[] };
 }
 
 export interface BlockImagePayload {
@@ -147,6 +151,9 @@ export interface Candidate {
 
   // ── Éligibilité des votants (Lot 2) : absent = comportement historique (mode « off » au dépôt du candidat) ─────────────────────────────────────
   eligibility?: CandidateEligibility;
+
+  // ── Comité de validation (Lot 4, COMMITTEE_MODE) : absent = quorum historique ───────────────────────────────────────────────────────────────────
+  committee?: CandidateCommittee;
 }
 
 export interface ValidationVote {
@@ -162,6 +169,8 @@ export interface ValidationVote {
   verdict?: "accept" | "reject";
   reason?: string;
   suspect?: boolean;
+  /** Refus v2 dont le motif n'est PAS objectivement vrai (comité « enforce ») : conservé et journalisé mais ne COMPTE pas (abstention) — lib/committee.ts `rejectIsObjective`. */
+  disputed?: true;
   /** Clé publique de l'appareil au moment du vote et hash brut signé (v2) : renseignés SEULEMENT avec BLOCK_RECEIPTS=true, pour fabriquer le reçu signé du bloc. */
   pk?: string;
   rawHash?: string;
@@ -373,6 +382,7 @@ export const isRejectVote = (v: ValidationVote): boolean => v.verdict === "rejec
 function voteGroups(m: VoteMap): Map<string, { accept: boolean; reject: boolean; v2Accept: boolean }> {
   const g = new Map<string, { accept: boolean; reject: boolean; v2Accept: boolean }>();
   for (const v of Object.values(m.votes)) {
+    if (v.disputed) continue;   // refus non objectif : abstention (comité « enforce »)
     const k = voterKey(v), e = g.get(k) ?? { accept: false, reject: false, v2Accept: false };
     if (isRejectVote(v)) e.reject = true; else { e.accept = true; if (v.v === 2) e.v2Accept = true; }
     g.set(k, e);
@@ -419,7 +429,7 @@ function voteSummary(voteMap: VoteMap, candidate: Candidate, added: boolean) {
   const voteCount = countAccepts(voteMap);
   const needed    = Math.ceil(candidate.poolSize * QUORUM_RATIO);
   const v2Ok      = !candidate.v2 || countV2Accepts(voteMap) >= minV2Approvals();
-  return { quorumReached: added && voteCount >= Math.max(1, needed) && v2Ok, voteCount, needed, rejectCount: countRejects(voteMap) };
+  return { quorumReached: added && voteCount >= Math.max(1, needed) && v2Ok, voteCount, needed, rejectCount: countRejects(voteMap), map: voteMap, added };
 }
 
 /** Ancien chemin (lecture-modification-écriture, NON atomique) : seulement si le script Redis est indisponible. */
@@ -449,7 +459,7 @@ export async function castVoteOn(
   vote: ValidationVote,
   candidate: Candidate,
   prefetched?: VoteMap | null,
-): Promise<{ quorumReached: boolean; voteCount: number; needed: number; rejectCount?: number }> {
+): Promise<{ quorumReached: boolean; voteCount: number; needed: number; rejectCount?: number; map?: VoteMap; added?: boolean }> {
   // Sorties sans commande : pas de carte pour CE candidat, ou déjà voté (lu dans le MGET de la route)
   if (prefetched !== undefined) {
     if (!prefetched || prefetched.candidateId !== candidate.candidateId) return { quorumReached: false, voteCount: 0, needed: 0 };
@@ -581,7 +591,24 @@ export async function finalizeBlock(
   // on tire au sort parmi tous les validateurs, pondéré inversement par le nombre
   // de blocs récents minés par chaque device.
   // Un device qui n'a pas miné depuis longtemps a plus de chances.
-  const effectiveMiner = await selectEquitableMiner(votes, minerDeviceId)
+  // Comité « enforce » + reçus : tirage DÉTERMINISTE et rejouable (graine = chaîne + contenu + racine des reçus ; aucun Math.random). Coût : un LLEN par approbateur, comme avant.
+  let minerInfo: Block["miner"] | undefined;
+  let deterministicMiner: string | null = null;
+  if (v2 && candidate.committee?.state === "enforce") {
+    const approvers = [...new Map(votes.filter((x) => x.verdict !== "reject").map((x) => [voterKey(x), x])).values()];
+    const accepted = await Promise.all(approvers.map(async (x) => {
+      let n = 0;
+      try { n = (await redis.llen(`chain:device:${x.deviceId}:blocks`)) ?? 0; } catch { n = 0; }
+      return { profileId: voterKey(x), minedBlocks: n };
+    }));
+    const winner = drawMiner({ parentHash, contentHash: v2.fields.contentHash, votesRoot: v2.fields.votesRoot, accepted });
+    if (winner) {
+      deterministicMiner = approvers.find((x) => voterKey(x) === winner)?.deviceId ?? null;
+      minerInfo = { profileId: winner, accepted };
+    }
+  }
+  const effectiveMiner = deterministicMiner
+    ?? await selectEquitableMiner(votes, minerDeviceId)
     ?? votes[votes.length - 1]?.deviceId
     ?? candidate.deviceId;
 
@@ -614,6 +641,7 @@ export async function finalizeBlock(
     podGeometry:     candidate.podGeometry,
     votesSummary:    summarizeVotes(votes, rejects),
     ...(v2 ? v2.fields : {}),
+    ...(minerInfo ? { miner: minerInfo } : {}),
     ...(candidate.eligibility?.mode === "enforce"
       ? { validation: { eligibility: "enforce" as const, plan: candidate.eligibility.plan, independentProfiles: candidate.eligibility.independentProfiles, distinctProfiles: new Set(votes.map(voterKey)).size } }
       : {}),

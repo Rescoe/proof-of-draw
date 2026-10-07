@@ -94,6 +94,8 @@ validatorProfileIds (triés), scorePpm (ENTIER), minedAt, [animRoot], votesRoot,
 - Les blocs v1 gardent leur format et leur hash ; un vérificateur choisit la règle selon `blockVersion`.
 - Le bloc affiche son **niveau d'assurance** : `committeeMode` ∈ {`committee`, `bootstrap`, `none`}, `committeeK`, et le décompte accept/reject des reçus.
 
+> **Transition (Lot 4, 07/10/2026)** : le comité, la règle des sièges, le refus objectif, le mineur déterministe et la réputation sont **implémentés côté serveur** derrière `COMMITTEE_MODE` (éteint par défaut) — `docs/LOT_4_COMITE_MINEUR_REPUTATION_2026_10_07.md`. Le **vote v2 actuel** siège (le vote v3 n'existe pas encore côté firmware) ; le bloc de comité porte `committeeMode` ∈ {`committee`, `bootstrap`} et `committeeK` dans son hash ; les rangs, le comité et le tirage du mineur sont **rejoués** par `lib/podVerify.ts`. La **réserve sur le grinding** (§ 9) reste entière.
+
 ## 8. Éligibilité (une seule fonction partagée) [?]
 
 Fonction unique `isEligibleVoter(device, candidate, now)`, utilisée par le **pool**, `validate-candidate` et `validation-result` (aujourd'hui incohérents : constat K4) :

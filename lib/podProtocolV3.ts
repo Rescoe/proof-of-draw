@@ -144,13 +144,15 @@ export interface Committee {
   ranked: string[];
 }
 
-export function selectCommittee(input: { eligibleProfiles: readonly string[]; authorProfileId: string | null; contentHash: string; parentHash: string }): Committee {
+export function selectCommittee(input: { eligibleProfiles: readonly string[]; authorProfileId: string | null; contentHash: string; parentHash: string; bootstrap?: boolean }): Committee {
   const seed = committeeSeed(input.parentHash, input.contentHash);
   const pool = [...new Set(input.eligibleProfiles)].filter((p) => p !== input.authorProfileId);
   const ranked = pool.map((p) => ({ p, r: committeeRank(seed, p) })).sort((a, b) => (a.r < b.r ? -1 : a.r > b.r ? 1 : a.p < b.p ? -1 : a.p > b.p ? 1 : 0)).map((x) => x.p);
   if (ranked.length === 0) return { mode: "none", K: 0, threshold: 0, ranked };
   const K = Math.min(COMMITTEE_MAX, ranked.length);
-  return { mode: ranked.length < BOOTSTRAP_BELOW ? "bootstrap" : "committee", K, threshold: ranked.length < BOOTSTRAP_BELOW ? K : threshold(K), ranked };
+  // « bootstrap » : sous BOOTSTRAP_BELOW profils, OU imposé par l'appelant (le plan d'éligibilité a dû admettre les profils de l'auteur) ; seuil = TOUS les membres
+  const boot = input.bootstrap === true || ranked.length < BOOTSTRAP_BELOW;
+  return { mode: boot ? "bootstrap" : "committee", K, threshold: boot ? K : threshold(K), ranked };
 }
 
 /** Membres dont le vote compte : vague 1 = K premiers, vague 2 (après délai sans décision) = jusqu'à 2K. Borne le coût (≤ 2K votes) quel que soit le nombre d'appareils. */

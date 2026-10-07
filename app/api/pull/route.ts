@@ -12,7 +12,8 @@ import type { ChainSummary } from "@/lib/chain";
 import { maybeCheckAnaFeed } from "@/lib/anaFeed";
 import { selectDelivery, withoutScenePointer, sceneRetryAfterSec, scenePullMeta, type DeliverySelection } from "@/lib/scene/delivery";
 import { animPullMeta, withoutAnimPointer } from "@/lib/anim/pointer";
-import { eligibilityConfigFromEnv, eligibilityModeFromEnv, voteGate } from "@/lib/eligibility";
+import { eligibilityConfigFromEnv, eligibilityModeFromEnv, profileIdOf, voteGate } from "@/lib/eligibility";
+import { committeeGate, committeeModeFromEnv, currentWave } from "@/lib/committee";
 
 const DEVICE_ID_REGEX = /^dev_[A-Z0-9]{8}$/;
 // Rate-limit ÉCHANTILLONNÉ (lib/pullBudget.ts) : 1 pull sur 8 compte ; > RL_SAMPLED_MAX dans la fenêtre = ≈ 32 pulls/min réels → 429.
@@ -196,6 +197,10 @@ export async function GET(req: NextRequest) {
       if (device && candidate.eligibility && eligibilityModeFromEnv() === "enforce") {
         const gate = voteGate({ mode: "enforce", eligibility: candidate.eligibility, device, now: Date.now(), cfg: eligibilityConfigFromEnv(), priorVoterProfiles: priorProfiles });
         notEligible = gate.action === "refuse";
+      }
+      // Comité (Lot 4, COMMITTEE_MODE=enforce) : seuls les membres de la fenêtre courante sont invités (pas de lecture de plus).
+      if (!notEligible && device && candidate.committee?.state === "enforce" && committeeModeFromEnv() === "enforce") {
+        notEligible = committeeGate({ mode: "enforce", committee: candidate.committee, profileId: profileIdOf(device), wave: currentWave(candidate.committee, candidate.submittedAt, Date.now()), isV2: true }).action === "refuse";
       }
       if (!alreadyVoted && !notEligible) {
         pendingValidation = {

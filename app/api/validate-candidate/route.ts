@@ -24,7 +24,8 @@ import type { Device } from "@/lib/deviceStore";
 import { parseCandidateRaw, parseVotesRaw, PULL_KEY_CANDIDATE, PULL_KEY_VOTES } from "@/lib/chain";
 import { getIP, forbidden } from "@/lib/rateLimit";
 import { ACTIVE_WINDOW_MS, rlSampled } from "@/lib/pullBudget";
-import { eligibilityConfigFromEnv, eligibilityModeFromEnv, voteGate } from "@/lib/eligibility";
+import { eligibilityConfigFromEnv, eligibilityModeFromEnv, profileIdOf, voteGate } from "@/lib/eligibility";
+import { committeeGate, committeeModeFromEnv, currentWave } from "@/lib/committee";
 
 const DEVICE_ID_REGEX = /^dev_[A-Z0-9]{8}$/;
 // Rate-limit échantillonné (1 requête sur 8) : > 2 échantillons dans la minute ≈ 16 requêtes/min (le firmware en fait ≤ 2/min)
@@ -94,6 +95,14 @@ export async function GET(req: NextRequest) {
         ? { candidate: null, alreadyVoted: true, candidateId: candidate.candidateId, profileRepresented: true }
         : { candidate: null, ineligible: gate.reason, candidateId: candidate.candidateId });
     }
+  }
+
+  // ── 5 ter. Comité (Lot 4) : seul un membre de la fenêtre courante est invité à valider (aucune lecture Redis de plus) ──────────────────────────────────────
+  const commMode = committeeModeFromEnv();
+  if (commMode !== "off" && candidate.committee) {
+    const cg = committeeGate({ mode: commMode, committee: candidate.committee, profileId: profileIdOf(device), wave: currentWave(candidate.committee, candidate.submittedAt, Date.now()), isV2: true });
+    if (cg.action === "shadow-refuse") console.warn(`[committee] SHADOW refuserait validate-candidate device=${deviceId} raison=${cg.reason}`);
+    if (cg.action === "refuse") return NextResponse.json({ candidate: null, notInCommittee: cg.reason, candidateId: candidate.candidateId });
   }
 
   // ── 6. Retourner les métadonnées du candidat (sans payload) ───────────────

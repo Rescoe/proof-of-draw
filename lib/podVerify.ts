@@ -11,12 +11,14 @@ import { createHash } from "node:crypto";
 import { verifyEd25519 } from "@/lib/ed25519";
 import { receiptsRoot, validatorKeysOf, type ReceiptsDoc } from "@/lib/blockReceipts";
 import { isPodScreen, metricsFromRaw } from "@/lib/podMetrics";
-import { blockHashV2, type BlockCanonicalV2 } from "@/lib/podProtocolV3";
+import { blockHashV2, committeeRank, committeeSeed, committeeWindow, decide, drawMiner, threshold, type BlockCanonicalV2, type Committee, type Verdict } from "@/lib/podProtocolV3";
 
 export interface ProofBlock {
   blockHash: string; parentHash: string; imageHash: string; actionsHash: string; deviceId: string; poolScreen: string;
   validatorIds: string[]; score: number; minedAt: number; animRoot?: string;
-  blockVersion?: 2; contentHash?: string; scorePpm?: number; votesRoot?: string; committeeMode?: "quorum"; committeeK?: number; receiptsCount?: number;
+  blockVersion?: 2; contentHash?: string; scorePpm?: number; votesRoot?: string; committeeMode?: "quorum" | "committee" | "bootstrap"; committeeK?: number; receiptsCount?: number;
+  /** tirage du mineur (hors hash) : rejoué par le vérificateur */
+  miner?: { profileId: string; accepted: { profileId: string; minedBlocks: number }[] };
 }
 
 /** Champs IMMUABLES d'un bloc (ceux que le hash couvre) : jamais la propriété, l'observation ni les images. */
@@ -24,7 +26,7 @@ export function toProofBlock(b: import("@/lib/chain").Block): ProofBlock {
   return {
     blockHash: b.blockHash, parentHash: b.parentHash, imageHash: b.imageHash, actionsHash: b.actionsHash, deviceId: b.deviceId, poolScreen: b.poolScreen,
     validatorIds: [...b.validatorIds].sort(), score: b.score, minedAt: b.minedAt, ...(b.anim?.root ? { animRoot: b.anim.root } : {}),
-    ...(b.blockVersion === 2 ? { blockVersion: 2 as const, contentHash: b.contentHash, scorePpm: b.scorePpm, votesRoot: b.votesRoot, committeeMode: b.committeeMode, committeeK: b.committeeK, receiptsCount: b.receiptsCount } : {}),
+    ...(b.blockVersion === 2 ? { blockVersion: 2 as const, contentHash: b.contentHash, scorePpm: b.scorePpm, votesRoot: b.votesRoot, committeeMode: b.committeeMode, committeeK: b.committeeK, receiptsCount: b.receiptsCount, ...(b.miner ? { miner: b.miner } : {}) } : {}),
   };
 }
 
@@ -79,6 +81,43 @@ function parseMessage(m: string): ParsedMessage | null {
 
 const add = (checks: Check[], id: string, label: string, status: CheckStatus, detail?: string) => { checks.push({ id, label, status, ...(detail ? { detail } : {}) }); };
 
+/**
+ * Contrôles du COMITÉ (mode « committee » / « bootstrap ») : la liste de rangs fournie est bien ordonnée par les rangs recalculés (graine = parentHash + contentHash du BLOC), les reçus sont
+ * exactement des membres de la fenêtre, dans l'ordre des rangs et au plus K, la décision (règle des sièges, seuil ⌈2K/3⌉) est « accepter », et le tirage du mineur se rejoue.
+ * NE PROUVE PAS que la liste des profils éligibles était complète (un serveur pourrait en omettre ; spec § 16, point 1).
+ */
+function verifyCommittee(checks: Check[], block: ProofBlock, doc: ReceiptsDoc, mode: "committee" | "bootstrap") {
+  const c = doc.committee;
+  if (!c) { add(checks, "committee-ranks", "Comité : rangs rejouables", "fail", "document de reçus sans comité"); return; }
+  const seed = committeeSeed(block.parentHash, block.contentHash ?? "");
+  const ranks = c.ranked.map((p) => committeeRank(seed, p));
+  const sorted = c.ranked.every((p, i) => i === 0 || ranks[i - 1] < ranks[i] || (ranks[i - 1] === ranks[i] && c.ranked[i - 1] < p));
+  const uniq = new Set(c.ranked).size === c.ranked.length;
+  const thr = mode === "bootstrap" ? c.K : threshold(c.K);
+  const consistent = c.mode === mode && c.K === block.committeeK && c.K >= 1 && c.K <= 7 && c.ranked.length <= 2 * c.K && c.threshold === thr;
+  add(checks, "committee-ranks", `Comité (${mode}, K = ${c.K}, seuil ${thr}) : rangs recalculés depuis la chaîne et le contenu`, sorted && uniq && consistent ? "ok" : "fail",
+    sorted && uniq && consistent ? `${c.ranked.length} profil(s) classés` : "liste de rangs, K ou seuil incohérents avec le bloc");
+
+  const committee: Committee = { mode, K: c.K, threshold: c.threshold, ranked: c.ranked };
+  const window2 = new Set(committeeWindow(committee, 2));
+  const inRankOrder = doc.receipts.every((r, i) => i === 0 || c.ranked.indexOf(doc.receipts[i - 1].profileId ?? "") < c.ranked.indexOf(r.profileId ?? ""));
+  const members = doc.receipts.length <= c.K && doc.receipts.every((r) => !!r.profileId && window2.has(r.profileId)) && new Set(doc.receipts.map((r) => r.profileId)).size === doc.receipts.length;
+  add(checks, "committee-members", "Chaque reçu est celui d'un membre du comité (un par profil, au plus K, dans l'ordre des rangs)", members && inRankOrder ? "ok" : "fail",
+    members && inRankOrder ? undefined : "reçu hors comité, profil en double, plus de K reçus ou ordre des rangs non respecté");
+
+  const verdicts = new Map<string, Verdict>(doc.receipts.filter((r) => r.profileId).map((r) => [r.profileId!, r.verdict] as [string, Verdict]));
+  const d = decide(committee, 2, verdicts);
+  add(checks, "committee-decision", `Décision rejouée : ${d.accepts} approbation(s) ≥ ${d.needed} et ≤ ${d.rejectLimit} refus tolérés`, d.state === "accept" ? "ok" : "fail", `${d.accepts} approbation(s), ${d.rejects} refus → ${d.state}`);
+
+  if (block.miner) {
+    const approvers = new Set(doc.receipts.filter((r) => r.verdict === "accept" && r.profileId).map((r) => r.profileId!));
+    const sameSet = JSON.stringify(block.miner.accepted.map((a) => a.profileId).sort()) === JSON.stringify([...approvers].sort());
+    const winner = drawMiner({ parentHash: block.parentHash, contentHash: block.contentHash ?? "", votesRoot: block.votesRoot ?? "", accepted: block.miner.accepted });
+    add(checks, "miner", "Mineur : tirage déterministe rejoué (graine = chaîne + contenu + racine des reçus)", sameSet && winner === block.miner.profileId && approvers.has(block.miner.profileId) ? "ok" : "fail",
+      `profil tiré : ${winner ?? "aucun"}${block.miner.accepted.length ? " ; nombres de blocs minés déclarés par le serveur (non vérifiables sans réplication de la chaîne)" : ""}`);
+  } else add(checks, "miner", "Mineur : tirage déterministe rejoué", "na", "bloc sans tirage déterministe");
+}
+
 export function verifyBlock(input: VerifyInput): VerifyReport {
   const { block, receipts } = input;
   const checks: Check[] = [];
@@ -97,7 +136,7 @@ export function verifyBlock(input: VerifyInput): VerifyReport {
     const canonical: BlockCanonicalV2 = {
       parentHash: block.parentHash, imageHash: block.imageHash, actionsHash: block.actionsHash, contentHash: block.contentHash, deviceId: block.deviceId, poolScreen: block.poolScreen,
       validatorProfileIds: validatorKeysOf(receipts), scorePpm: block.scorePpm, minedAt: block.minedAt, ...(block.animRoot ? { animRoot: block.animRoot } : {}),
-      votesRoot: receiptsRoot(receipts), committeeMode: "quorum", committeeK: block.committeeK,
+      votesRoot: receiptsRoot(receipts), committeeMode: block.committeeMode ?? "quorum", committeeK: block.committeeK,
     };
     hashOk = blockHashV2(canonical) === block.blockHash;
     add(checks, "hash", "Hash du bloc recalculé (format v2, engage les reçus)", hashOk ? "ok" : "fail", hashOk ? undefined : "le hash recalculé depuis les reçus diffère du hash annoncé");
@@ -141,17 +180,20 @@ export function verifyBlock(input: VerifyInput): VerifyReport {
     add(checks, "signatures-v1", "Votes hérités (écho du score du serveur)", v1Warn || stats.v1Echoes ? "warn" : "ok",
       stats.v1Echoes ? `${stats.v1Echoes} vote(s) hérité(s) : la signature ne couvre AUCUN contenu (le vote recopie le score du serveur)${v1Warn ? ` ; ${v1Warn} signature(s) absente(s) ou invalide(s) acceptée(s) en mode permissif` : ""}` : undefined);
 
-    // quorum historique : approbations DISTINCTES (profil ou appareil ; un profil contradictoire s'abstient) ≥ ⌈0,51 × électorat⌉
-    const groups = new Map<string, { a: boolean; r: boolean }>();
-    for (const r of receipts.receipts) { const k = r.profileId ?? r.deviceId, e = groups.get(k) ?? { a: false, r: false }; if (r.verdict === "reject") e.r = true; else e.a = true; groups.set(k, e); }
-    const accepts = [...groups.values()].filter((e) => e.a && !e.r).length;
-    const needed = Math.max(1, Math.ceil((block.committeeK ?? 0) * 0.51));
-    add(checks, "quorum", `Quorum historique (⌈0,51 × ${block.committeeK ?? "?"}⌉ = ${needed})`, accepts >= needed ? "ok" : "fail", `${accepts} approbation(s) distincte(s)`);
+    const mode = block.committeeMode ?? "quorum";
+    if (mode === "quorum") {
+      // quorum historique : approbations DISTINCTES (profil ou appareil ; un profil contradictoire s'abstient) ≥ ⌈0,51 × électorat⌉
+      const groups = new Map<string, { a: boolean; r: boolean }>();
+      for (const r of receipts.receipts) { const k = r.profileId ?? r.deviceId, e = groups.get(k) ?? { a: false, r: false }; if (r.verdict === "reject") e.r = true; else e.a = true; groups.set(k, e); }
+      const accepts = [...groups.values()].filter((e) => e.a && !e.r).length;
+      const needed = Math.max(1, Math.ceil((block.committeeK ?? 0) * 0.51));
+      add(checks, "quorum", `Quorum historique (⌈0,51 × ${block.committeeK ?? "?"}⌉ = ${needed})`, accepts >= needed ? "ok" : "fail", `${accepts} approbation(s) distincte(s)`);
+    } else verifyCommittee(checks, block, receipts, mode);
 
     // validateurs du bloc = appareils des reçus approuvés
     const fromReceipts = [...new Set(receipts.receipts.filter((r) => r.verdict === "accept").map((r) => r.deviceId))].sort();
     add(checks, "validators", "Validateurs du bloc = appareils des reçus approuvés", JSON.stringify(fromReceipts) === JSON.stringify([...block.validatorIds].sort()) ? "ok" : "fail");
-    receiptsOk = checks.filter((c) => ["receipts-count", "votes-root", "binding", "signatures-v2", "quorum", "validators"].includes(c.id)).every((c) => c.status === "ok");
+    receiptsOk = checks.filter((c) => ["receipts-count", "votes-root", "binding", "signatures-v2", "quorum", "validators", "committee-ranks", "committee-members", "committee-decision", "miner"].includes(c.id)).every((c) => c.status === "ok" || (c.id === "miner" && c.status === "na"));
   }
 
   // ── 4. ce qui n'est PAS vérifiable (dit explicitement) ─────────────────────────────────────────────────────────────────────────────────
