@@ -403,6 +403,23 @@ PoDScan est construit sur les preuves publiques, pas comme une simple nouvelle i
 
 **Critère de fin** : un visiteur peut vérifier une preuve sans faire confiance à une affirmation de l'interface et sans augmenter le coût Redis proportionnellement à la longueur de la chaîne.
 
+### Concordance de numérotation des lots (réalignée le 07/10/2026 sur demande de GPT)
+
+Les documents d'exécution (`PLAN_DE_TRAVAIL_CONSENSUS_FINAL_2026_10_06.md`, `docs/LOT_*`, feuille de route « Apprendre ») utilisent la numérotation **canonique** ci-dessous ; les titres « Lot N » de la présente section en sont la version antérieure.
+
+| Canonique (exécution) | Contenu | Titre dans cette section |
+|---|---|---|
+| Lot 0S | preuves sans matériel (audit, constats) | — |
+| Lot 1 | protocole v3 (spec + simulation) | Lot 2 |
+| Lot 2 | éligibilité, identité | Lot 1 (partie identité) |
+| Lot 3 | reçus signés et vérificateur | Lot 1 (partie reçus) |
+| Lot 4 | comité, mineur, réputation | Lot 3 |
+| Lot 5 | noyau `consensusPoD` | Lot 4 |
+| **Lot 6** | **animations validées par calcul** (`pod-anim-v3`, spec `docs/SPEC_PODANIM_V3.md`) | **Lot 5** |
+| **Lot 7** | **rendu e-ink, cartels** | **Lot 6** |
+| **Lot 8** | **grand reflash : Wi-Fi, OTA, vote v3** | **Lot 7** |
+| Lot 9 | nœuds sans écran, Raspberry Pi, réplication (+ PoDScan, publication) | Lots 8 et 9 |
+
 ## 5. Documentation publique « Apprendre »
 
 Claude a reçu la tâche d'ajouter une synthèse exhaustive et une feuille de route en fin de page. Cette livraison doit être un lot séparé du firmware e-ink 2,7 afin de rester auditable.

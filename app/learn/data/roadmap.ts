@@ -51,7 +51,7 @@ export const ROADMAP: RoadmapPhase[] = [
       { id: "anim-play", title: "Lecture sur TFT 2,8″, TFT 1,8″ et OLED", status: "done", note: "Multiscreen : animation sur l’OLED, image fixe sur l’e-ink, vérifié." },
       { id: "anim-studio", title: "Atelier d’animation refait : plein écran, 3 modes, 7 brosses, fantôme, retour/annuler", status: "done", note: "Vérifié dans l’aperçu ; essai sur téléphone réel à faire." },
       { id: "anim-master", title: "Canvas maître 256×128 exporté par écran avec trame", status: "todo", note: "Sans reflash. Étape suivante de l’atelier." },
-      { id: "anim-v2", title: "Animations VALIDÉES par calcul (racine, empreinte et métriques par image)", status: "todo", note: "Aujourd’hui les animations sont votées en v1 : écho du score serveur." },
+      { id: "anim-v2", title: "Animations VALIDÉES par calcul (racine, empreinte et métriques par image)", status: "todo", note: "Spécification rédigée (brouillon à geler ; aucun code, aucune route, aucun firmware) : aujourd’hui les animations sont encore votées en v1, écho du score serveur." },
     ],
   },
   {
