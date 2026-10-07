@@ -214,3 +214,14 @@ test("périmètre : le rasteriseur n'importe ni Redis, ni route, ni firmware ; l
     assert.doesNotMatch(t, /podRender\.h|renderLayout/, f);
   }
 });
+
+test("documentation du lot 8A : structure intacte (un seul titre, sections 1 à 7 chacune UNE fois, règle ANA complète, exigence 8B présente) — garde contre une copie accidentelle", () => {
+  const doc = read("docs/LOT_8A_RASTERISEUR_REFERENCE_2026_10_07.md");
+  const heads = doc.split("\n").filter((l) => /^#{1,3} /.test(l));
+  assert.equal(heads.length, 8, heads.join("\n"));
+  assert.equal(heads.filter((h) => h.startsWith("# ")).length, 1);
+  assert.deepEqual(heads.slice(1).map((h) => h.slice(0, 5)), ["## 1.", "## 2.", "## 3.", "## 4.", "## 5.", "## 6.", "## 7."]);
+  assert.ok(doc.includes("côté ANA, **seul** `^sha256:[0-9a-f]{64}$` est accepté ; `artworkHash` = les 64 hex **sans** le préfixe"));
+  assert.ok(doc.includes("Exigence du LOT 8B") && doc.includes("`toWorkMeta()`") && doc.includes("aucune commande Redis supplémentaire"));
+  assert.ok(doc.split("\n").length < 120, "document anormalement long (bloc dupliqué ?)");
+});
