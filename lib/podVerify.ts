@@ -11,6 +11,7 @@ import { createHash } from "node:crypto";
 import { verifyEd25519 } from "@/lib/ed25519";
 import { receiptsRoot, validatorKeysOf, type ReceiptsDoc } from "@/lib/blockReceipts";
 import { isPodScreen, metricsFromRaw } from "@/lib/podMetrics";
+import { verifyAnimBlock } from "@/lib/podVerifyAnim";
 import { blockHashV2, minerDeviceFor, committeeRank, committeeRoot, committeeSeed, committeeWindow, decide, drawMiner, minerRoot, quorumCommitteeRoot, threshold, type BlockCanonicalV2, type Committee, type Verdict } from "@/lib/podProtocolV3";
 
 export interface ProofBlock {
@@ -18,6 +19,8 @@ export interface ProofBlock {
   validatorIds: string[]; score: number; minedAt: number; animRoot?: string;
   /** appareil qui a reçu le bloc (hors hash) : pour un tirage déterministe, il doit être celui que les reçus désignent */
   minerDeviceId?: string;
+  /** jeu de règles engagé dans le hash : absent ≡ 1 (image fixe) ; 2 = animation v3 (lib/podVerifyAnim.ts) */
+  rulesVersion?: number;
   blockVersion?: 2; contentHash?: string; scorePpm?: number; votesRoot?: string; committeeMode?: "quorum" | "committee" | "bootstrap"; committeeK?: number; receiptsCount?: number;
   /** engagements du hash : comité (mode, K, seuil, vague, liste ordonnée) et tirage du mineur (résultat + entrées) */
   committeeRoot?: string; minerRoot?: string;
@@ -30,7 +33,7 @@ export function toProofBlock(b: import("@/lib/chain").Block): ProofBlock {
   return {
     blockHash: b.blockHash, parentHash: b.parentHash, imageHash: b.imageHash, actionsHash: b.actionsHash, deviceId: b.deviceId, poolScreen: b.poolScreen,
     validatorIds: [...b.validatorIds].sort(), score: b.score, minedAt: b.minedAt, ...(b.anim?.root ? { animRoot: b.anim.root } : {}),
-    ...(b.blockVersion === 2 ? { blockVersion: 2 as const, contentHash: b.contentHash, scorePpm: b.scorePpm, votesRoot: b.votesRoot, committeeMode: b.committeeMode, committeeK: b.committeeK, committeeRoot: b.committeeRoot, minerRoot: b.minerRoot, receiptsCount: b.receiptsCount, ...(b.miner ? { miner: b.miner, minerDeviceId: b.minerDeviceId } : {}) } : {}),
+    ...(b.blockVersion === 2 ? { blockVersion: 2 as const, contentHash: b.contentHash, scorePpm: b.scorePpm, votesRoot: b.votesRoot, committeeMode: b.committeeMode, committeeK: b.committeeK, committeeRoot: b.committeeRoot, minerRoot: b.minerRoot, receiptsCount: b.receiptsCount, ...(b.rulesVersion !== undefined ? { rulesVersion: b.rulesVersion } : {}), ...(b.miner ? { miner: b.miner, minerDeviceId: b.minerDeviceId } : {}) } : {}),
   };
 }
 
@@ -41,6 +44,10 @@ export interface VerifyInput {
   parent?: { blockHash: string } | null;
   /** contenu BRUT du bloc (même ordre canonique que /api/candidate-frame) pour recalculer hash et métriques */
   content?: { screen: string; raw: Uint8Array } | null;
+  /** clip PBC1 EXACT d'un bloc animation v3 (rulesVersion 2) pour recalculer images, racine et métriques */
+  clip?: Uint8Array | null;
+  /** indice de l'affiche annoncé (bloc animation v3), à comparer au premier maximum recalculé */
+  posterIndex?: number;
 }
 
 export type CheckStatus = "ok" | "fail" | "warn" | "na";
@@ -130,6 +137,11 @@ function verifyCommittee(checks: Check[], block: ProofBlock, doc: ReceiptsDoc, m
 }
 
 export function verifyBlock(input: VerifyInput): VerifyReport {
+  // jeu de règles engagé dans le hash : 2 = animation v3 (vérificateur dédié) ; toute valeur inconnue est un ÉCHEC (jamais interprétée comme 1)
+  if (input.block.rulesVersion === 2) return verifyAnimBlock(input);
+  if (input.block.rulesVersion !== undefined && input.block.rulesVersion !== 1) {
+    return { blockHash: input.block.blockHash, chainLinked: false, blockVersion: input.block.blockVersion === 2 ? 2 : 1, checks: [{ id: "rules", label: "Jeu de règles du bloc connu (1 ou 2)", status: "fail", detail: `rulesVersion inconnue : ${String(input.block.rulesVersion)}` }], ok: false, level: "none", stats: { receipts: input.receipts?.receipts.length ?? 0, v2Accepts: 0, v1Echoes: 0, rejects: 0, invalidSignatures: 0 } };
+  }
   const { block, receipts } = input;
   const checks: Check[] = [];
   const isV2 = block.blockVersion === 2;

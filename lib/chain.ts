@@ -105,6 +105,8 @@ export interface Block {
   committeeMode?: "quorum" | "committee" | "bootstrap"; // règle de décision : « quorum » = ⌈0,51 × électorat⌉ historique ; « committee » (K ≤ 7, seuil ⌈2K/3⌉) ; « bootstrap » (réseau trop petit : validation PARTIELLE)
   committeeK?: number;      // taille de l'électorat figé au dépôt du candidat
   receiptsCount?: number;
+  /** jeu de règles engagé dans le hash : absent ≡ 1 (image fixe) ; 2 = animation v3 (lot 6B ; aucun bloc n'en porte encore) */
+  rulesVersion?: 1 | 2;
   /** Engagements dans le hash (audit GPT) : `committeeRoot` = mode + K + seuil + vague + liste ORDONNÉE du comité ; `minerRoot` = résultat ET entrées du tirage du mineur. */
   committeeRoot?: string;
   minerRoot?: string;

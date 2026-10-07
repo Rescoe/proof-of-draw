@@ -7,6 +7,8 @@ import { getDevice, getGlobalActiveCount, getPoolSnapshot } from "@/lib/deviceSt
 import { getChainHead } from "@/lib/chain";
 import { committeeEnforceBlockedByGuard, committeeModeFromEnv, planCandidateCommittee, waveDelayMsFromEnv, type CandidateCommittee } from "@/lib/committee";
 import { blockReceiptsEnabled } from "@/lib/blockReceipts";
+import { animV3EnforceRequested, animV3ModeFromEnv } from "@/lib/animV3Mode";
+import { animShadowLine } from "@/lib/animShadow";
 import { ELECTORATE_MAX, authorProfilesOf, candidateEligibilityOf, effectiveEligibilityMode, eligibilityConfigFromEnv, eligibilityModeFromEnv, planPool, type CandidateEligibility } from "@/lib/eligibility";
 import {
   computeComplexity,
@@ -265,6 +267,11 @@ export async function POST(req: NextRequest) {
   };
 
   await setCandidate(candidate);
+  // pod-anim-v3 (lot 6B-2) : mode « shadow » = la référence v3 de l'animation est calculée et JOURNALISÉE, sans AUCUN effet (0 commande Redis, rien d'écrit, aucun vote ni bloc modifié). « off » (défaut) : rien.
+  if (candidate.anim && animV3ModeFromEnv() === "shadow") {
+    if (animV3EnforceRequested()) console.warn("[anim-v3] ANIM_V3_MODE=enforce IMPOSSIBLE (non implémenté : lot 8, capacités firmware) : ramené à SHADOW");
+    const line = animShadowLine(candidate); if (line) console.log(line);
+  }
   markHot().catch(() => {});   // quelqu'un dessine : les écrans au repos passent à 5 min de pull pendant 30 min
 
   console.log(`[submit-candidate] candidat créé id=${candidate.candidateId} poolSize=${poolSize} score=${metrics.score.toFixed(3)} drawScore=${drawScore} actionsHash=${actionsHash.slice(0, 12)}...`);

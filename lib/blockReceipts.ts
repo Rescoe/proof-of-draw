@@ -15,8 +15,8 @@ import { blockHashV2, committeeRoot, merkleRoot, minerRoot, quorumCommitteeRoot,
 export const blockReceiptsEnabled = (env: NodeJS.ProcessEnv = process.env): boolean => env.BLOCK_RECEIPTS === "true";
 
 export interface Receipt {
-  /** 2 = vote v2 (l'appareil a RECALCULÉ hash et métriques) ; 1 = vote hérité (écho du score serveur : la signature ne couvre aucun contenu) */
-  v: 1 | 2;
+  /** 2 = vote v2 (l'appareil a RECALCULÉ hash et métriques) ; 1 = vote hérité (écho du score serveur : la signature ne couvre aucun contenu) ; 3 = vote d'animation signé du lot 6B (produit par aucun firmware actuel) */
+  v: 1 | 2 | 3;
   deviceId: string;
   profileId?: string;
   /** clé publique de l'appareil AU MOMENT du vote ("" si l'appareil n'en avait pas) */

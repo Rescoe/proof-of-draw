@@ -166,7 +166,7 @@ test("le module de référence n'est branché sur AUCUNE route ni aucun firmware
   } };
   for (const d of ["app", "lib", "esp8266", "arduino_uno_r4"]) walk(d);
   // Importeurs AUTORISÉS : le simulateur S1 (hors ligne), le bloc v2 / vérificateur (lot 3) et le comité / mineur / réputation (lot 4) — tous derrière des interrupteurs éteints par défaut. Le MESSAGE DE VOTE v3 (voteMessageV3) n'est branché nulle part.
-  assert.deepEqual(offenders.filter((f) => !["lib/podProtocolV3.ts", "lib/podSim.ts", "lib/blockReceipts.ts", "lib/podVerify.ts", "lib/committee.ts", "lib/reputation.ts", "lib/chain.ts", "lib/animV3.ts"].includes(f)), []);   // lib/animV3.ts : référence pure des animations (lot 6B-1), aucune route
+  assert.deepEqual(offenders.filter((f) => !["lib/podProtocolV3.ts", "lib/podSim.ts", "lib/blockReceipts.ts", "lib/podVerify.ts", "lib/committee.ts", "lib/reputation.ts", "lib/chain.ts", "lib/animV3.ts", "lib/podVerifyAnim.ts"].includes(f)), []);   // animV3 : référence pure des animations (6B-1) ; podVerifyAnim : vérificateur de bloc animation (6B-2) — aucune route de vote
   assert.ok(DEVICE_ID.startsWith("dev_"));
 });
 

@@ -319,6 +319,10 @@ des métriques entières, plan en 7 phases et décisions à prendre : `docs/CHAN
 Les audits : `docs/NOTE_CLAUDE_AUDIT_VALIDATION_CONSENSUS_OTA_2026_10_06.md` et `docs/AUDIT_GPT_CONSENSUS_POD_IOT_2026_10_06.md`. **À la clôture de chaque lot : mettre à jour `app/learn/data/roadmap.ts` (feuille de route, fin de la page Apprendre) et, si un niveau d'assurance change, la synthèse `app/learn/components/SynthesisPath.tsx`** (test `learnRoadmap`).
 Firmware e-ink 2,7" seul (`eink27bw-2.1`) : vote v2 porté le 06/10/2026, compilé, **non essayé sur la carte**.
 
+**Animations calculées (lot 6, 07/10/2026) — `pod-anim-v3`** : spécification `docs/SPEC_PODANIM_V3.md` (R2) ; référence pure `lib/animV3.ts` + noyau C++ en flux `consensus-pod/src/podAnimV3.h` (vecteurs `anim-vectors.txt`, 260 clips : `docs/LOT_6B1_…`) ;
+route `/api/candidate-clip` (ticket HMAC `CLIP_TICKET_SECRET`), mode `ANIM_V3_MODE` **`off`/`shadow` seulement**, représentants, vérificateur de bloc animation (`rulesVersion = 2`) : `docs/LOT_6B2_…`. **Tout est INACTIF par défaut, aucun firmware ne l'utilise, aucun ticket n'est distribué** ;
+`enforce` n'existe pas (lot 8, capacités firmware). Un vote v1 (écho) ne valide JAMAIS un bloc animation v3. Ne pas parler d'animation « validée par les appareils » avant le lot 8.
+
 ## Non-goals
 
 Ne pas faire :

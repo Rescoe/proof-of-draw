@@ -237,7 +237,7 @@ test("rulesVersion VARIABLE par bloc : sans champ = 1 (hash historique INCHANGÉ
   assert.match(read("consensus-pod/test-vectors/vectors.txt"), /"rulesVersion":1,/);
 });
 
-test("pureté : lib/animV3.ts n'importe ni Redis, ni réseau, ni route ; aucun firmware, aucune route ni variable d'environnement ne l'utilise encore (6B-1 = référence seulement)", () => {
+test("pureté : lib/animV3.ts n'importe ni Redis, ni réseau, ni route ; PÉRIMÈTRE EXACT des fichiers qui l'utilisent (liste blanche) : aucun firmware, aucune route de vote, de pull ou d'enregistrement", () => {
   const src = read("lib/animV3.ts").replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/.*$/gm, "");
   const imports = [...src.matchAll(/from\s+"([^"]+)"/g)].map((m) => m[1]).sort();
   for (const i of imports) assert.ok(["@/lib/bench/clip", "@/lib/podMetrics", "@/lib/podProtocolV3"].includes(i), `import inattendu : ${i}`);
@@ -246,9 +246,15 @@ test("pureté : lib/animV3.ts n'importe ni Redis, ni réseau, ni route ; aucun f
   const walk = (dir: string) => { for (const e of fs.readdirSync(path.join(root, dir), { withFileTypes: true })) {
     const rel = path.join(dir, e.name).replace(/\\/g, "/");
     if (e.isDirectory()) { if (!["node_modules", ".next", ".git", "firmware-backups", ".claude", "tests", "docs", "scripts"].includes(e.name)) walk(rel); }
-    else if (/\.(ts|tsx|ino|h|cpp)$/.test(e.name) && /animV3|podAnimV3|pod-vote-v3-anim|ANIM_V3_MODE/.test(fs.readFileSync(path.join(root, rel), "utf8")) && !["lib/animV3.ts", "consensus-pod/src/podAnimV3.h", "consensus-pod/host/anim_harness.cpp"].includes(rel)) offenders.push(rel);
+    else if (/\.(ts|tsx|ino|h|cpp)$/.test(e.name) && /animV3|podAnimV3|pod-vote-v3-anim|ANIM_V3_MODE|clipTicket|clipPointer|candidate-clip|CLIP_TICKET_SECRET|animShadow|animReps|podVerifyAnim/.test(fs.readFileSync(path.join(root, rel), "utf8"))) offenders.push(rel);
   } };
   for (const d of ["app", "lib", "esp8266", "arduino_uno_r4", "consensus-pod"]) walk(d);
-  assert.deepEqual(offenders, [], "aucun usage en production");
+  // 6B-2 : référence, mode, ticket, réponse de route, shadow, représentants, vérificateur — et rien d'autre. Aucun firmware ; aucune route de vote/pull/registre/ACK ne les référence ;
+  // seule la route de DÉPÔT du candidat journalise la référence en shadow, et seule la route candidate-clip sert le clip.
+  assert.deepEqual(offenders.sort(), [
+    "app/api/candidate-clip/route.ts", "app/api/submit-candidate/route.ts", "consensus-pod/host/anim_harness.cpp", "consensus-pod/src/podAnimV3.h",
+    "lib/animClipResponse.ts", "lib/animReps.ts", "lib/animShadow.ts", "lib/animV3.ts", "lib/animV3Mode.ts", "lib/clipTicket.ts", "lib/podVerify.ts", "lib/podVerifyAnim.ts",
+  ].sort());
+  for (const f of ["app/api/pull/route.ts", "app/api/validate-candidate/route.ts", "app/api/validation-result/route.ts", "app/api/register/route.ts", "app/api/ack-frame/route.ts"]) assert.doesNotMatch(read(f), /clipTicket|clipPointer|candidate-clip|animV3/, `${f} ne distribue aucun ticket`);
   assert.equal(ANIM_V3.rulesVersion, 2);
 });
