@@ -24,7 +24,8 @@
 
 | Ressource | Avant | Après | Justification |
 |---|---|---|---|
-| **Commandes Redis** | 1 lecture du candidat courant à la 1ʳᵉ requête 200 de `/api/candidate-frame` | **identique** | Même chemin ; un id invalide ne lit toujours rien. **0 nouvelle commande.** |
+| **Commandes Redis — chemin normal (200)** | 1 lecture du candidat courant à la 1ʳᵉ requête de `/api/candidate-frame`, puis le CDN (réponse immuable) | **identique** | Aucune commande de plus sur le chemin nominal ; un identifiant invalide (400) ne lit toujours rien. |
+| **Commandes Redis — chemin d'erreur 404 sur un `candidateId` valide** | la 1ʳᵉ requête lisait le candidat, puis le CDN absorbait les suivantes pendant 30 s | **+1 lecture du candidat courant par requête** (plus de cache de 30 s) | **Coût d'erreur assumé, non nul** : seul le 404 n'est plus mutualisé. Il est borné : un firmware n'appelle `candidate-frame` qu'après `validate-candidate` (soumis au rate-limit du validateur) ; ces 404 sont des courses ou des expirations ; aucune boucle, aucun polling ajouté. À surveiller dans les journaux Vercel (`candidate-frame` 404). |
 | **Polling** | aucun nouveau | **aucun** | Aucun `setInterval`, aucune route, aucun appel client ajouté. |
 | **Requêtes Neon** | 0 | **0** | Aucun code ANA/Neon touché. |
 | **Cadence firmware** | inchangée | **inchangée** | Aucun `.ino`, aucun en-tête de firmware modifié. |
@@ -44,7 +45,7 @@ Le lot est **un seul commit local** : `git revert <hash>` restaure l'état `5aa6
 
 | # | Constat | Où | Suite proposée |
 |---|---|---|---|
-| E1 | La pastille de la galerie dit « **Animation validée image par image** » (`title`), alors que les animations sont votées en **v1 (écho)** : sur-promesse. | `app/gallery/GalleryClient.tsx` (pastille `gc-chip--replay`) | À corriger au plus tôt (lot de documentation) : « Animation (image par image : lecture) » tant que `pod-anim-v2` n'existe pas. |
+| E1 | ~~La pastille de la galerie disait « Animation validée image par image »~~ alors que les animations sont votées en **v1 (écho)** : sur-promesse. | `app/gallery/GalleryClient.tsx` | **CORRIGÉ (LOT0S-AUDIT-FIX1)** : libellé dans `lib/animationWording.ts` (empreinte de chaque image consignée et recalculable ; vote encore v1) ; test de vocabulaire dans `tests/lot0sWording.test.ts`. |
 | E2 | Le sketch **e-ink 2,7″ seul** (`eink27bw-2.1`) ne porte pas l'avertissement « NON TESTÉ sur le matériel » en en-tête (règle du dépôt), alors qu'il n'a pas été essayé. | `esp8266/esp_eink_2.7BW/esp_eink_2.7BW.ino` | À ajouter au prochain contact avec ce firmware (le lot interdisait de le modifier). |
 | E3 | `docs/UNO_R4_PORTS_ECRANS_NON_TESTES.md` et les en-têtes des ports R4 disent « non testé » alors que le porteur rapporte des essais réussis. Pas de **trace archivée** : on ne promeut rien sans preuve. | docs R4 | Lot 0 [U] : archiver une ligne `[VALIDATE2]` + `[MEM]` par variante. |
 | E4 | Le journal « Réseau » affiche le motif brut `blank` (« refuse (blank) »). | `lib/validationSummary.ts` | Libellé « image uniforme » avec le renommage du code en v3. |

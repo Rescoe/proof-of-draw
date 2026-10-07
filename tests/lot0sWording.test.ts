@@ -4,6 +4,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { OBS_BADGE, OBS_CHIP, OBS_CHIP_TITLE, OBS_FIELD_LABEL, OBS_FIELD_VALUE, OBS_FORBIDDEN_WORDS, OBS_NOTE, OBS_ROW_CONFIRMED, OBS_ROW_PENDING, OBS_SECTION_TITLE } from "../lib/observationWording";
 import { ROADMAP } from "../app/learn/data/roadmap";
+import { ANIM_CHIP_TITLE, ANIM_FORBIDDEN_CLAIM } from "../lib/animationWording";
 
 // Lot 0S (06/10/2026) : vocabulaire honnête. Tests de TEXTE : ils protègent des formulations qui laisseraient croire à une vérification qui n'existe pas.
 const root = path.join(__dirname, "..");
@@ -77,4 +78,48 @@ test("la route /api/candidate-frame délègue au module testé et n'écrit plus 
   const route = read("app/api/candidate-frame/route.ts");
   assert.ok(route.includes("candidateFrameResponse"));
   assert.doesNotMatch(route, /s-maxage=30/);
+});
+
+// ── Animations : jamais « validée image par image » tant que le vote reste v1 (LOT0S-AUDIT-FIX1) ───────────────────────────────────────────
+function walk(dir: string, out: string[] = []): string[] {
+  for (const e of fs.readdirSync(path.join(root, dir), { withFileTypes: true })) {
+    const rel = path.join(dir, e.name);
+    if (e.isDirectory()) { if (e.name !== "node_modules" && e.name !== ".next") walk(rel, out); }
+    else if (/\.(tsx?|md)$/.test(e.name)) out.push(rel);
+  }
+  return out;
+}
+
+test("le libellé public d'une animation dit que le vote est encore v1 et ne promet aucune validation image par image", () => {
+  assert.doesNotMatch(ANIM_CHIP_TITLE, ANIM_FORBIDDEN_CLAIM);
+  assert.match(ANIM_CHIP_TITLE, /v1/);
+  assert.match(ANIM_CHIP_TITLE, /pas encore validées par calcul/);
+  assert.match(ANIM_CHIP_TITLE, /peut être recalculée/);
+});
+
+test("le détecteur de formulation interdite reconnaît les variantes et laisse passer les phrases exactes", () => {
+  for (const bad of ["Animation validée image par image", "animations validées image par image", "validation de chaque image par image", "Validée image après image"]) assert.match(bad, ANIM_FORBIDDEN_CLAIM, bad);
+  for (const ok of ["🔎 Vérifier image par image", "Recalcule l'empreinte SHA-256 de chaque image", "Animations VALIDÉES par calcul (racine, empreinte et métriques par image)", "Animation : l’empreinte de chaque image est consignée"]) assert.doesNotMatch(ok, ANIM_FORBIDDEN_CLAIM, ok);
+});
+
+test("aucun texte de l'application (pages, composants, libellés) n'affirme « validée image par image »", () => {
+  const offenders: string[] = [];
+  for (const file of [...walk("app"), ...walk("lib")]) {
+    // la définition de la règle et ce test nomment la formulation interdite : ils sont exclus
+    if (file.replace(/\\/g, "/") === "lib/animationWording.ts") continue;
+    read(file).split("\n").forEach((line, i) => { if (ANIM_FORBIDDEN_CLAIM.test(line)) offenders.push(`${file}:${i + 1} ${line.trim().slice(0, 100)}`); });
+  }
+  assert.deepEqual(offenders, []);
+  assert.ok(read("app/gallery/GalleryClient.tsx").includes("ANIM_CHIP_TITLE"), "la galerie utilise le libellé centralisé");
+});
+
+// ── Budget du lot 0S : chemin nominal distinct du chemin d'erreur 404 ──────────────────────────────────────────────────────────────────────
+test("le budget Redis du lot 0S distingue le chemin nominal (200) du chemin d'erreur 404 (+1 lecture par requête, coût assumé)", () => {
+  const doc = read("docs/LOT_0S_PREUVES_ET_HYGIENE_2026_10_06.md");
+  assert.match(doc, /Commandes Redis — chemin normal \(200\)/);
+  assert.match(doc, /Commandes Redis — chemin d'erreur 404/);
+  assert.match(doc, /\+1 lecture du candidat courant par requête/);
+  assert.match(doc, /Coût d'erreur assumé, non nul/);
+  assert.doesNotMatch(doc, /\*\*0 nouvelle commande\.\*\*/, "l'ancienne affirmation de coût strictement nul ne doit plus figurer");
+  assert.match(read("lib/candidateFrameResponse.ts"), /Chemin d'erreur 404 sur un identifiant VALIDE : \+1 lecture par requête/);
 });
