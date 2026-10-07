@@ -7,6 +7,8 @@ import {
   ADVANCE, BLACK, CARTEL_MODES, FONT_5X7, LAYOUT_VERSION, PATTERNS, RED, T_DARK, T_GOLD, T_WHITE, WHITE, artworkIdentity, bottomLine, bytesPlane, decodeGrid, dimsOf, eInkTopLine, encodeGrid,
   fitGrid, foldText, frameHashOf, patternGrid, planeBytes, renderFrame, renderGrid, renderHashOf, type RenderMeta,
 } from "../lib/renderLayout";
+import { hash32 } from "../lib/renderLayout";
+import { hashArtworkSource, hashGenerativeBundle } from "../lib/scene/hash";
 import { cartelZonesFor } from "../lib/cartelZones";
 import { rgbaToScreenPayload } from "../lib/canvasToScreen";
 import { buildRenderVectors, metaCases } from "./helpers/renderVectors";
@@ -20,14 +22,16 @@ const sha = (...p: (string | Uint8Array)[]) => { const h = createHash("sha256");
 const CARTEL: ScreenId[] = ["eink29bwr", "eink27bw", "tft18"];
 const meta: RenderMeta = metaCases()[0].meta;
 
-test("la police est EXACTEMENT la table de la R4 (arduino_uno_r4/pod_uno_r4_eink29) : 42 glyphes de 5 colonnes", () => {
-  const src = read("arduino_uno_r4/pod_uno_r4_eink29/pod_uno_r4_eink29.ino");
-  const block = /FONT_5x7\[\]\[5\] = \{([\s\S]*?)\n\};/.exec(src)![1];
-  const parsed = [...block.matchAll(/\{([^}]*)\}/g)].map((m) => m[1].split(",").map((x) => parseInt(x.trim(), 16)));
-  assert.equal(parsed.length, 42);
-  assert.deepEqual(parsed, FONT_5X7.map((g) => [...g]));
-  // les deux autres R4 e-ink 2,7″ portent la même table
-  for (const f of ["arduino_uno_r4/pod_uno_r4_eink27/pod_uno_r4_eink27.ino", "arduino_uno_r4/pod_uno_r4_eink27_oled/pod_uno_r4_eink27_oled.ino"]) assert.ok(read(f).includes(block.trim().split("\n")[0].trim()), f);
+test("la police est EXACTEMENT la table de la R4 : les trois firmwares R4 qui la portent (e-ink 2,9″, 2,7″, 2,7″+OLED) sont parsés et comparés ENTIÈREMENT (42 glyphes × 5 colonnes)", () => {
+  const files = ["arduino_uno_r4/pod_uno_r4_eink29/pod_uno_r4_eink29.ino", "arduino_uno_r4/pod_uno_r4_eink27/pod_uno_r4_eink27.ino", "arduino_uno_r4/pod_uno_r4_eink27_oled/pod_uno_r4_eink27_oled.ino"];
+  for (const f of files) {
+    const block = /FONT_5x7\[\]\[5\] = \{([\s\S]*?)\n\};/.exec(read(f));
+    assert.ok(block, `${f} : table FONT_5x7 introuvable`);
+    const parsed = [...block[1].matchAll(/\{([^}]*)\}/g)].map((m) => m[1].split(",").map((x) => parseInt(x.trim(), 16)));
+    assert.equal(parsed.length, 42, f);
+    assert.ok(parsed.every((g) => g.length === 5 && g.every((v) => Number.isInteger(v) && v >= 0 && v <= 0xff)), `${f} : glyphe mal formé`);
+    assert.deepEqual(parsed, FONT_5X7.map((g) => [...g]), f);
+  }
 });
 
 test("géométrie : les bandes lues par le rasteriseur sont celles de lib/cartelZones (une seule source) et le port C++ répète les mêmes nombres", () => {
@@ -79,10 +83,20 @@ test("encodage == production : encodeGrid donne EXACTEMENT les octets de rgbaToS
     const back = decodeGrid(s, planes);
     for (let i = 0; i < g.length; i++) { const want = s === "eink27bw" && g[i] === RED ? BLACK : g[i]; if (back[i] !== want) assert.fail(`${s} pixel ${i}`); }
   }
-  // TFT : RGB565 petit-boutiste, aller-retour exact
-  const g = patternGrid("tft18", "noise", 3);
-  assert.deepEqual([...decodeGrid("tft18", encodeGrid("tft18", g))], [...g]);
-  assert.equal(encodeGrid("tft18", g)[0].length, planeBytes("tft18"));
+  // TFT 1,8″ : encodeGrid == rgbaToScreenPayload OCTET PAR OCTET (RGB565 petit-boutiste), sur une grille de mots 16 bits quelconques ET sur un rendu avec cartel (palette 0x10C4 / 0xFEA0 / 0x7BEF…)
+  const tftToRgba = (g: Uint16Array) => {
+    const rgba = new Uint8ClampedArray(g.length * 4);
+    g.forEach((v, i) => rgba.set([((v >> 11) & 31) << 3, ((v >> 5) & 63) << 2, (v & 31) << 3, 255], 4 * i));   // quantifié comme le producteur : r5<<3, g6<<2, b5<<3 ⇒ aller-retour exact
+    return rgba;
+  };
+  const anyWords = new Uint16Array(128 * 160).map((_, i) => hash32(99, i, 0) & 0xffff);
+  for (const g of [anyWords, patternGrid("tft18", "noise", 3), renderGrid("tft18", patternGrid("tft18", "bwr", 5), "fit", meta)]) {
+    const p = rgbaToScreenPayload(tftToRgba(g), "tft18") as { buffer: string };
+    const mine = encodeGrid("tft18", g)[0];
+    assert.equal(mine.length, planeBytes("tft18"));
+    assert.ok(Buffer.from(p.buffer, "base64").equals(Buffer.from(mine)), "tft18 : octets différents de la production");
+    assert.deepEqual([...decodeGrid("tft18", [mine])], [...g]);
+  }
   assert.throws(() => decodeGrid("oled096", [new Uint8Array(1024)]), /pas de cartel/);
 });
 
@@ -153,9 +167,27 @@ test("artworkHash : table de décision — jamais inventé (absent plutôt que f
   assert.equal(artworkIdentity({ kind: "animation", anim: { root: h } }).source, "anim-root-v1");
   assert.equal(artworkIdentity({}).hash, null, "bloc v1 / legacy : aucune identité");
   assert.equal(artworkIdentity({ blockVersion: 1 }).hash, null);
-  assert.equal(artworkIdentity({ source: "ana-agent", anaContentHash: h }).source, "ana-declared");
   assert.equal(artworkIdentity({ source: "ana-agent" }).hash, null, "ANA ancien : le hash du bloc identifie la publication, pas le contenu");
   assert.equal(artworkIdentity({ source: "ana-agent", anaContentHash: "zz" }).hash, null);
+  // ANA émet « sha256:<64 hex minuscules> » (lib/scene/hash.ts, feed V2) : valeurs RÉELLES calculées par les fonctions du contrat scene-v1 — poème, manifeste (source), scène
+  const poemSource = hashArtworkSource("Le poème de Kori\nrévision 1");
+  const sceneBundle = hashGenerativeBundle("work_1", 1, hashArtworkSource("// scène"), "sha256:" + "5".repeat(64), undefined);
+  const captureBundle = hashGenerativeBundle("work_2", 3, hashArtworkSource("// capture"), undefined, "sha256:" + "6".repeat(64));
+  for (const real of [poemSource, sceneBundle, captureBundle]) {
+    assert.match(real, /^sha256:[0-9a-f]{64}$/);
+    const id = artworkIdentity({ source: "ana-agent", anaContentHash: real });
+    assert.deepEqual(id, { hash: real.slice(7), source: "ana-declared", reason: "contentHash déclaré par ANA (sha256: retiré ; non recalculable par PoD)" });
+    assert.match(id.hash!, /^[0-9a-f]{64}$/, "artworkHash = 64 hex NUS");
+    assert.equal(artworkIdentity({ anaContentHash: real }).hash, real.slice(7), "reconnu aussi sans le champ source");
+  }
+  // strict : préfixe, longueur, alphabet, casse — jamais « réparés »
+  const bare = "ab".repeat(32);
+  for (const bad of [bare, `sha256:${bare.slice(1)}`, `sha256:${bare}0`, `sha256:${"AB".repeat(32)}`, `sha256:${"g".repeat(64)}`, `SHA256:${bare}`, `sha256: ${bare}`, ` sha256:${bare}`, `sha256:${bare}\n`, `sha1:${bare}`, `sha256:`, "", "sha256:capture-a"])
+    assert.equal(artworkIdentity({ source: "ana-agent", anaContentHash: bad }).hash, null, JSON.stringify(bad));
+  assert.equal(artworkIdentity({ source: "ana-agent", anaContentHash: 42 as unknown as string }).hash, null);
+  // le préfixe n'est accepté QUE côté ANA : les hash des blocs PoD restent des hex nus
+  assert.equal(artworkIdentity({ blockVersion: 2, contentHash: `sha256:${bare}` }).hash, null);
+  assert.equal(artworkIdentity({ kind: "animation", anim: { root: `sha256:${bare}` } }).hash, null);
   assert.equal(artworkIdentity({ source: "ana-agent", blockVersion: 2, contentHash: h }).hash, null, "ANA n'emprunte jamais le contentHash PoD sans contentHash ANA");
 });
 

@@ -250,6 +250,8 @@ export function bytesPlane(screen: ScreenId, seed: number): Uint8Array {
 export type ArtworkSource = "block-content-hash" | "anim-root-v3" | "anim-root-v1" | "ana-declared";
 export interface ArtworkIdentity { hash: string | null; source: ArtworkSource | null; reason: string }
 const HEX64 = /^[0-9a-f]{64}$/;
+/** Format réel des empreintes ANA (lib/scene/hash.ts, feed V2) : préfixe « sha256: » + 64 hex minuscules — SEUL format accepté côté ANA. */
+const ANA_SHA = /^sha256:([0-9a-f]{64})$/;
 
 /**
  * TABLE de l'`artworkHash` (jamais inventé : une identité absente reste VIDE). Entrées = champs déjà présents dans les blocs :
@@ -257,13 +259,15 @@ const HEX64 = /^[0-9a-f]{64}$/;
  *   animation v1 (kind « animation », sans blockVersion) → `anim.root` v1 (SHA-256 des empreintes d'images, délais, boucles, couleurs) — recalculable depuis le clip stocké, domaine DIFFÉRENT du v3 ;
  *   bloc humain v1 / legacy (image fixe)     → AUCUNE : `imageHash` n'est qu'un hash du JSON base64 du tampon d'UN écran, il n'est pas le rawHash voté ; le recalculer exigerait de relire l'image
  *                                              (lecture Redis) et produirait une valeur que personne n'a jamais votée ;
- *   œuvre ANA avec `contentHash` valide       → ce hash, étiqueté « déclaré par ANA » (PoD ne sait pas le recalculer) ;
+ *   œuvre ANA avec `contentHash` valide       → ce hash, étiqueté « déclaré par ANA » (PoD ne sait pas le recalculer). ANA l'émet sous la forme `sha256:<64 hex minuscules>` (poèmes, manifestes, scènes) :
+ *                                              SEUL ce format est accepté (préfixe, longueur et alphabet stricts, 64 hex nus REFUSÉS côté ANA) ; `artworkHash` = les 64 hex NUS (préfixe retiré) ;
  *   œuvre ANA sans `contentHash` (anciennes) → AUCUNE : le hash d'un bloc ANA (`blockHash`) identifie la PUBLICATION (sourceId, écran, agent, date), pas le contenu — une révision garde le même hash.
  */
 export function artworkIdentity(b: { source?: string; blockVersion?: number; contentHash?: string; kind?: string; rulesVersion?: number; anim?: { root?: string }; anaContentHash?: string }): ArtworkIdentity {
   const none = (reason: string): ArtworkIdentity => ({ hash: null, source: null, reason });
   if (b.source === "ana-agent" || b.anaContentHash !== undefined) {
-    return typeof b.anaContentHash === "string" && HEX64.test(b.anaContentHash) ? { hash: b.anaContentHash, source: "ana-declared", reason: "contentHash déclaré par ANA (non recalculable par PoD)" } : none("œuvre ANA sans contentHash valide : le hash du bloc identifie la publication, pas le contenu");
+    const m = typeof b.anaContentHash === "string" ? ANA_SHA.exec(b.anaContentHash) : null;
+    return m ? { hash: m[1], source: "ana-declared", reason: "contentHash déclaré par ANA (sha256: retiré ; non recalculable par PoD)" } : none("œuvre ANA sans contentHash valide : le hash du bloc identifie la publication, pas le contenu");
   }
   if (b.blockVersion === 2) {
     if (typeof b.contentHash === "string" && HEX64.test(b.contentHash)) return { hash: b.contentHash, source: b.rulesVersion === 2 ? "anim-root-v3" : "block-content-hash", reason: "contentHash du bloc v2" };
