@@ -3,6 +3,7 @@
 | | |
 |---|---|
 | **Statut** | **BROUILLON R1 (amendé après l'audit GPT de `139b0c5`), spécification seulement.** Aucun code de format, aucune route, aucun firmware, aucune variable n'est modifié par ce document. À **geler par GPT** puis par le porteur avant tout code 6B. |
+| **Révision R2** | 3 corrections de l'audit GPT de `bb2a61f` : **ticket HMAC** `candidate-clip-v1\|candidateId\|exp` vérifié avant Redis (le rate-limit de `validate-candidate` ne protège pas un appel direct ; l'affirmation correspondante est **supprimée**) ; **un seul appareil représentant par profil**, figé au dépôt (≤ 64 téléchargements) ; `frames = 0` **seulement** pour `reject/format` d'un clip illisible ; ancien bloc sans `rulesVersion` ⇒ 1 sans toucher son hash. §§ 3 bis, 4 bis, 7, 7 bis, 11. |
 | **Révision R1** | 7 corrections de l'audit GPT : (1) message de vote **propre** `pod-vote-v3-anim` ; (2) `rulesVersion` **variable par bloc** (changement du canonique TS/C++ listé § 4 bis) ; (3) **`S` signé** ; (4) budget Redis **recalculé sans comité** (jusqu'à 64 demandeurs) + comptage des défauts de cache ; (5) règles : **`uniform` retiré**, `noise` sur **agrégats** ; (6) `enforce` **techniquement impossible** en 6B (modes `off`/`shadow` seulement) ; (7) vecteurs de Merkle pour **tous** les N de 2 à 64 et **validation des identifiants avant tout accès Redis**. Décisions A1–A7 : propositions de GPT reprises (§ 11). |
 | **Date** | 07/10/2026 — base `42945c3` (FIX2 accepté) |
 | **Réalisateur** | Claude · **orchestrateur/auditeur** : GPT |
@@ -61,7 +62,8 @@ pod-vote-v3-anim|deviceId|candidateId|parentHash|metricsVersion|rulesVersion|cli
 - **17 éléments** séparés par `|` (préfixe + 16 champs). `metricsVersion = 2`, `rulesVersion = 2` (jeu A1 : un message d'animation dont `rulesVersion ≠ 2` est **invalide**) ; `frames` = N (2..64) ; `E, T, R, S` entiers 0…1 000 000 ; hashes en hexadécimal minuscule de 64 caractères ; `verdict`, `ruleCode`, `vclass` comme spec v3 § 3, avec `ruleCode` ∈ {`ok`, `format`, `hash`, `static`, `noise`, `rules`} (**pas** `uniform`, § 6).
 - **Domaine séparé** : le **premier élément** (`pod-vote-v3-anim`) diffère de `pod-vote-v3` ; chaque parseur n'accepte **que** son préfixe exact et la forme **canonique** (le message reconstruit doit être identique). Un message d'image ne peut donc pas être rejoué comme message d'animation, ni l'inverse (test 6B-T8 : parse croisé = refus, 0 faux positif sur les vecteurs).
 - **`S` est signé** (audit GPT) : `S = ⌊Σ s_i / N⌋` n'est **pas** reconstructible depuis `E, T, R` seuls (la moyenne des `s_i` plafonnés n'est pas une fonction des moyennes). Le serveur compare **les quatre** (`E, T, R, S`) à sa référence, comme pour une image fixe ; un écart rend un `accept` **invalide**.
-- **Refus sans calcul complet** (`format`, `hash`) : `E = T = R = S = 0`, `frames = 0` si le clip est illisible ; `clipHash` = hash des octets **effectivement lus** ; `animRoot` = la racine **annoncée** par le candidat (le vote reste lié au candidat) ; `saltedHash` = hash salé des octets lus. Le détail binaire est figé en 6B-1 (vecteurs).
+- **`frames`** : entier **2..64** pour tout vote, **sauf** un rejet `ruleCode = format` lorsque le clip est **illisible** et que N est **inconnu** (R2 · point 3) : alors **`frames = 0`** est **la seule exception**. Tout autre message avec `frames = 0`, ou `frames` ∉ {0} ∪ [2, 64], est **invalide** ; un `accept` ou un refus `hash`/`static`/`noise` avec `frames = 0` est invalide.
+- **Refus sans calcul complet** (`format`, `hash`) : `E = T = R = S = 0` (et `frames = 0` seulement dans l'exception ci-dessus) ; `clipHash` = hash des octets **effectivement lus** ; `animRoot` = la racine **annoncée** par le candidat (le vote reste lié au candidat) ; `saltedHash` = hash salé des octets lus. Le détail binaire est figé en 6B-1 (vecteurs).
 - **Hash salé** : `saltedHash = SHA-256(nonce ‖ octets du clip)`, `nonce = SHA-256("pod-nonce-v3|" candidateId "|" parentHash "|" deviceId)` (spec v3 § 5, **inchangé**).
 - La signature Ed25519 porte sur l'UTF-8 du message, **obligatoire**, comme en v3.
 - **Reçus** : `message|signature|clé` (feuille de Merkle des votes, spec v3 § 6, **inchangée**) ; le vérificateur reconnaît le type par le **préfixe** du message.
@@ -87,6 +89,7 @@ Aujourd'hui `rulesVersion` est une **constante globale** (`PROTOCOL.rulesVersion
 - `blockCanonicalV2` et `pod_block_canonical_v2` l'écrivent tel quel ; les constantes globales deviennent des **valeurs par défaut** ;
 - **les vecteurs des images fixes ne changent pas** (valeur 1 : texte canonique identique : test de non-régression) ; de nouveaux vecteurs couvrent `rulesVersion = 2` ;
 - le vérificateur **impose la cohérence** : `rulesVersion = 2` ⇔ `contentHash` est une racine d'animation ⇔ les reçus approuvés sont des `pod-vote-v3-anim` ; toute autre combinaison **échoue** ;
+- **ancien bloc sans champ `rulesVersion`** (blocs v1 historiques ; tout bloc v2 de test antérieur) : interprété comme **`rulesVersion = 1`** à la lecture (`block.rulesVersion ?? 1`) ; **son hash historique n'est PAS modifié** (le hash v1 ne contient pas ce champ ; le canonique v2 l'écrivait déjà avec la valeur 1) — test de non-régression : mêmes hashes qu'avant pour tous les vecteurs d'images et les blocs v1 ;
 - aucun bloc v2 n'a jamais été miné en production (`BLOCK_RECEIPTS` éteint) : pas de migration ; **le format de bloc v2 est donc encore modifiable** (à geler après 6B-1).
 
 ## 5. Agrégats entiers (reproductibles)
@@ -110,18 +113,32 @@ Pour N images : `E = ⌊Σ e_i / N⌋`, `T = ⌊Σ t_i / N⌋`, `R = ⌊Σ r_i /
 
 ## 7. Distribution du clip du candidat (route à créer en 6B)
 
-`GET /api/candidate-clip?candidateId=…` : corps = **octets exacts du clip** (≤ 9 216 o), en-têtes `X-Clip-Hash`, `X-Anim-Root`, `X-Metrics-Version` ; mêmes règles que `/api/candidate-frame` (réponse 200 **immuable** par `candidateId`, erreurs `no-store`).
-**Coût Redis HONNÊTE (corrigé R1 · point 4)** : chaque **exécution de la route** (défaut de cache CDN) lit le candidat : **1 lecture** (`getCurrentCandidate`). **Sans comité** (aucun comité d'animation, § 8), **tous les profils de l'électorat peuvent voter** : la borne est celle de l'électorat **figé** : **≤ 64 profils** (`ELECTORATE_MAX`). Un second appareil d'un profil **déjà représenté** est refusé par `validate-candidate` (`profile-already-voted`) donc ne télécharge pas ; mais **deux appareils du même profil qui arrivent avant le premier vote peuvent télécharger tous les deux** : la borne stricte est donc **le nombre d'appareils actifs des ≤ 64 profils** (mesuré au dépôt, journalisé en `shadow`), pas 64 ; chaque appareil télécharge **une fois** par candidat. Le CDN regroupe les demandes **par région** :
+`GET /api/candidate-clip?candidateId=…&exp=…&t=…` : corps = **octets exacts du clip** (≤ 9 216 o), en-têtes `X-Clip-Hash`, `X-Anim-Root`, `X-Metrics-Version` ; mêmes règles que `/api/candidate-frame` (réponse 200 **immuable** par URL, erreurs `no-store`).
+
+**Ticket HMAC (R2 · point 1)** : la route peut être appelée **directement**, sans passer par `validate-candidate` : son coût ne peut donc **pas** s'appuyer sur le rate-limit de ce dernier. Le ticket est :
+```
+ticket = HMAC-SHA256( secret serveur, "candidate-clip-v1|" candidateId "|" exp )        exp = expiration du candidat (secondes Unix, ≤ 30 min)
+```
+- **commun à tous les validateurs d'un candidat** (même URL ⇒ une seule entrée de cache CDN par région) ; calculé **sans Redis** (le serveur connaît déjà `candidateId` et `expiresAt` quand il annonce le candidat) et remis **uniquement** par `validate-candidate`/`pull` aux appareils **représentants** (§ 7 bis) ;
+- vérifié **avant toute lecture Redis**, en temps constant : `candidateId` conforme (UUID), `exp` entier non expiré, `t` hexadécimal de 64 caractères et égal au HMAC recalculé ; sinon **403/410 `no-store` sans aucune lecture** (donc un appel direct sans ticket valide **ne coûte aucune commande Redis**) ;
+- secret : variable serveur dédiée **`CLIP_TICKET_SECRET`** (≥ 32 octets aléatoires, **jamais** dans le dépôt, la sortie ou les journaux) ; **absente ⇒ route inactive et aucun ticket émis** (`shadow` ne sert aucun clip) ; sa création et sa rotation sont une **décision du porteur** (aucune variable n'est posée par 6B-1) ;
+- limite assumée : un ticket **divulgué** permet de demander le clip jusqu'à `exp` ; le contenu n'a rien de secret (publié dans la galerie après le bloc) et, **200 immuable**, le CDN absorbe les répétitions : seul un défaut de cache lit Redis (1 lecture). Le ticket n'authentifie **pas** un appareil et n'est **pas** une preuve d'identité.
+
+**Coût Redis HONNÊTE (R1 · point 4, précisé R2)** : chaque **exécution de la route avec ticket valide** (défaut de cache CDN) lit le candidat : **1 lecture** (`getCurrentCandidate`). Les requêtes sans ticket valide : **0 lecture**. Le CDN regroupe les demandes **par région** :
 
 | Hypothèse | Lectures de candidat par animation |
 |---|---|
-| Typique [E] (2 à 10 appareils, 1 à 3 régions) | **1 à 3** |
-| **Borne haute réelle** (électorat figé de 64 profils, aucune mise en cache utile : régions distinctes ou pointes simultanées avant la première réponse) | **≤ nombre d'appareils actifs des profils de l'électorat** (**64 si un appareil par profil**, plus sinon ; au plus le nombre d'exécutions réellement lancées, et la même route n'est appelée qu'une fois par appareil) |
-| Identifiant valide mais candidat non courant (404, `no-store`) | **+1 lecture par requête**, borné par le rate-limit de `validate-candidate` (4/min/appareil) |
+| Typique [E] (2 à 10 représentants, 1 à 3 régions) | **1 à 3** |
+| **Borne haute** (électorat figé ≤ 64 profils, **un seul appareil représentant par profil** § 7 bis, aucune mise en cache utile) | **≤ 64 appels de téléchargement** par candidat (un par représentant), plus les **rejeux d'un ticket valide** qui ne sont pas absorbés par le CDN (non bornés par la route elle-même : **journal MISS** + alerte, § ci-dessous ; mesuré en `shadow` avant toute décision) |
+| Ticket valide, candidat non courant ou expiré (404/410, `no-store`) | **+1 lecture par requête** possédant un ticket valide ; le rate-limit de `validate-candidate` **ne s'applique pas** à un appel direct : seul le ticket (non émis pour un candidat expiré, expiration courte) limite le périmètre |
+
+### 7 bis. Un seul appareil représentant par profil (R2 · point 2)
+
+Pour une animation v3, le dépôt du candidat **fige**, pour chaque profil de l'électorat, **un appareil représentant** : parmi les appareils **éligibles et actifs** du profil, le **plus petit `deviceId`** (ordre lexicographique, règle déterministe rejouable). La liste `{profileId → deviceId}` (≤ 64 entrées, ≈ 0,8 Ko) est stockée **dans le candidat** (champ additif, animations v3 seulement, aucune commande de plus). **Seul le représentant** reçoit le ticket et peut voter ; un autre appareil du même profil est refusé (`not-representative`, 409) **avant** tout téléchargement. Conséquences : **au plus 64 téléchargements autorisés par candidat** (un par profil), même quand un artiste possède plusieurs cartes ; si le représentant est hors ligne, **le profil s'abstient** (aucun remplaçant : c'est le prix de la borne). Pas de lien avec le comité (aucun comité d'animation, § 8).
 
 **Électorat non figeable (`overflow`, > 64 profils)** : une animation v3 n'est **pas** proposée (retour au chemin v1 actuel, § 8) ; la borne ci-dessus reste donc définie. Le journal `votersExpected` indique **appareils actifs** et **profils** de l'électorat figé. Aucune lecture par image, par boucle ni par vote. **Aucun polling.** Le `validate-candidate` existant (1 MGET) annonce le candidat ; le « pointeur » ajoute **≈ 120 o** (`clipHash`, `animRoot`, N, taille) au candidat, pas une commande.
 **Instrumentation des défauts de cache (sans commande Redis)** : chaque exécution de la route journalise **une ligne** `[candidate-clip] MISS candidate=<8 premiers caractères> votersExpected=<taille de l'électorat figé>` ; le **nombre de lignes MISS par candidat** (journaux Vercel) est comparé à la borne ci-dessus lors de l'essai en `shadow` ; **aucun compteur Redis** (ce serait une commande de plus). Seuil d'alerte proposé : **> 8 MISS** pour un candidat à ≤ 10 votants ⇒ revoir le cache.
-**Validation avant tout accès Redis (R1 · point 7)** : `candidateId` est contrôlé par la regex UUID **avant** toute lecture (400 sans lecture, comme `/api/candidate-frame`) ; les autres identifiants qui interviendraient (`deviceId` `dev_[A-Z0-9]{8}`, hashes hexadécimaux de 64 caractères) sont validés **avant** d'être utilisés dans une clé Redis. Test 6B-T7 : identifiants invalides (vides, trop longs, avec `:`/`*`/`|`/retours à la ligne, Unicode) ⇒ **0 appel Redis** (compteur de l'accès simulé).
+**Validation avant tout accès Redis (R1 · point 7, complété R2)** : `candidateId` (regex UUID), `exp`, ticket `t` (HMAC) et les autres identifiants qui interviendraient (`deviceId` `dev_[A-Z0-9]{8}`, hashes hexadécimaux de 64 caractères) sont validés **avant** d'être utilisés dans une clé Redis. Test 6B-T7 : identifiants invalides (vides, trop longs, avec `:`/`*`/`|`/retours à la ligne, Unicode), **ticket absent, altéré, expiré, d'un autre candidat** ⇒ **0 appel Redis** (compteur de l'accès simulé).
 **Stockage** : le candidat porte déjà le clip (≤ 12 Ko en base64) ; aucune écriture de plus. Après le bloc : `chain:anim:{hash}` (existant) + reçus (`chain:receipts:{hash}` existant).
 
 ## 8. Compatibilité et cohabitation (point demandé par GPT)
@@ -161,7 +178,9 @@ Nouveaux contrôles de `lib/podVerify.ts` pour un bloc animation v3 : `anim-clip
 | **A5** | Attestation C1/C2 obligatoire | **GELÉ** : **aucune** obligation au démarrage |
 | **A6** | Score en ppm `pod-metrics-2` | **GELÉ**, avec étiquette « v1 / v3 » dans la galerie |
 | **A7** | Délai engagé par image | **GELÉ** (feuille de 46 o) |
-| **A8** *(nouveau)* | Politique d'électorat pour une animation v3 | électorat **figé ≤ 64** exigé ; `overflow` ⇒ chemin v1 actuel (§ 7) — **à confirmer au gel** |
+| **A8** | Politique d'électorat pour une animation v3 | **GELÉ (R2)** : électorat **figé ≤ 64** exigé ; `overflow` ⇒ chemin v1 actuel (§ 7) |
+| **A9** *(R2)* | Ticket HMAC de `candidate-clip` | **GELÉ (proposition GPT)** : `HMAC-SHA256(secret, "candidate-clip-v1|candidateId|exp)`, commun au candidat, vérifié **avant** Redis ; variable **`CLIP_TICKET_SECRET`** à créer par le porteur (non posée par 6B-1) |
+| **A10** *(R2)* | Un appareil représentant par profil | **GELÉ (proposition GPT)** : plus petit `deviceId` actif éligible, figé au dépôt, ≤ 64 téléchargements ; profil absent = abstention |
 
 *Statut « GELÉ » : reprend les propositions de l'audit GPT du 07/10/2026 ; le gel **formel** reste à prononcer par GPT sur cette révision, puis par le porteur.*
 
