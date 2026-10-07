@@ -13,7 +13,7 @@
 | Plateforme | Verdict | Raison en une ligne |
 |---|---|---|
 | **ESP8266** | **VIABLE SOUS RÉSERVE** (stratégie « télécharger vers LittleFS, calculer TLS fermé ») ; **NON VIABLE** si l'on calcule *pendant* le TLS | L'automate fait **1 944 o** (< 2 Ko) et tient en RAM, mais il ne peut pas coexister avec BearSSL (≈ 35 Ko de tas requis sur ≈ 38 Ko disponibles : marge ≈ 3 Ko, soit moins que l'automate + hash salé + fragment ≈ 2,7 Ko). Calculé **après** la fermeture du TLS, avec le clip lu **depuis LittleFS**, il est confortable. À confirmer **sur carte** (`[HEAP]`). |
-| **UNO R4 WiFi** | **VIABLE SOUS RÉSERVE** | 2,6 Ko de RAM statique (objet **global**), TLS déporté dans le coprocesseur Wi-Fi (pas de concurrence de RAM), clip lisible directement depuis le socket. **Réserve : la pile principale de 1 024 o** — chaîne d'appels de l'automate ≈ 270 o + appelant, analysée statiquement (≈ 544 o au total dans l'auto-test), **non mesurée**. |
+| **UNO R4 WiFi** | **VIABLE SOUS RÉSERVE** | 2,6 Ko de RAM statique (objet **global**) ; le chiffrement TLS est déporté dans le coprocesseur Wi-Fi, mais **les tampons du client côté RA4M1 ne sont pas mesurés** ; clip lisible directement depuis le socket. **Réserve : la pile principale de 1 024 o** — chaîne d'appels de l'automate ≈ 270 o + appelant, analysée statiquement (≈ 544 o au total dans l'auto-test), **non mesurée**. |
 
 Rien n'a été exécuté sur une carte : « viable » signifie ici « compile, budgets calculés, logique exécutée sur PC ».
 
@@ -110,7 +110,7 @@ Contenu de `PodAnimStream` : image courante **1 024 o**, métriques 272 o, Merkl
 | **Opérations** du clip c1 (comptage exact) | SHA-256 : ≈ 78,5 Ko hachés (≈ 1 230 blocs : clip ×2, 64 × 1 024 o d'images, 64 feuilles, 63 nœuds) ; **524 288** pixels de métriques ; ≈ 23 300 pas de CRC | **comptage, pas un temps** |
 | **Temps sur ESP8266 / R4** | **NON MESURÉ.** Les deux exemples affichent `us(frag1/7/61/256)=…` par cas via `micros()` : ce sont des **mesures matérielles** seulement quand le porteur les aura exécutés | **à produire sur carte** |
 
-Aucune estimation en millisecondes pour les cartes n'est avancée. **Contrainte déjà certaine** : sur ESP8266 le calcul d'une image (8 192 pixels de métriques) se fait dans un seul appel `update` : le firmware doit appeler `yield()` entre fragments (≤ 256 o) pour nourrir le chien de garde.
+Aucune estimation en millisecondes pour les cartes n'est avancée. **Contrainte (corrigée par l'audit, voir § 9)** : `yield()` entre fragments **ne suffit pas** à nourrir le chien de garde de l'ESP8266 : un seul appel `update()` peut terminer **toutes** les images d'un clip très compressible (une transition vide ne coûte que 3 octets : un fragment de 256 o en contient jusqu'à 85).
 
 ## 4. Changement du noyau (sans effet sur les résultats)
 `consensus-pod/src/podAnimV3.h` : `PodAnimStream` contient désormais `Sha scratch_` et `uint8_t h_[32]` ; `frameDone`/`transitionDone`/`finish` n'ont plus de tableau ni de contexte SHA locaux ; `pod_anim_leaf_with(Sha&, …)`, `pod_anim_root_with(Sha&, …)`, `PodMerkleStack::{node,push,root}(…, Sha&)` ; les anciennes signatures restent (surcharges) pour les vecteurs. Preuves : `tests/animV3Core.test.ts` (2 968 vérifications bit à bit TypeScript ↔ C++, contrôles négatifs), `tests/animSelfTest.test.ts`.
@@ -128,7 +128,7 @@ Aucune estimation en millisecondes pour les cartes n'est avancée. **Contrainte 
 | Étape | Mémoire | Détail |
 |---|---|---|
 | 1. **TLS ouvert** : `GET /api/candidate-clip?…` | pas d'automate, pas de tampon d'écran, 1 fragment ≤ 256 o | chaque fragment est **écrit dans un fichier LittleFS** (`/anim_cand.pbc`) ; on arrête si > 9 216 o ; `yield()` ; `http.end()` |
-| 2. **TLS fermé** : calcul | `malloc(sizeof(PodAnimStream))` = **1 944 o** + `PodSalted` 112 o + résultat 244 o + fragment 256 o ≈ **2,6 Ko** | lecture du fichier **par fragments** → `stream.update` + `salted.update` ; `yield()` entre fragments ; **allocation APRÈS la libération des tampons d'écran**, **libérée avant** toute nouvelle connexion TLS |
+| 2. **TLS fermé** : calcul | `malloc(sizeof(PodAnimStream))` = **1 944 o** + `PodSalted` 112 o + résultat 244 o + fragment 256 o ≈ **2,6 Ko** | lecture du fichier **par fragments** → `stream.update` + `salted.update` ; `yield()` entre fragments (**insuffisant seul, voir § 9**) ; **allocation APRÈS la libération des tampons d'écran**, **libérée avant** toute nouvelle connexion TLS |
 | 3. Libération | tout est rendu | l'automate et le résultat ne vivent pas pendant le TLS suivant |
 | 4. Message et signature | tampon ≈ 400 o | `pod_anim_vote_message` ; signature Ed25519 existante ; vérifier `ESP.getFreeHeap()` avant |
 | 5. **TLS ouvert** : `POST /api/validation-result` | comme aujourd'hui | vote ; suppression du fichier |
@@ -142,7 +142,7 @@ Aucune estimation en millisecondes pour les cartes n'est avancée. **Contrainte 
 | Point | Décision |
 |---|---|
 | Emplacement | **objet global** (`static PodAnimStream<PodSha256Rw>` + hash salé + résultat + 1 fragment global de 256 o) ≈ **2,7 Ko de RAM statique** ; **jamais** une variable locale ni un grand tableau local (pile principale de 1 024 o) |
-| TLS | assuré par le **coprocesseur Wi-Fi** : pas de concurrence de RAM avec le calcul ; le clip peut être lu **directement** depuis `WiFiSSLClient` fragment par fragment |
+| TLS | le **chiffrement** est assuré par le coprocesseur Wi-Fi (pas de contexte BearSSL côté RA4M1), mais la RAM des tampons du client `WiFiSSLClient` côté RA4M1 **n'est pas mesurée** : à relever au premier essai ; le clip peut être lu **directement** depuis le client, fragment par fragment |
 | Pile | l'appel de `update()` doit se faire depuis un niveau d'appel **peu profond** (cadres appelants < ≈ 300 o) ; pas d'appel depuis une interruption ; à mesurer (`[MEM]` / marquage de pile) lors du premier essai |
 | RAM | firmwares R4 actuels : 19 128 à 22 768 o statiques (32 768 au total) + ≈ 2,7 Ko ⇒ **≈ 21,8 à 25,5 Ko** : reste ≈ 7 Ko pour la pile et le tas ; à confirmer sur le TFT 2,8" (le plus gros) |
 | Ordre | flux → calcul → message → signature → vote ; fragments globaux **réutilisés** par le téléchargement des images |
@@ -187,6 +187,22 @@ Tout ce qui précède s'ajoute au **firmware unique du lot 8**. Les auto-tests d
 | L5 | L'OTA n'est ni écrite ni essayée ; la R4 reste « à vérifier ». |
 | L6 | La stratégie ESP8266 « fichier d'abord » suppose LittleFS monté et ≥ 12 Ko libres ; le multiscreen l'utilise déjà pour les clips. |
 | L7 | Le journal `votersExpected` de `candidate-clip` (réserve de GPT) est à corriger **avant l'activation de `shadow`**, pas dans ce lot. |
+| L8 | Chien de garde ESP8266 et classe C1 sur R4 : critères du lot 8 (§ 9). |
 
-## 8. Rollback
+## 9. 6C-FIX1 (audit GPT du 6C : « accepté sous réserve ») et critères OBLIGATOIRES du lot 8
+
+| # | Constat | Traitement |
+|---|---|---|
+| 1 | `git diff --check` ne passait pas : espaces finaux dans les sorties de compilation archivées (`docs/mesures/`), ligne vide finale dans deux fichiers. **Mon affirmation « diff propre » était fausse** : j'avais lancé la vérification *avant* `git add`, donc sans les fichiers nouveaux. | Fichiers nettoyés (espaces finaux et lignes vides finales supprimés — **aucun chiffre modifié**). Vérification désormais faite sur le commit (`git diff --check HEAD~1 HEAD`). |
+| 2 | **Chien de garde ESP8266** : `yield()` entre fragments de 256 o n'est pas une garantie. | **Mesure hôte ajoutée** (g++ `-O2`, PC, pas une carte) — clip de 64 images identiques (1 241 o) : pire appel `update()` = **3 035 µs** avec des fragments de 256 o contre **48 µs** avec des fragments de 1 octet (×63) ; 64 images presque identiques (1 497 o) : 923 µs contre 42 µs. Le temps total est identique (≈ 1,8 à 3 ms) : seule la **granularité** change. Sur ESP8266 le facteur par rapport au PC n'est pas mesuré : **aucune durée en ms n'est affirmée**. |
+| 3 | **Classe de calcul** : les deux auto-tests signent `vclass = "C0"`. | Le lot 8 devra tester un **vrai message `C1`** sur R4 (la classe se choisit par carte à la compilation, pas à l'exécution). Le noyau ne dépend pas de la classe (elle n'est qu'un champ du message). |
+| 4 | Formulation sur la R4 | assouplie (§ 0 et § 5.3) : le chiffrement est déporté, la RAM des tampons du client côté RA4M1 n'est **pas** mesurée. |
+
+### Critères OBLIGATOIRES du lot 8 (à satisfaire AVANT le grand flash)
+1. **Watchdog ESP8266** : au choix (a) alimenter l'automate **octet par octet** (ou par très petits morceaux) depuis un tampon lu dans LittleFS, avec `yield()` entre morceaux ; (b) ajouter à l'automate un mécanisme de **progression** (par exemple `update()` qui rend la main après chaque image terminée, avec un compteur/une sortie « reprise possible ») ; **dans les deux cas, tester explicitement 64 images identiques et 64 images presque identiques** (cas ci-dessus, à ajouter à l'auto-test) et relever le plus long intervalle entre deux `yield()` **sur carte**.
+2. **Classe C1 sur R4** : auto-test R4 avec `vclass = "C1"`, message vérifié contre la référence.
+3. **Une carte canari de chaque famille** (ESP8266, R4) avant le grand flash : exécuter les deux auto-tests (`[ANIMTEST] RESULTAT PASS 36/36`), relever tas libre avant/après, temps (`us(frag…)`), plus long intervalle entre `yield()`, marge de pile R4, RAM des tampons du client TLS côté RA4M1.
+4. Le grand flash reste **unique** : ces essais utilisent les exemples de la bibliothèque, pas le firmware final.
+
+## 10. Rollback
 Fichiers ajoutés (auto-tests, en-tête généré, archive de mesures, tests) + refactorisation de `consensus-pod/src/podAnimV3.h` (aucun résultat modifié). `git revert` du commit suffit ; aucun état, aucune variable, aucun firmware.

@@ -1,14 +1,14 @@
 . Variables and constants in RAM (global, static), used 35920 / 80192 bytes (44%)
 ║   SEGMENT  BYTES    DESCRIPTION
 ╠══ DATA     1496     initialized variables
-╠══ RODATA   1464     constants       
+╠══ RODATA   1464     constants
 ╚══ BSS      32960    zeroed variables
 . Instruction RAM (IRAM_ATTR, ICACHE_RAM_ATTR), used 59839 / 65536 bytes (91%)
 ║   SEGMENT  BYTES    DESCRIPTION
 ╠══ ICACHE   32768    reserved space for flash instruction cache
-╚══ IRAM     27071    code in IRAM    
+╚══ IRAM     27071    code in IRAM
 . Code in flash (default, ICACHE_FLASH_ATTR), used 278692 / 1048576 bytes (26%)
 ║   SEGMENT  BYTES    DESCRIPTION
-╚══ IROM     278692   code in flash   
+╚══ IROM     278692   code in flash
 EXIT 0
 avertissements ou erreurs dans consensus-pod/ (notre code) : 0
