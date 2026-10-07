@@ -325,6 +325,8 @@ route `/api/candidate-clip` (ticket HMAC `CLIP_TICKET_SECRET`), mode `ANIM_V3_MO
 
 **Cartels e-ink (lot 7, 07/10/2026)** : `docs/SPEC_LOT_7_CARTELS_RENDU_2026_10_07.md`. Les firmwares gravent le cartel PAR-DESSUS l'image (e-ink 2,9″ : 28 lignes sur 128 ; 2,7″ : 26–28 sur 176 ; TFT 1,8″ : 27–29 sur 160) ; `lib/cartelZones.ts` (géométrie lue dans les sources, testée) alimente les hachures de l'éditeur et l'avertissement d'envoi — **purement visuel, l'image du bloc reste complète**. L'ACK accepte un « rapport non authentifié » facultatif (`artworkHash`/`frameHash`/`renderHash`/`layoutVersion`/`cartelMode`), consigné dans l'enregistrement d'affichage, jamais voté ni public (type public sans `render`), sans `renderHash` pour une scène. Contrat de rendu et décisions D7 GELÉS (`fit` au rendu, pas de réglage visible avant le firmware, rasteriseur complet versionné, signature `pod-render-v1` au lot 8).
 
+**Rasteriseur de référence (lot 8A, 07/10/2026)** : `docs/LOT_8A_RASTERISEUR_REFERENCE_2026_10_07.md`. `lib/renderLayout.ts` (TypeScript) est la source unique de `layoutVersion = 1` (police R4, repli des accents, cartel, `fit` entier, `frameHash`/`renderHash`, table `artworkIdentity` « absent plutôt qu'inventé ») ; `consensus-pod/src/podRender.h` le porte en C++ (harnais hôte `consensus-pod/host/render_harness.cpp`, vecteurs `consensus-pod/test-vectors/render-vectors.txt`, régénérés par `node --import tsx scripts/gen-render-vectors.ts`). **Référence logicielle : aucun firmware ne l'utilise, jamais essayée sur un écran** ; la version hôte travaille sur une grille complète (stratégie mémoire MCU = lot 8B).
+
 ## Non-goals
 
 Ne pas faire :
