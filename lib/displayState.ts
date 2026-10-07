@@ -13,11 +13,13 @@
 export type DisplayKind = "human" | "ana" | "personal";
 
 /**
- * RAPPORT DE RENDU (lot 7.5, D9) : ce que l'appareil dit avoir RÉELLEMENT affiché. `artworkHash` = hash de l'œuvre (celle sur laquelle le réseau a voté) ; `renderHash` = hash du tampon FINAL
- * (cartel gravé compris) ; `layoutVersion` = version des règles de mise en page et de cartel ; `cartelMode` = réglage appliqué. JAMAIS voté, JAMAIS vérifié par le serveur (il ne connaît ni la date ni le
- * texte gravés par l'appareil) : un simple témoignage consigné pour le débogage du propriétaire. Aucun firmware actuel ne l'envoie (lot 8) : le champ reste absent.
+ * RAPPORT DE RENDU (lot 7.5, D9) — « rapport NON AUTHENTIFIÉ reçu avec l'ACK » : l'ACK n'est pas signé, n'importe qui connaissant un `deviceId` peut en forger un ; il n'a donc aucune valeur de preuve.
+ * Trois niveaux de hash (docs/SPEC_LOT_7_CARTELS_RENDU_2026_10_07.md § 4) : `artworkHash` = identité canonique de l'œuvre fournie par le serveur (`contentHash` du bloc) ; `frameHash` = buffer EXACT reçu
+ * avant mise en page ; `renderHash` = buffer logique FINAL envoyé au pilote après fit/cartel (pas une preuve des pixels physiques). `layoutVersion` = version de TOUT le rasteriseur ; `cartelMode` = réglage appliqué.
+ * JAMAIS voté, JAMAIS vérifié par le serveur, JAMAIS public ; pas de `renderHash` pour une scène animée (clipHash/animRoot). Aucun firmware actuel ne l'envoie (lot 8) : le champ reste absent.
+ * Lot 8 : message signé `pod-render-v1` (clé Ed25519 de l'appareil) — alors seulement le rapport sera « authentifié par la clé de l'appareil ».
  */
-export interface RenderReport { artworkHash?: string; renderHash?: string; layoutVersion?: number; cartelMode?: "overlay" | "fit" | "hidden" }
+export interface RenderReport { artworkHash?: string; frameHash?: string; renderHash?: string; layoutVersion?: number; cartelMode?: "overlay" | "fit" | "hidden" }
 
 export interface ShownRecord {
   frameId:     string;
@@ -35,8 +37,8 @@ export interface ShownRecord {
   hasImage:    boolean;
 }
 
-/** Version exposée au public : une frame personnelle ne révèle rien d'autre que son existence. */
-export type PublicShown = Omit<ShownRecord, "frameId"> & { frameId: string | null };
+/** Version exposée au public : une frame personnelle ne révèle rien d'autre que son existence ; le rapport de rendu (`render`) est EXCLU DU TYPE, pas seulement de la valeur. */
+export type PublicShown = Omit<ShownRecord, "frameId" | "render"> & { frameId: string | null };
 
 export interface DisplayKV {
   set(key: string, value: string, opts?: { nx?: boolean; ex?: number }): Promise<unknown>;
@@ -57,15 +59,18 @@ const str = (v: unknown): string | undefined => (typeof v === "string" && v ? v 
 const int = (v: unknown): number | undefined => (Number.isSafeInteger(v) ? (v as number) : undefined);
 
 /** Lecture STRICTE du rapport de rendu d'un corps d'ACK : champs inconnus ou invalides ignorés (jamais d'erreur : l'ACK doit réussir). `null` si rien d'exploitable. */
-export function sanitizeRenderReport(body: unknown): RenderReport | null {
+export function sanitizeRenderReport(body: unknown, mode?: "frame" | "scene"): RenderReport | null {
   if (!body || typeof body !== "object") return null;
   const b = body as Record<string, unknown>, out: RenderReport = {};
   const hex = (v: unknown) => (typeof v === "string" && /^[0-9a-f]{64}$/.test(v) ? v : undefined);
-  const aw = hex(b.artworkHash), rh = hex(b.renderHash);
+  const aw = hex(b.artworkHash), fh = hex(b.frameHash), rh = hex(b.renderHash);
   if (aw) out.artworkHash = aw;
+  if (fh) out.frameHash = fh;
   if (rh) out.renderHash = rh;
   if (Number.isSafeInteger(b.layoutVersion) && (b.layoutVersion as number) >= 1 && (b.layoutVersion as number) <= 255) out.layoutVersion = b.layoutVersion as number;
   if (b.cartelMode === "overlay" || b.cartelMode === "fit" || b.cartelMode === "hidden") out.cartelMode = b.cartelMode;
+  // une SCÈNE animée n'a pas de rendu unique : ni frameHash ni renderHash (l'animation est identifiée par clipHash / animRoot, déjà engagés dans le bloc)
+  if (mode === "scene") { delete out.frameHash; delete out.renderHash; }
   return Object.keys(out).length > 0 ? out : null;
 }
 

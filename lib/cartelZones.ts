@@ -14,6 +14,8 @@
 // Les valeurs par firmware (FIRMWARE_CARTEL) servent de DONNÉES DE TEST : tests/cartelZones.test.ts relit les sources .ino et vérifie que ces lignes y sont bien.
 
 import type { ScreenId } from "@/lib/screenProfiles";
+import { rgbaToScreenPayload } from "@/lib/canvasToScreen";
+import type { ScreenPayload } from "@/lib/screenToCanvas";
 
 /** Bande de lignes du canvas (bornes incluses). */
 export interface CartelBand { y0: number; y1: number }
@@ -60,7 +62,7 @@ export function cartelBandAt(z: CartelZones, y: number): "top" | "bottom" | null
 }
 
 export interface CartelUsage {
-  /** pixels dessinés (≠ fond blanc) dans les bandes du cartel */
+  /** pixels dessinés (ceux qui deviennent NOIRS ou ROUGES sur e-ink, ≠ blanc RGB565 sur TFT) sous les bandes du cartel */
   underCartel: number;
   /** pixels dessinés au total */
   drawn: number;
@@ -69,24 +71,47 @@ export interface CartelUsage {
   top: number; bottom: number;
 }
 
+// ─── Comptage : QUANTIFICATION RÉELLE de chaque écran (aucun seuil de couleur propre à ce module) ─────────────────────────────────────────────────────────────────────────────────────────────
+// Un pixel « dessiné » est un pixel qui, APRÈS l'encodage envoyé à l'écran (rgbaToScreenPayload, celui du vote et de la diffusion), n'est pas du blanc : e-ink = noir ou rouge (luminance < 128, ou
+// rouge franc), TFT = mot RGB565 ≠ 0xFFFF. Un gris très clair devient blanc sur l'e-ink (non compté) ; sur le TFT, #F8F8F8 reste un pixel visible (compté). On encode l'image entière, puis l'image dont
+// seules les lignes d'une bande sont conservées (le reste en blanc opaque) : la différence est le nombre de pixels perdus, sans connaître la disposition des octets de chaque pilote.
+function bytesOf(b64: string): Uint8Array {
+  if (typeof Buffer !== "undefined") return new Uint8Array(Buffer.from(b64, "base64"));
+  const bin = atob(b64), out = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+  return out;
+}
+const zeroBits = (b: Uint8Array) => { let n = 0; for (const v of b) { let x = (~v) & 0xff; while (x) { n += x & 1; x >>= 1; } } return n; };
+
+/** Nombre de pixels non blancs d'une charge utile encodée (e-ink : bits à 0 du plan noir et du plan rouge ; TFT : mots RGB565 ≠ 0xFFFF). */
+function drawnIn(p: ScreenPayload): number {
+  switch (p.screen) {
+    case "eink27bw": return zeroBits(bytesOf(p.buffer));
+    case "eink29bwr": return zeroBits(bytesOf(p.black)) + zeroBits(bytesOf(p.red));
+    case "tft18": case "tft28": { const b = bytesOf(p.buffer); let n = 0; for (let i = 0; i + 1 < b.length; i += 2) if (b[i] !== 0xff || b[i + 1] !== 0xff) n++; return n; }
+    default: return 0;
+  }
+}
+
+/** Copie de l'image où seules les lignes retenues sont conservées (le reste : blanc opaque). */
+function keepRows(rgba: ArrayLike<number>, width: number, height: number, keep: (y: number) => boolean): Uint8ClampedArray {
+  const out = new Uint8ClampedArray(width * height * 4).fill(255);
+  for (let y = 0; y < height; y++) if (keep(y)) for (let i = y * width * 4, e = i + width * 4; i < e; i++) out[i] = rgba[i];
+  return out;
+}
+
 /**
- * Compte les pixels DESSINÉS (opaques et non blancs) sous les bandes du cartel. `rgba` = image du canvas (largeur × hauteur × 4). Fond = blanc : un pixel blanc ne compte pas
- * (le cartel blanchit de toute façon). Retourne `null` si l'écran n'a pas de cartel gravé ou si les dimensions ne correspondent pas au profil.
+ * Compte les pixels qui seront effacés par le cartel, avec la quantification RÉELLE de l'écran (voir ci-dessus). `rgba` = image du canvas (largeur × hauteur × 4). Retourne `null` si l'écran n'a pas de
+ * cartel gravé, si les dimensions ne correspondent pas au profil ou si l'encodage échoue (jamais un faux zéro).
  */
 export function countUnderCartel(screen: ScreenId, rgba: ArrayLike<number>, width: number, height: number): CartelUsage | null {
   const z = cartelZonesFor(screen);
   if (!z || width !== z.canvasW || height !== z.canvasH || rgba.length !== width * height * 4) return null;
-  let drawn = 0, top = 0, bottom = 0;
-  for (let y = 0; y < height; y++) {
-    const band = cartelBandAt(z, y);
-    for (let x = 0; x < width; x++) {
-      const i = (y * width + x) * 4;
-      if (rgba[i + 3] < 128) continue;
-      if (rgba[i] > 245 && rgba[i + 1] > 245 && rgba[i + 2] > 245) continue;
-      drawn++;
-      if (band === "top") top++; else if (band === "bottom") bottom++;
-    }
-  }
-  const under = top + bottom;
-  return { underCartel: under, drawn, share: drawn === 0 ? 0 : under / drawn, top, bottom };
+  try {
+    const drawn = drawnIn(rgbaToScreenPayload(rgba, screen));
+    const top = drawnIn(rgbaToScreenPayload(keepRows(rgba, width, height, (y) => cartelBandAt(z, y) === "top"), screen));
+    const bottom = drawnIn(rgbaToScreenPayload(keepRows(rgba, width, height, (y) => cartelBandAt(z, y) === "bottom"), screen));
+    const under = top + bottom;
+    return { underCartel: under, drawn, share: drawn === 0 ? 0 : under / drawn, top, bottom };
+  } catch { return null; }
 }

@@ -71,24 +71,44 @@ test("la zone retenue par écran est l'UNION conservatrice des firmwares : ce qu
 function blank(w: number, h: number) { const d = new Uint8ClampedArray(w * h * 4); d.fill(255); return d; }
 const put = (d: Uint8ClampedArray, w: number, x: number, y: number, rgb: [number, number, number] = [0, 0, 0], a = 255) => { const i = (y * w + x) * 4; d[i] = rgb[0]; d[i + 1] = rgb[1]; d[i + 2] = rgb[2]; d[i + 3] = a; };
 
-test("countUnderCartel : une page blanche = 0 ; un trait dans la zone sûre = 0 ; un trait dans une bande est compté (haut / bas séparément) ; blanc explicite et transparence ignorés", () => {
+test("countUnderCartel : page blanche = 0 sur les trois écrans ; trait en zone sûre = 0 ; trait dans une bande compté (haut / bas séparément) ; bornes exactes des bandes sur chaque écran", () => {
   const z = cartelZonesFor("eink29bwr")!, W = z.canvasW, H = z.canvasH;
+  for (const s of ["eink29bwr", "eink27bw", "tft18"] as ScreenId[]) { const q = cartelZonesFor(s)!; assert.deepEqual(countUnderCartel(s, blank(q.canvasW, q.canvasH), q.canvasW, q.canvasH), { underCartel: 0, drawn: 0, share: 0, top: 0, bottom: 0 }, s); }
   const img = blank(W, H);
-  assert.deepEqual(countUnderCartel("eink29bwr", img, W, H), { underCartel: 0, drawn: 0, share: 0, top: 0, bottom: 0 });
   for (let x = 0; x < 50; x++) put(img, W, x, 60);                      // zone sûre
   for (let x = 0; x < 10; x++) put(img, W, x, 5);                       // bande haute
   for (let x = 0; x < 30; x++) put(img, W, x, 120, [204, 0, 0]);        // bande basse (rouge)
-  put(img, W, 0, 0, [255, 255, 255]); put(img, W, 1, 1, [0, 0, 0], 0);   // blanc explicite et pixel transparent : ignorés
-  const u = countUnderCartel("eink29bwr", img, W, H)!;
-  assert.deepEqual(u, { underCartel: 40, drawn: 90, share: 40 / 90, top: 10, bottom: 30 });
-  // bornes exactes des bandes
-  const edge = blank(W, H);
-  for (const y of [13, 14, 113, 114]) put(edge, W, 3, y);
-  const e = countUnderCartel("eink29bwr", edge, W, H)!;
-  assert.deepEqual([e.top, e.bottom, e.drawn], [1, 1, 4], "lignes 13 et 114 dans le cartel ; 14 et 113 sûres");
+  put(img, W, 0, 0, [255, 255, 255]);                                   // blanc explicite : ne compte pas
+  assert.deepEqual(countUnderCartel("eink29bwr", img, W, H), { underCartel: 40, drawn: 90, share: 40 / 90, top: 10, bottom: 30 });
+  for (const [s, rows] of [["eink29bwr", [13, 14, 113, 114]], ["eink27bw", [13, 14, 161, 162]], ["tft18", [14, 15, 145, 146]]] as const) {
+    const q = cartelZonesFor(s)!, e = blank(q.canvasW, q.canvasH);
+    for (const y of rows) put(e, q.canvasW, 3, y);
+    const u = countUnderCartel(s, e, q.canvasW, q.canvasH)!;
+    assert.deepEqual([u.top, u.bottom, u.drawn], [1, 1, 4], `${s} : lignes ${rows[0]} et ${rows[2 + 1]} dans le cartel, ${rows[1]} et ${rows[2]} sûres`);
+  }
   assert.equal(countUnderCartel("oled096", blank(128, 64), 128, 64), null, "écran sans cartel gravé");
   assert.equal(countUnderCartel("eink29bwr", blank(10, 10), 10, 10), null, "dimensions incohérentes : jamais de faux zéro");
   assert.equal(countUnderCartel("eink29bwr", new Uint8ClampedArray(5), W, H), null);
+});
+
+test("countUnderCartel suit la QUANTIFICATION RÉELLE : sur l'e-ink un gris clair devient blanc (non compté), une couleur sombre ou un rouge franc est compté ; sur le TFT tout mot RGB565 ≠ blanc est compté (#F8F8F8 oui, #FFFFFE non)", () => {
+  const count = (screen: ScreenId, rgb: [number, number, number], a = 255) => {
+    const q = cartelZonesFor(screen)!, im = blank(q.canvasW, q.canvasH); put(im, q.canvasW, 5, 2, rgb, a);
+    return countUnderCartel(screen, im, q.canvasW, q.canvasH)!.underCartel;
+  };
+  // e-ink 2,9″ BWR et 2,7″ : luminance (3R + 6G + B)/10 < 128 → noir ; rouge si R > 150 et G, B < 100 ; sinon blanc
+  for (const s of ["eink29bwr", "eink27bw"] as ScreenId[]) {
+    for (const light of [[255, 255, 255], [250, 250, 250], [240, 240, 240], [200, 200, 200], [128, 128, 128], [255, 220, 220], [250, 245, 200]] as [number, number, number][]) assert.equal(count(s, light), 0, `${s} ${light} : devient blanc`);
+    for (const dark of [[0, 0, 0], [127, 127, 127], [60, 60, 200], [0, 0, 120]] as [number, number, number][]) assert.equal(count(s, dark), 1, `${s} ${dark} : devient noir`);
+  }
+  assert.equal(count("eink29bwr", [204, 0, 0]), 1, "rouge de la palette"); assert.equal(count("eink29bwr", [151, 99, 99]), 1, "juste rouge (R > 150, G et B < 100)");
+  assert.equal(count("eink29bwr", [151, 100, 99]), 1, "G = 100 : plus « rouge » mais luminance (3R+6G+B)/10 = 115 < 128 → noir : toujours perdu");
+  assert.equal(count("eink29bwr", [200, 100, 200]), 0, "G = 100 et luminance 192 → blanc");
+  // TFT 1,8″ : RGB565 — blanc = 0xFFFF seulement ; les canaux sont tronqués (R5 = R>>3, G6 = G>>2, B5 = B>>3)
+  assert.equal(count("tft18", [255, 255, 255]), 0); assert.equal(count("tft18", [255, 255, 254]), 0, "B>>3 = 31 : toujours blanc"); assert.equal(count("tft18", [255, 252, 255]), 0, "G>>2 = 63 : toujours blanc");
+  assert.equal(count("tft18", [248, 248, 248]), 1, "#F8F8F8 : G>>2 = 62 → n'est PLUS blanc, visible sur le TFT (un seuil RGB > 245 l'aurait ignoré)");
+  assert.equal(count("tft18", [247, 255, 255]), 1, "R>>3 = 30"); assert.equal(count("tft18", [255, 251, 255]), 1, "G>>2 = 62"); assert.equal(count("tft18", [250, 245, 245]), 1);
+  assert.equal(count("tft18", [0, 0, 0]), 1); assert.equal(count("tft18", [10, 10, 10], 0), 0, "pixel transparent (α < 32) : blanc, comme l'encodeur du TFT");
 });
 
 test("interface : la zone est dessinée dans le calque de guides de la scène (hachures, suit rotation et zoom), activable depuis « Affichage », activée par défaut, et ne touche ni le moteur de dessin ni l'envoi", () => {
@@ -102,4 +122,16 @@ test("interface : la zone est dessinée dans le calque de guides de la scène (h
   const engine = fs.readdirSync(path.join(root, "lib", "drawEngine")).map((f) => read(`lib/drawEngine/${f}`)).join("\n");
   assert.doesNotMatch(engine, /cartel/i, "le moteur de dessin ignore le cartel : l'image du bloc reste complète");
   assert.doesNotMatch(read("lib/canvasToScreen.ts"), /cartel/i, "conversions canvas → buffer inchangées");
+});
+
+test("contrat de rendu GELÉ (LOT7-FIX1) : la spécification fixe trois niveaux de hash, les domaines SHA-256, l'ordre des plans BWR, l'exclusion des scènes, le compositeur TFT, le rasteriseur versionné, la signature pod-render-v1 et le vocabulaire « non authentifié »", () => {
+  const spec = read("docs/SPEC_LOT_7_CARTELS_RENDU_2026_10_07.md");
+  for (const needle of [
+    "artworkHash", "frameHash", "renderHash", "pod-frame-v1|", "pod-render-v1|", "plan₀ = noir, plan₁ = rouge", "4 736 octets", "little-endian", "W x H",
+    "ne vaut que pour l'e-ink 2,7″", "aucun framebuffer final n'existe", "compositeur ligne par ligne", "writePixels",
+    "layoutVersion` versionne TOUT le rasteriseur", "mode = scene", "clipHash", "animRoot", "une preuve des pixels physiquement visibles",
+    "rapport NON AUTHENTIFIÉ reçu avec l'ACK", "pod-render-v1|deviceId|frameId|screen|layoutVersion|cartelMode|artworkHash|frameHash|renderHash", "sans lecture Redis de plus", "`fit` par défaut", "aucun réglage visible avant",
+  ]) assert.ok(spec.includes(needle), needle);
+  assert.ok(!/témoignage/i.test(spec + read("lib/displayState.ts") + read("app/profile/OwnDisplaysDebug.tsx")), "le rapport n'est JAMAIS présenté comme un témoignage de l'appareil");
+  assert.match(read("docs/PLAN_DE_TRAVAIL_CONSENSUS_FINAL_2026_10_06.md"), /8\.8 `cartelMode`, `renderHash` \(Lot 7\.4-7\.5\) \| \*\*contrat gelé/);
 });

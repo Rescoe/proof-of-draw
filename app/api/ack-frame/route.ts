@@ -63,7 +63,7 @@ export async function POST(req: NextRequest) {
     // `mode` (facultatif, firmware scene-v1) : "scene" si l'appareil a joué l'animation plutôt que la frame fixe.
     const mode = body.mode === "scene" ? "scene" : undefined;
     // Rapport de rendu facultatif (lot 7.5 ; aucun firmware ne l'envoie encore) : consigné dans l'enregistrement d'affichage DÉJÀ écrit (0 commande de plus), jamais voté ni vérifié.
-    const render = sanitizeRenderReport(body);
+    const render = sanitizeRenderReport(body, mode);
     let shown = null;
     if (t) {
       shown = await recordDisplayed(redis as unknown as DisplayKV, deviceId, t.screen, t.frame, "consensus", mode, undefined, render);

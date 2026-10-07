@@ -162,7 +162,7 @@ test("un échec Redis n'est JAMAIS propagé (l'ACK du firmware doit réussir)", 
   finally { console.error = originalError; }
 });
 
-// ── Lot 7.5 : rapport de rendu de l'appareil (artworkHash / renderHash / layoutVersion / cartelMode) — témoignage consigné, jamais voté, jamais public, 0 commande de plus ──
+// ── Lot 7.5 : rapport de rendu de l'appareil (artworkHash / renderHash / layoutVersion / cartelMode) — rapport NON AUTHENTIFIÉ reçu avec l'ACK, consigné, jamais voté, jamais public, 0 commande de plus ──
 import fs from "node:fs";
 import path from "node:path";
 import { sanitizeRenderReport } from "../lib/displayState";
@@ -197,9 +197,38 @@ test("route d'ACK : lit le rapport par sanitizeRenderReport (jamais bloquant), l
   const root = path.join(__dirname, "..");
   const read = (p: string) => fs.readFileSync(path.join(root, p), "utf8").replace(/\r\n/g, "\n");
   const ack = read("app/api/ack-frame/route.ts");
-  assert.match(ack, /const render = sanitizeRenderReport\(body\);/);
+  assert.match(ack, /const render = sanitizeRenderReport\(body, mode\);/);
   assert.match(ack, /recordDisplayed\(redis as unknown as DisplayKV, deviceId, t\.screen, t\.frame, "consensus", mode, undefined, render\)/);
   assert.deepEqual([...ack.matchAll(/\bredis\.([a-z]+)[<(]/g)].map((m) => m[1]), ["mget", "del"], "commandes directes de la route inchangées : un MGET et un DEL (+ l'écriture de l'appareil et l'enregistrement d'affichage existants)");
   assert.match(read("app/profile/OwnDisplaysDebug.tsx"), /jamais voté ni vérifié par le serveur/);
   assert.doesNotMatch(read("lib/podVerify.ts") + read("lib/chain.ts"), /renderHash|artworkHash/, "le rapport de rendu n'entre ni dans le vote ni dans le bloc");
+});
+
+// ── LOT7-FIX1 : trois niveaux de hash, type public sans `render` ──
+test("rapport de rendu : TROIS niveaux de hash distincts (artworkHash, frameHash, renderHash), chacun lu strictement", () => {
+  const a = "11".repeat(32), f = "22".repeat(32), r = "33".repeat(32);
+  assert.deepEqual(sanitizeRenderReport({ artworkHash: a, frameHash: f, renderHash: r, layoutVersion: 2, cartelMode: "fit" }), { artworkHash: a, frameHash: f, renderHash: r, layoutVersion: 2, cartelMode: "fit" });
+  assert.deepEqual(sanitizeRenderReport({ frameHash: f }), { frameHash: f });
+  assert.equal(sanitizeRenderReport({ frameHash: "22".repeat(31) }), null); assert.equal(sanitizeRenderReport({ frameHash: "ZZ".repeat(32) }), null);
+});
+
+test("le TYPE public exclut `render` (pas seulement la valeur à l'exécution) : l'assignation d'un rapport de rendu à PublicShown ne compile pas", () => {
+  const ok: import("../lib/displayState").PublicShown = { frameId: null, screen: "eink29bwr", shownAt: 1, kind: "human", hasImage: true };
+  assert.equal("render" in ok, false);
+  const bad: import("../lib/displayState").PublicShown = {
+    frameId: null, screen: "eink29bwr", shownAt: 1, kind: "human", hasImage: true,
+    // @ts-expect-error — `render` est EXCLU du type public : si cette ligne compilait, l'exclusion aurait disparu
+    render: { renderHash: "aa".repeat(32) },
+  };
+  assert.ok(bad);
+});
+
+test("une SCÈNE animée n'a pas de rendu unique : frameHash et renderHash sont écartés (mode « scene »), l'identité de l'œuvre (artworkHash) et la mise en page sont conservées", async () => {
+  const rep = { artworkHash: "11".repeat(32), frameHash: "22".repeat(32), renderHash: "33".repeat(32), layoutVersion: 1, cartelMode: "hidden" };
+  assert.deepEqual(sanitizeRenderReport(rep, "scene"), { artworkHash: "11".repeat(32), layoutVersion: 1, cartelMode: "hidden" });
+  assert.deepEqual(sanitizeRenderReport({ renderHash: "33".repeat(32) }, "scene"), null, "rien d'exploitable → null");
+  assert.deepEqual(sanitizeRenderReport(rep, "frame"), rep); assert.deepEqual(sanitizeRenderReport(rep), rep);
+  const r = fakeKV();
+  const rec = await recordDisplayed(r.kv, "dev_AAAA1111", "tft18", anaFrame, "consensus", "scene", 5, sanitizeRenderReport(rep, "scene"));
+  assert.equal(rec!.render?.renderHash, undefined); assert.equal(rec!.mode, "scene");
 });
