@@ -72,6 +72,6 @@ test("portabilité de podRender.h : ni String, ni allocation, ni printf, ni STL,
 
 test("8A = référence : le harnais est le SEUL consommateur de podRender.h (aucun .ino, aucune route) ; lecture seule des vecteurs", () => {
   const walk = (d: string): string[] => fs.readdirSync(path.join(root, d), { withFileTypes: true }).flatMap((e) => e.name === "node_modules" || e.name === ".next" || e.name === ".claude" ? [] : e.isDirectory() ? walk(path.join(d, e.name)) : /\.(ino|h|cpp|ts|tsx)$/.test(e.name) ? [path.join(d, e.name)] : []);
-  const users = ["esp8266", "arduino_uno_r4", "app", "lib", "consensus-pod"].flatMap(walk).filter((f) => /podRender\.h/.test(fs.readFileSync(path.join(root, f), "utf8"))).map((f) => f.replace(/\\/g, "/")).filter((f) => f !== "lib/renderLayout.ts" && f !== "consensus-pod/src/podRender.h");
-  assert.deepEqual(users, ["consensus-pod/host/render_harness.cpp"]);
+  const users = ["esp8266", "arduino_uno_r4", "app", "lib", "consensus-pod"].flatMap(walk).filter((f) => /podRender\.h/.test(fs.readFileSync(path.join(root, f), "utf8"))).map((f) => f.replace(/\\/g, "/")).filter((f) => f !== "lib/renderLayout.ts" && f !== "consensus-pod/src/podRender.h" && !f.startsWith("tests/"));
+  assert.deepEqual(users.sort(), ["consensus-pod/host/render_harness.cpp", "consensus-pod/host/render_stream_harness.cpp", "consensus-pod/src/podRenderStream.h"]);   // 8B-1 : le noyau en flux (et son harnais) réutilisent police, texte, géométrie
 });

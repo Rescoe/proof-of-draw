@@ -327,6 +327,8 @@ route `/api/candidate-clip` (ticket HMAC `CLIP_TICKET_SECRET`), mode `ANIM_V3_MO
 
 **Rasteriseur de référence (lot 8A, 07/10/2026)** : `docs/LOT_8A_RASTERISEUR_REFERENCE_2026_10_07.md`. `lib/renderLayout.ts` (TypeScript) est la source unique de `layoutVersion = 1` (police R4, repli des accents, cartel, `fit` entier, `frameHash`/`renderHash`, table `artworkIdentity` « absent plutôt qu'inventé » ; ANA = `sha256:<hex64>` strict, normalisé en 64 hex nus) ; `consensus-pod/src/podRender.h` le porte en C++ (harnais hôte `consensus-pod/host/render_harness.cpp`, vecteurs `consensus-pod/test-vectors/render-vectors.txt`, régénérés par `node --import tsx scripts/gen-render-vectors.ts`). **Référence logicielle : aucun firmware ne l'utilise, jamais essayée sur un écran** ; la version hôte travaille sur une grille complète (stratégie mémoire MCU = lot 8B).
 
+**Noyau de rendu en flux (lot 8B-1, 07/10/2026)** : `docs/LOT_8B1_NOYAU_RENDU_FLUX_2026_10_07.md`. `consensus-pod/src/podRenderStream.h` produit les octets du pilote SANS grille : e-ink = octet calculé à la demande depuis les plans reçus (sortie bornée choisie par l'appelant), TFT 1,8″ = compositeur ligne par ligne (une ligne source + une ligne de sortie, fit monotone), `frameHash` sur les octets reçus, `renderHash` sur ceux remis au pilote. Vérifié sur l'HÔTE contre les 228 vecteurs d'or et la référence à grille (octet par octet), COMPILÉ pour ESP8266/R4 (sondes `consensus-pod/examples/RenderProbe*`, « NE PAS DÉPLOYER », mesures dans `docs/mesures/8B1_2026_10_07/`). **Aucun firmware ne l'utilise, jamais essayé sur une carte** ; pas de signature `pod-render-v1`, pas de réglage `cartelMode` exposé.
+
 ## Non-goals
 
 Ne pas faire :

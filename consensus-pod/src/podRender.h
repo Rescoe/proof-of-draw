@@ -127,15 +127,20 @@ static inline size_t pod_render_top_line(const PodRenderSpec& s, const PodRender
   if (m.blockIndex >= 0) { char num[24]; const int k = pod_utoa((uint64_t)m.blockIndex, num); const char suffix[3] = { ' ', '#', 0 }; for (int i = 0; suffix[i] && n < max; i++) out[n++] = suffix[i]; for (int i = 0; i < k && n < max; i++) out[n++] = num[i]; out[n] = 0; }
   return n;
 }
-/** Ligne du bas : « ARTISTE - TITRE », ou l'un des deux, ou le repli ; tronquée à `max` caractères. */
+/** Ligne du bas : « ARTISTE - TITRE », ou l'un des deux, ou le repli ; tronquée à `max` caractères. `out` : max+1 octets au moins. Aucun tampon temporaire (8B-1) : l'artiste est replié dans `out`, le titre à la suite. */
 static inline size_t pod_render_bottom_line(const PodRenderMeta& m, size_t max, char* out) {
-  char a[POD_R_LINE_MAX], t[POD_R_LINE_MAX]; if (max > POD_R_LINE_MAX - 1) max = POD_R_LINE_MAX - 1;
-  const size_t an = pod_render_fold(m.artist, m.artistLen, a, max + 1), tn = pod_render_fold(m.title, m.titleLen, t, max + 1);
-  size_t n = 0;
-  if (an && tn) { for (size_t i = 0; i < an && n < max; i++) out[n++] = a[i]; const char sep[4] = { ' ', '-', ' ', 0 }; for (int i = 0; sep[i] && n < max; i++) out[n++] = sep[i]; for (size_t i = 0; i < tn && n < max; i++) out[n++] = t[i]; }
-  else if (an) { for (size_t i = 0; i < an; i++) out[n++] = a[i]; }
-  else if (tn) { for (size_t i = 0; i < tn; i++) out[n++] = t[i]; }
-  else { for (; POD_R_FALLBACK[n] && n < max; n++) out[n] = POD_R_FALLBACK[n]; }
+  if (max > POD_R_LINE_MAX - 1) max = POD_R_LINE_MAX - 1;
+  size_t n = pod_render_fold(m.artist, m.artistLen, out, max + 1);
+  char probe[2]; const bool hasTitle = pod_render_fold(m.title, m.titleLen, probe, sizeof(probe)) > 0;   // le titre se replie-t-il en au moins un caractère ?
+  if (n > 0 && hasTitle) {
+    static const char SEP[] = " - ";
+    for (int i = 0; SEP[i] && n < max; i++) out[n++] = SEP[i];
+    if (n < max) n += pod_render_fold(m.title, m.titleLen, out + n, max - n + 1);
+  } else if (n == 0 && hasTitle) {
+    n = pod_render_fold(m.title, m.titleLen, out, max + 1);
+  } else if (n == 0) {
+    for (; POD_R_FALLBACK[n] && n < max; n++) out[n] = POD_R_FALLBACK[n];
+  }
   out[n] = 0;
   return n;
 }

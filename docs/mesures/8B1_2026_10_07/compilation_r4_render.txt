@@ -1,0 +1,71 @@
+C:\Users\thibf\Documents\Arduino\libraries\Crypto\src\AES128.cpp: In member function 'virtual void AESTiny128::decryptBlock(uint8_t*, const uint8_t*)':
+C:\Users\thibf\Documents\Arduino\libraries\Crypto\src\AES128.cpp:235:40: warning: unused parameter 'output' [-Wunused-parameter]
+ void AESTiny128::decryptBlock(uint8_t *output, const uint8_t *input)
+                                        ^~~~~~
+C:\Users\thibf\Documents\Arduino\libraries\Crypto\src\AES128.cpp:235:63: warning: unused parameter 'input' [-Wunused-parameter]
+ void AESTiny128::decryptBlock(uint8_t *output, const uint8_t *input)
+                                                               ^~~~~
+C:\Users\thibf\Documents\Arduino\libraries\Crypto\src\AES256.cpp: In member function 'virtual void AESTiny256::decryptBlock(uint8_t*, const uint8_t*)':
+C:\Users\thibf\Documents\Arduino\libraries\Crypto\src\AES256.cpp:272:40: warning: unused parameter 'output' [-Wunused-parameter]
+ void AESTiny256::decryptBlock(uint8_t *output, const uint8_t *input)
+                                        ^~~~~~
+C:\Users\thibf\Documents\Arduino\libraries\Crypto\src\AES256.cpp:272:63: warning: unused parameter 'input' [-Wunused-parameter]
+ void AESTiny256::decryptBlock(uint8_t *output, const uint8_t *input)
+                                                               ^~~~~
+C:\Users\thibf\Documents\Arduino\libraries\Crypto\src\RNG.cpp:63:2: warning: #warning "no hardware random number source detected for this platform" [-Wcpp]
+ #warning "no hardware random number source detected for this platform"
+  ^~~~~~~
+C:\Users\thibf\AppData\Local\Arduino15\packages\arduino\hardware\renesas_uno\1.5.3\cores\arduino\Interrupts.cpp: In function 'int pin2IrqChannel(int)':
+C:\Users\thibf\AppData\Local\Arduino15\packages\arduino\hardware\renesas_uno\1.5.3\cores\arduino\Interrupts.cpp:78:21: warning: comparison between signed and unsigned integer expressions [-Wsign-compare]
+   if(pin < 0 || pin >= PINS_COUNT) {
+C:\Users\thibf\AppData\Local\Arduino15\packages\arduino\hardware\renesas_uno\1.5.3\cores\arduino\IRQManager.cpp: In member function 'bool IRQManager::addPeripheral(Peripheral_t, void*)':
+C:\Users\thibf\AppData\Local\Arduino15\packages\arduino\hardware\renesas_uno\1.5.3\cores\arduino\IRQManager.cpp:385:38: warning: comparison between signed and unsigned integer expressions [-Wsign-compare]
+         if (irqcfg->first_irq_number != FSP_INVALID_VECTOR) {
+C:\Users\thibf\AppData\Local\Arduino15\packages\arduino\hardware\renesas_uno\1.5.3\cores\arduino\IRQManager.cpp:448:38: warning: comparison between signed and unsigned integer expressions [-Wsign-compare]
+         if (irqcfg->first_irq_number != FSP_INVALID_VECTOR) {
+C:\Users\thibf\AppData\Local\Arduino15\packages\arduino\hardware\renesas_uno\1.5.3\cores\arduino\IRQManager.cpp:609:26: warning: unused variable 'scfg' [-Wunused-variable]
+         i2c_slave_cfg_t *scfg = (i2c_slave_cfg_t *)p_cfg->scfg;
+                          ^~~~
+C:\Users\thibf\AppData\Local\Arduino15\packages\arduino\hardware\renesas_uno\1.5.3\cores\arduino\IRQManager.cpp:701:27: warning: unused variable 'mcfg' [-Wunused-variable]
+         i2c_master_cfg_t *mcfg = (i2c_master_cfg_t *)p_cfg->mcfg;
+                           ^~~~
+C:\Users\thibf\AppData\Local\Arduino15\packages\arduino\hardware\renesas_uno\1.5.3\cores\arduino\IRQManager.cpp: In member function 'void IRQManager::set_canfd_error_link_event(int, int)':
+C:\Users\thibf\AppData\Local\Arduino15\packages\arduino\hardware\renesas_uno\1.5.3\cores\arduino\IRQManager.cpp:1779:49: warning: unused parameter 'li' [-Wunused-parameter]
+ void IRQManager::set_canfd_error_link_event(int li, int ch)
+                                                 ^~
+C:\Users\thibf\AppData\Local\Arduino15\packages\arduino\hardware\renesas_uno\1.5.3\cores\arduino\IRQManager.cpp:1779:57: warning: unused parameter 'ch' [-Wunused-parameter]
+ void IRQManager::set_canfd_error_link_event(int li, int ch)
+                                                         ^~
+C:\Users\thibf\AppData\Local\Arduino15\packages\arduino\hardware\renesas_uno\1.5.3\cores\arduino\IRQManager.cpp: In member function 'void IRQManager::set_canfd_rx_link_event(int, int)':
+C:\Users\thibf\AppData\Local\Arduino15\packages\arduino\hardware\renesas_uno\1.5.3\cores\arduino\IRQManager.cpp:1794:46: warning: unused parameter 'li' [-Wunused-parameter]
+ void IRQManager::set_canfd_rx_link_event(int li, int ch)
+                                              ^~
+C:\Users\thibf\AppData\Local\Arduino15\packages\arduino\hardware\renesas_uno\1.5.3\cores\arduino\IRQManager.cpp:1794:54: warning: unused parameter 'ch' [-Wunused-parameter]
+ void IRQManager::set_canfd_rx_link_event(int li, int ch)
+                                                      ^~
+C:\Users\thibf\AppData\Local\Arduino15\packages\arduino\hardware\renesas_uno\1.5.3\cores\arduino\IRQManager.cpp: In member function 'void IRQManager::set_canfd_tx_link_event(int, int)':
+C:\Users\thibf\AppData\Local\Arduino15\packages\arduino\hardware\renesas_uno\1.5.3\cores\arduino\IRQManager.cpp:1809:46: warning: unused parameter 'li' [-Wunused-parameter]
+ void IRQManager::set_canfd_tx_link_event(int li, int ch)
+                                              ^~
+C:\Users\thibf\AppData\Local\Arduino15\packages\arduino\hardware\renesas_uno\1.5.3\cores\arduino\IRQManager.cpp:1809:54: warning: unused parameter 'ch' [-Wunused-parameter]
+ void IRQManager::set_canfd_tx_link_event(int li, int ch)
+                                                      ^~
+C:\Users\thibf\AppData\Local\Arduino15\packages\arduino\hardware\renesas_uno\1.5.3\cores\arduino\cm_backtrace\cm_backtrace.c: In function 'cm_backtrace_init':
+C:\Users\thibf\AppData\Local\Arduino15\packages\arduino\hardware\renesas_uno\1.5.3\cores\arduino\cm_backtrace\cm_backtrace.c:144:13: warning: assignment discards 'const' qualifier from pointer target type [-Wdiscarded-qualifiers]
+     fw_name = firmware_name;
+             ^
+C:\Users\thibf\AppData\Local\Arduino15\packages\arduino\hardware\renesas_uno\1.5.3\cores\arduino\cm_backtrace\cm_backtrace.c:145:12: warning: assignment discards 'const' qualifier from pointer target type [-Wdiscarded-qualifiers]
+     hw_ver = hardware_ver;
+            ^
+C:\Users\thibf\AppData\Local\Arduino15\packages\arduino\hardware\renesas_uno\1.5.3\cores\arduino\cm_backtrace\cm_backtrace.c:146:12: warning: assignment discards 'const' qualifier from pointer target type [-Wdiscarded-qualifiers]
+     sw_ver = software_ver;
+            ^
+C:\Users\thibf\AppData\Local\Arduino15\packages\arduino\hardware\renesas_uno\1.5.3\cores\arduino\tinyusb\rusb2\dcd_rusb2.c: In function 'wait_pipe_fifo_empty':
+C:\Users\thibf\AppData\Local\Arduino15\packages\arduino\hardware\renesas_uno\1.5.3\cores\arduino\tinyusb\rusb2\dcd_rusb2.c:289:3: warning: 'return' with a value, in function returning void
+   TU_ASSERT(num);
+   ^~~~~~~~~
+C:\Users\thibf\AppData\Local\Arduino15\packages\arduino\hardware\renesas_uno\1.5.3\cores\arduino\tinyusb\rusb2\dcd_rusb2.c:288:13: note: declared here
+ static void wait_pipe_fifo_empty(rusb2_reg_t* rusb, uint8_t num) {
+             ^~~~~~~~~~~~~~~~~~~~
+Le croquis utilise 58768 octets (22%) de l'espace de stockage de programmes. Le maximum est de 262144 octets.
+Les variables globales utilisent 8552 octets (26%) de mémoire dynamique, ce qui laisse 24216 octets pour les variables locales. Le maximum est de 32768 octets.
