@@ -5,7 +5,7 @@ import path from "node:path";
 import { verifyEd25519 } from "../lib/ed25519";
 import {
   BOOTSTRAP_BELOW, COMMITTEE_MAX, classifyVote, committeeWindow, decide, drawMiner, evaluateRules, merkleProof, merkleRoot, minerWeight, parseVoteMessageV3, saltNonce, saltedHash,
-  selectCommittee, sha256Hex, threshold, verifyMerkleProof, voteLeaf, voteMessageV3, blockHashV2, committeeSeed, type Verdict, type VoteV3,
+  effectiveVoters, selectCommittee, sha256Hex, threshold, verifyMerkleProof, voteLeaf, voteMessageV3, blockHashV2, committeeSeed, type Verdict, type VoteV3,
 } from "../lib/podProtocolV3";
 import { buildVectors, CANDIDATE_ID, CONTENT_HASH, DEVICE_ID, PARENT_HASH } from "./helpers/podV3Vectors";
 
@@ -159,7 +159,7 @@ test("le module de référence n'est branché sur AUCUNE route ni aucun firmware
     else if (/\.(tsx?|ino|h)$/.test(e.name) && fs.readFileSync(path.join(root, rel), "utf8").includes("podProtocolV3")) offenders.push(rel.replace(/\\/g, "/"));
   } };
   for (const d of ["app", "lib", "esp8266", "arduino_uno_r4"]) walk(d);
-  assert.deepEqual(offenders.filter((f) => f !== "lib/podProtocolV3.ts"), []);
+  assert.deepEqual(offenders.filter((f) => f !== "lib/podProtocolV3.ts" && f !== "lib/podSim.ts"), []);   // seul le simulateur S1 (hors ligne) l'importe
   assert.ok(DEVICE_ID.startsWith("dev_"));
 });
 
@@ -179,4 +179,22 @@ test("graine du comité : issue de la CHAÎNE et du CONTENU (jamais du candidatI
   const accepted = P.slice(0, 5).map((profileId) => ({ profileId, minedBlocks: 0 }));
   const winners = new Set(Array.from({ length: 40 }, (_, i) => drawMiner({ parentHash: PARENT_HASH, contentHash: CONTENT_HASH, votesRoot: sha256Hex(`r${i}`), accepted })));
   assert.ok(winners.size > 1, "le tirage varie avec les reçus");
+});
+
+test("règle des sièges : l'électorat effectif ne dépasse JAMAIS K (les suppléants remplacent les silencieux) ; les K premiers RANGS comptent", () => {
+  const P = Array.from({ length: 9 }, (_, i) => `art_${i}`);
+  const c = selectCommittee({ eligibleProfiles: P, authorProfileId: null, contentHash: CONTENT_HASH, parentHash: PARENT_HASH });   // K = 7, T = 5, tolérance 2 ; rangs 0..8
+  // les 9 profils votent : rangs 0-4 approuvent, rangs 5-8 refusent
+  const all = new Map<string, Verdict>(c.ranked.map((p, i) => [p, i < 5 ? "accept" : "reject"]));
+  assert.deepEqual(effectiveVoters(c, 2, all), c.ranked.slice(0, 7), "seuls les 7 premiers rangs comptent");
+  const d = decide(c, 2, all);
+  assert.deepEqual([d.accepts, d.rejects, d.state], [5, 2, "accept"], "5 approbations, 2 refus tolérés : accepté (l'ancienne règle « fenêtre » aurait compté 4 refus et refusé)");
+  // silencieux : les rangs 1 et 3 se taisent ; les suppléants (rangs 7 et 8) les remplacent dans l'ordre des rangs
+  const silent = new Map(all); silent.delete(c.ranked[1]); silent.delete(c.ranked[3]);
+  assert.deepEqual(effectiveVoters(c, 2, silent), [c.ranked[0], c.ranked[2], c.ranked[4], c.ranked[5], c.ranked[6], c.ranked[7], c.ranked[8]]);
+  assert.equal(effectiveVoters(c, 1, silent).length, 5, "en vague 1 il n'y a pas de suppléants");
+  // un vote tardif d'un rang meilleur prend la place d'un rang plus bas (déterministe, rejouable depuis les reçus)
+  const late = new Map<string, Verdict>(); late.set(c.ranked[8], "accept");
+  assert.deepEqual(effectiveVoters(c, 2, late), [c.ranked[8]]);
+  assert.ok(effectiveVoters(c, 2, all).length <= c.K);
 });

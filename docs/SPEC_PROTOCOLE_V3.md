@@ -6,6 +6,7 @@
 | **Date** | 07/10/2026 — base `831c717` |
 | **Réalisateur** | Claude |
 | **Référence exécutable** | `lib/podProtocolV3.ts` (pure, sans Redis ni réseau) |
+| **Simulation (S1)** | `docs/SIMULATION_PROTOCOLE_V3_2026_10_07.md` (générée par `scripts/sim-pod-v3.ts`, reproductible) : ses résultats ont **modifié** ce brouillon (règle des sièges § 9, validation des refus § 4) et fixé une **réserve majeure** sur le grinding (§ 9, § 15). |
 | **Vecteurs d'or** | `tests/fixtures/pod-v3-vectors.json` (générés par `tests/helpers/podV3Vectors.ts`, régénérables par `node --import tsx scripts/gen-pod-v3-vectors.ts`) ; `tests/podProtocolV3.test.ts` exige que le fichier commité soit **identique** à la sortie du code. |
 | **Remplace** | rien : le vote v2 (`pod-vote-v2`) et les blocs v1 restent valides (§ 13). |
 | **Source des décisions** | `PLAN_DE_TRAVAIL_CONSENSUS_FINAL_2026_10_06.md` (D1-D12), `PLAN_COLLABORATION_GPT_CLAUDE_POD.md`, audits GPT et Claude du 06/10. |
@@ -54,6 +55,8 @@ pod-vote-v3|deviceId|candidateId|parentHash|metricsVersion|rulesVersion|rawHash|
 3. **`uniform`** si `e = 0` **et** `t = 0` (image toute blanche **ou toute pleine** ; remplace le motif v2 `blank`) ;
 4. **`noise`** si `e > 980 000` **et** `t > 900 000` (bornes strictes) ;
 5. sinon `ok`.
+
+**Le serveur valide aussi les REFUS (résultat du simulateur, modèle M1b)** : un `reject` n'est compté que si son motif objectif est **vrai pour le contenu connu du serveur** (`uniform`, `noise`). Un refus au motif faux est **invalide** (il ne compte pas : équivalent à un silence) et alimente la réputation (`falseReject`) ; un refus `hash` dont le hash signé diffère de la référence est un `dispute` : **il n'est pas compté pour bloquer** (le contenu est immuable et servi en TLS : une vraie divergence est quasi impossible). Sans cette validation, 20 % de profils malhonnêtes faisaient refuser **16 à 32 %** des bons contenus (SIMULATION § 1) ; avec, **0 %**. Conséquence assumée : un refus du comité n'ajoute pas de jugement au serveur, il **corrobore** ; un contenu objectivement mauvais est de toute façon déjà refusé à l'admission.
 
 Aucune règle esthétique. **Le serveur réapplique exactement cette fonction** : un `accept` dont les valeurs signées violent une règle est **invalide** (constat K15). Les seuils de qualité informatifs (durée, traits, couverture) ne sont **pas** des règles N2.
 
@@ -105,8 +108,9 @@ Fonction unique `isEligibleVoter(device, candidate, now)`, utilisée par le **po
 - **Grinding de l'auteur (limite assumée)** : l'auteur peut modifier quelques pixels pour changer la graine et donc le comité. Il est **exclu du comité**, ne connaît pas d'avance quels profils éligibles sont complices, et chaque essai coûte un dessin ; la parade est l'**éligibilité** (appairage vérifié, ancienneté 24 h, réputation), pas la cryptographie. Une balise aléatoire publique externe (type drand) fermerait cette porte mais ajoute une dépendance réseau : **[?] point ouvert**.
 - **K = min(7, n)** ; **seuil T = ⌈2K/3⌉** (K=7 → 5 ; K=3 → 2) ; tolérance de refus = **K − T**.
 - **Mode** : `none` (aucun éligible : pas de bloc) ; **`bootstrap`** si n < 3 (**T = K** : tous les membres doivent approuver ; bloc étiqueté « validation partielle », jamais « validé par le réseau ») ; `committee` sinon.
-- **Vague 1** = les K premiers rangs. **Vague 2** (repli séquentiel après un délai sans décision, **proposé : 10 min**, le TTL du candidat étant de 30 min) = jusqu'à **2K** premiers rangs. **Aucun vote hors fenêtre ne compte** : le coût est **borné à 2K = 14 votes** quel que soit le nombre d'appareils (testé avec 500 profils).
-- **Décision** (`decide`) : `accept` ⇔ approbations ≥ T **et** refus ≤ K−T ; `reject` ⇔ refus ≥ K−T+1 ; sinon `pending`. Un bloc dont les **reçus enregistrés** ne satisfont pas ces conditions est **invalide**.
+- **Vague 1** = les K premiers rangs. **Vague 2** (repli séquentiel après un délai sans décision, **proposé : 10 min**, le TTL du candidat étant de 30 min) = jusqu'à **2K** premiers rangs **comme suppléants** : **règle des sièges** — parmi les votants, seuls les **K premiers rangs** comptent (`effectiveVoters`), l'électorat effectif ne grossit jamais. (Première version : tous les votants de la fenêtre comptaient avec la même tolérance de refus ; le simulateur a montré que cela **doublait** la nuisance des refus malveillants.) **Aucun vote hors fenêtre ne compte** : le coût est **borné à 2K = 14 votes** quel que soit le nombre d'appareils (testé avec 500 profils).
+- **Décision** (`decide`) : `accept` ⇔ approbations ≥ T **et** refus ≤ K−T ; `reject` ⇔ refus ≥ K−T+1 ; sinon `pending`. Un bloc dont les **reçus enregistrés** ne satisfont pas ces conditions est **invalide**. **Les reçus d'un bloc sont exactement les votants effectifs** (≤ K, dans l'ordre des rangs) ; un vote reçu après la finalisation est ignoré.
+- **RÉSERVE MAJEURE — grinding (SIMULATION § 3)** : la graine (chaîne + contenu) est **calculable par l'auteur avant la soumission** ; avec 20 % de profils éligibles complices, **28 %** de réussite pour choisir son comité avec 100 variantes de l'image et **93 %** avec 1 000 (n = 50). **Tant qu'une balise aléatoire postérieure à la soumission (ou un tirage séquentiel) n'existe pas, le comité ne peut pas être présenté comme résistant aux profils malhonnêtes** : la protection réelle reste la validation par le serveur (M1b). Recommandation : balise publique type drand dans la graine (point ouvert 10).
 - **Le serveur est votant de référence** : il calcule hash/métriques du candidat et **ne compte pas** dans T ; il ne peut ni imposer un bloc ni en bloquer un à lui seul **[?]**.
 - Limite connue : un attaquant qui crée des **profils** (pas seulement des appareils) peut « moudre » les rangs ; la parade est l'éligibilité (appairage vérifié, ancienneté 24 h, réputation), pas la cryptographie.
 
@@ -165,7 +169,7 @@ Total ≈ 28. Aucun polling, aucun `SCAN` ; contenu et preuves servis par le CDN
 7. **Stockage des reçus** : +2,7 Ko par bloc dans Redis (blocs permanents) : acceptable vis-à-vis du stockage Upstash, ou reçus sur stockage froid avec seule racine dans Redis ?
 8. **Migration du type `Block`** : champs additifs `blockVersion`, `votes`, `votesRoot` (le code de lecture actuel les ignore).
 9. **Nom du motif** : `uniform` (proposé) remplace `blank` **uniquement** en v3.
-10. **Grinding de l'auteur** : balise aléatoire externe (drand) ou acceptation de la limite (§ 9) ?
+10. **Grinding de l'auteur** : **recommandation du simulateur : balise aléatoire publique postérieure à la soumission (drand) incluse dans la graine** — vérifiable par tout tiers, une requête par candidat (0 commande Redis, valeur stockée dans le candidat) ; alternative : tirage séquentiel. Sinon, **ne pas annoncer** de tolérance aux profils malhonnêtes (§ 9).
 11. **Ensemble éligible** : engager une racine de Merkle de l'instantané des profils éligibles dans le bloc (§ 16, point 1) ?
 12. **v3 = v2 pour le quorum pendant E2** : valider que le serveur traite un vote v3 conforme comme un vote v2 conforme (§ 18).
 

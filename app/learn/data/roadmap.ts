@@ -80,7 +80,7 @@ export const ROADMAP: RoadmapPhase[] = [
       { id: "committee", title: "Comité déterministe de 7 profils, seuil 2/3, mineur rejouable", status: "todo", note: "Remplace le quorum de 51 % et le tirage aléatoire serveur." },
       { id: "rules", title: "Règles N2 versionnées, motif de refus signé, revérifiées par le serveur", status: "todo" },
       { id: "reputation", title: "Réputation par profil sur mensonges objectivement prouvables", status: "todo", note: "Seul un drapeau « suspect » temporaire existe aujourd’hui." },
-      { id: "simulation", title: "Simulation avec une fraction d’appareils malhonnêtes (taux de tolérance mesuré)", status: "todo" },
+      { id: "simulation", title: "Simulation avec une fraction d’appareils malhonnêtes (taux de tolérance mesuré)", status: "doing", note: "Simulateur en mémoire livré ; il montre qu’un auteur peut choisir son comité si la graine est calculable à l’avance : la tolérance ne doit pas être annoncée avant une balise aléatoire postérieure à la soumission." },
       { id: "anchor", title: "Ancrage périodique de la tête de chaîne (dépôt public ou horodatage)", status: "todo" },
     ],
   },

@@ -156,15 +156,25 @@ export function selectCommittee(input: { eligibleProfiles: readonly string[]; au
 /** Membres dont le vote compte : vague 1 = K premiers, vague 2 (après délai sans décision) = jusqu'à 2K. Borne le coût (≤ 2K votes) quel que soit le nombre d'appareils. */
 export const committeeWindow = (c: Committee, wave: 1 | 2): string[] => c.ranked.slice(0, wave === 1 ? c.K : Math.min(2 * c.K, c.ranked.length));
 
+/**
+ * RÈGLE DES SIÈGES (simulateur S1, docs/SIMULATION_PROTOCOLE_V3_2026_10_07.md) : parmi les votants de la fenêtre, seuls les K PREMIERS RANGS comptent. Les suppléants de la vague 2 ne font que
+ * remplacer les silencieux : l'électorat effectif ne grossit jamais. (Avec la fenêtre qui double et une tolérance de refus inchangée, 20 % de profils malhonnêtes refusaient à tort 32 % des bons
+ * contenus ; avec les sièges : 17 %.) Les reçus enregistrés d'un bloc sont exactement ces votants effectifs, dans l'ordre des rangs (≤ K).
+ */
+export function effectiveVoters(c: Committee, wave: 1 | 2, votes: ReadonlyMap<string, Verdict>): string[] {
+  const out: string[] = [];
+  for (const m of committeeWindow(c, wave)) { if (votes.has(m)) out.push(m); if (out.length >= c.K) break; }
+  return out;
+}
+
 export type Decision = { state: "pending" | "accept" | "reject"; accepts: number; rejects: number; needed: number; rejectLimit: number };
 /**
- * Décision rejouable. accept ⇔ accepts ≥ T ET rejects ≤ K−T ; reject ⇔ rejects ≥ K−T+1. Une finalisation « accept » dont le jeu de votes ENREGISTRÉ ne satisfait pas ces deux
- * conditions est invalide (un vérificateur le détecte).
+ * Décision rejouable sur les votants EFFECTIFS (règle des sièges). accept ⇔ accepts ≥ T ET rejects ≤ K−T ; reject ⇔ rejects ≥ K−T+1. Une finalisation « accept » dont le jeu de votes
+ * ENREGISTRÉ ne satisfait pas ces deux conditions est invalide (un vérificateur le détecte).
  */
 export function decide(c: Committee, wave: 1 | 2, votes: ReadonlyMap<string, Verdict>): Decision {
-  const win = new Set(committeeWindow(c, wave));
   let accepts = 0, rejects = 0;
-  for (const [profile, verdict] of votes) { if (!win.has(profile)) continue; if (verdict === "accept") accepts++; else rejects++; }
+  for (const profile of effectiveVoters(c, wave, votes)) { if (votes.get(profile) === "accept") accepts++; else rejects++; }
   const needed = c.threshold, rejectLimit = c.K - c.threshold;   // rejets tolérés
   if (c.mode === "none") return { state: "pending", accepts, rejects, needed, rejectLimit };
   if (accepts >= needed && rejects <= rejectLimit) return { state: "accept", accepts, rejects, needed, rejectLimit };
