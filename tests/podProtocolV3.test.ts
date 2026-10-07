@@ -156,10 +156,11 @@ test("le module de référence n'est branché sur AUCUNE route ni aucun firmware
   const walk = (dir: string) => { for (const e of fs.readdirSync(path.join(root, dir), { withFileTypes: true })) {
     const rel = path.join(dir, e.name);
     if (e.isDirectory()) { if (!["node_modules", ".next", ".git", "firmware-backups", ".claude"].includes(e.name)) walk(rel); }
-    else if (/\.(tsx?|ino|h)$/.test(e.name) && fs.readFileSync(path.join(root, rel), "utf8").includes("podProtocolV3")) offenders.push(rel.replace(/\\/g, "/"));
+    else if (/\.(tsx?|ino|h)$/.test(e.name) && fs.readFileSync(path.join(root, rel), "utf8").replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/.*$/gm, "").includes("podProtocolV3")) offenders.push(rel.replace(/\\/g, "/"));
   } };
   for (const d of ["app", "lib", "esp8266", "arduino_uno_r4"]) walk(d);
-  assert.deepEqual(offenders.filter((f) => f !== "lib/podProtocolV3.ts" && f !== "lib/podSim.ts"), []);   // seul le simulateur S1 (hors ligne) l'importe
+  // Importeurs AUTORISÉS : le simulateur S1 (hors ligne) et le bloc v2 / vérificateur du lot 3 (derrière BLOCK_RECEIPTS, éteint par défaut). Le MESSAGE DE VOTE v3, le comité et le mineur ne sont branchés nulle part.
+  assert.deepEqual(offenders.filter((f) => !["lib/podProtocolV3.ts", "lib/podSim.ts", "lib/blockReceipts.ts", "lib/podVerify.ts"].includes(f)), []);
   assert.ok(DEVICE_ID.startsWith("dev_"));
 });
 

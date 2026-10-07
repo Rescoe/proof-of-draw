@@ -32,5 +32,7 @@ test("feuille de route : les totaux de progression sont cohérents", () => {
 test("feuille de route : jamais « fait » sans preuve pour ce qui touche au matériel non essayé", () => {
   const items = ROADMAP.flatMap((p) => p.items);
   for (const id of ["fw-27solo", "fw-tft28"]) assert.notEqual(items.find((i) => i.id === id)?.status, "done", `${id} n'a pas été essayé sur la carte`);
-  for (const id of ["receipts", "committee", "anim-v2", "ota"]) assert.equal(items.find((i) => i.id === id)?.status, "todo", `${id} n'existe pas encore`);
+  for (const id of ["committee", "anim-v2", "ota"]) assert.equal(items.find((i) => i.id === id)?.status, "todo", `${id} n'existe pas encore`);
+  // livrés derrière un interrupteur éteint et jamais essayés sur le réseau réel : « en cours », jamais « fait »
+  for (const id of ["receipts", "verifier", "eligibility"]) assert.equal(items.find((i) => i.id === id)?.status, "doing", `${id} : code livré, non activé`);
 });

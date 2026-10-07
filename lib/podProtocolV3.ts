@@ -204,7 +204,9 @@ export interface BlockCanonicalV2 {
   contentHash: string;
   deviceId: string; poolScreen: string;
   validatorProfileIds: string[]; scorePpm: number; minedAt: number; animRoot?: string;
-  votesRoot: string; committeeMode: Committee["mode"]; committeeK: number;
+  votesRoot: string;
+  /** « quorum » = règle HISTORIQUE (⌈0,51 × électorat⌉, committeeK = taille de l'électorat) : transitoire, avant le comité (lot 4) */
+  committeeMode: Committee["mode"] | "quorum"; committeeK: number;
 }
 export function blockCanonicalV2(b: BlockCanonicalV2): string {
   return JSON.stringify({

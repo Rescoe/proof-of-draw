@@ -82,6 +82,8 @@ vide    = SHA-256("pod-merkle-v3-empty")
 
 ## 7. Bloc v2 [C]
 
+> **Transition (Lot 3, 07/10/2026)** : le bloc v2 est **déjà produit** par `finalizeBlock` quand `BLOCK_RECEIPTS=true` (éteint par défaut), avec les votes **v2 actuels** (`pod-vote-v2`) et le mode de décision `committeeMode = "quorum"` (⌈0,51 × électorat⌉, `committeeK` = taille de l'électorat) — le comité (lot 4) le remplacera. Les reçus vivent dans `chain:receipts:{blockHash}` ; le hash s'engage sur leur racine. Le vérificateur est `lib/podVerify.ts` (CLI `scripts/verify-block.ts`, route `/api/block-proof`). Les votes v2 ne signent pas `parentHash` : le contrôle de **position** reste « non vérifiable » jusqu'au vote v3. Détails : `docs/LOT_3_RECUS_ET_VERIFICATEUR_2026_10_07.md`.
+
 Hachage canonique : `JSON.stringify` d'un objet dont l'**ordre des clés est figé** :
 ```
 blockVersion, metricsVersion, rulesVersion, parentHash, imageHash, actionsHash, contentHash, deviceId, poolScreen,

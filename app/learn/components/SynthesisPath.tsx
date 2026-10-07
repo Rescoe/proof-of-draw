@@ -145,7 +145,7 @@ message signé = pod-vote-v2 | appareil | candidat | hash | version | e | t | r 
         <p>
           Modifier un ancien bloc change tous les hash suivants : l’<strong>intégrité de l’historique</strong> est réelle. En revanche, les
           <strong> votes signés complets ne sont pas conservés</strong> dans le bloc (seul un résumé l’est) : un tiers ne peut pas, aujourd’hui,
-          revérifier seul qu’un quorum a bien approuvé ces octets. C’est le premier chantier de la feuille de route.
+          revérifier seul qu’un quorum a bien approuvé ces octets. Le code qui conserve ces reçus signés dans le bloc et le vérificateur public existent, mais sont éteints par défaut et pas encore essayés sur le réseau réel : tant qu’ils ne sont pas activés, la phrase ci-dessus reste vraie.
         </p>
       </Disclosure>
 

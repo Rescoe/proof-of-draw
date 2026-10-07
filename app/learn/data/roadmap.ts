@@ -73,8 +73,8 @@ export const ROADMAP: RoadmapPhase[] = [
     title: "4 · Preuves vérifiables hors du serveur",
     summary: "Rendre un bloc vérifiable par n’importe qui, sans faire confiance au serveur.",
     items: [
-      { id: "receipts", title: "Conserver les votes signés dans le bloc, liés au parentHash", status: "todo", note: "Aujourd’hui ils sont supprimés après le minage : le bloc n’est pas vérifiable seul." },
-      { id: "verifier", title: "Vérificateur public (recalcule hash, métriques, signatures, comité)", status: "todo" },
+      { id: "receipts", title: "Conserver les votes signés dans le bloc, liés au parentHash", status: "doing", note: "Code livré derrière un interrupteur, éteint par défaut, pas encore essayé sur le réseau réel : aujourd’hui les votes sont supprimés après le minage. La liaison au parentHash attend le vote v3 (firmware)." },
+      { id: "verifier", title: "Vérificateur public (recalcule hash, métriques, signatures, comité)", status: "doing", note: "Vérificateur et outil en ligne de commande livrés (hash, reçus, signatures, contenu) ; le comité et un second vérificateur indépendant restent à faire." },
       { id: "eligibility", title: "Un vote par profil, auteur exclu, appairage exigé pour voter", status: "doing", note: "Code livré derrière un interrupteur, éteint par défaut ; à essayer en mode « ombre » avant de l’activer. Aujourd’hui un appareil non appairé peut encore voter." },
       { id: "register-proof", title: "Preuve de possession de la clé à l’enregistrement, épinglage et récupération par le profil", status: "todo" },
       { id: "committee", title: "Comité déterministe de 7 profils, seuil 2/3, mineur rejouable", status: "todo", note: "Remplace le quorum de 51 % et le tirage aléatoire serveur." },

@@ -38,6 +38,7 @@ import { FramePayload } from "@/lib/queue";
 import type { ActionEvent } from "@/lib/types/actions";
 import { summarizeVotes, type VotesSummary } from "@/lib/validationSummary";
 import { voterKey, type CandidateEligibility } from "@/lib/eligibility";
+import { blockReceiptsEnabled, buildBlockV2, type ReceiptsDoc } from "@/lib/blockReceipts";
 
 export interface Block {
   blockIndex: number;
@@ -92,6 +93,16 @@ export interface Block {
   // « independent » : au moins 3 profils indépendants de l'auteur ont pu voter, l'auteur est EXCLU. « bootstrap » : réseau trop petit, les profils de l'auteur étaient admis :
   // VALIDATION PARTIELLE, à ne jamais présenter comme « validé par le réseau ». `distinctProfiles` = profils distincts ayant voté (une carte de plus ne donne pas une voix de plus).
   validation?: { eligibility: "enforce"; plan: "independent" | "bootstrap" | "none"; independentProfiles: number; distinctProfiles: number };
+
+  // ── Bloc « v2 » (Lot 3, BLOCK_RECEIPTS=true) : le hash s'ENGAGE sur les REÇUS signés de tous les votes (racine de Merkle). Absent = bloc v1 (hash historique). ───────────────
+  // Les reçus eux-mêmes vivent dans `chain:receipts:{blockHash}` (permanent) : les listes de blocs ne grossissent pas. Format : lib/podProtocolV3.ts `blockCanonicalV2`, lib/blockReceipts.ts.
+  blockVersion?: 2;
+  contentHash?: string;     // rawHash (image fixe) ou racine d'animation : ce que les votes v2 recalculent
+  scorePpm?: number;        // score final en ppm ENTIER (le hash v2 ne contient plus de flottant)
+  votesRoot?: string;       // racine de Merkle des reçus
+  committeeMode?: "quorum"; // règle de décision : « quorum » = ⌈0,51 × électorat⌉ historique (le comité arrive au lot 4)
+  committeeK?: number;      // taille de l'électorat figé au dépôt du candidat
+  receiptsCount?: number;
 }
 
 export interface BlockImagePayload {
@@ -151,6 +162,9 @@ export interface ValidationVote {
   verdict?: "accept" | "reject";
   reason?: string;
   suspect?: boolean;
+  /** Clé publique de l'appareil au moment du vote et hash brut signé (v2) : renseignés SEULEMENT avec BLOCK_RECEIPTS=true, pour fabriquer le reçu signé du bloc. */
+  pk?: string;
+  rawHash?: string;
   /** Profil représenté (renseigné SEULEMENT en mode enforce) : un profil compte UNE voix quel que soit le nombre de ses appareils (lib/eligibility.ts). Absent = un vote par appareil (historique). */
   profileId?: string;
 }
@@ -173,6 +187,7 @@ const imageKey   = (hash: string) => `chain:image:${hash}`;
 const actionsKey = (hash: string) => `chain:actions:${hash}`;
 const replayKey  = (hash: string) => `chain:replay:${hash}`;
 const animKey    = (hash: string) => `chain:anim:${hash}`;
+const receiptsKey = (hash: string) => `chain:receipts:${hash}`;
 const KEY_OBS_QUEUE = "chain:obs:queue";
 const KEY_OBS_PENDING = "chain:obs:pending";   // drapeau « la file d'observation n'est pas vide » : lu dans le MGET du pull (le pull ne dépile plus à chaque fois)
 
@@ -507,6 +522,7 @@ export async function finalizeBlock(
   frameId: string,
   minerDeviceId?: string,   // ESP dont le vote a déclenché le quorum
   rejects = 0,              // refus signés (v2) reçus avant le quorum : seulement pour le résumé affiché
+  allVotes?: readonly ValidationVote[],   // TOUS les votes (acceptations ET refus) : nécessaires aux reçus du bloc v2 (BLOCK_RECEIPTS=true)
 ): Promise<Block> {
   const head     = await getChainHead();
   const length   = await getChainLength();
@@ -530,7 +546,11 @@ export async function finalizeBlock(
     animRoot:    candidate.anim?.root,
   });
 
-  const blockHash = await sha256Hex(canonical);
+  let blockHash = await sha256Hex(canonical);
+
+  // Bloc v2 (BLOCK_RECEIPTS=true) : le hash s'engage sur les reçus signés ; sinon hash v1 historique, inchangé.
+  const v2 = blockReceiptsEnabled() && allVotes && allVotes.length > 0 ? buildBlockV2({ candidate, allVotes, parentHash, finalScore, minedAt }) : null;
+  if (v2) blockHash = v2.blockHash;
 
   // ── Axe 3 : Ré-validation des k blocs précédents ─────────────────────────────
   // k = min(5, floor(log2(N+1))) blocs sélectionnés pour re-vérification future
@@ -593,6 +613,7 @@ export async function finalizeBlock(
     podHashEnriched: candidate.podHashEnriched,
     podGeometry:     candidate.podGeometry,
     votesSummary:    summarizeVotes(votes, rejects),
+    ...(v2 ? v2.fields : {}),
     ...(candidate.eligibility?.mode === "enforce"
       ? { validation: { eligibility: "enforce" as const, plan: candidate.eligibility.plan, independentProfiles: candidate.eligibility.independentProfiles, distinctProfiles: new Set(votes.map(voterKey)).size } }
       : {}),
@@ -636,6 +657,9 @@ export async function finalizeBlock(
       redis.ltrim(`chain:device:${candidate.deviceId}:drawn`, 0, 99),
     );
   }
+
+  // Reçus signés du bloc v2 : permanents, dans la même rafale d'écritures (+1 commande par bloc)
+  if (v2) writes.push(redis.set(receiptsKey(blockHash), JSON.stringify(v2.doc)));
 
   // Animation : clip + empreintes + scores par image, permanents (≤ 25 Ko), à côté de l'affiche
   if (candidate.anim) {
@@ -790,6 +814,20 @@ export const getRecentBlocksCached = unstable_cache(
 // ─── Données de replay et actions ────────────────────────────────────────────
 
 /** Document d'animation d'un bloc (clip + empreintes + scores par image), ou null pour un dessin. */
+/** Bloc + reçus en UN MGET (route publique de preuve). */
+export async function getBlockProofData(hash: string): Promise<{ block: Block | null; receipts: ReceiptsDoc | null }> {
+  const [b, r] = await redis.mget<unknown[]>(blockKey(hash), receiptsKey(hash));
+  const parse = <T,>(x: unknown): T | null => { if (!x) return null; try { return (typeof x === "string" ? JSON.parse(x) : x) as T; } catch { return null; } };
+  const raw = parse<Record<string, unknown>>(b);
+  return { block: raw ? migrateBlock(raw) : null, receipts: parse<ReceiptsDoc>(r) };
+}
+
+export async function getBlockReceipts(hash: string): Promise<ReceiptsDoc | null> {
+  const raw = await redis.get(receiptsKey(hash));
+  if (!raw) return null;
+  try { return (typeof raw === "string" ? JSON.parse(raw) : raw) as ReceiptsDoc; } catch { return null; }
+}
+
 export async function getBlockAnim(hash: string): Promise<import("@/lib/anim/block").AnimBlockDoc | null> {
   const raw = await redis.get(animKey(hash));
   if (!raw) return null;

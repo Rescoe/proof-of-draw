@@ -36,6 +36,7 @@ import { invalidateNetworkSnapshot } from "@/lib/networkSnapshot";
 import { checkVoteV2, parseVoteV2, voteMessageV2 } from "@/lib/podVote";
 import { PPM } from "@/lib/podMetrics";
 import { eligibilityConfigFromEnv, eligibilityModeFromEnv, voteGate } from "@/lib/eligibility";
+import { blockReceiptsEnabled } from "@/lib/blockReceipts";
 
 const DEVICE_ID_REGEX = /^dev_[A-Z0-9]{8}$/;
 const BLACKLIST_TTL = parseInt(process.env.BLACKLIST_TTL_SECONDS ?? "604800");
@@ -176,7 +177,9 @@ export async function POST(req: NextRequest) {
       ? { deviceId: String(deviceId), entropy: v2Vote.e / PPM, transitions: v2Vote.t / PPM, rle: v2Vote.r / PPM, score: espScore, signature: String(signature ?? ""), votedAt: Date.now(),
           v: 2, verdict: v2Vote.verdict, ...(v2Vote.reason ? { reason: v2Vote.reason } : {}), ...(v2Vote.suspect ? { suspect: true } : {}) }
       : { deviceId: String(deviceId), entropy: Number(entropy), transitions: Number(transitions), rle: Number(rle), score: espScore, signature: String(signature ?? ""), votedAt: Date.now() }),
-      ...(voterProfileId ? { profileId: voterProfileId } : {}) };
+      ...(voterProfileId ? { profileId: voterProfileId } : {}),
+      // Reçu signé du bloc (BLOCK_RECEIPTS=true seulement) : clé publique au moment du vote et, pour un vote v2, le hash brut signé
+      ...(blockReceiptsEnabled() ? { ...(device.publicKey ? { pk: device.publicKey } : {}), ...(isV2 && typeof (body as Record<string, unknown>).rawHash === "string" ? { rawHash: String((body as Record<string, unknown>).rawHash) } : {}) } : {}) };
     const { quorumReached, voteCount, needed, rejectCount } = await castVote(vote, candidate, prefetchedVotes);
 
     // Trop de refus pour que le quorum d'approbations soit encore atteignable : le candidat est refusé par le réseau (vote v2 uniquement).
@@ -213,7 +216,7 @@ export async function POST(req: NextRequest) {
       const allVotes = accepted.length > 0 ? accepted : [vote];
       const frameId = crypto.randomUUID();
       // vote.deviceId = l'ESP dont le vote vient d'atteindre le quorum → premier mineur
-      const block = await finalizeBlock(candidate, allVotes, frameId, vote.deviceId, voteMap ? countRejects(voteMap) : 0);
+      const block = await finalizeBlock(candidate, allVotes, frameId, vote.deviceId, voteMap ? countRejects(voteMap) : 0, voteMap ? Object.values(voteMap.votes) : [vote]);
 
       if (candidate.anim) {
         // Animation : diffusée à TOUS les écrans dynamiques (TFT 2.8", TFT 1.8", OLED) dont le firmware la joue — affiche à leur géométrie + pointeur du clip.
