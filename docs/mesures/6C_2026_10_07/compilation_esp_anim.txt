@@ -1,0 +1,15 @@
+### esp_anim : arduino-cli compile --fqbn esp8266:esp8266:nodemcuv2:eesz=4M2M --library <depot>/consensus-pod --build-property compiler.cpp.extra_flags=-fstack-usage --warnings all --build-path <scratchpad>/build_esp_anim <depot>/consensus-pod/examples/AnimSelfTestEsp8266
+. Variables and constants in RAM (global, static), used 33000 / 80192 bytes (41%)
+║   SEGMENT  BYTES    DESCRIPTION
+╠══ DATA     1496     initialized variables
+╠══ RODATA   1464     constants       
+╚══ BSS      30040    zeroed variables
+. Instruction RAM (IRAM_ATTR, ICACHE_RAM_ATTR), used 59839 / 65536 bytes (91%)
+║   SEGMENT  BYTES    DESCRIPTION
+╠══ ICACHE   32768    reserved space for flash instruction cache
+╚══ IRAM     27071    code in IRAM    
+. Code in flash (default, ICACHE_FLASH_ATTR), used 278372 / 1048576 bytes (26%)
+║   SEGMENT  BYTES    DESCRIPTION
+╚══ IROM     278372   code in flash   
+EXIT 0
+avertissements ou erreurs dans consensus-pod/ (notre code) : 0

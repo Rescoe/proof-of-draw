@@ -1,0 +1,5 @@
+### r4_anim : arduino-cli compile --fqbn arduino:renesas_uno:unor4wifi --library <depot>/consensus-pod --build-property compiler.cpp.extra_flags=-fstack-usage --warnings all --build-path <scratchpad>/build_r4_anim <depot>/consensus-pod/examples/AnimSelfTestUnoR4
+Le croquis utilise 88152 octets (33%) de l'espace de stockage de programmes. Le maximum est de 262144 octets.
+Les variables globales utilisent 11296 octets (34%) de mémoire dynamique, ce qui laisse 21472 octets pour les variables locales. Le maximum est de 32768 octets.
+EXIT 0
+avertissements ou erreurs dans consensus-pod/ (notre code) : 0

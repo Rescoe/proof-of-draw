@@ -39,14 +39,17 @@ static inline PodAnimRule pod_anim_evaluate_rules(bool formatOk, bool hashOk, bo
 }
 
 // ─── Engagements ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-/** feuille d'image = SHA-256( 0x02 ‖ empreinte (32 o) ‖ u32 e ‖ u32 t ‖ u32 r ‖ u8 délai ) — 46 octets. */
-template <class Sha> static inline void pod_anim_leaf(const uint8_t frameHash[32], uint32_t e, uint32_t t, uint32_t r, uint8_t delayUnits, uint8_t out[32]) {
-  uint8_t b[46]; b[0] = 0x02; memcpy(b + 1, frameHash, 32);
+/**
+ * feuille d'image = SHA-256( 0x02 ‖ empreinte (32 o) ‖ u32 e ‖ u32 t ‖ u32 r ‖ u8 délai ) — 46 octets. Version `_with` : le contexte SHA-256 `s` est FOURNI (celui de l'automate : aucun contexte de ~110 o sur la
+ * pile — la pile principale de l'UNO R4 fait 1 024 o). `out` peut être le même tableau que `frameHash` : l'empreinte est entièrement lue avant l'écriture du résultat.
+ */
+template <class Sha> static inline void pod_anim_leaf_with(Sha& s, const uint8_t frameHash[32], uint32_t e, uint32_t t, uint32_t r, uint8_t delayUnits, uint8_t out[32]) {
+  const uint8_t tag = 0x02; uint8_t be[12];
   const uint32_t v[3] = { e, t, r };
-  for (int i = 0; i < 3; i++) { b[33 + 4 * i] = (uint8_t)(v[i] >> 24); b[34 + 4 * i] = (uint8_t)(v[i] >> 16); b[35 + 4 * i] = (uint8_t)(v[i] >> 8); b[36 + 4 * i] = (uint8_t)v[i]; }
-  b[45] = delayUnits;
-  Sha s; s.begin(); s.update(b, sizeof(b)); s.finish(out);
+  for (int i = 0; i < 3; i++) { be[4 * i] = (uint8_t)(v[i] >> 24); be[4 * i + 1] = (uint8_t)(v[i] >> 16); be[4 * i + 2] = (uint8_t)(v[i] >> 8); be[4 * i + 3] = (uint8_t)v[i]; }
+  s.begin(); s.update(&tag, 1); s.update(frameHash, 32); s.update(be, sizeof(be)); s.update(&delayUnits, 1); s.finish(out);
 }
+template <class Sha> static inline void pod_anim_leaf(const uint8_t frameHash[32], uint32_t e, uint32_t t, uint32_t r, uint8_t delayUnits, uint8_t out[32]) { Sha s; pod_anim_leaf_with<Sha>(s, frameHash, e, t, r, delayUnits, out); }
 
 /**
  * Racine de Merkle des images EN FLUX (≤ 7 hachages en attente) : mêmes nœuds que pod_merkle_root (SHA-256(0x01 ‖ gauche ‖ droite), nœud impair PROMU, jamais dupliqué) ; les feuilles sont
@@ -55,30 +58,35 @@ template <class Sha> static inline void pod_anim_leaf(const uint8_t frameHash[32
 template <class Sha> struct PodMerkleStack {
   uint8_t h[POD_ANIM_MERKLE_DEPTH][32]; uint8_t lv[POD_ANIM_MERKLE_DEPTH]; uint8_t n; uint32_t count;
   void begin() { n = 0; count = 0; }
-  static void node(const uint8_t* l, const uint8_t* r, uint8_t out[32]) { Sha s; s.begin(); const uint8_t one = 1; s.update(&one, 1); s.update(l, 32); s.update(r, 32); s.finish(out); }
-  bool push(const uint8_t leaf[32]) {
+  /** nœud = SHA-256(0x01 ‖ l ‖ r) avec le contexte `s` fourni ; `out` peut être `l` ou `r` (les deux entrées sont lues avant l'écriture du résultat). */
+  static void node(Sha& s, const uint8_t* l, const uint8_t* r, uint8_t out[32]) { s.begin(); const uint8_t one = 1; s.update(&one, 1); s.update(l, 32); s.update(r, 32); s.finish(out); }
+  bool push(const uint8_t leaf[32], Sha& s) {
     if (count >= POD_ANIM_MAX_FRAMES || n >= POD_ANIM_MERKLE_DEPTH) return false;
     memcpy(h[n], leaf, 32); lv[n] = 0; n++; count++;
-    while (n >= 2 && lv[n - 1] == lv[n - 2]) { uint8_t t[32]; node(h[n - 2], h[n - 1], t); memcpy(h[n - 2], t, 32); lv[n - 2]++; n--; }
+    while (n >= 2 && lv[n - 1] == lv[n - 2]) { node(s, h[n - 2], h[n - 1], h[n - 2]); lv[n - 2]++; n--; }
     return true;
   }
-  /** vide : SHA-256("pod-merkle-v3-empty") ; sinon racine. Ne modifie pas la pile. */
-  void root(uint8_t out[32]) const {
-    if (n == 0) { Sha s; s.begin(); s.update("pod-merkle-v3-empty", 19); s.finish(out); return; }
-    uint8_t cur[32]; memcpy(cur, h[n - 1], 32);
-    for (int i = (int)n - 2; i >= 0; i--) { uint8_t t[32]; node(h[i], cur, t); memcpy(cur, t, 32); }
-    memcpy(out, cur, 32);
+  bool push(const uint8_t leaf[32]) { Sha s; return push(leaf, s); }
+  /** vide : SHA-256("pod-merkle-v3-empty") ; sinon racine. Ne modifie pas la pile. `out` ne doit PAS être l'un des h[]. */
+  void root(uint8_t out[32], Sha& s) const {
+    if (n == 0) { s.begin(); s.update("pod-merkle-v3-empty", 19); s.finish(out); return; }
+    memcpy(out, h[n - 1], 32);
+    for (int i = (int)n - 2; i >= 0; i--) node(s, h[i], out, out);
   }
+  void root(uint8_t out[32]) const { Sha s; root(out, s); }
 };
 
 /** animRoot = SHA-256( "pod-anim-v3|pbc1|" clipHash "|" framesRoot "|" N "|" loops "|" fg "|" bg ) — hex minuscule (65 octets). */
-template <class Sha> static inline void pod_anim_root(const char* clipHashHex, const char* framesRootHex, uint32_t frames, uint32_t loops, uint32_t fg, uint32_t bg, char out[65]) {
-  Sha s; s.begin(); uint8_t o[32]; char num[24];
+template <class Sha> static inline void pod_anim_root_with(Sha& s, const char* clipHashHex, const char* framesRootHex, uint32_t frames, uint32_t loops, uint32_t fg, uint32_t bg, char out[65]) {
+  s.begin(); uint8_t o[32]; char num[24];
   const char* pre = "pod-anim-v3|pbc1|"; s.update(pre, strlen(pre));
   s.update(clipHashHex, strlen(clipHashHex)); s.update("|", 1); s.update(framesRootHex, strlen(framesRootHex)); s.update("|", 1);
   s.update(num, (size_t)pod_utoa(frames, num)); s.update("|", 1); s.update(num, (size_t)pod_utoa(loops, num)); s.update("|", 1);
   s.update(num, (size_t)pod_utoa(fg, num)); s.update("|", 1); s.update(num, (size_t)pod_utoa(bg, num));
   s.finish(o); pod_hex(o, 32, out);
+}
+template <class Sha> static inline void pod_anim_root(const char* clipHashHex, const char* framesRootHex, uint32_t frames, uint32_t loops, uint32_t fg, uint32_t bg, char out[65]) {
+  Sha s; pod_anim_root_with<Sha>(s, clipHashHex, framesRootHex, frames, loops, fg, bg, out);
 }
 
 // ─── Automate de lecture du clip PBC1 ─────────────────────────────────────────────────────────────────────────────────────────────────────────
@@ -111,14 +119,14 @@ template <class Sha> class PodAnimStream {
   /** À appeler une seule fois, à la fin du flux. Remplit `out` dans tous les cas ; retourne out->formatOk. */
   bool finish(PodAnimResult* out) {
     memset(out, 0, sizeof(*out));
-    uint8_t ch[32]; clip_.finish(ch); pod_hex(ch, 32, out->clipHash);
+    clip_.finish(h_); pod_hex(h_, 32, out->clipHash);
     out->bytes = pos_; out->rule = POD_ANIM_FORMAT; out->formatOk = false;
     if (finished_ || failed_ || st_ != S_DONE || frames_ != n_ || sumUnits_ > POD_ANIM_MAX_PLAY_UNITS) return false;
     finished_ = true;
-    uint8_t fr[32]; merkle_.root(fr); pod_hex(fr, 32, out->framesRoot);
+    merkle_.root(h_, scratch_); pod_hex(h_, 32, out->framesRoot);
     out->formatOk = true; out->frames = n_; out->loops = loops_; out->fg = fg_; out->bg = bg_;
     out->E = sumE_ / n_; out->T = sumT_ / n_; out->R = sumR_ / n_; out->S = sumS_ / n_; out->posterIndex = poster_; out->allIdentical = same_;
-    pod_anim_root<Sha>(out->clipHash, out->framesRoot, n_, loops_, fg_, bg_, out->animRoot);
+    pod_anim_root_with<Sha>(scratch_, out->clipHash, out->framesRoot, n_, loops_, fg_, bg_, out->animRoot);
     out->rule = pod_anim_evaluate_rules(true, true, same_, out->E, out->T);
     return true;
   }
@@ -127,6 +135,8 @@ template <class Sha> class PodAnimStream {
   enum St { S_HEADER, S_DELAY0, S_FRAME0, S_TDELAY, S_NRUNS0, S_NRUNS1, S_ROFF0, S_ROFF1, S_RLEN, S_RDATA, S_CRC, S_DONE, S_FAIL };
 
   Sha clip_;
+  Sha scratch_;                 // contexte SHA-256 de TRAVAIL (hash d'image, feuille, nœuds, racines) : réutilisé, jamais recréé sur la pile
+  uint8_t h_[32];               // empreinte d'image / feuille / racine en cours (32 o réutilisés)
   PodMerkleStack<Sha> merkle_;
   PodMetrics metrics_;
   uint8_t frame_[POD_ANIM_FRAME_BYTES];
@@ -146,14 +156,15 @@ template <class Sha> class PodAnimStream {
 
   /** Fin d'une image : empreinte, métriques, feuille, agrégats. */
   void frameDone(uint32_t idx, uint8_t delayUnits) {
-    uint8_t fh[32]; { Sha s; s.begin(); s.update(frame_, POD_ANIM_FRAME_BYTES); s.finish(fh); }
+    scratch_.begin(); scratch_.update(frame_, POD_ANIM_FRAME_BYTES); scratch_.finish(h_);
     metrics_.begin(POD_ANIM_W, POD_ANIM_H);
     for (uint16_t y = 0; y < POD_ANIM_H; y++) for (uint16_t x = 0; x < POD_ANIM_W; x++) metrics_.push((uint8_t)((frame_[y * 16 + (x >> 3)] >> (7 - (x & 7))) & 1));
     PodMetricsOut m; if (!metrics_.finish(&m)) { fail(); return; }
-    uint8_t leaf[32]; pod_anim_leaf<Sha>(fh, m.e, m.t, m.r, delayUnits, leaf);
-    if (!merkle_.push(leaf)) { fail(); return; }
+    // l'empreinte (h_) sert d'abord à la comparaison avec l'image 0, puis est remplacée EN PLACE par la feuille
+    if (idx == 0) { memcpy(fh0_, h_, 32); bestS_ = m.s; poster_ = 0; } else { if (memcmp(h_, fh0_, 32) != 0) same_ = false; if (m.s > bestS_) { bestS_ = m.s; poster_ = idx; } }
+    pod_anim_leaf_with<Sha>(scratch_, h_, m.e, m.t, m.r, delayUnits, h_);
+    if (!merkle_.push(h_, scratch_)) { fail(); return; }
     sumE_ += m.e; sumT_ += m.t; sumR_ += m.r; sumS_ += m.s;
-    if (idx == 0) { memcpy(fh0_, fh, 32); bestS_ = m.s; poster_ = 0; } else { if (memcmp(fh, fh0_, 32) != 0) same_ = false; if (m.s > bestS_) { bestS_ = m.s; poster_ = idx; } }
     frames_++;
   }
 
@@ -162,8 +173,8 @@ template <class Sha> class PodAnimStream {
       frameDone(transIdx_, delay_); if (failed_) return;
       sumUnits_ += delay_;
     } else {   // retour à l'image 0 : même image, même délai
-      uint8_t fh[32]; { Sha s; s.begin(); s.update(frame_, POD_ANIM_FRAME_BYTES); s.finish(fh); }
-      if (memcmp(fh, fh0_, 32) != 0 || delay_ != delay0_) { fail(); return; }
+      scratch_.begin(); scratch_.update(frame_, POD_ANIM_FRAME_BYTES); scratch_.finish(h_);
+      if (memcmp(h_, fh0_, 32) != 0 || delay_ != delay0_) { fail(); return; }
     }
     transIdx_++;
     if (transIdx_ > n_) { if (bodyPos_ != bodyBytes_) { fail(); return; } crcPos_ = 0; st_ = S_CRC; }

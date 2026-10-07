@@ -321,7 +321,7 @@ Firmware e-ink 2,7" seul (`eink27bw-2.1`) : vote v2 porté le 06/10/2026, compil
 
 **Animations calculées (lot 6, 07/10/2026) — `pod-anim-v3`** : spécification `docs/SPEC_PODANIM_V3.md` (R2) ; référence pure `lib/animV3.ts` + noyau C++ en flux `consensus-pod/src/podAnimV3.h` (vecteurs `anim-vectors.txt`, 260 clips : `docs/LOT_6B1_…`) ;
 route `/api/candidate-clip` (ticket HMAC `CLIP_TICKET_SECRET`), mode `ANIM_V3_MODE` **`off`/`shadow` seulement**, représentants, vérificateur de bloc animation (`rulesVersion = 2`) : `docs/LOT_6B2_…`. **Tout est INACTIF par défaut, aucun firmware ne l'utilise, aucun ticket n'est distribué** ;
-`enforce` n'existe pas (lot 8, capacités firmware). Un vote v1 (écho) ne valide JAMAIS un bloc animation v3. Ne pas parler d'animation « validée par les appareils » avant le lot 8.
+`enforce` n'existe pas (lot 8, capacités firmware). **Lot 6C** (`docs/LOT_6C_…`, `docs/mesures/6C_2026_10_07/`) : l'automate d'animation (≈ 1,9 Ko) est COMPILÉ pour ESP8266 et UNO R4 (exemples `consensus-pod/examples/AnimSelfTest*`, « NE PAS DÉPLOYER »), jamais essayé sur carte ; contrat du lot 8 : ESP8266 = clip écrit dans LittleFS pendant le TLS puis calcul TLS FERMÉ, jamais d'automate pendant le TLS ; R4 = objet GLOBAL (pile principale de 1 024 o). Un vote v1 (écho) ne valide JAMAIS un bloc animation v3. Ne pas parler d'animation « validée par les appareils » avant le lot 8.
 
 ## Non-goals
 

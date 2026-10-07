@@ -51,7 +51,7 @@ export const ROADMAP: RoadmapPhase[] = [
       { id: "anim-play", title: "Lecture sur TFT 2,8″, TFT 1,8″ et OLED", status: "done", note: "Multiscreen : animation sur l’OLED, image fixe sur l’e-ink, vérifié." },
       { id: "anim-studio", title: "Atelier d’animation refait : plein écran, 3 modes, 7 brosses, fantôme, retour/annuler", status: "done", note: "Vérifié dans l’aperçu ; essai sur téléphone réel à faire." },
       { id: "anim-master", title: "Canvas maître 256×128 exporté par écran avec trame", status: "todo", note: "Sans reflash. Étape suivante de l’atelier." },
-      { id: "anim-v2", title: "Animations VALIDÉES par calcul (racine, empreinte et métriques par image)", status: "todo", note: "Spécification relue par l’audit et référence de calcul livrée (TypeScript et C++ identiques sur plus de 200 clips) ; aucune route ni firmware ne l’utilise encore : aujourd’hui les animations sont encore votées en v1, écho du score serveur." },
+      { id: "anim-v2", title: "Animations VALIDÉES par calcul (racine, empreinte et métriques par image)", status: "todo", note: "Spécification relue par l’audit et référence de calcul livrée (TypeScript et C++ identiques sur plus de 200 clips) ; l’automate de lecture du clip est aussi compilé pour l’ESP8266 et l’UNO R4 (moins de 2 Ko de RAM, jamais essayé sur carte) ; aucun firmware ne l’utilise encore : aujourd’hui les animations sont encore votées en v1, écho du score serveur." },
     ],
   },
   {
@@ -91,7 +91,7 @@ export const ROADMAP: RoadmapPhase[] = [
     items: [
       { id: "core-extract", title: "Extraire un noyau portable sans écran ni réseau (flux → hash + métriques + message de vote)", status: "doing", note: "Noyau C++ livré (règles, hash salé, vote v3, reçus, comité, mineur, bloc) et identique à la référence TypeScript ; aucun firmware ne l’utilise encore, l’adoption se fera au grand reflash." },
       { id: "vectors", title: "Vecteurs de test officiels exécutés sur TypeScript, ESP8266, R4 et PC", status: "doing", note: "Plus de mille vérifications générées par la référence TypeScript et retrouvées à l’identique par le noyau C++ sur PC ; ESP8266 et R4 : l’auto-test compile, il n’a jamais tourné sur une carte." },
-      { id: "adapters", title: "Adaptateurs ESP8266, R4, ESP32 et PC/Raspberry Pi", status: "doing", note: "Adaptateurs de calcul SHA-256 pour PC, ESP8266 et R4 livrés (compilés, jamais essayés sur carte) ; ESP32 et Raspberry Pi natif restent à faire." },
+      { id: "adapters", title: "Adaptateurs ESP8266, R4, ESP32 et PC/Raspberry Pi", status: "doing", note: "Adaptateurs de calcul SHA-256 pour PC, ESP8266 et R4 livrés (compilés, jamais essayés sur carte) ; l’automate d’animation y est compilé avec ses budgets mémoire mesurés à la compilation ; ESP32 et Raspberry Pi natif restent à faire." },
       { id: "headless", title: "Nœuds de validation sans écran (rôle validator)", status: "todo" },
       { id: "publish", title: "Publication ouverte (spécification, licence, exemples) en version expérimentale", status: "todo", note: "Après gel du protocole v3." },
     ],

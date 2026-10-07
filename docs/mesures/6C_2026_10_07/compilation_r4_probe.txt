@@ -1,0 +1,4 @@
+Le croquis utilise 88312 octets (33%) de l'espace de stockage de programmes. Le maximum est de 262144 octets.
+Les variables globales utilisent 14240 octets (43%) de mémoire dynamique, ce qui laisse 18528 octets pour les variables locales. Le maximum est de 32768 octets.
+EXIT 0
+avertissements ou erreurs dans consensus-pod/ (notre code) : 0

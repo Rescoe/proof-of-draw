@@ -253,6 +253,8 @@ test("pureté : lib/animV3.ts n'importe ni Redis, ni réseau, ni route ; PÉRIM�
   // seule la route de DÉPÔT du candidat journalise la référence en shadow, et seule la route candidate-clip sert le clip.
   assert.deepEqual(offenders.sort(), [
     "app/api/candidate-clip/route.ts", "app/api/submit-candidate/route.ts", "consensus-pod/host/anim_harness.cpp", "consensus-pod/src/podAnimV3.h",
+    // lot 6C : auto-tests de VALIDATION (exemples de la bibliothèque, jamais des firmwares de production) et leurs données générées
+    "consensus-pod/examples/AnimSelfTestEsp8266/AnimSelfTestEsp8266.ino", "consensus-pod/examples/AnimSelfTestUnoR4/AnimSelfTestUnoR4.ino", "consensus-pod/src/podAnimSelfTest.h", "consensus-pod/src/podAnimV3_selftest.h",
     "lib/animClipResponse.ts", "lib/animReps.ts", "lib/animShadow.ts", "lib/animV3.ts", "lib/animV3Mode.ts", "lib/clipTicket.ts", "lib/podVerify.ts", "lib/podVerifyAnim.ts",
   ].sort());
   for (const f of ["app/api/pull/route.ts", "app/api/validate-candidate/route.ts", "app/api/validation-result/route.ts", "app/api/register/route.ts", "app/api/ack-frame/route.ts"]) assert.doesNotMatch(read(f), /clipTicket|clipPointer|candidate-clip|animV3/, `${f} ne distribue aucun ticket`);

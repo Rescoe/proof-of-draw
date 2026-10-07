@@ -1,0 +1,5 @@
+### r4_baseline : arduino-cli compile --fqbn arduino:renesas_uno:unor4wifi  --warnings all --build-path <scratchpad>/build_r4_baseline <scratchpad>/baseline
+Le croquis utilise 52000 octets (19%) de l'espace de stockage de programmes. Le maximum est de 262144 octets.
+Les variables globales utilisent 6740 octets (20%) de mémoire dynamique, ce qui laisse 26028 octets pour les variables locales. Le maximum est de 32768 octets.
+EXIT 0
+avertissements ou erreurs dans consensus-pod/ (notre code) : 0

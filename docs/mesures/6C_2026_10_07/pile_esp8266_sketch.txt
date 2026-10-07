@@ -1,0 +1,18 @@
+# ESP8266 sketch — -fstack-usage (octets de pile STATIQUES par fonction, hors fonctions appelées) — analyse statique, PAS une mesure d'exécution
+consensusPoD.h:196:19:int pod_utoa(uint64_t, char*)	96	static
+AnimSelfTestEsp8266.ino:17:17:uint32_t clockUs()	0	static
+AnimSelfTestEsp8266.ino:16:13:void sink(const char*)	0	static
+consensusPoD.h:51:20:void pod_hex(const uint8_t*, size_t, char*)	0	static
+pod_metrics.h:58:8:bool PodMetrics::finish(PodMetricsOut*) const	64	static
+consensusPoD.h:61:8:void PodOut::str(const char*)	32	static
+consensusPoD.h:62:8:void PodOut::ch(char)	32	static
+consensusPoD.h:63:8:void PodOut::u64(uint64_t)	96	static
+podAnimSelfTest.h:72:20:void pod_anim_selftest_say(PodAnimTestSink, char*, size_t, const char*, uint32_t, const char*, uint32_t)	64	static
+AnimSelfTestEsp8266.ino:32:6:void loop()	0	static
+podAnimV3.h:155:8:void PodAnimStream<Sha>::crcStep(uint8_t) [with Sha = PodSha256Br]	0	static
+podAnimV3.h:62:15:static void PodMerkleStack<Sha>::node(Sha&, const uint8_t*, const uint8_t*, uint8_t*) [with Sha = PodSha256Br]	48	static
+podAnimV3.h:158:8:void PodAnimStream<Sha>::frameDone(uint32_t, uint8_t) [with Sha = PodSha256Br]	96	static
+podAnimV3.h:171:8:void PodAnimStream<Sha>::transitionDone() [with Sha = PodSha256Br]	16	static
+AnimSelfTestEsp8266.ino:19:6:void setup()	304	static
+AnimSelfTestEsp8266.ino:32:28:ino)	0	static
+

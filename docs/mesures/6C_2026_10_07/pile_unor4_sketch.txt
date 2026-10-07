@@ -1,0 +1,34 @@
+# UNO R4 sketch — -fstack-usage (octets de pile STATIQUES par fonction, hors fonctions appelées) — analyse statique, PAS une mesure d'exécution
+consensusPoD.h:196:19:int pod_utoa(uint64_t, char*)	48	static
+AnimSelfTestUnoR4.ino:17:13:void sink(const char*)	0	static
+AnimSelfTestUnoR4.ino:18:17:uint32_t clockUs()	0	static
+podAnimV3.h:155:8:void PodAnimStream<Sha>::crcStep(uint8_t) [with Sha = PodSha256Rw]	8	static
+consensusPoD.h:51:20:void pod_hex(const uint8_t*, size_t, char*)	12	static
+consensusPoD.h:61:8:void PodOut::str(const char*)	16	static
+consensusPoD.h:62:8:void PodOut::ch(char)	16	static
+consensusPoD.h:63:8:void PodOut::u64(uint64_t)	48	static
+podAnimSelfTest.h:72:20:void pod_anim_selftest_say(PodAnimTestSink, char*, size_t, const char*, uint32_t, const char*, uint32_t)	40	static
+AnimSelfTestUnoR4.ino:31:6:void loop()	0	static
+AnimSelfTestUnoR4.ino:31:28:ino)	16	static
+crypto_uno_r4.h:11:8:void PodSha256Rw::finish(uint8_t*)	0	static
+podAnimV3.h:62:15:static void PodMerkleStack<Sha>::node(Sha&, const uint8_t*, const uint8_t*, uint8_t*) [with Sha = PodSha256Rw]	32	static
+podAnimV3.h:158:8:void PodAnimStream<Sha>::frameDone(uint32_t, uint8_t) [with Sha = PodSha256Rw]	80	static
+podAnimV3.h:171:8:void PodAnimStream<Sha>::transitionDone() [with Sha = PodSha256Rw]	16	static
+AnimSelfTestUnoR4.ino:31:28:ino)	8	static
+AnimSelfTestUnoR4.ino:20:6:void setup()	296	static
+
+
+# UNO R4 bibliothèque Crypto SHA256.cpp — -fstack-usage (octets de pile STATIQUES par fonction, hors fonctions appelées) — analyse statique, PAS une mesure d'exécution
+SHA256.cpp:66:8:virtual size_t SHA256::hashSize() const	0	static
+SHA256.cpp:71:8:virtual size_t SHA256::blockSize() const	0	static
+SHA256.cpp:76:6:virtual void SHA256::reset()	0	static
+SHA256.cpp:144:6:virtual void SHA256::clear()	8	static
+SHA256.cpp:61:1:SHA256::~SHA256()	8	static
+SHA256.cpp:61:1:virtual SHA256::~SHA256()	8	static
+SHA256.cpp:52:1:SHA256::SHA256()	8	static
+SHA256.cpp:174:6:void SHA256::processChunk()	80	static
+SHA256.cpp:90:6:virtual void SHA256::update(const void*, size_t)	32	static
+SHA256.cpp:112:6:virtual void SHA256::finalize(void*, size_t)	24	static
+SHA256.cpp:150:6:virtual void SHA256::resetHMAC(const void*, size_t)	16	static
+SHA256.cpp:157:6:virtual void SHA256::finalizeHMAC(const void*, size_t, void*, size_t)	64	static
+
