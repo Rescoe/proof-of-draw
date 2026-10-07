@@ -253,7 +253,7 @@ export async function POST(req: NextRequest) {
       const allVotes = accepted.length > 0 ? accepted : [vote];
       const frameId = crypto.randomUUID();
       // vote.deviceId = l'ESP dont le vote vient d'atteindre le quorum → premier mineur (sauf comité « enforce » : tirage déterministe dans finalizeBlock)
-      const block = await finalizeBlock(candidate, allVotes, frameId, vote.deviceId, finalOutcome ? finalOutcome.votes.filter((v) => v.verdict === "reject").length : voteMap ? countRejects(voteMap) : 0, receiptVotes);
+      const block = await finalizeBlock(candidate, allVotes, frameId, vote.deviceId, finalOutcome ? finalOutcome.votes.filter((v) => v.verdict === "reject").length : voteMap ? countRejects(voteMap) : 0, receiptVotes, wave);
       // Réputation : UNE agrégation (1 commande Redis) à la finalisation ; ne bloque jamais le minage.
       if (finalOutcome) await applyReputation(redis as unknown as { eval(s: string, k: string[], a: string[]): Promise<unknown> }, reputationEntries(candidate, finalOutcome));
 

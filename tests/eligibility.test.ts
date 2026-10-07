@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import {
-  DEFAULT_ELIGIBILITY, authorProfilesOf, candidateEligibilityOf, eligibilityConfigFromEnv, eligibilityModeFromEnv, evaluateDevice, planPool, profileIdOf, voteGate, voterKey,
+  DEFAULT_ELIGIBILITY, ELECTORATE_MAX, authorProfilesOf, candidateEligibilityOf, eligibilityConfigFromEnv, eligibilityModeFromEnv, evaluateDevice, planPool, profileIdOf, voteGate, voterKey,
   type CandidateEligibility, type EligibilityConfig,
 } from "../lib/eligibility";
 import { castVoteOn, countAccepts, countRejects, countV2Accepts, countVoters, type Candidate, type ValidationVote, type VoteMap, type VoteRedis } from "../lib/chain";
@@ -133,11 +133,44 @@ test("porte de vote — shadow : ne refuse JAMAIS (journal seulement) et n'estam
   assert.deepEqual(gate("enforce", dev("B"), elig({ mode: "shadow" })), { action: "allow", profileId: null });
 });
 
-test("candidateEligibilityOf : mémorise le plan sans la liste des profils (coût de stockage borné)", () => {
+test("candidateEligibilityOf : FIGE l'électorat au dépôt (liste triée des profils, ≤ 64) ; au-delà : « overflow », contrôle dynamique ; stockage borné", () => {
   const plan = planPool([dev("A"), dev("B"), dev("C"), dev("D")], ["esp_dev_A"], NOW, cfg);
   const e = candidateEligibilityOf("enforce", plan);
-  assert.deepEqual(e, { mode: "enforce", plan: "independent", authorProfiles: ["esp_dev_A"], profiles: 3, independentProfiles: 3 });
-  assert.ok(JSON.stringify(e).length < 160);
+  assert.deepEqual(e, { mode: "enforce", plan: "independent", authorProfiles: ["esp_dev_A"], profiles: 3, independentProfiles: 3, profileIds: ["esp_dev_B", "esp_dev_C", "esp_dev_D"] });
+  assert.ok(JSON.stringify(e).length < 300);
+  const many = Array.from({ length: 64 }, (_, i) => dev(`M${String(i).padStart(2, "0")}`));
+  const full = candidateEligibilityOf("enforce", planPool(many, [], NOW, cfg));
+  assert.equal(full.profileIds!.length, 64); assert.ok(JSON.stringify(full).length < 2600, String(JSON.stringify(full).length));
+  const over = candidateEligibilityOf("enforce", planPool([...many, dev("M64")], [], NOW, cfg));
+  assert.equal(over.profileIds, undefined); assert.equal(over.overflow, true); assert.equal(over.profiles, 65);
+  assert.equal(ELECTORATE_MAX, 64);
+});
+
+test("ÉLECTORAT FIGÉ (audit GPT) : un profil devenu actif APRÈS le dépôt ne vote pas ; un profil devenu inactif reste électeur ; l'auteur reste exclu ; un profil déjà représenté est refusé", () => {
+  const plan = planPool([dev("A"), dev("B"), dev("C"), dev("D")], ["esp_dev_A"], NOW, cfg);   // électorat : B, C, D
+  const e = candidateEligibilityOf("enforce", plan);
+  const later = dev("N", { createdAt: NOW - 72 * H, lastPing: NOW - 5_000 });                       // profil qui n'était PAS dans l'électorat (il était inactif ou absent au dépôt)
+  assert.deepEqual(gate("enforce", later, e), { action: "refuse", status: 403, reason: "not-in-electorate", profileId: "esp_dev_N" }, "hors dénominateur ⇒ pas de voix");
+  const nowStale = dev("B", { lastPing: NOW - 3 * H });                                              // B était actif au dépôt, ne l'est plus : son appareil vote ⇒ il s'est manifesté
+  assert.deepEqual(gate("enforce", nowStale, e), { action: "allow", profileId: "esp_dev_B" }, "dans l'électorat figé : l'activité n'est PAS recalculée");
+  assert.deepEqual(gate("enforce", dev("A"), e), { action: "refuse", status: 403, reason: "author", profileId: "esp_dev_A" });
+  assert.deepEqual(gate("enforce", dev("F", { artistName: undefined }), e), { action: "refuse", status: 403, reason: "unpaired", profileId: null });
+  assert.equal((gate("enforce", dev("C"), e, ["esp_dev_C"]) as { status: number }).status, 409);
+  // le dénominateur du quorum est EXACTEMENT la taille de l'électorat figé
+  assert.equal(plan.poolSize, e.profileIds!.length);
+  // bootstrap : l'auteur figure dans la liste figée et vote une fois
+  const boot = candidateEligibilityOf("enforce", planPool([dev("A"), dev("B")], ["esp_dev_A"], NOW, cfg));
+  assert.equal(boot.plan, "bootstrap"); assert.deepEqual(boot.profileIds, ["esp_dev_A", "esp_dev_B"]);
+  assert.deepEqual(gate("enforce", dev("A"), boot), { action: "allow", profileId: "esp_dev_A" });
+  assert.equal((gate("enforce", dev("N"), boot) as { reason: string }).reason, "not-in-electorate");
+});
+
+test("électorat trop grand (overflow) ou candidat antérieur : le contrôle reste DYNAMIQUE comme avant (compatibilité)", () => {
+  const dynamic = elig();   // sans profileIds
+  assert.equal(dynamic.profileIds, undefined);
+  assert.deepEqual(gate("enforce", dev("B"), dynamic), { action: "allow", profileId: "esp_dev_B" });
+  assert.equal((gate("enforce", dev("S", { lastPing: NOW - 2 * H }), dynamic) as { reason: string }).reason, "inactive");
+  assert.equal((gate("enforce", dev("N"), { ...dynamic, overflow: true }) as { action: string }).action, "allow");
 });
 
 // ── comptage : une voix par profil, abstention en cas de contradiction ───────────────────────────────────────────────────────────────────────────
@@ -227,7 +260,7 @@ test("reset-key : droits du PROPRIÉTAIRE vérifiés AVANT toute lecture ; confi
   assert.doesNotMatch(route, /setInterval|\.scan\(|redis\.keys/);
   const store = read("lib/deviceStore.ts");
   const fn = store.slice(store.indexOf("export async function resetDeviceKey"), store.indexOf("export async function setDeviceName")).split("/**")[0];
-  assert.match(fn, /delete device\.publicKey/); assert.match(fn, /saveDevice\(device\)/);
+  assert.match(fn, /delete device\.publicKey/); assert.match(fn, /writeDeviceKey\(device\)/); assert.doesNotMatch(fn, /saveDevice\(/, "1 GET + 1 SET, jamais les 3 écritures de saveDevice");
   assert.doesNotMatch(fn, /artistId|artistName|deviceName|pairCode/, "ne modifie que la clé");
 });
 

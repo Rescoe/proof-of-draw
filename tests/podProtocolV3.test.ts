@@ -120,6 +120,12 @@ test("mineur : déterministe, rejouable, pondéré en sens inverse du nombre de 
   assert.equal(drawMiner({ ...base, accepted: [] }), null);
   assert.equal(drawMiner({ ...base, accepted: [{ profileId: "art_solo", minedBlocks: 9 }] }), "art_solo");
   assert.equal(minerWeight(0), 1_000_000); assert.equal(minerWeight(3), 250_000); assert.equal(minerWeight(12), 76_923);
+  // audit GPT : à partir de 10⁶ blocs le poids valait 0 (somme nulle ⇒ RangeError « Division by zero ») ; il est désormais ≥ 1 TOUJOURS
+  for (const n of [999_999, 1_000_000, 1_000_001, 10_000_000, 4_294_967_295, 2 ** 40, Number.MAX_SAFE_INTEGER]) assert.ok(minerWeight(n) >= 1, String(n));
+  assert.equal(minerWeight(999_999), 1); assert.equal(minerWeight(1_000_000), 1); assert.equal(minerWeight(-5), 1_000_000); assert.equal(minerWeight(NaN), 1_000_000); assert.equal(minerWeight(Infinity), 1_000_000);
+  const huge = [{ profileId: "art_a", minedBlocks: 1_000_000 }, { profileId: "art_b", minedBlocks: 4_294_967_295 }];
+  assert.doesNotThrow(() => drawMiner({ parentHash: PARENT_HASH, contentHash: CONTENT_HASH, votesRoot: sha256Hex("x"), accepted: huge }));
+  assert.ok(["art_a", "art_b"].includes(drawMiner({ parentHash: PARENT_HASH, contentHash: CONTENT_HASH, votesRoot: sha256Hex("x"), accepted: huge })!));
   // équité statistique : sur 3000 tirages (reçus différents), le profil sans bloc gagne nettement plus que celui qui en a 12
   const wins: Record<string, number> = {};
   for (let i = 0; i < 3000; i++) { const id = drawMiner({ ...base, votesRoot: sha256Hex(`reçus${i}`), accepted })!; wins[id] = (wins[id] ?? 0) + 1; }

@@ -5,7 +5,7 @@
 
 import { createPrivateKey, createPublicKey, sign } from "node:crypto";
 import {
-  PROTOCOL, blockCanonicalV2, blockHashV2, classifyVote, committeeRank, committeeSeed, committeeWindow, decide, drawMiner, evaluateRules, merkleProof, merkleRoot, minerSeed, parseVoteMessageV3,
+  PROTOCOL, blockCanonicalV2, blockHashV2, classifyVote, committeeRank, committeeRoot, committeeSeed, committeeWindow, minerRoot, decide, drawMiner, evaluateRules, merkleProof, merkleRoot, minerSeed, parseVoteMessageV3,
   saltNonce, saltedHash, selectCommittee, sha256Hex, voteLeaf, voteMessageV3, type BlockCanonicalV2, type VoteV3, type Verdict,
 } from "../../lib/podProtocolV3";
 
@@ -74,6 +74,7 @@ export function buildVectors() {
   const block: BlockCanonicalV2 = {
     parentHash: PARENT_HASH, imageHash: rawHash, actionsHash: sha256Hex("pod-test-actions"), contentHash: CONTENT_HASH, deviceId: DEVICE_ID, poolScreen: "oled096",
     validatorProfileIds: ["art_bob", "art_alice"], scorePpm: 587_000, minedAt: 1_791_300_000_000, votesRoot: merkleRoot(leaves(2)), committeeMode: "committee", committeeK: 7,
+    committeeRoot: committeeRoot({ mode: "committee", K: 7, threshold: 5, wave: 1, ranked: c9.ranked.slice(0, 14) }), minerRoot: minerRoot({ profileId: miner.winner!, accepted }),
   };
 
   // ── réputation ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────

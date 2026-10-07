@@ -38,10 +38,13 @@ static inline uint64_t pod_div_round(uint64_t a, uint64_t b) { return (a + b / 2
 class PodMetrics {
  public:
   void begin(uint16_t w, uint16_t h) {
-    w_ = w; h_ = h; x_ = 0; y_ = 0; last_ = 0; ones_ = 0; runs_ = 1; trans_ = 0; count_ = 0;
+    // Dimensions invalides (0, ou largeur > POD_MAX_W = taille du tampon de ligne) : AUCUNE écriture ne sera faite (push() sans effet), finish() renvoie false.
+    bad_ = (w == 0 || h == 0 || w > POD_MAX_W);
+    w_ = bad_ ? 0 : w; h_ = bad_ ? 0 : h; x_ = 0; y_ = 0; last_ = 0; ones_ = 0; runs_ = 1; trans_ = 0; count_ = 0;
     memset(row_, 0, sizeof(row_));
   }
   void push(uint8_t a) {
+    if (bad_ || w_ == 0 || x_ >= w_) return;   // garde mémoire : x_ < w_ <= POD_MAX_W = taille de row_
     uint8_t v = a ? 1 : 0;
     ones_ += v;
     if (count_ > 0 && v != last_) runs_++;
@@ -54,7 +57,7 @@ class PodMetrics {
   }
   bool finish(PodMetricsOut* out) const {
     uint64_t n = (uint64_t)w_ * h_;
-    if (w_ == 0 || h_ == 0 || w_ > POD_MAX_W || count_ != n) return false;
+    if (bad_ || w_ == 0 || h_ == 0 || w_ > POD_MAX_W || count_ != n) return false;
     uint64_t total = (uint64_t)(w_ - 1) * h_ + (uint64_t)w_ * (h_ - 1);
     uint32_t q = (uint32_t)pod_div_round(1024ULL * ones_, n);
     uint32_t e = POD_TABLE(q);
@@ -67,6 +70,7 @@ class PodMetrics {
   }
  private:
   uint16_t w_ = 0, h_ = 0, x_ = 0, y_ = 0;
+  bool bad_ = false;
   uint8_t last_ = 0;
   uint8_t row_[POD_MAX_W];
   uint32_t ones_ = 0, runs_ = 1, trans_ = 0;

@@ -38,7 +38,7 @@ import { FramePayload } from "@/lib/queue";
 import type { ActionEvent } from "@/lib/types/actions";
 import { summarizeVotes, type VotesSummary } from "@/lib/validationSummary";
 import { voterKey, type CandidateEligibility } from "@/lib/eligibility";
-import { blockReceiptsEnabled, buildBlockV2, type ReceiptsDoc } from "@/lib/blockReceipts";
+import { blockReceiptsEnabled, prepareBlockV2, sealBlockV2, type MinerCommit, type ReceiptsDoc } from "@/lib/blockReceipts";
 import type { CandidateCommittee } from "@/lib/committee";
 import { drawMiner } from "@/lib/podProtocolV3";
 
@@ -105,6 +105,9 @@ export interface Block {
   committeeMode?: "quorum" | "committee" | "bootstrap"; // règle de décision : « quorum » = ⌈0,51 × électorat⌉ historique ; « committee » (K ≤ 7, seuil ⌈2K/3⌉) ; « bootstrap » (réseau trop petit : validation PARTIELLE)
   committeeK?: number;      // taille de l'électorat figé au dépôt du candidat
   receiptsCount?: number;
+  /** Engagements dans le hash (audit GPT) : `committeeRoot` = mode + K + seuil + vague + liste ORDONNÉE du comité ; `minerRoot` = résultat ET entrées du tirage du mineur. */
+  committeeRoot?: string;
+  minerRoot?: string;
   /** Mineur tiré de façon DÉTERMINISTE et rejouable (comité « enforce » + BLOCK_RECEIPTS) : graine = chaîne + contenu + racine des reçus ; `accepted` = profils approbateurs et leur nombre de blocs minés au moment du tirage. Hors hash. */
   miner?: { profileId: string; accepted: { profileId: string; minedBlocks: number }[] };
 }
@@ -533,6 +536,7 @@ export async function finalizeBlock(
   minerDeviceId?: string,   // ESP dont le vote a déclenché le quorum
   rejects = 0,              // refus signés (v2) reçus avant le quorum : seulement pour le résumé affiché
   allVotes?: readonly ValidationVote[],   // TOUS les votes (acceptations ET refus) : nécessaires aux reçus du bloc v2 (BLOCK_RECEIPTS=true)
+  wave: 1 | 2 = 1,                        // vague de décision du comité (engagée dans le hash)
 ): Promise<Block> {
   const head     = await getChainHead();
   const length   = await getChainLength();
@@ -559,7 +563,26 @@ export async function finalizeBlock(
   let blockHash = await sha256Hex(canonical);
 
   // Bloc v2 (BLOCK_RECEIPTS=true) : le hash s'engage sur les reçus signés ; sinon hash v1 historique, inchangé.
-  const v2 = blockReceiptsEnabled() && allVotes && allVotes.length > 0 ? buildBlockV2({ candidate, allVotes, parentHash, finalScore, minedAt }) : null;
+  // Deux temps : (1) reçus et racine, (2) tirage du mineur (a besoin de votesRoot), (3) scellement : le hash ENGAGE le comité ET le tirage du mineur (audit GPT).
+  const prep = blockReceiptsEnabled() && allVotes && allVotes.length > 0 ? prepareBlockV2({ candidate, allVotes, parentHash, finalScore, minedAt, wave }) : null;
+
+  // Comité « enforce » + reçus : tirage DÉTERMINISTE et rejouable (graine = chaîne + contenu + racine des reçus ; aucun Math.random). Coût : un LLEN par approbateur, comme avant.
+  let minerInfo: Block["miner"] | undefined;
+  let deterministicMiner: string | null = null;
+  if (prep && candidate.committee?.state === "enforce") {
+    const approvers = [...new Map(votes.filter((x) => x.verdict !== "reject").map((x) => [voterKey(x), x])).values()];
+    const accepted = await Promise.all(approvers.map(async (x) => {
+      let n = 0;
+      try { n = (await redis.llen(`chain:device:${x.deviceId}:blocks`)) ?? 0; } catch { n = 0; }
+      return { profileId: voterKey(x), minedBlocks: n };
+    }));
+    const winner = drawMiner({ parentHash, contentHash: prep.contentHash, votesRoot: prep.votesRoot, accepted });
+    if (winner) {
+      deterministicMiner = approvers.find((x) => voterKey(x) === winner)?.deviceId ?? null;
+      minerInfo = { profileId: winner, accepted };
+    }
+  }
+  const v2 = prep ? sealBlockV2(prep, minerInfo ? (minerInfo as MinerCommit) : null) : null;
   if (v2) blockHash = v2.blockHash;
 
   // ── Axe 3 : Ré-validation des k blocs précédents ─────────────────────────────
@@ -591,22 +614,6 @@ export async function finalizeBlock(
   // on tire au sort parmi tous les validateurs, pondéré inversement par le nombre
   // de blocs récents minés par chaque device.
   // Un device qui n'a pas miné depuis longtemps a plus de chances.
-  // Comité « enforce » + reçus : tirage DÉTERMINISTE et rejouable (graine = chaîne + contenu + racine des reçus ; aucun Math.random). Coût : un LLEN par approbateur, comme avant.
-  let minerInfo: Block["miner"] | undefined;
-  let deterministicMiner: string | null = null;
-  if (v2 && candidate.committee?.state === "enforce") {
-    const approvers = [...new Map(votes.filter((x) => x.verdict !== "reject").map((x) => [voterKey(x), x])).values()];
-    const accepted = await Promise.all(approvers.map(async (x) => {
-      let n = 0;
-      try { n = (await redis.llen(`chain:device:${x.deviceId}:blocks`)) ?? 0; } catch { n = 0; }
-      return { profileId: voterKey(x), minedBlocks: n };
-    }));
-    const winner = drawMiner({ parentHash, contentHash: v2.fields.contentHash, votesRoot: v2.fields.votesRoot, accepted });
-    if (winner) {
-      deterministicMiner = approvers.find((x) => voterKey(x) === winner)?.deviceId ?? null;
-      minerInfo = { profileId: winner, accepted };
-    }
-  }
   const effectiveMiner = deterministicMiner
     ?? await selectEquitableMiner(votes, minerDeviceId)
     ?? votes[votes.length - 1]?.deviceId
@@ -686,8 +693,8 @@ export async function finalizeBlock(
     );
   }
 
-  // Reçus signés du bloc v2 : permanents, dans la même rafale d'écritures (+1 commande par bloc)
-  if (v2) writes.push(redis.set(receiptsKey(blockHash), JSON.stringify(v2.doc)));
+  // Reçus signés du bloc v2 : permanents (+1 commande par bloc), écrits AVANT le bloc : /api/block-proof ne peut jamais voir un bloc v2 sans ses reçus (audit GPT)
+  if (v2) await redis.set(receiptsKey(blockHash), JSON.stringify(v2.doc));
 
   // Animation : clip + empreintes + scores par image, permanents (≤ 25 Ko), à côté de l'affiche
   if (candidate.anim) {

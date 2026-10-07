@@ -345,10 +345,12 @@
       "minedAt": 1791300000000,
       "votesRoot": "c34e39ed014675761c81b7430575a28d16d7bc1a81a170ace0f502dd6dda5a85",
       "committeeMode": "committee",
-      "committeeK": 7
+      "committeeK": 7,
+      "committeeRoot": "9d77eec69630470d33902e42b8a790f6722e77524bbe0af156d28b8292f53ed6",
+      "minerRoot": "1f42f74fa0be367a5b6f46f16f0523536ef6511419c93c2d3f64063a32f56267"
     },
-    "canonical": "{\"blockVersion\":2,\"metricsVersion\":2,\"rulesVersion\":1,\"parentHash\":\"b708882bd916ecc71a1af2ea292892918b5e2dcd4eb5e588046b9ae8093e6a6d\",\"imageHash\":\"8d7e566766f6bd1bb4cac87cadfde681197f9243f4d2692a0fd12674092212a7\",\"actionsHash\":\"972dd261231c9a1ef7a3f81e3565254cd70e04b1928a30d1520bc216bce0b15a\",\"contentHash\":\"8d7e566766f6bd1bb4cac87cadfde681197f9243f4d2692a0fd12674092212a7\",\"deviceId\":\"dev_AB12CD34\",\"poolScreen\":\"oled096\",\"validatorProfileIds\":[\"art_alice\",\"art_bob\"],\"scorePpm\":587000,\"minedAt\":1791300000000,\"votesRoot\":\"c34e39ed014675761c81b7430575a28d16d7bc1a81a170ace0f502dd6dda5a85\",\"committeeMode\":\"committee\",\"committeeK\":7}",
-    "hash": "e247585a290be7c6db5d1020f8df50634f5bf443c6073b9bcf9b87e7a4322501"
+    "canonical": "{\"blockVersion\":2,\"metricsVersion\":2,\"rulesVersion\":1,\"parentHash\":\"b708882bd916ecc71a1af2ea292892918b5e2dcd4eb5e588046b9ae8093e6a6d\",\"imageHash\":\"8d7e566766f6bd1bb4cac87cadfde681197f9243f4d2692a0fd12674092212a7\",\"actionsHash\":\"972dd261231c9a1ef7a3f81e3565254cd70e04b1928a30d1520bc216bce0b15a\",\"contentHash\":\"8d7e566766f6bd1bb4cac87cadfde681197f9243f4d2692a0fd12674092212a7\",\"deviceId\":\"dev_AB12CD34\",\"poolScreen\":\"oled096\",\"validatorProfileIds\":[\"art_alice\",\"art_bob\"],\"scorePpm\":587000,\"minedAt\":1791300000000,\"votesRoot\":\"c34e39ed014675761c81b7430575a28d16d7bc1a81a170ace0f502dd6dda5a85\",\"committeeMode\":\"committee\",\"committeeK\":7,\"committeeRoot\":\"9d77eec69630470d33902e42b8a790f6722e77524bbe0af156d28b8292f53ed6\",\"minerRoot\":\"1f42f74fa0be367a5b6f46f16f0523536ef6511419c93c2d3f64063a32f56267\"}",
+    "hash": "3be763ca9449314e7037af7134b942cdf997255414605a3b85ab1fa2938d1b5d"
   },
   "reputation": [
     {

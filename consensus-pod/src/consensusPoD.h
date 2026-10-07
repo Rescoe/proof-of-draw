@@ -161,6 +161,12 @@ static inline PodDecision pod_decide_seats(int K, int thresholdN, const uint8_t*
 // ─── Mineur déterministe ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 struct PodMinerCand { const char* profileId; uint32_t minedBlocks; };
 
+/** Poids = max(1, ⌊10⁶/(blocsMinés+1)⌋), calculé en 64 bits : à partir de 10⁶ blocs le poids valait 0 (somme nulle ⇒ division par zéro), et blocsMinés+1 débordait sur 32 bits (audit GPT). */
+static inline uint64_t pod_miner_weight(uint32_t minedBlocks) {
+  uint64_t w = 1000000ULL / ((uint64_t)minedBlocks + 1ULL);
+  return w ? w : 1;
+}
+
 /** graine du mineur = SHA-256("pod-miner-v3|" graineDuComité "|" votesRoot). */
 template <class Sha> static inline void pod_miner_seed(const char* committeeSeedHex, const char* votesRootHex, char out[65]) {
   Sha s; s.begin(); uint8_t o[32];
@@ -177,13 +183,37 @@ template <class Sha> static inline int pod_miner_draw(const char* parentHash, co
   int idx[POD_MAX_SET];
   for (int i = 0; i < n; i++) { int j = i; while (j > 0 && strcmp(c[idx[j - 1]].profileId, c[i].profileId) > 0) { idx[j] = idx[j - 1]; j--; } idx[j] = i; }
   uint64_t total = 0;
-  for (int i = 0; i < n; i++) total += (uint64_t)(1000000UL / (c[i].minedBlocks + 1UL));
+  for (int i = 0; i < n; i++) total += pod_miner_weight(c[i].minedBlocks);   // ≥ 1 par candidat : total ≥ 1, jamais de division par zéro
   char cs[65], ms[65]; pod_committee_seed<Sha>(parentHash, contentHash, cs); pod_miner_seed<Sha>(cs, votesRootHex, ms);
   uint64_t u = 0;
   for (int i = 0; i < 16; i++) { char ch = ms[i]; u = (u << 4) | (uint64_t)(ch <= '9' ? ch - '0' : ch - 'a' + 10); }
   u %= total;
-  for (int k = 0; k < n; k++) { uint64_t w = (uint64_t)(1000000UL / (c[idx[k]].minedBlocks + 1UL)); if (u < w) return idx[k]; u -= w; }
+  for (int k = 0; k < n; k++) { uint64_t w = pod_miner_weight(c[idx[k]].minedBlocks); if (u < w) return idx[k]; u -= w; }
   return idx[n - 1];
+}
+
+// ─── Engagements du comité et du mineur dans le hash du bloc (audit GPT) ──────────────────────────────────────────────────────────────────────
+static inline int pod_utoa(uint64_t v, char* out) { char t[24]; int i = 23; t[i] = 0; if (v == 0) t[--i] = '0'; while (v) { t[--i] = (char)('0' + (v % 10)); v /= 10; } int n = 0; while (t[i]) out[n++] = t[i++]; out[n] = 0; return n; }
+
+/** committeeRoot = SHA-256("pod-committee-set-v3|" mode "|" K "|" seuil "|" vague "|" rangs séparés par « , »). Quorum historique : mode "quorum", K = électorat, seuil 0, vague 0, aucun rang. */
+template <class Sha> static inline void pod_committee_root(const char* mode, uint32_t K, uint32_t thresholdN, uint32_t wave, const char* const* ranked, int n, char out[65]) {
+  Sha s; s.begin(); char num[24]; uint8_t o[32];
+  s.update("pod-committee-set-v3|", 21); s.update(mode, strlen(mode)); s.update("|", 1);
+  s.update(num, (size_t)pod_utoa(K, num)); s.update("|", 1); s.update(num, (size_t)pod_utoa(thresholdN, num)); s.update("|", 1); s.update(num, (size_t)pod_utoa(wave, num)); s.update("|", 1);
+  for (int i = 0; i < n; i++) { if (i) s.update(",", 1); s.update(ranked[i], strlen(ranked[i])); }
+  s.finish(o); pod_hex(o, 32, out);
+}
+
+/** minerRoot = SHA-256("pod-miner-set-v3|" profil tiré "|" « profil:blocs » triés par profil, séparés par « , »). `winner` nul : SHA-256("pod-miner-set-v3|none"). */
+template <class Sha> static inline void pod_miner_root(const char* winner, const PodMinerCand* c, int n, char out[65]) {
+  Sha s; s.begin(); uint8_t o[32];
+  if (!winner) { s.update("pod-miner-set-v3|none", 21); s.finish(o); pod_hex(o, 32, out); return; }
+  int idx[POD_MAX_SET]; if (n < 0) n = 0; if (n > POD_MAX_SET) n = POD_MAX_SET;
+  for (int i = 0; i < n; i++) { int j = i; while (j > 0 && strcmp(c[idx[j - 1]].profileId, c[i].profileId) > 0) { idx[j] = idx[j - 1]; j--; } idx[j] = i; }
+  s.update("pod-miner-set-v3|", 17); s.update(winner, strlen(winner)); s.update("|", 1);
+  char num[24];
+  for (int k = 0; k < n; k++) { if (k) s.update(",", 1); s.update(c[idx[k]].profileId, strlen(c[idx[k]].profileId)); s.update(":", 1); s.update(num, (size_t)pod_utoa(c[idx[k]].minedBlocks, num)); }
+  s.finish(o); pod_hex(o, 32, out);
 }
 
 // ─── Hachage canonique du bloc v2 ────────────────────────────────────────────────────────────────────────────────────────────────────────────
@@ -193,6 +223,7 @@ struct PodBlockV2 {
   uint32_t scorePpm; uint64_t minedAt;
   const char* animRoot;                              // nullable
   const char *votesRoot, *committeeMode; uint32_t committeeK;
+  const char *committeeRoot, *minerRoot;             // engagements (voir pod_committee_root / pod_miner_root)
 };
 
 /** Texte canonique EXACT de blockCanonicalV2() (JSON.stringify, ordre des clés figé, score en ppm entier). Retourne la longueur ou −1 (tampon ≥ 1 024 octets conseillé). */
@@ -208,7 +239,8 @@ static inline int pod_block_canonical_v2(char* out, size_t cap, const PodBlockV2
   for (int i = 0; i < b.nValidators; i++) { if (i) o.ch(','); o.ch('"'); o.str(sorted[i]); o.ch('"'); }
   o.str("],\"scorePpm\":"); o.u64(b.scorePpm); o.str(",\"minedAt\":"); o.u64(b.minedAt);
   if (b.animRoot && b.animRoot[0]) { o.str(",\"animRoot\":\""); o.str(b.animRoot); o.ch('"'); }
-  o.str(",\"votesRoot\":\""); o.str(b.votesRoot); o.str("\",\"committeeMode\":\""); o.str(b.committeeMode); o.str("\",\"committeeK\":"); o.u64(b.committeeK); o.ch('}');
+  o.str(",\"votesRoot\":\""); o.str(b.votesRoot); o.str("\",\"committeeMode\":\""); o.str(b.committeeMode); o.str("\",\"committeeK\":"); o.u64(b.committeeK);
+  o.str(",\"committeeRoot\":\""); o.str(b.committeeRoot); o.str("\",\"minerRoot\":\""); o.str(b.minerRoot); o.str("\"}");
   return o.ok ? (int)o.pos : -1;
 }
 

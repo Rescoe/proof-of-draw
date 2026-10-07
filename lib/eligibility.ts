@@ -53,7 +53,10 @@ export function profileIdOf(d: Pick<Device, "deviceId" | "artistId" | "artistNam
   return null;
 }
 
-export type IneligibleReason = "unpaired" | "inactive" | "too-young" | "no-key" | "author";
+export type IneligibleReason = "unpaired" | "inactive" | "too-young" | "no-key" | "author" | "not-in-electorate";
+
+/** Taille maximale de l'électorat FIGÉ stocké dans le candidat (≈ 1,6 Ko). Au-delà : `overflow` — le contrôle redevient dynamique (le comité, borné à 2K, reste la protection à grande échelle). */
+export const ELECTORATE_MAX = 64;
 export type DeviceEligibility = { eligible: true; profileId: string } | { eligible: false; reason: IneligibleReason; profileId: string | null };
 
 const norm = (s: string) => s.trim().toLowerCase();
@@ -112,13 +115,20 @@ export interface CandidateEligibility {
   mode: "shadow" | "enforce";
   plan: PoolPlanKind;
   authorProfiles: string[];
-  /** profils éligibles au moment du dépôt (information ; le contrôle d'un vote reste individuel) */
+  /** nombre de profils éligibles au moment du dépôt */
   profiles: number;
   independentProfiles: number;
+  /**
+   * ÉLECTORAT FIGÉ au dépôt (liste triée des profils, ≤ ELECTORATE_MAX) : seuls ces profils peuvent voter, et le dénominateur du quorum est exactement sa taille. Sans cela (version précédente)
+   * l'éligibilité était recalculée au vote : un profil devenu actif après le dépôt votait hors dénominateur (audit GPT). Absent = candidat antérieur ou électorat trop grand (`overflow`).
+   */
+  profileIds?: string[];
+  overflow?: true;
 }
 
 export function candidateEligibilityOf(mode: "shadow" | "enforce", plan: PoolPlan): CandidateEligibility {
-  return { mode, plan: plan.kind, authorProfiles: plan.authorProfiles, profiles: plan.profiles.length, independentProfiles: plan.independentProfiles };
+  const frozen = plan.profiles.length <= ELECTORATE_MAX ? { profileIds: [...plan.profiles].sort() } : { overflow: true as const };
+  return { mode, plan: plan.kind, authorProfiles: plan.authorProfiles, profiles: plan.profiles.length, independentProfiles: plan.independentProfiles, ...frozen };
 }
 
 export type VoteGate =
@@ -137,6 +147,15 @@ export function voteGate(opts: { mode: EligibilityMode; eligibility: CandidateEl
   if (mode === "off" || !eligibility) return { action: "allow", profileId: null };
   const verdict = ((): VoteGate => {
     if (eligibility.plan === "none") return { action: "refuse", status: 403, reason: "no-eligible-profile", profileId: profileIdOf(device) };
+    // ÉLECTORAT FIGÉ : l'appartenance à la liste du dépôt décide ; ni l'activité ni l'ancienneté ne sont recalculées (un appareil qui vote vient de se manifester).
+    if (eligibility.profileIds) {
+      const profileId = profileIdOf(device);
+      if (!profileId) return { action: "refuse", status: 403, reason: "unpaired", profileId: null };
+      if (eligibility.plan !== "bootstrap" && eligibility.authorProfiles.includes(profileId)) return { action: "refuse", status: 403, reason: "author", profileId };
+      if (!eligibility.profileIds.includes(profileId)) return { action: "refuse", status: 403, reason: "not-in-electorate", profileId };
+      if (opts.priorVoterProfiles.has(profileId)) return { action: "refuse", status: 409, reason: "profile-already-voted", profileId };
+      return { action: "allow", profileId };
+    }
     const a = evaluateDevice(device, now, cfg, eligibility.authorProfiles, eligibility.plan === "bootstrap");
     if (!a.eligible) return { action: "refuse", status: 403, reason: a.reason, profileId: a.profileId };
     if (opts.priorVoterProfiles.has(a.profileId)) return { action: "refuse", status: 409, reason: "profile-already-voted", profileId: a.profileId };

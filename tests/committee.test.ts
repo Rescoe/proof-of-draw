@@ -4,11 +4,11 @@ import fs from "node:fs";
 import path from "node:path";
 import { createHash, createPrivateKey, createPublicKey, sign } from "node:crypto";
 import {
-  committeeGate, committeeModeFromEnv, committeeOutcome, currentWave, planCandidateCommittee, rejectIsObjective, toCommittee, waveDelayMsFromEnv, type CandidateCommittee,
+  committeeEnforceBlockedByGuard, committeeGate, committeeModeFromEnv, committeeModeRequested, committeeOutcome, currentWave, planCandidateCommittee, rejectIsObjective, toCommittee, waveDelayMsFromEnv, type CandidateCommittee,
 } from "../lib/committee";
 import type { PoolPlan } from "../lib/eligibility";
 import { REP_KEY, REPUTATION_SCRIPT, applyReputation, reputationArgs, reputationEntries, reputationOf, type RepEntry } from "../lib/reputation";
-import { buildBlockV2 } from "../lib/blockReceipts";
+import { buildBlockV2, prepareBlockV2, sealBlockV2 } from "../lib/blockReceipts";
 import { verifyBlock, type ProofBlock } from "../lib/podVerify";
 import { buildCandidateV2, voteMessageV2 } from "../lib/podVote";
 import { METRIC_GRID, PPM } from "../lib/podMetrics";
@@ -48,7 +48,15 @@ test("modes et délai : COMMITTEE_MODE absent/invalide = off ; vague 2 : 10 min 
   assert.equal(committeeModeFromEnv(env({})), "off");
   for (const v of ["", "on", "true", "strict"]) assert.equal(committeeModeFromEnv(env({ COMMITTEE_MODE: v })), "off", v);
   assert.equal(committeeModeFromEnv(env({ COMMITTEE_MODE: "Shadow" })), "shadow");
-  assert.equal(committeeModeFromEnv(env({ COMMITTEE_MODE: "enforce" })), "enforce");
+  // GARDE contre le grinding (audit GPT) : « enforce » n'est effectif qu'avec l'accusé explicite COMMITTEE_GRINDING_ACK=true
+  assert.equal(committeeModeRequested(env({ COMMITTEE_MODE: "enforce" })), "enforce");
+  assert.equal(committeeModeFromEnv(env({ COMMITTEE_MODE: "enforce" })), "shadow", "sans accusé : ramené à « shadow »");
+  assert.equal(committeeEnforceBlockedByGuard(env({ COMMITTEE_MODE: "enforce" })), true);
+  for (const ack of ["", "1", "yes", "TRUE", "false"]) assert.equal(committeeModeFromEnv(env({ COMMITTEE_MODE: "enforce", COMMITTEE_GRINDING_ACK: ack })), "shadow", `accusé « ${ack} » invalide`);
+  assert.equal(committeeModeFromEnv(env({ COMMITTEE_MODE: "enforce", COMMITTEE_GRINDING_ACK: "true" })), "enforce");
+  assert.equal(committeeEnforceBlockedByGuard(env({ COMMITTEE_MODE: "enforce", COMMITTEE_GRINDING_ACK: "true" })), false);
+  assert.equal(committeeEnforceBlockedByGuard(env({ COMMITTEE_MODE: "shadow" })), false);
+  assert.equal(committeeModeFromEnv(env({ COMMITTEE_GRINDING_ACK: "true" })), "off", "l'accusé seul n'active rien");
   assert.equal(waveDelayMsFromEnv(env({})), 600_000);
   assert.equal(waveDelayMsFromEnv(env({ COMMITTEE_WAVE2_MINUTES: "3" })), 180_000);
   for (const v of ["0", "-5", "abc", ""]) assert.equal(waveDelayMsFromEnv(env({ COMMITTEE_WAVE2_MINUTES: v })), 600_000, v);
@@ -185,9 +193,10 @@ function committeeBlock(profiles = PROFILES, nVotes = 5) {
   const out = committeeOutcome(c, 1, mapOf(...win.slice(0, nVotes).map((p) => v2vote(p))));
   assert.equal(out.decision.state, "accept");
   const candidate = { candidateId: CANDIDATE_ID, poolSize: profiles.length, v2: v2spec, anim: undefined, imageHash: "a".repeat(64), actionsHash: "b".repeat(64), deviceId: "dev_AUTHOR01", poolScreen: "oled096", committee: c } as unknown as Candidate;
-  const built = buildBlockV2({ candidate, allVotes: out.votes, parentHash: PARENT, finalScore: 0.4, minedAt: 1_791_300_000_000 });
+  const prep = prepareBlockV2({ candidate, allVotes: out.votes, parentHash: PARENT, finalScore: 0.4, minedAt: 1_791_300_000_000, wave: 1 });
   const accepted = out.votes.map((v) => ({ profileId: v.profileId!, minedBlocks: v.profileId!.length % 3 }));
-  const winner = drawMiner({ parentHash: PARENT, contentHash: v2spec.rawHash, votesRoot: built.fields.votesRoot, accepted })!;
+  const winner = drawMiner({ parentHash: PARENT, contentHash: v2spec.rawHash, votesRoot: prep.votesRoot, accepted })!;
+  const built = sealBlockV2(prep, { profileId: winner, accepted });   // le hash ENGAGE le comité (rangs, seuil, vague) ET le tirage du mineur (résultat + entrées)
   const block: ProofBlock = {
     blockHash: built.blockHash, parentHash: PARENT, imageHash: candidate.imageHash, actionsHash: candidate.actionsHash, deviceId: candidate.deviceId, poolScreen: "oled096",
     validatorIds: out.votes.map((v) => v.deviceId).sort(), score: 0.4, minedAt: 1_791_300_000_000, ...built.fields, miner: { profileId: winner, accepted },
@@ -203,35 +212,62 @@ test("bloc « comité » honnête : hash, reçus dans l'ORDRE DES RANGS, comité
   assert.deepEqual(doc.receipts.map((r) => r.profileId), c.ranked.filter((p) => doc.receipts.some((r) => r.profileId === p)), "reçus triés par rang");
   const r = verifyBlock({ block, receipts: doc, parent: { blockHash: PARENT } });
   assert.equal(r.ok, true, JSON.stringify(r.checks.filter((x) => x.status === "fail")));
-  for (const id of ["hash", "committee-ranks", "committee-members", "committee-decision", "miner", "signatures-v2"]) assert.equal(status(r, id), "ok", id);
+  for (const id of ["hash", "committee-commit", "miner-commit", "committee-ranks", "committee-members", "committee-decision", "miner", "signatures-v2"]) assert.equal(status(r, id), "ok", id);
+  assert.match(block.committeeRoot!, /^[0-9a-f]{64}$/); assert.match(block.minerRoot!, /^[0-9a-f]{64}$/);
+  assert.equal(doc.committee!.wave, 1);
   assert.equal(r.checks.find((x) => x.id === "quorum"), undefined, "pas de quorum historique en mode comité");
   assert.equal(r.level, "receipts");
   assert.notEqual(buildBlockV2({ candidate: { candidateId: CANDIDATE_ID, poolSize: 9, v2: v2spec, imageHash: "a".repeat(64), actionsHash: "b".repeat(64), deviceId: "dev_AUTHOR01", poolScreen: "oled096" } as unknown as Candidate, allVotes: [], parentHash: PARENT, finalScore: 0.4, minedAt: 1_791_300_000_000 }).blockHash, block.blockHash);
 });
 
-test("FALSIFICATION du comité : rangs réordonnés, K ou seuil changés, reçu d'un non-membre, trop peu d'approbations, mineur truqué, nombres de blocs incohérents", () => {
+test("FALSIFICATION du comité : le comité et le mineur sont ENGAGÉS dans le hash — liste remplacée, vague changée, K ou seuil changés, mineur truqué, entrées du tirage truquées", () => {
   const { block, doc } = committeeBlock();
+  // le serveur remplace la liste du comité par une autre liste COHÉRENTE (autres profils, même ordre de rangs recalculé) sans toucher au bloc : audit GPT, bloquant 1
+  const swapped = clone(doc); swapped.committee!.ranked = [...swapped.committee!.ranked.slice(0, 6), "art_complice1", "art_complice2"];
+  const rs = verifyBlock({ block, receipts: swapped });
+  assert.equal(status(rs, "committee-commit"), "fail", "le hash du bloc contient committeeRoot : une autre liste est détectée");
+  assert.equal(rs.ok, false);
+  const wave = clone(doc); wave.committee!.wave = 2;
+  assert.equal(status(verifyBlock({ block, receipts: wave }), "committee-commit"), "fail", "la vague est engagée");
   const reordered = clone(doc); reordered.committee!.ranked = [...reordered.committee!.ranked].reverse();
-  assert.equal(status(verifyBlock({ block, receipts: reordered }), "committee-ranks"), "fail");
+  const rr = verifyBlock({ block, receipts: reordered });
+  assert.equal(status(rr, "committee-commit"), "fail"); assert.equal(status(rr, "committee-ranks"), "fail");
   const k = clone(doc); k.committee!.K = 5;
-  assert.equal(status(verifyBlock({ block, receipts: k }), "committee-ranks"), "fail");
+  assert.equal(status(verifyBlock({ block, receipts: k }), "committee-commit"), "fail");
   const thr = clone(doc); thr.committee!.threshold = 2;
-  assert.equal(status(verifyBlock({ block, receipts: thr }), "committee-ranks"), "fail");
+  assert.equal(status(verifyBlock({ block, receipts: thr }), "committee-commit"), "fail");
+  // le serveur change AUSSI committeeRoot dans le bloc pour rester cohérent : alors c'est le HASH du bloc qui ne correspond plus
+  const both = verifyBlock({ block: { ...block, committeeRoot: "0".repeat(64) }, receipts: swapped });
+  assert.equal(status(both, "hash"), "fail", "committeeRoot fait partie du hash canonique");
   const stranger = clone(doc); stranger.receipts[0].profileId = "art_etranger";
   assert.equal(status(verifyBlock({ block, receipts: stranger }), "committee-members"), "fail");
-  const truqueur = { ...block, miner: { ...block.miner!, profileId: block.miner!.accepted.find((a) => a.profileId !== block.miner!.profileId)!.profileId } };
-  assert.equal(status(verifyBlock({ block: truqueur, receipts: doc }), "miner"), "fail", "un autre approbateur désigné : le tirage rejoué le contredit");
-  const rigged = { ...block, miner: { ...block.miner!, accepted: block.miner!.accepted.map((a) => ({ ...a, minedBlocks: a.profileId === block.miner!.profileId ? 99 : 0 })) } };
-  assert.notEqual(drawMiner({ parentHash: PARENT, contentHash: v2spec.rawHash, votesRoot: block.votesRoot!, accepted: rigged.miner.accepted }), block.miner!.profileId, "(contrôle du cas de test)");
+  // mineur : résultat ET entrées engagés
+  const truqueur = { ...block, miner: { ...block.miner!, profileId: block.miner!.accepted.find((x) => x.profileId !== block.miner!.profileId)!.profileId } };
+  const rt = verifyBlock({ block: truqueur, receipts: doc });
+  assert.equal(status(rt, "miner-commit"), "fail", "un autre profil désigné : minerRoot ne correspond plus"); assert.equal(status(rt, "miner"), "fail");
+  const rigged = { ...block, miner: { ...block.miner!, accepted: block.miner!.accepted.map((x) => ({ ...x, minedBlocks: x.profileId === block.miner!.profileId ? 99 : 0 })) } };
+  assert.equal(status(verifyBlock({ block: rigged, receipts: doc }), "miner-commit"), "fail", "nombres de blocs minés truqués : les ENTRÉES du tirage sont engagées");
+  const noMiner = { ...block, miner: undefined };
+  assert.equal(status(verifyBlock({ block: noMiner, receipts: doc }), "miner-commit"), "fail", "effacer le tirage ne passe pas : minerRoot l'engage");
   const few = committeeBlock(PROFILES, 5); few.doc.receipts.splice(4);
   assert.equal(verifyBlock({ block: few.block, receipts: few.doc }).ok, false, "reçus supprimés : racine/hash/décision échouent");
+});
+
+test("un comité « shadow » n'a PAS siégé : ni dans les reçus ni dans le hash (mode « quorum », racine du quorum historique)", () => {
+  const c = committeeFor(PROFILES, "independent", "shadow");
+  const win = committeeWindow(toCommittee(c), 1);
+  const candidate = { candidateId: CANDIDATE_ID, poolSize: 9, v2: v2spec, imageHash: "a".repeat(64), actionsHash: "b".repeat(64), deviceId: "dev_AUTHOR01", poolScreen: "oled096", committee: c } as unknown as Candidate;
+  const built = buildBlockV2({ candidate, allVotes: win.slice(0, 5).map((p) => v2vote(p)), parentHash: PARENT, finalScore: 0.4, minedAt: 1 });
+  assert.equal(built.doc.committee, undefined); assert.equal(built.fields.committeeMode, "quorum"); assert.equal(built.fields.committeeK, 9);
 });
 
 test("mineur déterministe : même bloc, même résultat ; sans reçus (BLOCK_RECEIPTS) ou sans comité « enforce », l'ancien tirage est conservé ; aucun Math.random dans le chemin déterministe", () => {
   const a = committeeBlock(), b = committeeBlock();
   assert.equal(a.block.miner!.profileId, b.block.miner!.profileId);
   const src = read("lib/chain.ts");
-  assert.match(src, /if \(v2 && candidate\.committee\?\.state === "enforce"\)/);
+  assert.match(src, /if \(prep && candidate\.committee\?\.state === "enforce"\)/);
+  assert.ok(src.indexOf("const v2 = prep ? sealBlockV2(prep") < src.indexOf("targetBlockHash: blockHash"), "le hash FINAL (mineur engagé) existe avant la tâche d'observation qui le cite");
+  assert.ok(src.indexOf("prepareBlockV2({") < src.indexOf("drawMiner({") && src.indexOf("drawMiner({") < src.indexOf("sealBlockV2(prep"), "préparer → tirer le mineur → sceller");
   assert.match(src, /const effectiveMiner = deterministicMiner\s+\?\? await selectEquitableMiner/);
   const detBlock = src.slice(src.indexOf("let minerInfo"), src.indexOf("const effectiveMiner"));
   assert.doesNotMatch(detBlock, /Math\.random/);

@@ -187,7 +187,11 @@ export function decide(c: Committee, wave: 1 | 2, votes: ReadonlyMap<string, Ver
 // ─── Mineur déterministe (équité conservée : poids inverse du nombre de blocs déjà minés) ─────────────────────────────────────────────────
 /** graine du mineur = SHA-256("pod-miner-v3|" graine du comité "|" votesRoot) : elle dépend des REÇUS FINALISÉS (que ni le serveur ni l'auteur ne peuvent choisir avant le vote). */
 export const minerSeed = (seed: string, votesRoot: string): string => sha256Hex(`pod-miner-v3|${seed}|${votesRoot}`);
-export const minerWeight = (minedBlocks: number): number => Math.floor(PPM / (minedBlocks + 1));
+/** Poids ≥ 1 TOUJOURS (audit GPT : à partir de 10⁶ blocs minés le poids tombait à 0 → somme nulle → division par zéro). Entrée non finie ou négative = 0 bloc. */
+export const minerWeight = (minedBlocks: number): number => {
+  const k = Number.isFinite(minedBlocks) && minedBlocks > 0 ? Math.floor(minedBlocks) : 0;
+  return Math.max(1, Math.floor(PPM / (k + 1)));
+};
 
 /** Parmi les profils ayant approuvé (liste triée par profileId pour être canonique) : tirage = (8 premiers octets de la graine) mod somme des poids. */
 export function drawMiner(input: { parentHash: string; contentHash: string; votesRoot: string; accepted: readonly { profileId: string; minedBlocks: number }[] }): string | null {
@@ -199,6 +203,25 @@ export function drawMiner(input: { parentHash: string; contentHash: string; vote
   return list[list.length - 1].profileId;   // inatteignable (u < total)
 }
 
+// ─── Engagements du comité et du mineur dans le hash du bloc (audit GPT : ils n'étaient que des métadonnées hors hash) ─────────────────────────────────────────────
+export type CommitteeRootMode = "quorum" | "committee" | "bootstrap";
+/**
+ * committeeRoot = SHA-256("pod-committee-set-v3|" mode "|" K "|" seuil "|" vague "|" rangs séparés par « , »). Engage le MODE, K, le SEUIL, la VAGUE de décision et la liste ORDONNÉE des (≤ 2K)
+ * profils classés. Quorum historique : mode « quorum », K = électorat, seuil 0, vague 0, aucun rang.
+ */
+export const committeeRoot = (c: { mode: CommitteeRootMode; K: number; threshold: number; wave: 0 | 1 | 2; ranked: readonly string[] }): string =>
+  sha256Hex(`pod-committee-set-v3|${c.mode}|${c.K}|${c.threshold}|${c.wave}|${c.ranked.join(",")}`);
+export const quorumCommitteeRoot = (electorate: number): string => committeeRoot({ mode: "quorum", K: electorate, threshold: 0, wave: 0, ranked: [] });
+/**
+ * minerRoot = SHA-256("pod-miner-set-v3|" profil tiré "|" « profil:blocs » triés par profil). Engage le RÉSULTAT du tirage ET ses ENTRÉES (profils approbateurs et nombres de blocs minés
+ * retenus). Pas de tirage déterministe (quorum historique) : SHA-256("pod-miner-set-v3|none").
+ */
+export const minerRoot = (m: { profileId: string; accepted: readonly { profileId: string; minedBlocks: number }[] } | null): string => {
+  if (!m) return sha256Hex("pod-miner-set-v3|none");
+  const list = [...m.accepted].sort((a, b) => (a.profileId < b.profileId ? -1 : a.profileId > b.profileId ? 1 : 0)).map((a) => `${a.profileId}:${a.minedBlocks}`).join(",");
+  return sha256Hex(`pod-miner-set-v3|${m.profileId}|${list}`);
+};
+
 // ─── Bloc v2 : hachage canonique (ordre des clés FIGÉ ; score en ppm ENTIER, plus de flottant) ──────────────────────────────────────────
 export interface BlockCanonicalV2 {
   parentHash: string; imageHash: string; actionsHash: string;
@@ -209,6 +232,10 @@ export interface BlockCanonicalV2 {
   votesRoot: string;
   /** « quorum » = règle HISTORIQUE (⌈0,51 × électorat⌉, committeeK = taille de l'électorat) : transitoire, avant le comité (lot 4) */
   committeeMode: Committee["mode"] | "quorum"; committeeK: number;
+  /** engage mode, K, seuil, vague et liste ordonnée du comité (voir committeeRoot) */
+  committeeRoot: string;
+  /** engage le résultat et les entrées du tirage du mineur (voir minerRoot) */
+  minerRoot: string;
 }
 export function blockCanonicalV2(b: BlockCanonicalV2): string {
   return JSON.stringify({
@@ -216,7 +243,7 @@ export function blockCanonicalV2(b: BlockCanonicalV2): string {
     parentHash: b.parentHash, imageHash: b.imageHash, actionsHash: b.actionsHash, contentHash: b.contentHash, deviceId: b.deviceId, poolScreen: b.poolScreen,
     validatorProfileIds: [...b.validatorProfileIds].sort(), scorePpm: b.scorePpm, minedAt: b.minedAt,
     ...(b.animRoot ? { animRoot: b.animRoot } : {}),
-    votesRoot: b.votesRoot, committeeMode: b.committeeMode, committeeK: b.committeeK,
+    votesRoot: b.votesRoot, committeeMode: b.committeeMode, committeeK: b.committeeK, committeeRoot: b.committeeRoot, minerRoot: b.minerRoot,
   });
 }
 export const blockHashV2 = (b: BlockCanonicalV2): string => sha256Hex(blockCanonicalV2(b));

@@ -18,5 +18,7 @@ export async function GET(req: NextRequest) {
   if (!HEX64.test(hash)) return NextResponse.json({ error: "hash invalide" }, { status: 400, headers: { "Cache-Control": "no-store" } });
   const { block, receipts } = await getBlockProofData(hash);
   if (!block) return NextResponse.json({ error: "bloc introuvable" }, { status: 404, headers: { "Cache-Control": "no-store" } });
+  // Un bloc v2 sans ses reçus (écriture en cours, ou perdus) ne doit JAMAIS être servi ni mis en cache immuable 24 h : 503 + no-store (audit GPT). finalizeBlock écrit les reçus AVANT le bloc.
+  if (block.blockVersion === 2 && !receipts) return NextResponse.json({ error: "reçus du bloc indisponibles : réessayer" }, { status: 503, headers: { "Cache-Control": "no-store", "Retry-After": "5" } });
   return NextResponse.json({ block: toProofBlock(block), receipts }, { headers: { "Cache-Control": "public, s-maxage=86400, max-age=3600, immutable" } });
 }

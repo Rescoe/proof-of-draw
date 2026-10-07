@@ -88,13 +88,32 @@ int main(int argc, char** argv) {
       int w = pod_miner_draw<Sha>(t[1].c_str(), t[2].c_str(), t[3].c_str(), cands.data(), (int)cands.size());
       check(ln, "miner", "profil tiré", t[6], w < 0 ? "(aucun)" : names[w]);
       char cs[65], ms[65]; pod_committee_seed<Sha>(t[1].c_str(), t[2].c_str(), cs); pod_miner_seed<Sha>(cs, t[3].c_str(), ms); check(ln, "miner", "graine du mineur", t[7], ms);
-    } else if (c == "block" && t.size() == 16) {
+    } else if (c == "croot" && t.size() == 7) {
+      std::vector<std::string> ranked; if (t[5] != "-") { std::string s = t[5]; size_t p = 0; while (p <= s.size()) { size_t q = s.find(',', p); if (q == std::string::npos) q = s.size(); ranked.push_back(s.substr(p, q - p)); p = q + 1; } }
+      std::vector<const char*> rp; for (size_t i = 0; i < ranked.size(); i++) rp.push_back(ranked[i].c_str());
+      char r[65]; pod_committee_root<Sha>(t[1].c_str(), (uint32_t)std::strtoul(t[2].c_str(), 0, 10), (uint32_t)std::strtoul(t[3].c_str(), 0, 10), (uint32_t)std::strtoul(t[4].c_str(), 0, 10), rp.data(), (int)rp.size(), r);
+      check(ln, "croot", "engagement du comité", t[6], r);
+    } else if (c == "mroot" && t.size() == 5) {
+      std::vector<std::string> names; std::vector<uint32_t> blocks;
+      if (t[3] != "-") { std::string s = t[3]; size_t p = 0; while (p <= s.size()) { size_t q = s.find(',', p); if (q == std::string::npos) q = s.size(); std::string e = s.substr(p, q - p); size_t k = e.rfind(':'); names.push_back(e.substr(0, k)); blocks.push_back((uint32_t)std::strtoul(e.c_str() + k + 1, 0, 10)); p = q + 1; } }
+      std::vector<PodMinerCand> cands; for (size_t i = 0; i < names.size(); i++) { PodMinerCand m = { names[i].c_str(), blocks[i] }; cands.push_back(m); }
+      char r[65]; pod_miner_root<Sha>(t[1] == "-" ? 0 : t[1].c_str(), cands.data(), (int)cands.size(), r);
+      check(ln, "mroot", "engagement du tirage du mineur", t[4], r);
+    } else if (c == "metricsbad" && t.size() == 3) {
+      // largeur invalide : AUCUN débordement du tampon de ligne, finish() refuse (audit GPT)
+      struct Guard { PodMetrics m; uint8_t canary[64]; };
+      static Guard g; memset(g.canary, 0xAA, sizeof(g.canary));
+      g.m.begin((uint16_t)std::atoi(t[1].c_str()), 4);
+      for (int i = 0; i < std::atoi(t[2].c_str()); i++) g.m.push(i & 1);
+      bool intact = true; for (size_t i = 0; i < sizeof(g.canary); i++) if (g.canary[i] != 0xAA) intact = false;
+      PodMetricsOut o; check(ln, "metricsbad", "tampon voisin intact", "1", intact ? "1" : "0"); check(ln, "metricsbad", "finish refuse", "0", g.m.finish(&o) ? "1" : "0");
+    } else if (c == "block" && t.size() == 18) {
       std::vector<std::string> vals; if (t[7] != "-") { std::string s = t[7]; size_t p = 0; while (p <= s.size()) { size_t q = s.find(',', p); if (q == std::string::npos) q = s.size(); vals.push_back(s.substr(p, q - p)); p = q + 1; } }
       std::vector<const char*> vp; for (size_t i = 0; i < vals.size(); i++) vp.push_back(vals[i].c_str());
       PodBlockV2 b = { t[1].c_str(), t[2].c_str(), t[3].c_str(), t[4].c_str(), t[5].c_str(), t[6].c_str(), vp.data(), (int)vp.size(), (uint32_t)std::strtoul(t[8].c_str(), 0, 10),
-                       (uint64_t)std::strtoull(t[9].c_str(), 0, 10), t[10] == "-" ? 0 : t[10].c_str(), t[11].c_str(), t[12].c_str(), (uint32_t)std::strtoul(t[13].c_str(), 0, 10) };
+                       (uint64_t)std::strtoull(t[9].c_str(), 0, 10), t[10] == "-" ? 0 : t[10].c_str(), t[11].c_str(), t[12].c_str(), (uint32_t)std::strtoul(t[13].c_str(), 0, 10), t[14].c_str(), t[15].c_str() };
       static char scratch[1536]; char hh[65]; int n = pod_block_hash_v2<Sha>(b, scratch, sizeof(scratch), hh);
-      check(ln, "block", "texte canonique du bloc v2", t[14], n < 0 ? "(tampon trop petit)" : scratch); check(ln, "block", "hash du bloc v2", t[15], n < 0 ? "-" : hh);
+      check(ln, "block", "texte canonique du bloc v2", t[16], n < 0 ? "(tampon trop petit)" : scratch); check(ln, "block", "hash du bloc v2", t[17], n < 0 ? "-" : hh);
     } else { g_fail++; std::printf("ÉCART ligne %d : commande inconnue ou mal formée (« %s », %zu jetons)\n", ln, c.c_str(), t.size()); }
   }
   std::fclose(f);

@@ -5,7 +5,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { redis } from "@/lib/redis";
 import { getDevice, getGlobalActiveCount, getPoolSnapshot } from "@/lib/deviceStore";
 import { getChainHead } from "@/lib/chain";
-import { committeeModeFromEnv, planCandidateCommittee, waveDelayMsFromEnv, type CandidateCommittee } from "@/lib/committee";
+import { committeeEnforceBlockedByGuard, committeeModeFromEnv, planCandidateCommittee, waveDelayMsFromEnv, type CandidateCommittee } from "@/lib/committee";
 import { blockReceiptsEnabled } from "@/lib/blockReceipts";
 import { authorProfilesOf, candidateEligibilityOf, eligibilityConfigFromEnv, eligibilityModeFromEnv, planPool, type CandidateEligibility } from "@/lib/eligibility";
 import {
@@ -213,6 +213,7 @@ export async function POST(req: NextRequest) {
     // Comité de validation (Lot 4, COMMITTEE_MODE) : seulement pour une image fixe à contenu v2 ET une éligibilité calculée. « enforce » exige l'éligibilité « enforce » ET les reçus de bloc
     // (BLOCK_RECEIPTS) : sans eux, le comité n'est pas vérifiable et le mineur ne peut pas être rejoué ; le plan reste alors en « shadow » (journal seul). +1 lecture : la tête de chaîne.
     const commMode = committeeModeFromEnv();
+    if (committeeEnforceBlockedByGuard()) console.warn("[committee] COMMITTEE_MODE=enforce REFUSÉ : le tirage du comité est calculable par l'auteur avant la soumission (grinding, docs/SIMULATION_PROTOCOLE_V3). Ajouter COMMITTEE_GRINDING_ACK=true pour l'accepter EN CONNAISSANCE DE CAUSE ; plan calculé en SHADOW.");
     if (commMode !== "off" && v2) {
       const head = await getChainHead();
       const state = commMode === "enforce" && eligMode === "enforce" && blockReceiptsEnabled() ? "enforce" : "shadow";

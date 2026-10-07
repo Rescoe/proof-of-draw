@@ -116,7 +116,7 @@ function consistentForgery(honest: ReturnType<typeof makeBlock>, mutate: (doc: R
   const doc = clone(honest.doc); mutate(doc);
   const votesRoot = receiptsRoot(doc);
   const canonical: BlockCanonicalV2 = { parentHash: PARENT, imageHash: honest.block.imageHash, actionsHash: honest.block.actionsHash, contentHash: honest.block.contentHash!, deviceId: honest.block.deviceId, poolScreen: honest.block.poolScreen,
-    validatorProfileIds: validatorKeysOf(doc), scorePpm: honest.block.scorePpm!, minedAt: honest.block.minedAt, votesRoot, committeeMode: "quorum", committeeK: honest.block.committeeK! };
+    validatorProfileIds: validatorKeysOf(doc), scorePpm: honest.block.scorePpm!, minedAt: honest.block.minedAt, votesRoot, committeeMode: "quorum", committeeK: honest.block.committeeK!, committeeRoot: honest.block.committeeRoot!, minerRoot: honest.block.minerRoot! };
   return { block: { ...honest.block, votesRoot, blockHash: blockHashV2(canonical), receiptsCount: doc.receipts.length, validatorIds: doc.receipts.filter((r) => r.verdict === "accept").map((r) => r.deviceId).sort() }, doc };
 }
 
@@ -181,8 +181,13 @@ test("bloc v1 (historique) : le hash se recalcule, aucun reçu (« na »), nivea
 test("le hash v1 du vérificateur == celui de finalizeBlock (même canonique) ; sans BLOCK_RECEIPTS, finalizeBlock n'écrit AUCUN reçu et garde le hash v1", () => {
   const src = read("lib/chain.ts");
   assert.match(src, /validatorIds: votes\.map\(\(v\) => v\.deviceId\)\.sort\(\),\s+score:\s+finalScore,\s+minedAt,/);
-  assert.match(src, /const v2 = blockReceiptsEnabled\(\) && allVotes && allVotes\.length > 0 \? buildBlockV2/);
-  assert.match(src, /if \(v2\) writes\.push\(redis\.set\(receiptsKey\(blockHash\)/);
+  assert.match(src, /const prep = blockReceiptsEnabled\(\) && allVotes && allVotes\.length > 0 \? prepareBlockV2/);
+  assert.match(src, /if \(v2\) await redis\.set\(receiptsKey\(blockHash\)/);
+  // les reçus sont écrits AVANT le bloc : /api/block-proof ne voit jamais un bloc v2 sans ses reçus (audit GPT)
+  assert.ok(src.indexOf("if (v2) await redis.set(receiptsKey(blockHash)") < src.indexOf("await Promise.all(writes);"), "reçus avant le bloc");
+  // et la route de preuve refuse de servir (et de mettre en cache) un bloc v2 sans reçus
+  const proofRoute = read("app/api/block-proof/route.ts");
+  assert.match(proofRoute, /block\.blockVersion === 2 && !receipts\) return NextResponse\.json\([^)]*status: 503[^)]*no-store/);
   assert.equal(blockReceiptsEnabled({} as unknown as NodeJS.ProcessEnv), false);
   assert.equal(blockReceiptsEnabled({ BLOCK_RECEIPTS: "true" } as unknown as NodeJS.ProcessEnv), true);
   assert.equal(blockReceiptsEnabled({ BLOCK_RECEIPTS: "1" } as unknown as NodeJS.ProcessEnv), false);

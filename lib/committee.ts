@@ -13,9 +13,19 @@ import { voterKey, type PoolPlan } from "@/lib/eligibility";
 import { NOISE_E, NOISE_T, committeeWindow, decide, effectiveVoters, selectCommittee, type Committee, type Decision, type Verdict } from "@/lib/podProtocolV3";
 
 export type CommitteeMode = "off" | "shadow" | "enforce";
-export const committeeModeFromEnv = (env: NodeJS.ProcessEnv = process.env): CommitteeMode => {
+/** Mode DEMANDÉ par la variable (avant la garde ci-dessous). */
+export const committeeModeRequested = (env: NodeJS.ProcessEnv = process.env): CommitteeMode => {
   const v = (env.COMMITTEE_MODE ?? "off").trim().toLowerCase();
   return v === "enforce" || v === "shadow" ? v : "off";
+};
+/**
+ * GARDE (audit GPT : le grinding du comité reste exploitable — SIMULATION § 3) : « enforce » n'est EFFECTIF que si COMMITTEE_GRINDING_ACK=true, un accusé EXPLICITE que la graine est calculable
+ * par l'auteur avant la soumission (aucune balise aléatoire postérieure). Sans l'accusé, « enforce » est ramené à « shadow » (journal seul). Cette garde disparaîtra avec la balise.
+ */
+export const committeeEnforceBlockedByGuard = (env: NodeJS.ProcessEnv = process.env): boolean => committeeModeRequested(env) === "enforce" && env.COMMITTEE_GRINDING_ACK !== "true";
+export const committeeModeFromEnv = (env: NodeJS.ProcessEnv = process.env): CommitteeMode => {
+  const m = committeeModeRequested(env);
+  return m === "enforce" && env.COMMITTEE_GRINDING_ACK !== "true" ? "shadow" : m;
 };
 /** Délai avant la vague 2 (suppléants) — proposé : 10 min (le TTL du candidat est de 30 min). */
 export const waveDelayMsFromEnv = (env: NodeJS.ProcessEnv = process.env): number => {

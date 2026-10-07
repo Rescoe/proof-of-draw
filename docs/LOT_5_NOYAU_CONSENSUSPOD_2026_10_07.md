@@ -15,7 +15,7 @@
 | `src/pod_metrics.h`, `pod_metrics_table.h` | métriques entières : **copies byte-identiques** de `esp8266/_shared` (déjà validées sur matériel), ajoutées à `scripts/sync-bench-header.js` et au test des copies. |
 | `src/adapters/` | `crypto_posix.h` (SHA-256 portable, PC/Raspberry/tests), `crypto_esp8266.h` (BearSSL), `crypto_uno_r4.h` (bibliothèque Crypto). |
 | `host/core_harness.cpp` | harnais PC : relit `test-vectors/vectors.txt` et compare **chaque valeur** au noyau C++. |
-| `test-vectors/vectors.txt` | **468 lignes → 1 327 vérifications**, générées par la **référence TypeScript** (`scripts/gen-consensus-pod-vectors.ts`). |
+| `test-vectors/vectors.txt` | **513 lignes → 1 400 vérifications** (mise à jour après l'audit : engagements du comité et du mineur, poids extrêmes, garde du tampon de métriques), générées par la **référence TypeScript** (`scripts/gen-consensus-pod-vectors.ts`). |
 | `examples/SelfTest*` | auto-test ESP8266 et R4 (compilables, avec un jeu minimal généré). |
 | `library.properties`, `README.md` | structure de bibliothèque Arduino ; « BROUILLON INTERNE, NON PUBLIÉ ». |
 

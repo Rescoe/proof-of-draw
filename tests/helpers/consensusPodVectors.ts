@@ -1,7 +1,7 @@
 // tests/helpers/consensusPodVectors.ts — construit le fichier de vecteurs du noyau C++ à partir de la référence TypeScript (voir scripts/gen-consensus-pod-vectors.ts).
 import { createHash } from "node:crypto";
 import {
-  blockCanonicalV2, blockHashV2, committeeRank, committeeSeed, decide, drawMiner, evaluateRules, merkleRoot, minerSeed, saltNonce, saltedHash, threshold, voteLeaf, voteMessageV3,
+  blockCanonicalV2, blockHashV2, committeeRank, committeeRoot, committeeSeed, decide, drawMiner, evaluateRules, merkleRoot, minerRoot, minerSeed, saltNonce, saltedHash, threshold, voteLeaf, voteMessageV3,
   type Committee, type Verdict, type VoteClass, type BlockCanonicalV2, type RuleCode,
 } from "../../lib/podProtocolV3";
 import { mulberry32, shuffle } from "../../lib/podSim";
@@ -55,22 +55,43 @@ export function buildConsensusVectors() {
     const d = decide(c, wave2 && windowN > K ? 2 : 1, votes);
     push("decide", K, threshold(K), windowN, verdicts.map((v) => VERDICT_CHAR[v]).join(""), d.state === "pending" ? 0 : d.state === "accept" ? 1 : 2, d.accepts, d.rejects);
   }
-  // mineur déterministe
+  // mineur déterministe — y compris des nombres de blocs EXTRÊMES (audit GPT : poids nul à partir de 10⁶ blocs, débordement 32 bits)
+  const EXTREME = [0, 1, 99, 100, 999_999, 1_000_000, 1_000_001, 10_000_000, 4_000_000_000, 4_294_967_295];
+  for (let i = 0; i < 12; i++) {
+    const n = 1 + Math.floor(rng() * 6), parent = h64(), content = h64(), votesRoot = h64();
+    const cands = Array.from({ length: n }, (_, k) => ({ profileId: `art_x${k}${sha(`x${i}${k}`).slice(0, 5)}`, minedBlocks: EXTREME[Math.floor(rng() * EXTREME.length)] }));
+    const winner = drawMiner({ parentHash: parent, contentHash: content, votesRoot, accepted: cands })!;
+    push("miner", parent, content, votesRoot, n, cands.map((c) => `${c.profileId}:${c.minedBlocks}`).join(","), winner, minerSeed(committeeSeed(parent, content), votesRoot));
+  }
   for (let i = 0; i < 24; i++) {
     const n = 1 + Math.floor(rng() * 14), parent = h64(), content = h64(), votesRoot = h64();
     const cands = shuffle(Array.from({ length: n }, (_, k) => ({ profileId: `art_${k}${sha(`m${i}${k}`).slice(0, 6)}`, minedBlocks: Math.floor(rng() * rng() * 40) })), rng);
     const winner = drawMiner({ parentHash: parent, contentHash: content, votesRoot, accepted: cands })!;
     push("miner", parent, content, votesRoot, n, cands.map((c) => `${c.profileId}:${c.minedBlocks}`).join(","), winner, minerSeed(committeeSeed(parent, content), votesRoot));
   }
+  // engagements du comité et du mineur
+  for (let i = 0; i < 16; i++) {
+    const mode = (["committee", "bootstrap", "quorum"] as const)[i % 3], K = 1 + Math.floor(rng() * 7), nr = mode === "quorum" ? 0 : Math.min(14, K + Math.floor(rng() * (K + 1)));
+    const ranked = Array.from({ length: nr }, (_, k) => `art_${k}${sha(`r${i}${k}`).slice(0, 6)}`);
+    const wave = mode === "quorum" ? 0 : (1 + (i % 2)) as 1 | 2, thr = mode === "quorum" ? 0 : mode === "bootstrap" ? K : threshold(K);
+    push("croot", mode, K, thr, wave, ranked.length ? ranked.join(",") : "-", committeeRoot({ mode, K, threshold: thr, wave, ranked }));
+  }
+  push("mroot", "-", 0, "-", minerRoot(null));
+  for (let i = 0; i < 12; i++) {
+    const n = 1 + Math.floor(rng() * 7), cands = shuffle(Array.from({ length: n }, (_, k) => ({ profileId: `art_m${k}${sha(`m${i}${k}`).slice(0, 5)}`, minedBlocks: EXTREME[Math.floor(rng() * EXTREME.length)] })), rng);
+    push("mroot", cands[0].profileId, n, cands.map((c) => `${c.profileId}:${c.minedBlocks}`).join(","), minerRoot({ profileId: cands[0].profileId, accepted: cands }));
+  }
+  // largeur de métriques invalide : aucun débordement
+  push("metricsbad", 241, 5000); push("metricsbad", 65535, 4000); push("metricsbad", 0, 100); push("metricsbad", 500, 100000);
   // bloc v2 canonique et hash
   for (let i = 0; i < 10; i++) {
     const nv = Math.floor(rng() * 8), withAnim = i % 3 === 0;
     const b: BlockCanonicalV2 = {
       parentHash: i === 0 ? "0".repeat(64) : h64(), imageHash: h64(), actionsHash: h64(), contentHash: h64(), deviceId: dev(), poolScreen: (["oled096", "eink27bw", "eink29bwr", "tft18", "tft28"])[i % 5],
       validatorProfileIds: shuffle(Array.from({ length: nv }, (_, k) => `art_${k}${sha(`b${i}${k}`).slice(0, 5)}`), rng), scorePpm: Math.floor(rng() * 1_000_001), minedAt: 1_700_000_000_000 + Math.floor(rng() * 200_000_000_000),
-      ...(withAnim ? { animRoot: h64() } : {}), votesRoot: h64(), committeeMode: (["committee", "bootstrap", "quorum"] as const)[i % 3], committeeK: 1 + Math.floor(rng() * 14),
+      ...(withAnim ? { animRoot: h64() } : {}), votesRoot: h64(), committeeMode: (["committee", "bootstrap", "quorum"] as const)[i % 3], committeeK: 1 + Math.floor(rng() * 14), committeeRoot: h64(), minerRoot: h64(),
     };
-    push("block", b.parentHash, b.imageHash, b.actionsHash, b.contentHash, b.deviceId, b.poolScreen, nv === 0 ? "-" : b.validatorProfileIds.join(","), b.scorePpm, b.minedAt, withAnim ? b.animRoot! : "-", b.votesRoot, b.committeeMode, b.committeeK, blockCanonicalV2(b), blockHashV2(b));
+    push("block", b.parentHash, b.imageHash, b.actionsHash, b.contentHash, b.deviceId, b.poolScreen, nv === 0 ? "-" : b.validatorProfileIds.join(","), b.scorePpm, b.minedAt, withAnim ? b.animRoot! : "-", b.votesRoot, b.committeeMode, b.committeeK, b.committeeRoot, b.minerRoot, blockCanonicalV2(b), blockHashV2(b));
   }
 
   // ── jeu minimal embarqué dans les sketches d'auto-test (compilation ESP8266 / R4) ───────────────────────────────────────────────────────────────

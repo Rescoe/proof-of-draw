@@ -25,7 +25,7 @@
 |---|---|
 | absent / `off` | **aucun** (quorum 51 %, mineur aléatoire) |
 | `shadow` | le comité est calculé et **journalisé** (`[committee] SHADOW …`, avec le quorum historique pour comparaison) ; aucun effet |
-| `enforce` | **effectif seulement si** `ELIGIBILITY_MODE=enforce` **et** `BLOCK_RECEIPTS=true` ; sinon le plan reste en `shadow` avec un avertissement dans les journaux |
+| `enforce` | **effectif seulement si** `ELIGIBILITY_MODE=enforce`, `BLOCK_RECEIPTS=true` **et** `COMMITTEE_GRINDING_ACK=true` (accusé explicite du risque de grinding, ajouté après l'audit GPT) ; sinon le plan reste en `shadow` avec un avertissement dans les journaux |
 
 Le comité n'existe que pour une **image fixe à contenu v2** : une **animation** (vote encore v1) suit toujours le quorum historique.
 Réglage : `COMMITTEE_WAVE2_MINUTES` (10 par défaut ; le TTL du candidat est de 30 min).

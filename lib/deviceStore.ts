@@ -781,7 +781,7 @@ export async function resetDeviceKey(deviceId: string): Promise<{ hadKey: boolea
   const device = await getDevice(deviceId);
   if (!device) return null;
   const hadKey = !!device.publicKey;
-  if (hadKey) { delete device.publicKey; await saveDevice(device); }
+  if (hadKey) { delete device.publicKey; await writeDeviceKey(device); }   // UNE commande (clé device:{id} seule) : la MAC et le code d'appairage n'ont pas changé
   return { hadKey };
 }
 
