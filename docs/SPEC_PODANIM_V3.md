@@ -2,8 +2,9 @@
 
 | | |
 |---|---|
-| **Statut** | **BROUILLON, spécification seulement.** Aucun code de format, aucune route, aucun firmware, aucune variable n'est modifié par ce document. À relire et **geler par GPT** puis par le porteur avant le 6B. |
-| **Date** | 07/10/2026 — base `a677311` + FIX2 |
+| **Statut** | **BROUILLON R1 (amendé après l'audit GPT de `139b0c5`), spécification seulement.** Aucun code de format, aucune route, aucun firmware, aucune variable n'est modifié par ce document. À **geler par GPT** puis par le porteur avant tout code 6B. |
+| **Révision R1** | 7 corrections de l'audit GPT : (1) message de vote **propre** `pod-vote-v3-anim` ; (2) `rulesVersion` **variable par bloc** (changement du canonique TS/C++ listé § 4 bis) ; (3) **`S` signé** ; (4) budget Redis **recalculé sans comité** (jusqu'à 64 demandeurs) + comptage des défauts de cache ; (5) règles : **`uniform` retiré**, `noise` sur **agrégats** ; (6) `enforce` **techniquement impossible** en 6B (modes `off`/`shadow` seulement) ; (7) vecteurs de Merkle pour **tous** les N de 2 à 64 et **validation des identifiants avant tout accès Redis**. Décisions A1–A7 : propositions de GPT reprises (§ 11). |
+| **Date** | 07/10/2026 — base `42945c3` (FIX2 accepté) |
 | **Réalisateur** | Claude · **orchestrateur/auditeur** : GPT |
 | **S'appuie sur** | `docs/SPEC_PROTOCOLE_V3.md` (vote v3, règles, Merkle, bloc v2 : **réutilisés tels quels**), `lib/bench/clip.ts` (format PBC1, inchangé), `lib/anim/block.ts` (empreintes et scores v1 actuels), `lib/podMetrics.ts` (`pod-metrics-2`, inchangé) |
 | **Numérotation** | **Lot 6 = animations** (canonique : `PLAN_DE_TRAVAIL_CONSENSUS_FINAL_2026_10_06.md`) ; e-ink/cartels = lot 7 ; grand reflash = lot 8 ; concordance avec le plan GPT en fin de `PLAN_COLLABORATION_GPT_CLAUDE_POD.md` |
@@ -30,10 +31,10 @@ Le vote porte sur le **clip PBC1** (octets exacts), jamais sur l'affiche par éc
 |---|---|
 | Format de clip | `PBC1` version 1 (128×64, 1 bit, 2..64 images, ≤ 9 216 o, CRC32) — **inchangé** |
 | Métriques | `pod-metrics-2` (**inchangées**) appliquées **à chaque image** |
-| Règles | **`rulesVersion = 2`** = jeu « animation A1 » (§ 6) ; `rulesVersion = 1` reste le jeu « image fixe N2 » |
-| Vote | **`pod-vote-v3`** (14 champs, § 3 de la spec v3) **sans changement de format** ; la classe de contenu se déduit de `rulesVersion` **[?] A2** |
+| Règles | **`rulesVersion = 2`** = jeu « animation A1 » (§ 6) ; `rulesVersion = 1` reste le jeu « image fixe N2 ». **Le bloc porte sa propre `rulesVersion`** (§ 4 bis) |
+| Vote | **message PROPRE `pod-vote-v3-anim`** (§ 3 bis) : le type de contenu est **explicite et signé** (clip, racine, hash salé, E/T/R/S) ; il n'est **plus déduit** de `rulesVersion` (**A2 gelé**) |
 | Racine d'animation | **`animRoot`** (§ 4) = `contentHash` du bloc (déjà prévu : spec v3 § 7) |
-| Préfixes de domaine ajoutés | `pod-anim-v3\|` (racine), feuille d'image `0x02` (§ 4) |
+| Préfixes de domaine ajoutés | `pod-vote-v3-anim\|` (message de vote), `pod-anim-v3\|pbc1\|` (racine), feuille d'image `0x02` (§ 4) |
 
 ## 3. Ce qu'un appareil recalcule (flux, sans tampon de clip)
 
@@ -52,6 +53,19 @@ Un appareil lit le clip **une seule fois, en flux** (`readFull()`), et calcule e
 **Temps [E]** : jusqu'à 64 images × (SHA-256 de 1 Ko + 8 192 pixels de métriques) — **à mesurer** sur ESP8266 et R4 (aucune mesure à ce jour).
 **Équivalence de mise en page [E → 6B]** : `pod-metrics-2` d'un écran `oled096` lit un tampon **en pages** ; le clip est en **lignes**. Les métriques portent sur la **grille logique** : un test 6B (T3) comparera `metricsFromRaw("oled096", pages(image))` avec les métriques de l'image PBC1.
 
+## 3 bis. Message de vote d'animation `pod-vote-v3-anim` (R1 · points 1 et 3)
+
+```
+pod-vote-v3-anim|deviceId|candidateId|parentHash|metricsVersion|rulesVersion|clipHash|animRoot|saltedHash|frames|E|T|R|S|verdict|ruleCode|vclass
+```
+- **17 éléments** séparés par `|` (préfixe + 16 champs). `metricsVersion = 2`, `rulesVersion = 2` (jeu A1 : un message d'animation dont `rulesVersion ≠ 2` est **invalide**) ; `frames` = N (2..64) ; `E, T, R, S` entiers 0…1 000 000 ; hashes en hexadécimal minuscule de 64 caractères ; `verdict`, `ruleCode`, `vclass` comme spec v3 § 3, avec `ruleCode` ∈ {`ok`, `format`, `hash`, `static`, `noise`, `rules`} (**pas** `uniform`, § 6).
+- **Domaine séparé** : le **premier élément** (`pod-vote-v3-anim`) diffère de `pod-vote-v3` ; chaque parseur n'accepte **que** son préfixe exact et la forme **canonique** (le message reconstruit doit être identique). Un message d'image ne peut donc pas être rejoué comme message d'animation, ni l'inverse (test 6B-T8 : parse croisé = refus, 0 faux positif sur les vecteurs).
+- **`S` est signé** (audit GPT) : `S = ⌊Σ s_i / N⌋` n'est **pas** reconstructible depuis `E, T, R` seuls (la moyenne des `s_i` plafonnés n'est pas une fonction des moyennes). Le serveur compare **les quatre** (`E, T, R, S`) à sa référence, comme pour une image fixe ; un écart rend un `accept` **invalide**.
+- **Refus sans calcul complet** (`format`, `hash`) : `E = T = R = S = 0`, `frames = 0` si le clip est illisible ; `clipHash` = hash des octets **effectivement lus** ; `animRoot` = la racine **annoncée** par le candidat (le vote reste lié au candidat) ; `saltedHash` = hash salé des octets lus. Le détail binaire est figé en 6B-1 (vecteurs).
+- **Hash salé** : `saltedHash = SHA-256(nonce ‖ octets du clip)`, `nonce = SHA-256("pod-nonce-v3|" candidateId "|" parentHash "|" deviceId)` (spec v3 § 5, **inchangé**).
+- La signature Ed25519 porte sur l'UTF-8 du message, **obligatoire**, comme en v3.
+- **Reçus** : `message|signature|clé` (feuille de Merkle des votes, spec v3 § 6, **inchangée**) ; le vérificateur reconnaît le type par le **préfixe** du message.
+
 ## 4. Engagements (ce que le hash du bloc couvre)
 
 Tous les entiers sont **big-endian de largeur fixe** pour que le C++ (flux, sans `String`) reproduise l'octet près ; les chaînes textuelles sont de l'UTF-8 ASCII.
@@ -63,12 +77,21 @@ animRoot    = SHA-256( "pod-anim-v3|pbc1|" clipHash "|" framesRoot "|" N "|" loo
 ```
 - **`délai_i`** = unité de 10 ms **telle que stockée par PBC1** (u8, 2..255) : le délai est **engagé image par image** (le rythme fait partie de l'œuvre) ; `loops` vaut **0 imposé** (boucle sans fin) ; `fg ≠ bg` imposé (§ 6).
 - Modifier **un octet du clip, un délai, une couleur, l'ordre ou le contenu d'une image, N ou `loops`** change `clipHash` et/ou `animRoot` : testé en 6B (T4).
-- Le **bloc v2** d'une animation v3 porte `contentHash = animRoot` (la graine du comité et du mineur le référencent déjà), `rulesVersion = 2`, `scorePpm = S`. `imageHash` conserve la valeur actuelle (racine v1) **[?] A3** : le vérificateur recalcule les deux.
+- Le **bloc v2** d'une animation v3 porte `contentHash = animRoot` (la graine du comité et du mineur le référencent déjà), `rulesVersion = 2`, `scorePpm = S`. `imageHash` conserve la valeur actuelle (racine v1) **uniquement par compatibilité** (A3 gelé : `contentHash = animRoot` fait foi) : le vérificateur recalcule les deux.
 - Les **reçus** (spec v3 § 6) et `votesRoot`, `committeeRoot`, `minerRoot` ne changent pas.
+
+### 4 bis. `rulesVersion` VARIABLE par bloc (R1 · point 2 — changement du canonique)
+
+Aujourd'hui `rulesVersion` est une **constante globale** (`PROTOCOL.rulesVersion = 1` dans `lib/podProtocolV3.ts` ; `POD_RULES_VERSION` dans `consensus-pod/src/consensusPoD.h`) écrite dans le texte canonique du bloc : la valeur 2 n'est donc **pas réalisable** en l'état. Changement requis en **6B-1** :
+- `BlockCanonicalV2` (TypeScript) et `PodBlockV2` (C++) reçoivent un champ **`rulesVersion`** ∈ {1, 2} lu **depuis le bloc** (même position dans l'ordre figé des clés) ; `1` pour une image fixe, `2` pour une animation v3 ;
+- `blockCanonicalV2` et `pod_block_canonical_v2` l'écrivent tel quel ; les constantes globales deviennent des **valeurs par défaut** ;
+- **les vecteurs des images fixes ne changent pas** (valeur 1 : texte canonique identique : test de non-régression) ; de nouveaux vecteurs couvrent `rulesVersion = 2` ;
+- le vérificateur **impose la cohérence** : `rulesVersion = 2` ⇔ `contentHash` est une racine d'animation ⇔ les reçus approuvés sont des `pod-vote-v3-anim` ; toute autre combinaison **échoue** ;
+- aucun bloc v2 n'a jamais été miné en production (`BLOCK_RECEIPTS` éteint) : pas de migration ; **le format de bloc v2 est donc encore modifiable** (à geler après 6B-1).
 
 ## 5. Agrégats entiers (reproductibles)
 
-Pour N images : `E = ⌊Σ e_i / N⌋`, `T = ⌊Σ t_i / N⌋`, `R = ⌊Σ r_i / N⌋` ; `s_i = min(10⁶, ⌊(4e_i + 4t_i + 2r_i)/10⌋)` ; `S = ⌊Σ s_i / N⌋`. Les sommes tiennent en `u32` (≤ 64 × 10⁶). Le vote signe **E, T, R** dans les champs `e, t, r` ; `scorePpm = S` est **recalculable** par n'importe qui depuis `framesRoot`+images.
+Pour N images : `E = ⌊Σ e_i / N⌋`, `T = ⌊Σ t_i / N⌋`, `R = ⌊Σ r_i / N⌋` ; `s_i = min(10⁶, ⌊(4e_i + 4t_i + 2r_i)/10⌋)` ; `S = ⌊Σ s_i / N⌋`. Les sommes tiennent en `u32` (≤ 64 × 10⁶). Le vote signe **E, T, R et S** (§ 3 bis : `S` n'est pas déductible de `E, T, R`) ; `scorePpm = S` du bloc est **recalculable** par n'importe qui depuis les images (vérifiées par `framesRoot`).
 **Affiche** : `posterIndex` = premier indice maximisant `s_i` (déterministe, vérifiable) ; le **rendu** de l'affiche par écran n'est **pas** engagé (même statut que le rendu e-ink : lot 7, `renderHash`).
 **Changement assumé** : le score d'une animation passe de la moyenne de flottants v1 à des **ppm entiers `pod-metrics-2`** : les nouveaux blocs ne sont pas comparables aux anciens ; les anciens blocs d'animation restent affichés et marqués « v1 : non recalculée ».
 
@@ -78,17 +101,27 @@ Pour N images : `E = ⌊Σ e_i / N⌋`, `T = ⌊Σ t_i / N⌋`, `R = ⌊Σ r_i /
 |---|---|---|
 | 1 | `format` | clip non conforme PBC1 v1 : CRC, structure, 2 ≤ N ≤ 64, taille ≤ 9 216 o, **`loops = 0`**, **`fg ≠ bg`**, délais 2..255, durée d'un tour ≤ 120 s, **retour à l'image 0** exact |
 | 2 | `hash` | `clipHash` ou `animRoot` recalculés ≠ annoncés |
-| 3 | `static` *(nouveau)* | toutes les images identiques (aujourd'hui `animRefusal`) |
-| 4 | `uniform` | **toutes** les images ont `e_i = 0` **et** `t_i = 0` (vide ou plein) |
-| 5 | `noise` | **toutes** les images ont `e_i > 980 000` **et** `t_i > 900 000` **[?] A1** (alternative : agrégats `E`, `T`) |
-| 6 | `ok` | sinon |
+| 3 | `static` *(nouveau)* | **toutes les images sont identiques** (aucun changement dans le temps ; couvre aussi « toutes vides » ou « toutes pleines » fixes) |
+| 4 | `noise` | **agrégats** : `E > 980 000` **et** `T > 900 000` (bornes strictes, mêmes seuils que N2) — **A1 gelé** |
+| 5 | `ok` | sinon |
 
-`accept ⇔ ok`. Le serveur **réapplique la même fonction** et **valide les refus** comme pour une image fixe (un refus n'est compté que si son motif objectif est vrai : `static`, `uniform`, `noise` ; sinon `dispute`). `ruleCode` ajouté à l'ensemble de la spec v3 § 3 : **`static`** (seule nouveauté ; `format`, `hash`, `uniform`, `noise`, `ok` existent déjà). `rules` reste le code des règles inconnues.
+**Pas de règle `uniform` pour les animations** (R1 · point 5) : une alternance **noir ↔ blanc** (images uniformes qui **diffèrent**) est une animation temporelle légitime (clignotement, flash) et **est acceptée** ; seules les animations **statiques** (aucune différence entre images) sont rejetées. Un refus signé `uniform` sur une animation est donc **toujours invalide** (équivalent à un silence, `falseReject` en réputation).
+`accept ⇔ ok`. Le serveur **réapplique la même fonction** et **valide les refus** comme pour une image fixe (un refus n'est compté que si son motif objectif est vrai pour le clip connu : `static`, `noise` ; sinon `dispute`). Nouveau `ruleCode` : **`static`** (`format`, `hash`, `noise`, `ok`, `rules` existent déjà ; `uniform` reste réservé aux images fixes). Table de versions : `rulesVersion 1` = N2 (images), `rulesVersion 2` = A1 (animations) ; toute évolution incrémente **sa** version.
 
 ## 7. Distribution du clip du candidat (route à créer en 6B)
 
 `GET /api/candidate-clip?candidateId=…` : corps = **octets exacts du clip** (≤ 9 216 o), en-têtes `X-Clip-Hash`, `X-Anim-Root`, `X-Metrics-Version` ; mêmes règles que `/api/candidate-frame` (réponse 200 **immuable** par `candidateId`, erreurs `no-store`).
-**Coût Redis HONNÊTE** : **1 lecture du candidat par candidat ET par région CDN avant mise en cache** (pas « zéro ») ; avec K ≤ 7 votants de classe C0/C1 répartis sur 1 à 3 régions [E] : **1 à 3 lectures** par candidat. Aucune lecture par image, par boucle ni par vote. **Aucun polling.** Le `validate-candidate` existant (1 MGET) annonce le candidat ; le « pointeur » ajoute **≈ 120 o** (`clipHash`, `animRoot`, N, taille) au candidat, pas une commande.
+**Coût Redis HONNÊTE (corrigé R1 · point 4)** : chaque **exécution de la route** (défaut de cache CDN) lit le candidat : **1 lecture** (`getCurrentCandidate`). **Sans comité** (aucun comité d'animation, § 8), **tous les profils de l'électorat peuvent voter** : la borne est celle de l'électorat **figé** : **≤ 64 profils** (`ELECTORATE_MAX`). Un second appareil d'un profil **déjà représenté** est refusé par `validate-candidate` (`profile-already-voted`) donc ne télécharge pas ; mais **deux appareils du même profil qui arrivent avant le premier vote peuvent télécharger tous les deux** : la borne stricte est donc **le nombre d'appareils actifs des ≤ 64 profils** (mesuré au dépôt, journalisé en `shadow`), pas 64 ; chaque appareil télécharge **une fois** par candidat. Le CDN regroupe les demandes **par région** :
+
+| Hypothèse | Lectures de candidat par animation |
+|---|---|
+| Typique [E] (2 à 10 appareils, 1 à 3 régions) | **1 à 3** |
+| **Borne haute réelle** (électorat figé de 64 profils, aucune mise en cache utile : régions distinctes ou pointes simultanées avant la première réponse) | **≤ nombre d'appareils actifs des profils de l'électorat** (**64 si un appareil par profil**, plus sinon ; au plus le nombre d'exécutions réellement lancées, et la même route n'est appelée qu'une fois par appareil) |
+| Identifiant valide mais candidat non courant (404, `no-store`) | **+1 lecture par requête**, borné par le rate-limit de `validate-candidate` (4/min/appareil) |
+
+**Électorat non figeable (`overflow`, > 64 profils)** : une animation v3 n'est **pas** proposée (retour au chemin v1 actuel, § 8) ; la borne ci-dessus reste donc définie. Le journal `votersExpected` indique **appareils actifs** et **profils** de l'électorat figé. Aucune lecture par image, par boucle ni par vote. **Aucun polling.** Le `validate-candidate` existant (1 MGET) annonce le candidat ; le « pointeur » ajoute **≈ 120 o** (`clipHash`, `animRoot`, N, taille) au candidat, pas une commande.
+**Instrumentation des défauts de cache (sans commande Redis)** : chaque exécution de la route journalise **une ligne** `[candidate-clip] MISS candidate=<8 premiers caractères> votersExpected=<taille de l'électorat figé>` ; le **nombre de lignes MISS par candidat** (journaux Vercel) est comparé à la borne ci-dessus lors de l'essai en `shadow` ; **aucun compteur Redis** (ce serait une commande de plus). Seuil d'alerte proposé : **> 8 MISS** pour un candidat à ≤ 10 votants ⇒ revoir le cache.
+**Validation avant tout accès Redis (R1 · point 7)** : `candidateId` est contrôlé par la regex UUID **avant** toute lecture (400 sans lecture, comme `/api/candidate-frame`) ; les autres identifiants qui interviendraient (`deviceId` `dev_[A-Z0-9]{8}`, hashes hexadécimaux de 64 caractères) sont validés **avant** d'être utilisés dans une clé Redis. Test 6B-T7 : identifiants invalides (vides, trop longs, avec `:`/`*`/`|`/retours à la ligne, Unicode) ⇒ **0 appel Redis** (compteur de l'accès simulé).
 **Stockage** : le candidat porte déjà le clip (≤ 12 Ko en base64) ; aucune écriture de plus. Après le bloc : `chain:anim:{hash}` (existant) + reçus (`chain:receipts:{hash}` existant).
 
 ## 8. Compatibilité et cohabitation (point demandé par GPT)
@@ -96,22 +129,24 @@ Pour N images : `E = ⌊Σ e_i / N⌋`, `T = ⌊Σ t_i / N⌋`, `R = ⌊Σ r_i /
 | Situation | Règle |
 |---|---|
 | **Anciens firmwares** (vote v1 écho, `multiscreen-2.x`, `tft18-2.x`, `r4tft28-2.x`) | continuent d'**afficher** les animations ; **ne votent pas** une animation v3 : le serveur **n'invite pas** un appareil qui ne déclare pas la capacité (champ `caps` de `/api/register`, lot 8) ; ils **s'abstiennent**. |
-| **Aucun vote v1 ne valide un bloc animation v3** | un bloc animation v3 exige **uniquement des reçus v3 de rulesVersion 2** ; le **vérificateur** compte les reçus v1/v2 en `warn` et les **exclut** du quorum/comité (test 6B T6 : un bloc dont le quorum n'est atteint qu'avec des échos est **refusé**). |
-| **Avant tout firmware C0/C1 capable** | les animations restent sur le chemin **actuel** (candidat v1, quorum historique, étiquette « non recalculée ») ; le mode `ANIM_V3_MODE` (6B) est **éteint par défaut** : `off` → comportement actuel strict ; `shadow` → le serveur calcule la référence v3 (`framesRoot`, `animRoot`, e/t/r) et la **journalise sans effet** ; `enforce` → n'accepte que des votes v3. |
+| **Aucun vote v1 ne valide un bloc animation v3** | un bloc animation v3 exige **uniquement des reçus `pod-vote-v3-anim`** (`rulesVersion = 2`) ; le **vérificateur** compte les reçus v1/v2/v3-image en `warn` et les **exclut** du quorum/comité (test 6B-T6 : un bloc dont le quorum n'est atteint qu'avec des échos est **refusé**). |
+| **Avant tout firmware C0/C1 capable** | les animations restent sur le chemin **actuel** (candidat v1, quorum historique, étiquette « non recalculée »). |
+| **`ANIM_V3_MODE` : seulement `off` et `shadow` en 6B** (R1 · point 6) | `off` (défaut) → comportement actuel **strict** ; `shadow` → le serveur calcule la référence v3 (`framesRoot`, `animRoot`, E/T/R/S) et la **journalise sans aucun effet** (aucun vote v3 n'est accepté, aucune route d'écriture). **`enforce` n'existe pas dans le code 6B** : la valeur `enforce` (ou toute autre) est **ramenée à `shadow`** avec un avertissement, et aucun chemin de code « strict » n'est livré. Il ne sera **écrit qu'au lot 8**, avec la **déclaration réelle des capacités** par les firmwares (`caps` dans `/api/register`) : sans elle, le serveur ne peut pas savoir quels appareils savent voter une animation. Test : `ANIM_V3_MODE=enforce` ⇒ `shadow`, aucun écart de comportement par rapport à `shadow` ; aucune production en mode strict. |
 | **Blocs animation existants** | inchangés (`blockVersion` absent) ; affichés « v1 : non recalculée » ; jamais réécrits. |
 | **Classes de calcul** | C0 (ESP8266) : flux complet, §3 ; C1 (R4) : idem + marge mémoire ; C2 (hôte) : idem + rejeu du clip complet. Un comité peut exiger ≥ 1 attestation C1/C2 **[?] A5**. |
 | **Grinding** | la graine d'un comité d'animation = `parentHash` + `animRoot` : **calculable par l'auteur avant la soumission** comme pour une image ; **aucun comité d'animation** tant que la balise postérieure n'existe pas ; la décision d'une animation v3 reste le **quorum** (profils éligibles figés). |
 
 ## 9. Vérificateur public (6B)
 
-Nouveaux contrôles de `lib/podVerify.ts` pour un bloc animation v3 : `anim-clip` (CRC, structure, `clipHash`), `anim-frames` (images décodées → `frameHash_i`, `e_i,t_i,r_i`, `framesRoot`), `anim-root` (= `animRoot` = `contentHash` du bloc), `anim-metrics` (E,T,R recalculés = signés par chaque reçu approuvé ; S = `scorePpm`), `anim-poster` (indice), `anim-receipts-class` (aucun reçu v1 compté). Niveau `content` atteint si le clip fourni redonne tout. **Ne prouve toujours pas** : identité d'un appareil, geste humain, complétude des éligibles.
+Nouveaux contrôles de `lib/podVerify.ts` pour un bloc animation v3 : `anim-clip` (CRC, structure, `clipHash`), `anim-frames` (images décodées → `frameHash_i`, `e_i,t_i,r_i`, `framesRoot`), `anim-root` (= `animRoot` = `contentHash` du bloc), `anim-metrics` (E,T,R **et S** recalculés = signés par chaque reçu approuvé ; S = `scorePpm`), `anim-poster` (indice), `anim-receipts-class` (aucun reçu v1 / image compté), `anim-rules` (`rulesVersion = 2` du bloc ⇔ racine d'animation ⇔ reçus `pod-vote-v3-anim`). Niveau `content` atteint si le clip fourni redonne tout. **Ne prouve toujours pas** : identité d'un appareil, geste humain, complétude des éligibles.
 
 ## 10. Plan 6A → 6C et critères
 
 | Étape | Contenu | Acceptation | Reflash |
 |---|---|---|---|
-| **6A** *(ce document)* | spécification | relue et **gelée** par GPT | non |
-| **6B** | référence TypeScript (`lib/animV3.ts`), noyau C++ hôte (`pod_anim_*` dans `consensus-pod/src`), vecteurs, route `candidate-clip`, mode `ANIM_V3_MODE` (off/shadow/enforce), vérificateur, tests ; **aucun firmware de production** | ≥ **200 clips** différentiels TS ↔ C++ (cas limites : 2 images, 64 images, identiques, plein, vide, bruit, runs de 255, délais extrêmes, fg=bg, loops≠0, CRC faux, retour ≠ image 0) ; **T4** : modifier 1 octet / un délai / un ordre d'images / fg / bg / N → rejet ou racine différente, sur TS **et** C++ ; **T6** : échos v1 non comptés ; coût Redis écrit et testé ; `ANIM_V3_MODE=off` = **0 différence** | non |
+| **6A-R1** *(ce document)* | spécification amendée | relue et **gelée** par GPT **avant tout code** | non |
+| **6B-1** | **référence pure** TypeScript (`lib/animV3.ts` : décodage, `frameLeaf`, `framesRoot`, `animRoot`, E/T/R/S, règles A1, message `pod-vote-v3-anim`) + **noyau C++ hôte** (`pod_anim_*` dans `consensus-pod/src`) + `rulesVersion` variable (§ 4 bis) + **vecteurs** + tests différentiels ; **aucune route, aucun serveur, aucun firmware** | ≥ **200 clips** différentiels TS ↔ C++ (2 images, 64 images, identiques, noir↔blanc alternés, vide, plein, bruit, runs de 255, délais extrêmes, fg=bg, loops≠0, CRC faux, retour ≠ image 0) ; **T3** layout pages/lignes ; **T4** : modifier 1 octet / un délai / un ordre d'images / fg / bg / N → rejet ou racine différente (TS **et** C++) ; **T8** parse croisé image/animation refusé ; **vecteurs de Merkle pour CHAQUE N de 2 à 64** (impairs compris : N = 3, 5, 7… 63 : promotion du nœud impair, jamais de duplication) en TS **et** C++ ; régression : vecteurs des images fixes **inchangés** | non |
+| **6B-2** | route `candidate-clip` (validation des identifiants **avant** Redis, journal MISS), `ANIM_V3_MODE` **`off` / `shadow` seulement**, vérificateur (§ 9), tests de câblage et de budget | **T6** échos non comptés ; **T7** identifiants invalides ⇒ 0 appel Redis ; `enforce` ⇒ `shadow` ; `off` = **0 différence** ; budget § 7 écrit et testé (1 lecture par MISS, borne 64) | non |
 | **6C** | préparation firmware : démonstrateur C++ **hôte** du décodage image par image (tampon 1 Ko) et des mesures de mémoire/temps simulées ; auto-test compilable ESP8266/R4 (comme le lot 5) ; **aucun `.ino` de production** | auto-test compile ; RAM statique mesurée ; budgets § 3 documentés | non (essai porteur facultatif) |
 | **Adoption** | firmwares C0/C1 : lot 8 (grand reflash) | traces par variante | oui |
 
@@ -119,13 +154,16 @@ Nouveaux contrôles de `lib/podVerify.ts` pour un bloc animation v3 : `anim-clip
 
 | # | Question | Proposition de Claude |
 |---|---|---|
-| **A1** | `uniform`/`noise` : sur **toutes** les images, sur au moins une, ou sur les agrégats ? | **toutes** (le plus conservateur et le plus objectif : une seule bonne image sauve l'animation) ; `noise` à rediscuter après mesure |
-| **A2** | Distinguer image/animation par `rulesVersion` (2) ou par un nouveau préfixe `pod-vote-v3a` ? | **`rulesVersion`** : format de vote et noyau C++ inchangés ; risque : confusion si un jour `rulesVersion` évolue pour les images (le préciser par table de versions) |
-| **A3** | `imageHash` d'un bloc animation v3 : garder la racine v1 ou la remplacer par `animRoot` ? | **garder la racine v1** (compatibilité des vues et de `block-anim`) ; `contentHash = animRoot` fait foi pour le protocole |
-| **A4** | `fg = bg` interdit, `loops = 0` imposé : acceptable ? | oui (une animation invisible n'a pas de sens ; le serveur impose déjà `loops = 0`) |
-| **A5** | Exiger ≥ 1 attestation C1/C2 par bloc d'animation ? | **non** au démarrage (le parc n'a que des C0/C1) ; à réévaluer avec les nœuds hôtes |
-| **A6** | Score d'animation en ppm `pod-metrics-2` (rupture avec le score v1 affiché) | oui, avec étiquette claire « v1 / v3 » dans la galerie |
-| **A7** | Délai engagé **par image** (dans la feuille) ou seulement dans `animRoot` ? | **par image** (la feuille reste de taille fixe — 46 o —, un seul hachage par image) |
+| **A1** | Règles : `static`, `uniform`, `noise` | **GELÉ (proposition GPT)** : `static` rejette les images **toutes identiques** mais **pas** une alternance uniforme noir/blanc ; **pas de `uniform`** ; `noise` sur les **agrégats** `E > 980 000` et `T > 900 000` |
+| **A2** | Distinguer image/animation | **GELÉ** : domaine signé propre **`pod-vote-v3-anim`** (§ 3 bis), plus de déduction par `rulesVersion` ; `rulesVersion` devient variable par bloc (§ 4 bis) |
+| **A3** | `imageHash` d'un bloc animation v3 | **GELÉ** : racine v1 conservée **uniquement par compatibilité** ; `contentHash = animRoot` fait foi |
+| **A4** | `fg ≠ bg` et `loops = 0` | **GELÉ** |
+| **A5** | Attestation C1/C2 obligatoire | **GELÉ** : **aucune** obligation au démarrage |
+| **A6** | Score en ppm `pod-metrics-2` | **GELÉ**, avec étiquette « v1 / v3 » dans la galerie |
+| **A7** | Délai engagé par image | **GELÉ** (feuille de 46 o) |
+| **A8** *(nouveau)* | Politique d'électorat pour une animation v3 | électorat **figé ≤ 64** exigé ; `overflow` ⇒ chemin v1 actuel (§ 7) — **à confirmer au gel** |
+
+*Statut « GELÉ » : reprend les propositions de l'audit GPT du 07/10/2026 ; le gel **formel** reste à prononcer par GPT sur cette révision, puis par le porteur.*
 
 ## 12. Ce que cette spécification NE fait PAS
 

@@ -100,7 +100,7 @@ validatorProfileIds (triés), scorePpm (ENTIER), minedAt, [animRoot], votesRoot,
 
 > **Corrections post-audit (07/10/2026, `docs/CORRECTIFS_POST_AUDIT_GPT_2026_10_07.md`)** : `committeeRoot` (mode, K, seuil, vague, liste ordonnée) et `minerRoot` (résultat et entrées du tirage) sont **dans le hash canonique** ; le poids du mineur est ≥ 1 ; l'électorat est **figé au dépôt** ; `COMMITTEE_MODE=enforce` exige l'accusé explicite `COMMITTEE_GRINDING_ACK=true` tant qu'il n'existe pas de balise aléatoire postérieure à la soumission.
 
-> **FIX2 (07/10/2026)** : au-delà de 64 profils sans comité « enforce », un candidat déposé en éligibilité « enforce » est ramené à « shadow » (pas de quorum incohérent) ; l'**appareil** qui reçoit le bloc d'un mineur déterministe est le plus petit appareil approuvant du profil tiré (contrôle `miner-device`). **Animations** : `docs/SPEC_PODANIM_V3.md` (brouillon 6A : `rulesVersion = 2`, `animRoot` = `contentHash`, e/t/r par image).
+> **FIX2 (07/10/2026)** : au-delà de 64 profils sans comité « enforce », un candidat déposé en éligibilité « enforce » est ramené à « shadow » (pas de quorum incohérent) ; l'**appareil** qui reçoit le bloc d'un mineur déterministe est le plus petit appareil approuvant du profil tiré (contrôle `miner-device`). **Animations** : `docs/SPEC_PODANIM_V3.md` (brouillon 6A-R1 : message signé propre `pod-vote-v3-anim`, `rulesVersion` variable par bloc (1 images, 2 animations), `animRoot` = `contentHash`, E/T/R/S signés).
 
 ## 8. Éligibilité (une seule fonction partagée) [?]
 
