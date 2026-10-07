@@ -12,6 +12,7 @@ import type { ChainSummary } from "@/lib/chain";
 import { maybeCheckAnaFeed } from "@/lib/anaFeed";
 import { selectDelivery, withoutScenePointer, sceneRetryAfterSec, scenePullMeta, type DeliverySelection } from "@/lib/scene/delivery";
 import { animPullMeta, withoutAnimPointer } from "@/lib/anim/pointer";
+import { eligibilityConfigFromEnv, eligibilityModeFromEnv, voteGate } from "@/lib/eligibility";
 
 const DEVICE_ID_REGEX = /^dev_[A-Z0-9]{8}$/;
 // Rate-limit ÉCHANTILLONNÉ (lib/pullBudget.ts) : 1 pull sur 8 compte ; > RL_SAMPLED_MAX dans la fenêtre = ≈ 32 pulls/min réels → 429.
@@ -180,14 +181,23 @@ export async function GET(req: NextRequest) {
     if (candidate) {
       const votesRaw = votesRawMget;   // déjà lu dans le MGET du début : zéro commande de plus
       let alreadyVoted = false;
+      const priorProfiles = new Set<string>();
       if (votesRaw) {
         try {
           const voteMap =
             typeof votesRaw === "string" ? JSON.parse(votesRaw) : votesRaw;
           alreadyVoted = !!voteMap?.votes?.[deviceId];
+          if (voteMap?.candidateId === candidate.candidateId) for (const v of Object.values((voteMap?.votes ?? {}) as Record<string, { deviceId: string; profileId?: string }>)) if (v.profileId && v.deviceId !== deviceId) priorProfiles.add(v.profileId);
         } catch {}
       }
-      if (!alreadyVoted) {
+      // Éligibilité (Lot 2, ELIGIBILITY_MODE=enforce) : un appareil qui n'a pas le droit de voter (auteur, non appairé…) ou dont le profil a déjà voté n'est pas invité à valider : il
+      // n'appelle donc pas /api/validate-candidate à chaque cycle pour rien (aucune commande Redis de plus : appareil, candidat et votes sont déjà lus). « off » / « shadow » : aucun effet.
+      let notEligible = false;
+      if (device && candidate.eligibility && eligibilityModeFromEnv() === "enforce") {
+        const gate = voteGate({ mode: "enforce", eligibility: candidate.eligibility, device, now: Date.now(), cfg: eligibilityConfigFromEnv(), priorVoterProfiles: priorProfiles });
+        notEligible = gate.action === "refuse";
+      }
+      if (!alreadyVoted && !notEligible) {
         pendingValidation = {
           candidateId: candidate.candidateId,
           poolScreen:  candidate.poolScreen, // info seulement — l'ESP peut l'afficher si son écran correspond

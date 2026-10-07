@@ -421,6 +421,26 @@ export async function getGlobalActiveCount(activeWindowMs = ACTIVE_WINDOW_MS): P
   return Math.max(1, count);
 }
 
+/**
+ * Instantané de TOUS les appareils lus pour le plan d'éligibilité (Lot 2, ELIGIBILITY_MODE shadow/enforce). Même coût que getGlobalActiveCount (1 SMEMBERS + 1 MGET) : à appeler À SA PLACE,
+ * jamais en plus. `legacyCount` = exactement ce que renvoie getGlobalActiveCount (appairés ET actifs, minimum 1) : le quorum historique reste calculable pour comparaison.
+ */
+export async function getPoolSnapshot(activeWindowMs = ACTIVE_WINDOW_MS): Promise<{ devices: Device[]; legacyCount: number }> {
+  const allIds = (await redis.smembers("devices:all")) as string[];
+  if (!allIds || allIds.length === 0) return { devices: [], legacyCount: 1 };
+  const now = Date.now();
+  const values = await redis.mget<(string | null)[]>(...allIds.map(deviceKey));
+  const expired = allIds.filter((_, i) => !values[i]);
+  if (expired.length > 0) Promise.all(expired.map((id) => redis.srem("devices:all", id))).catch(() => {});
+  const devices: Device[] = [];
+  for (const raw of values) {
+    if (!raw) continue;
+    try { devices.push(typeof raw === "string" ? JSON.parse(raw) : (raw as Device)); } catch { /* entrée illisible : ignorée */ }
+  }
+  const legacy = devices.filter((d) => !!(d.artistId || d.artistName) && now - d.lastPing < activeWindowMs).length;
+  return { devices, legacyCount: Math.max(1, legacy) };
+}
+
 // ─── Axe 2 : ESP en prêt public ──────────────────────────────────────────────
 
 /**
@@ -751,6 +771,18 @@ export async function updateDevicePublicKey(deviceId: string, publicKey: string)
   if (!device || device.publicKey === publicKey) return;
   device.publicKey = publicKey;
   await saveDevice(device);
+}
+
+/**
+ * Efface la clé publique d'un appareil (réinitialisation par le PROPRIÉTAIRE, route reset-key) : le prochain /api/register en enregistrera une nouvelle, même avec PIN_DEVICE_KEY=true.
+ * Retourne null si l'appareil n'existe pas. 1 lecture + 1 écriture, uniquement sur action du propriétaire.
+ */
+export async function resetDeviceKey(deviceId: string): Promise<{ hadKey: boolean } | null> {
+  const device = await getDevice(deviceId);
+  if (!device) return null;
+  const hadKey = !!device.publicKey;
+  if (hadKey) { delete device.publicKey; await saveDevice(device); }
+  return { hadKey };
 }
 
 /**

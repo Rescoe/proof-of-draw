@@ -75,7 +75,7 @@ export const ROADMAP: RoadmapPhase[] = [
     items: [
       { id: "receipts", title: "Conserver les votes signés dans le bloc, liés au parentHash", status: "todo", note: "Aujourd’hui ils sont supprimés après le minage : le bloc n’est pas vérifiable seul." },
       { id: "verifier", title: "Vérificateur public (recalcule hash, métriques, signatures, comité)", status: "todo" },
-      { id: "eligibility", title: "Un vote par profil, auteur exclu, appairage exigé pour voter", status: "todo", note: "Aujourd’hui un appareil non appairé peut voter." },
+      { id: "eligibility", title: "Un vote par profil, auteur exclu, appairage exigé pour voter", status: "doing", note: "Code livré derrière un interrupteur, éteint par défaut ; à essayer en mode « ombre » avant de l’activer. Aujourd’hui un appareil non appairé peut encore voter." },
       { id: "register-proof", title: "Preuve de possession de la clé à l’enregistrement, épinglage et récupération par le profil", status: "todo" },
       { id: "committee", title: "Comité déterministe de 7 profils, seuil 2/3, mineur rejouable", status: "todo", note: "Remplace le quorum de 51 % et le tirage aléatoire serveur." },
       { id: "rules", title: "Règles N2 versionnées, motif de refus signé, revérifiées par le serveur", status: "todo" },

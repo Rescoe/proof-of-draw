@@ -35,6 +35,7 @@ import { broadcastAnimation } from "@/lib/anim/broadcast";
 import { invalidateNetworkSnapshot } from "@/lib/networkSnapshot";
 import { checkVoteV2, parseVoteV2, voteMessageV2 } from "@/lib/podVote";
 import { PPM } from "@/lib/podMetrics";
+import { eligibilityConfigFromEnv, eligibilityModeFromEnv, voteGate } from "@/lib/eligibility";
 
 const DEVICE_ID_REGEX = /^dev_[A-Z0-9]{8}$/;
 const BLACKLIST_TTL = parseInt(process.env.BLACKLIST_TTL_SECONDS ?? "604800");
@@ -93,6 +94,21 @@ export async function POST(req: NextRequest) {
     if (!candidate) return json({ error: "Aucun candidat actif" }, 409);
     const prefetchedVotes = parseVotesRaw(raws[3]);
     if (candidate.candidateId !== String(candidateId)) return json({ error: "candidateId ne correspond pas au candidat actif", current: candidate.candidateId }, 409);
+
+    // ── Éligibilité (Lot 2, ELIGIBILITY_MODE) : aucune lecture Redis de plus. « off » : aucun effet. « shadow » : journal seul. « enforce » : refus 403 (inéligible) / 409 (profil déjà représenté). ──
+    const eligMode = eligibilityModeFromEnv();
+    let voterProfileId: string | null = null;
+    if (eligMode !== "off" && candidate.eligibility) {
+      const prior = new Set<string>();
+      if (prefetchedVotes && prefetchedVotes.candidateId === candidate.candidateId) for (const v of Object.values(prefetchedVotes.votes)) if (v.profileId && v.deviceId !== String(deviceId)) prior.add(v.profileId);
+      const gate = voteGate({ mode: eligMode, eligibility: candidate.eligibility, device, now: Date.now(), cfg: eligibilityConfigFromEnv(), priorVoterProfiles: prior });
+      if (gate.action === "shadow-refuse") console.warn(`[eligibility] SHADOW refuserait le vote device=${deviceId} raison=${gate.reason} profil=${gate.profileId ?? "?"}`);
+      if (gate.action === "refuse") {
+        console.warn(`[eligibility] REFUS du vote device=${deviceId} raison=${gate.reason} profil=${gate.profileId ?? "?"}`);
+        return json({ error: gate.reason === "profile-already-voted" ? "Profil déjà représenté par un autre appareil" : "Appareil non éligible pour ce candidat", reason: gate.reason }, gate.status);
+      }
+      if (gate.action === "allow") voterProfileId = gate.profileId;
+    }
 
     let espScore = Number(score);
     const serverScore = candidate.score;
@@ -156,10 +172,11 @@ export async function POST(req: NextRequest) {
       console.warn(`[validation-result] pas de publicKey device=${deviceId} — mise à jour firmware requise`);
     }
 
-    const vote: ValidationVote = v2Vote
+    const vote: ValidationVote = { ...(v2Vote
       ? { deviceId: String(deviceId), entropy: v2Vote.e / PPM, transitions: v2Vote.t / PPM, rle: v2Vote.r / PPM, score: espScore, signature: String(signature ?? ""), votedAt: Date.now(),
           v: 2, verdict: v2Vote.verdict, ...(v2Vote.reason ? { reason: v2Vote.reason } : {}), ...(v2Vote.suspect ? { suspect: true } : {}) }
-      : { deviceId: String(deviceId), entropy: Number(entropy), transitions: Number(transitions), rle: Number(rle), score: espScore, signature: String(signature ?? ""), votedAt: Date.now() };
+      : { deviceId: String(deviceId), entropy: Number(entropy), transitions: Number(transitions), rle: Number(rle), score: espScore, signature: String(signature ?? ""), votedAt: Date.now() }),
+      ...(voterProfileId ? { profileId: voterProfileId } : {}) };
     const { quorumReached, voteCount, needed, rejectCount } = await castVote(vote, candidate, prefetchedVotes);
 
     // Trop de refus pour que le quorum d'approbations soit encore atteignable : le candidat est refusé par le réseau (vote v2 uniquement).

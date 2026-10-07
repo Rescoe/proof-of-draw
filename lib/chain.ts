@@ -37,6 +37,7 @@ import type { ReplayAnalysis } from "@/lib/crypto";
 import { FramePayload } from "@/lib/queue";
 import type { ActionEvent } from "@/lib/types/actions";
 import { summarizeVotes, type VotesSummary } from "@/lib/validationSummary";
+import { voterKey, type CandidateEligibility } from "@/lib/eligibility";
 
 export interface Block {
   blockIndex: number;
@@ -86,6 +87,11 @@ export interface Block {
   // d'images vivent dans `chain:anim:{hash}` (permanent) ; `imagePayload` est l'affiche (image fixe) au format de l'écran.
   kind?: "animation";
   anim?: import("@/lib/anim/block").AnimBlockMeta;
+
+  // ── Éligibilité des votants (Lot 2, ELIGIBILITY_MODE=enforce) — additif, hors du hash du bloc ───────────────────────────────────────────────
+  // « independent » : au moins 3 profils indépendants de l'auteur ont pu voter, l'auteur est EXCLU. « bootstrap » : réseau trop petit, les profils de l'auteur étaient admis :
+  // VALIDATION PARTIELLE, à ne jamais présenter comme « validé par le réseau ». `distinctProfiles` = profils distincts ayant voté (une carte de plus ne donne pas une voix de plus).
+  validation?: { eligibility: "enforce"; plan: "independent" | "bootstrap" | "none"; independentProfiles: number; distinctProfiles: number };
 }
 
 export interface BlockImagePayload {
@@ -127,6 +133,9 @@ export interface Candidate {
 
   // ── Validation réelle (P2) : hash du contenu brut + métriques entières que les appareils RECALCULENT (lib/podVote.ts) ─────────
   v2?: import("@/lib/podVote").CandidateV2;
+
+  // ── Éligibilité des votants (Lot 2) : absent = comportement historique (mode « off » au dépôt du candidat) ─────────────────────────────────────
+  eligibility?: CandidateEligibility;
 }
 
 export interface ValidationVote {
@@ -142,6 +151,8 @@ export interface ValidationVote {
   verdict?: "accept" | "reject";
   reason?: string;
   suspect?: boolean;
+  /** Profil représenté (renseigné SEULEMENT en mode enforce) : un profil compte UNE voix quel que soit le nombre de ses appareils (lib/eligibility.ts). Absent = un vote par appareil (historique). */
+  profileId?: string;
 }
 
 export interface VoteMap {
@@ -338,8 +349,25 @@ export function parseVotesRaw(raw: unknown): VoteMap | null {
 }
 
 export const isRejectVote = (v: ValidationVote): boolean => v.verdict === "reject";
-export const countAccepts = (m: VoteMap): number => Object.values(m.votes).filter((v) => !isRejectVote(v)).length;
-export const countRejects = (m: VoteMap): number => Object.values(m.votes).filter(isRejectVote).length;
+
+/**
+ * UNE VOIX PAR PROFIL (Lot 2). Les votes sont regroupés par `voterKey` (le profil s'il est renseigné, sinon l'appareil : comportement historique, identique à avant pour tout vote sans profil).
+ * Un profil dont les appareils sont d'accord compte UNE fois ; un profil dont les appareils se CONTREDISENT (un accept et un reject) s'ABSTIENT (ni approbation ni refus) — déterministe,
+ * indépendant de l'ordre d'arrivée (l'ordre des clés d'une carte de votes réécrite par Redis n'est pas garanti).
+ */
+function voteGroups(m: VoteMap): Map<string, { accept: boolean; reject: boolean; v2Accept: boolean }> {
+  const g = new Map<string, { accept: boolean; reject: boolean; v2Accept: boolean }>();
+  for (const v of Object.values(m.votes)) {
+    const k = voterKey(v), e = g.get(k) ?? { accept: false, reject: false, v2Accept: false };
+    if (isRejectVote(v)) e.reject = true; else { e.accept = true; if (v.v === 2) e.v2Accept = true; }
+    g.set(k, e);
+  }
+  return g;
+}
+export const countAccepts = (m: VoteMap): number => [...voteGroups(m).values()].filter((e) => e.accept && !e.reject).length;
+export const countRejects = (m: VoteMap): number => [...voteGroups(m).values()].filter((e) => e.reject && !e.accept).length;
+/** Nombre de voix (profils ou appareils) distinctes ayant voté, abstentions comprises. */
+export const countVoters = (m: VoteMap): number => voteGroups(m).size;
 
 /**
  * Enregistrement ATOMIQUE d'un vote (G2, 06/10/2026). Avant : GET de la carte des votes, ajout en mémoire, SET → deux votes simultanés s'écrasaient (le dernier
@@ -362,7 +390,7 @@ export const VOTE_SCRIPT = [
 ].join("\n");
 
 /** Approbations v2 (l'appareil a recalculé hash + métriques et signé) : distinctes des approbations v1 (écho du score serveur). */
-export const countV2Accepts = (m: VoteMap): number => Object.values(m.votes).filter((v) => v.v === 2 && !isRejectVote(v)).length;
+export const countV2Accepts = (m: VoteMap): number => [...voteGroups(m).values()].filter((e) => e.accept && !e.reject && e.v2Accept).length;
 
 /**
  * Nombre minimal d'approbations v2 exigé pour finaliser un candidat qui porte une spécification v2 (MIN_V2_APPROVALS, défaut 0 = désactivé).
@@ -565,6 +593,9 @@ export async function finalizeBlock(
     podHashEnriched: candidate.podHashEnriched,
     podGeometry:     candidate.podGeometry,
     votesSummary:    summarizeVotes(votes, rejects),
+    ...(candidate.eligibility?.mode === "enforce"
+      ? { validation: { eligibility: "enforce" as const, plan: candidate.eligibility.plan, independentProfiles: candidate.eligibility.independentProfiles, distinctProfiles: new Set(votes.map(voterKey)).size } }
+      : {}),
     ...(candidate.anim
       ? { kind: "animation" as const, anim: { frames: candidate.anim.frames, loops: candidate.anim.loops, playMs: candidate.anim.playMs, bytes: candidate.anim.bytes, root: candidate.anim.root } }
       : {}),

@@ -24,6 +24,7 @@ import type { Device } from "@/lib/deviceStore";
 import { parseCandidateRaw, parseVotesRaw, PULL_KEY_CANDIDATE, PULL_KEY_VOTES } from "@/lib/chain";
 import { getIP, forbidden } from "@/lib/rateLimit";
 import { ACTIVE_WINDOW_MS, rlSampled } from "@/lib/pullBudget";
+import { eligibilityConfigFromEnv, eligibilityModeFromEnv, voteGate } from "@/lib/eligibility";
 
 const DEVICE_ID_REGEX = /^dev_[A-Z0-9]{8}$/;
 // Rate-limit échantillonné (1 requête sur 8) : > 2 échantillons dans la minute ≈ 16 requêtes/min (le firmware en fait ≤ 2/min)
@@ -78,6 +79,21 @@ export async function GET(req: NextRequest) {
       alreadyVoted: true,
       candidateId: candidate.candidateId,
     });
+  }
+
+  // ── 5 bis. Éligibilité (Lot 2) : aucune lecture Redis de plus (appareil, candidat et votes déjà lus ci-dessus) ─────────────────────────────────
+  const eligMode = eligibilityModeFromEnv();
+  if (eligMode !== "off" && candidate.eligibility) {
+    const prior = new Set<string>();
+    if (voteMap && voteMap.candidateId === candidate.candidateId) for (const v of Object.values(voteMap.votes)) if (v.profileId && v.deviceId !== deviceId) prior.add(v.profileId);
+    const gate = voteGate({ mode: eligMode, eligibility: candidate.eligibility, device, now: Date.now(), cfg: eligibilityConfigFromEnv(), priorVoterProfiles: prior });
+    if (gate.action === "shadow-refuse") console.warn(`[eligibility] SHADOW refuserait validate-candidate device=${deviceId} raison=${gate.reason} profil=${gate.profileId ?? "?"}`);
+    if (gate.action === "refuse") {
+      console.warn(`[eligibility] REFUS validate-candidate device=${deviceId} raison=${gate.reason} profil=${gate.profileId ?? "?"}`);
+      return NextResponse.json(gate.reason === "profile-already-voted"
+        ? { candidate: null, alreadyVoted: true, candidateId: candidate.candidateId, profileRepresented: true }
+        : { candidate: null, ineligible: gate.reason, candidateId: candidate.candidateId });
+    }
   }
 
   // ── 6. Retourner les métadonnées du candidat (sans payload) ───────────────

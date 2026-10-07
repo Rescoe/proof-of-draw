@@ -3,7 +3,8 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { redis } from "@/lib/redis";
-import { getDevice, getGlobalActiveCount } from "@/lib/deviceStore";
+import { getDevice, getGlobalActiveCount, getPoolSnapshot } from "@/lib/deviceStore";
+import { authorProfilesOf, candidateEligibilityOf, eligibilityConfigFromEnv, eligibilityModeFromEnv, planPool, type CandidateEligibility } from "@/lib/eligibility";
 import {
   computeComplexity,
   decodeEinkBuffer,
@@ -193,7 +194,20 @@ export async function POST(req: NextRequest) {
   const effectiveArtistName = drawArtistName || deviceOwnerName;
 
   // Quorum global : tous les ESP actifs du réseau, tous écrans confondus
-  const poolSize = await getGlobalActiveCount();
+  // Éligibilité des votants (Lot 2, ELIGIBILITY_MODE) : « off » (défaut) = EXACTEMENT le comportement historique ; « shadow » = plan calculé et journalisé, quorum inchangé ;
+  // « enforce » = quorum en PROFILS éligibles (auteur exclu, une voix par profil ; bootstrap étiqueté sous 3 profils indépendants). Même lecture Redis que getGlobalActiveCount.
+  const eligMode = eligibilityModeFromEnv();
+  let poolSize: number;
+  let eligibility: CandidateEligibility | undefined;
+  if (eligMode === "off") {
+    poolSize = await getGlobalActiveCount();
+  } else {
+    const snap = await getPoolSnapshot();
+    const plan = planPool(snap.devices, authorProfilesOf(device, drawArtistName, snap.devices), Date.now(), eligibilityConfigFromEnv());
+    eligibility = candidateEligibilityOf(eligMode, plan);
+    poolSize = eligMode === "enforce" ? plan.poolSize : snap.legacyCount;
+    console.log(`[eligibility] ${eligMode.toUpperCase()} plan=${plan.kind} profils=${plan.profiles.length} indépendants=${plan.independentProfiles} auteur=[${plan.authorProfiles.join(",")}] poolHistorique=${snap.legacyCount} poolRetenu=${poolSize}`);
+  }
   const CANDIDATE_TTL_SEC = parseInt(process.env.CANDIDATE_TTL_SEC ?? "1800");
 
   // Warning consolidé — résumé des observations de qualité (non-bloquant)
@@ -227,6 +241,7 @@ export async function POST(req: NextRequest) {
     submittedAt: Date.now(),
     expiresAt: Date.now() + CANDIDATE_TTL_SEC * 1000,
     poolSize,
+    ...(eligibility ? { eligibility } : {}),
     warning,
   };
 
