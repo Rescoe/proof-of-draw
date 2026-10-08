@@ -982,7 +982,7 @@ static uint8_t podRenderStreamToTft(WiFiClient* stream, char* frameHex, char* re
   }
   while (ok && g_podTft.sourceRemaining()) ok = podReadSourceRow(stream) && g_podTft.consumeSource(g_podSrcRow);   // l'image reçue est lue et hachée EN ENTIER
   tft.endWrite();
-  if (!ok || !g_podTft.finish(frameHex, renderHex)) { Serial.println(F("[RENDER] image abandonnée (aucun ACK)")); return 0; }
+  if (!ok || !g_podTft.finish(frameHex, renderHex)) { Serial.println(F("[RENDER] image abandonnée (aucun ACK) — l'écran peut être PARTIELLEMENT redessiné")); return 0; }
   return 2;
 }
 #endif

@@ -53,7 +53,7 @@ public:
 // POD_RENDER_V1_BEGIN
     // Rendu en flux (lot 8B-2A) : `produce(ctx, out, cap)` remplit `out` d'au plus `cap` octets et retourne leur nombre (0 = fin ou erreur). Les octets sont envoyés tels quels au plan noir (0x24), puis
     // INVERSÉS (~octet, comme Display) au plan rouge (0x26) — exactement le contrat de Display(), sans tampon intermédiaire. Un appel de `produce` ne franchit jamais la frontière entre les deux plans.
-    // Retourne false SANS rafraîchir le panneau si `produce` s'arrête avant les 2 × 4 736 octets (l'écran garde son image) ; le pilote ne rapporte aucune erreur SPI (TurnOnDisplay est void) : true = « tout a été remis ».
+    // Retourne false SANS lancer le rafraîchissement si `produce` s'arrête avant les 2 × 4 736 octets (la RAM du panneau est alors partiellement écrite ; l'écran garde son état physique du moment, éventuellement une page blanche) ; le pilote ne rapporte aucune erreur SPI (TurnOnDisplay est void) : true = « tout a été remis ».
     typedef unsigned int (*ProduceFn)(void* ctx, unsigned char* out, unsigned int cap);
     bool DisplayStream(ProduceFn produce, void* ctx);
 // POD_RENDER_V1_END

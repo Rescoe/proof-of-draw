@@ -434,7 +434,8 @@ static bool refreshPanel(bool white) {
 #if POD_RENDER_V1
 // ─── Rendu v1 en flux : calcul ET remise au pilote ───────────────────────────────────────────────────────────────────────────────────────────────
 // Mémoire (UNO R4, pile principale ≈ 1 Ko : TOUS les objets sont GLOBAUX) : PodEinkRenderer 272 o (son contexte SHA sert AUSSI au frameHash : pas de second contexte) + 65 o de hash (statique), plus les plans blackBuf / redBuf EXISTANTS (2 × 4 736 o, jamais modifiés) ; le seul
-// tampon de pile est le morceau de 32 o du pilote. Aucune grille, aucun tampon final. Retour : 0 = échec AVANT la remise · 1 = rendu calculé mais NON remis (panneau resté BUSY) · 2 = calculé ET remis.
+// tampon de pile est le morceau de 32 o du pilote. Aucune grille, aucun tampon final. Retour : 0 = échec AVANT la fin de la remise · 1 = TOUTES les données ET la commande de rafraîchissement ont été envoyées, mais la FIN PHYSIQUE du rafraîchissement n'est pas confirmée (BUSY expiré : l'image peut être affichée ou en cours d'affichage) · 2 = remis et rafraîchissement confirmé.
+// Seul 2 est un succès (sinon AUCUN ACK, le serveur réessaiera). ⚠ État de l'écran après un échec : NON garanti inchangé — la page blanche CLEAR_BEFORE_IMAGE peut venir d'être affichée ; une production interrompue (−1) laisse la RAM du panneau partiellement écrite sans lancer le rafraîchissement.
 static PodEinkRenderer<PodSha256Rw> g_podEink;
 static uint32_t podRenderProduce(void* ctx, uint8_t* out, uint32_t cap) { return static_cast<PodEinkRenderer<PodSha256Rw>*>(ctx)->read(out, cap); }
 
@@ -448,13 +449,13 @@ static uint8_t podRenderAndShow() {
   if (!g_podEink.begin(spec, POD_RENDER_MODE_DEFAULT, meta, blackBuf, redBuf, BUF_SIZE)) { logf("[RENDER] paramètres refusés — abandon"); return 0; }
   waitMinRefreshGap();
   const unsigned long t0 = millis();
-  if (!epd.init()) { logf("[RENDER] panneau non initialisé — abandon, rien n'est envoyé"); lastRefreshMs = millis(); hasRefreshed = true; return 0; }
+  if (!epd.init()) { logf("[RENDER] panneau non initialisé — abandon, aucune donnée envoyée (l'écran peut être resté blanc)"); lastRefreshMs = millis(); hasRefreshed = true; return 0; }
   const int8_t sent = epd.displayStream(podRenderProduce, &g_podEink);
   epd.sleep();
   lastRefreshMs = millis(); hasRefreshed = true;
-  if (sent == -1) { logf("[RENDER] production interrompue — le panneau n'a PAS été rafraîchi"); return 0; }
+  if (sent == -1) { logf("[RENDER] production interrompue — rafraîchissement NON lancé (RAM du panneau partiellement écrite ; l'écran garde son état physique, éventuellement blanc)"); return 0; }
   if (!g_podEink.finish(hex)) { logf("[RENDER] renderHash incomplet — abandon"); return 0; }
-  if (sent != 0) { logf("[RENDER] rendu CALCULÉ (renderHash=%s) mais NON remis : le panneau n'a pas fini (BUSY)", hex); return 1; }
+  if (sent != 0) { logf("[RENDER] rendu CALCULÉ (renderHash=%s), données ET commande de rafraîchissement ENVOYÉES, mais fin physique du rafraîchissement NON confirmée (BUSY expiré) — pas d'ACK", hex); return 1; }
   logf("[RENDER] calculé ET remis au pilote en %lu ms — mode=%u renderHash=%s", millis() - t0, (unsigned)POD_RENDER_MODE_DEFAULT, hex);
   return 2;
 }

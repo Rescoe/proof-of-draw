@@ -388,7 +388,7 @@ static uint8_t podStreamFrame(podhttp::Reader<WiFiSSLClient>& rd) {
   }
   while (ok && g_podTft.sourceRemaining()) ok = rd.readBody(g_rowBytes, ROW_BYTES) == ROW_BYTES && g_podTft.consumeSource(g_rowBytes);   // l'image reçue est lue et hachée EN ENTIER
   tft.endWrite();
-  if (!ok || !g_podTft.finish(g_podFrameHex, g_podRenderHex)) { logf("[RENDER] image abandonnée (aucun ACK)"); return 0; }
+  if (!ok || !g_podTft.finish(g_podFrameHex, g_podRenderHex)) { logf("[RENDER] image abandonnée (aucun ACK) — l'écran peut être PARTIELLEMENT redessiné"); return 0; }
   return 2;
 }
 #endif

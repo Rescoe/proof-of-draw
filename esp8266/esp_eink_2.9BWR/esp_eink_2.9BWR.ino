@@ -983,7 +983,9 @@ void logHeapState(const char* tag) {
 // Ordre exact de la mémoire (ESP8266, TLS FERMÉ à l'entrée) :
 //   TAS    blackBuf 4 736 o + redBuf 4 736 o   (alloués AVANT le TLS par doFetchFrame, comme avant : ce sont les tampons de réception) — jamais modifiés ici
 //   PILE   PodFrameHasher (128 o, libéré avant la suite) puis PodEinkRenderer (264 o) + 32 o de morceau dans le pilote ; AUCUNE allocation, aucun tampon final, aucune grille
-// Pic ajouté par ce chemin : ≈ 300 o de pile. Retour : 0 = échec AVANT la remise · 1 = rendu calculé mais NON remis · 2 = rendu calculé ET remis au pilote (seul 2 est un succès).
+// Pic ajouté par ce chemin : ≈ 300 o de pile. Retour : 0 = échec AVANT la fin de la remise · 1 = données remises mais confirmation incomplète · 2 = rendu calculé ET remis au pilote (seul 2 est un succès : sinon AUCUN ACK, le serveur réessaiera).
+// ⚠ État de l'écran après un échec : il n'est PAS garanti inchangé. clearDisplayWhite() peut avoir affiché une page BLANCHE juste avant (si une image était déjà affichée) ; une production interrompue laisse la RAM du panneau
+//   partiellement écrite SANS lancer le rafraîchissement (l'écran garde alors son état physique du moment, éventuellement blanc). Sans ACK il reste blanc / ancien jusqu'au prochain pull réussi.
 static unsigned int podRenderProduce(void* ctx, unsigned char* out, unsigned int cap) { return ((PodEinkRenderer<PodSha256Br>*)ctx)->read(out, cap); }
 
 static uint8_t podRenderAndShow() {
@@ -997,11 +999,11 @@ static uint8_t podRenderAndShow() {
   }
   PodEinkRenderer<PodSha256Br> r;
   if (!r.begin(spec, POD_RENDER_MODE_DEFAULT, meta, blackBuf, redBuf, BUF_SIZE)) { Serial.println(F("[RENDER] paramètres refusés — abandon")); return 0; }
-  if (!initDisplayForRefresh()) { Serial.println(F("[RENDER] panneau non initialisé — abandon, rien n'est envoyé")); return 0; }
+  if (!initDisplayForRefresh()) { Serial.println(F("[RENDER] panneau non initialisé — abandon, aucune donnée envoyée (l'écran peut être resté blanc)")); return 0; }
   const bool delivered = epd.DisplayStream(podRenderProduce, &r);
   epd.Sleep();
   lastRefreshMs = millis();
-  if (!delivered) { Serial.println(F("[RENDER] production interrompue — le panneau n'a PAS été rafraîchi")); return 0; }
+  if (!delivered) { Serial.println(F("[RENDER] production interrompue — rafraîchissement NON lancé (RAM du panneau partiellement écrite ; l'écran garde son état physique, éventuellement blanc)")); return 0; }
   if (!r.finish(renderHex)) { Serial.println(F("[RENDER] renderHash incomplet — abandon")); return 1; }
   Serial.printf_P(PSTR("[RENDER] calculé ET remis au pilote — mode=%u frameHash=%s renderHash=%s\n"), (unsigned)POD_RENDER_MODE_DEFAULT, frameHex, renderHex);
   return 2;

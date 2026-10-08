@@ -72,8 +72,8 @@ class Epd29b {
 // POD_RENDER_V1_BEGIN
   /**
    * Rendu en flux (lot 8B-2A) : `produce(ctx, out, cap)` remplit `out` d'au plus `cap` octets et retourne leur nombre (0 = fin ou erreur). Mêmes écritures que display() : plan noir (0x24) tel quel, plan rouge (0x26)
-   * INVERSÉ (~octet), sans tampon intermédiaire ; un appel de `produce` ne franchit jamais la frontière entre les plans. Retourne 0 = rafraîchi ; -1 = production interrompue (le panneau n'est PAS rafraîchi,
-   * il garde son image) ; -2 = le panneau n'a pas fini son rafraîchissement (BUSY resté actif). Le chunk (32 o) vit sur la pile : l'appelant garde ses gros objets en global (pile principale R4 : 1 Ko).
+   * INVERSÉ (~octet), sans tampon intermédiaire ; un appel de `produce` ne franchit jamais la frontière entre les plans. Retourne 0 = rafraîchi (BUSY retombé) ; -1 = production interrompue (le rafraîchissement n'est PAS lancé ; la RAM du panneau est partiellement écrite,
+   * il garde son état physique du moment, éventuellement une page blanche) ; -2 = TOUTES les données et la commande de rafraîchissement ont été envoyées, mais BUSY n'est pas retombé dans le délai : la fin physique du rafraîchissement n'est PAS confirmée (l'image peut être affichée). Le chunk (32 o) vit sur la pile : l'appelant garde ses gros objets en global (pile principale R4 : 1 Ko).
    */
   typedef uint32_t (*ProduceFn)(void* ctx, uint8_t* out, uint32_t cap);
   int8_t displayStream(ProduceFn produce, void* ctx) {

@@ -4,6 +4,7 @@
 |---|---|
 | **Date** | 08/10/2026 — base `5e703d4` (LOT 8B-1 gelé par GPT et poussé) |
 | **Réalisateur** | Claude · **auditeur** : GPT |
+| **Publication** | `c5a9b7e` est **poussé** (`origin/main` = `c5a9b7e`, constaté à l'audit ; le rapport initial du lot le disait local à tort) |
 | **Statut** | **Quatre firmwares COMPILÉS chemin désactivé ET chemin activé** (ESP8266 e-ink 2,9″ BWR · ESP8266 TFT 1,8″ · UNO R4 e-ink 2,9″ BWR · UNO R4 TFT 1,8″). **Jamais flashés, jamais essayés sur une carte.** Le chemin v1 est protégé par `POD_RENDER_V1`, **égal à 0 par défaut**. |
 | **Interdits respectés** | aucun flash, aucun déploiement, aucune variable Vercel, aucun secret ; ACK, routes, rapport de rendu, `cartelMode` (non exposé), signature `pod-render-v1`, `AnaWorkMeta.contentHash`, OTA : **inchangés / non commencés** ; quatre firmwares seulement (pas les huit) |
 | **Budget** | Redis **+0**, Neon **0** (le chemin v1 ne parle pas au serveur ; aucune route modifiée) |
@@ -19,7 +20,7 @@
 | **ESP8266 TFT 1,8″** (`Adafruit_ST7735`, SPI **logiciel**, GFX 1.12.6) | `tft.writePixels(uint16_t*, len, block, bigEndian)` → **`void`** ; chemin générique : `SPI_WRITE16(mot)` envoie l'octet de poids FORT d'abord (relu dans `Adafruit_SPITFT.cpp`) | écriture ligne par ligne ; **aucune erreur remontée** | une ligne source + une ligne de sortie ; `writePixels(…, true, false)` |
 | **UNO R4 TFT 1,8″** (`Adafruit_ST7735`, SPI matériel) | idem ; l'ancien chemin R4 appelait déjà `writePixels(g_rowPixels, IMG_W, true)` (`bigEndian` = faux) | idem | idem, avec les tampons `g_rowBytes` / `g_rowPixels` **existants** |
 
-**Conséquences honnêtes** : (1) l'e-ink peut être alimenté **sans tampon final** parce que le pilote envoie octet par octet, pas parce que la bibliothèque le propose ; (2) sur le TFT et sur l'ESP8266 e-ink, **aucune erreur d'écriture n'est observable** (`writePixels`, `SendData`, `TurnOnDisplay` sont `void`) : seuls sont détectés — et provoquent l'abandon sans ACK — l'échec d'initialisation (`Init()` / `init()`), l'échec de lecture du flux, l'échec de composition, l'arrêt de la production ; (3) seule la R4 e-ink détecte un panneau resté BUSY (code −2 → « calculé mais NON remis »).
+**Conséquences honnêtes** : (1) l'e-ink peut être alimenté **sans tampon final** parce que le pilote envoie octet par octet, pas parce que la bibliothèque le propose ; (2) sur le TFT et sur l'ESP8266 e-ink, **aucune erreur d'écriture n'est observable** (`writePixels`, `SendData`, `TurnOnDisplay` sont `void`) : seuls sont détectés — et provoquent l'abandon sans ACK — l'échec d'initialisation (`Init()` / `init()`), l'échec de lecture du flux, l'échec de composition, l'arrêt de la production ; (3) seule la R4 e-ink observe la broche BUSY : un BUSY qui ne retombe pas (code −2) signifie que **toutes les données et la commande de rafraîchissement ont été envoyées** mais que la **fin physique** du rafraîchissement n'est pas confirmée — l'image peut être affichée ou en cours d'affichage ; ce n'est **pas** « non remis ».
 
 ### Ordre des octets au TFT (preuve par la bibliothèque, pas par hypothèse)
 Le noyau produit le RGB565 **petit-boutiste** (les octets hachés dans `renderHash`). ESP8266 : l'ancien code échangeait les octets à la main puis appelait `writePixels(…, bigEndian = true)` ; la bibliothèque rééchangeait (`__builtin_bswap16`) avant `SPI_WRITE16`. Le nouveau code passe les mêmes octets, lus comme mots natifs, avec `bigEndian = false` : `SPI_WRITE16(mot)` → **même signal sur le fil**, sans échange intermédiaire, et le tampon remis au pilote **est** celui qui alimente `renderHash`. Raisonnement valable pour le SPI **logiciel** de GFX 1.12.6 (version installée) ; à confirmer à l'œil sur le canari (couleurs inversées = octets échangés).
@@ -39,7 +40,19 @@ Le pilote **inverse** le plan rouge (`~octet`) avant de l'envoyer au panneau (co
 5. finish()            renderHash = hash des octets remis    — faux si la production s'est arrêtée
 ```
 **Pic ajouté** : ≈ 264 o (objet) + 32 o (morceau du pilote) + 128 o (hasheur, ESP8266, libéré avant la suite). Les plans existent déjà (ils sont la destination du téléchargement) : **ESP8266 — ils sont alloués par `doFetchFrame` AVANT le TLS, comme avant ce lot (9 472 o de tas, inchangé) ; le chemin v1 n'alloue RIEN, ni avant, ni pendant, ni après le TLS.** Aucun gros tampon pendant le TLS n'est ajouté.
-**« Rendu calculé » vs « rendu remis au pilote »** : trois états explicites — 0 échec avant la remise (rien affiché de nouveau) · 1 calculé mais NON remis (R4 : panneau BUSY) · 2 calculé **et** remis. Seul 2 mène au succès (donc à l'ACK existant, inchangé).
+**« Rendu calculé » vs « rendu remis au pilote »** : trois états explicites — 0 échec avant la fin de la remise · 1 **toutes les données et la commande de rafraîchissement envoyées, fin physique non confirmée** (R4 : BUSY expiré) · 2 calculé **et** remis, rafraîchissement confirmé (R4) ou lancé (ESP8266, qui ne peut pas le confirmer). Seul 2 mène au succès (donc à l'ACK existant, inchangé) ; 1 est traité prudemment comme un échec : **pas d'ACK, le serveur réessaiera**.
+
+### État de l'écran après un échec — NON garanti inchangé
+L'absence d'ACK protège le serveur (il renverra l'image), **pas l'écran** :
+
+| Cas | Ce que montre l'écran |
+|---|---|
+| **TFT**, coupure du flux ou refus de composition en cours de route | les lignes déjà écrites sont **affichées** : image **partiellement redessinée** (comme avant ce lot, où le TFT était aussi écrit pendant la lecture) |
+| **e-ink**, échec avant la remise (`Init()`/`init()`, `frameHash`, `begin`) après une page blanche | l'écran peut être **resté blanc** : la page blanche (`clearDisplayWhite()` sur ESP8266 quand une image était déjà affichée ; `CLEAR_BEFORE_IMAGE` sur R4) est affichée **avant** le rendu de la nouvelle image |
+| **e-ink**, production interrompue pendant la remise | la RAM du panneau est partiellement écrite, mais le rafraîchissement **n'est pas lancé** : l'écran garde son **état physique du moment** (ancienne image, ou page blanche si elle vient d'être affichée) |
+| **e-ink R4**, BUSY expiré (état 1) | données et commande envoyées ; l'image peut être **affichée ou en cours d'affichage** |
+
+Le canari (8B-2B) devra observer ces cas sur la carte avant toute activation.
 
 ### TFT 1,8″ : une ligne source + une ligne de sortie
 ```
@@ -66,10 +79,10 @@ Outillage archivé (`versions.txt`) : `arduino-cli 1.4.1`, cœur `esp8266:esp826
 
 | Firmware | RAM statique (o) base · OFF · ON | Δ ON | Flash (o) base · OFF · ON | Δ ON |
 |---|---|---|---|---|
-| ESP8266 e-ink 2,9″ BWR | 34 808 · **34 808** · 35 056 | **+248** | 408 120 · **408 120** · 417 576 | +9 456 |
-| ESP8266 TFT 1,8″ | 36 064 · **36 064** · 37 116 | **+1 052** | 501 948 · **501 948** · 505 292 | +3 344 |
-| UNO R4 e-ink 2,9″ BWR | 22 768 · **22 768** · 23 112 | **+344** | 118 444 · **118 444** · 121 228 | +2 784 |
-| UNO R4 TFT 1,8″ | 20 864 · **20 864** · 21 424 | **+560** | 128 168 · 128 160 · 130 728 | +2 568 |
+| ESP8266 e-ink 2,9″ BWR | 34 808 · **34 808** · 35 056 | **+248** | 408 120 · **408 120** · 417 708 | +9 588 |
+| ESP8266 TFT 1,8″ | 36 064 · **36 064** · 37 116 | **+1 052** | 501 948 · **501 948** · 505 340 | +3 392 |
+| UNO R4 e-ink 2,9″ BWR | 22 768 · **22 768** · 23 112 | **+344** | 118 444 · **118 444** · 121 444 | +3 000 |
+| UNO R4 TFT 1,8″ | 20 864 · **20 864** · 21 424 | **+560** | 128 168 · 128 160 · 130 784 | +2 624 |
 
 * **OFF == base** : RAM identique à l'octet près sur les quatre ; flash identique sur trois, **−8 o** sur la R4 TFT (écart d'origine non investiguée — très probablement le décalage des numéros de ligne dans des constantes du binaire ; le texte du firmware est identique, voir § 3).
 * **ESP8266 : règle 8 du CLAUDE.md (≤ 40 000 o de RAM statique)** — 35 056 et 37 116 : respectée (marges 4 944 et 2 884 o). Les tables de police sont en flash (`0x4023xxxx`), les statiques ajoutés sont les objets du noyau et les tampons de ligne du TFT.

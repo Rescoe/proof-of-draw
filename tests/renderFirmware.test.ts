@@ -62,7 +62,7 @@ for (const s of SKETCHES) {
     for (const route of ["/api/ack-frame", "/api/pull-frame", "/api/pull?", "/api/validation-result", "/api/register"]) assert.equal(after.split(route).length, before.split(route).length, route);
   });
 
-  test(`${s.name} : chemin ACTIVÉ — aucune allocation dynamique, aucune écriture si le rendu échoue, aucun ACK hors succès, hashes seulement journalisés`, () => {
+  test(`${s.name} : chemin ACTIVÉ — aucune allocation dynamique, AUCUN ACK hors succès (l'écran peut rester blanc ou partiellement dessiné : documenté), hashes seulement journalisés`, () => {
     const src = read(s.ino);
     const on = src.split("\n").join("\n");
     // blocs actifs seulement avec POD_RENDER_V1 = 1
@@ -165,7 +165,21 @@ test("mesures de compilation ARCHIVÉES (docs/mesures/8B2A_2026_10_08) : chemin 
   assert.ok(frame("r4_tft", 1, "doPull") - frame("r4_tft", 0, "doPull") <= 96);
   // la note du lot annonce ces mêmes chiffres et ses limites
   const doc = read("docs/LOT_8B2A_INTEGRATION_CANARIS_2026_10_08.md");
-  for (const needle of ["184 o avec le rendu v1", "Jamais flashés", "NON validée", "marge faible", "ne parle pas au serveur", "aucun avertissement nouveau"]) assert.ok(doc.includes(needle) || doc.includes(needle.toLowerCase()), needle);
+  for (const needle of ["184 o avec le rendu v1", "Jamais flashés", "NON validée", "marge faible", "ne parle pas au serveur", "aucun avertissement nouveau", "État de l'écran après un échec — NON garanti inchangé", "fin physique", "partiellement redessinée", "l'écran peut être **resté blanc**", "`c5a9b7e` est **poussé**"]) assert.ok(doc.includes(needle) || doc.includes(needle.toLowerCase()), needle);
   const heads = doc.split("\n").filter((l) => /^#{1,2} /.test(l));
   assert.deepEqual(heads.slice(1).map((h) => h.slice(0, 5)), ["## 1.", "## 2.", "## 3.", "## 4.", "## 5.", "## 6.", "## 7."]);
+});
+
+test("honnêteté des messages et commentaires : aucun firmware ni pilote ne prétend qu'un échec laisse l'écran inchangé, ni qu'un BUSY expiré signifie « non remis »", () => {
+  const files = ["esp8266/esp_eink_2.9BWR/esp_eink_2.9BWR.ino", "esp8266/esp_tft1.8/esp_tft1.8.ino", "arduino_uno_r4/pod_uno_r4_eink29/pod_uno_r4_eink29.ino", "arduino_uno_r4/pod_uno_r4_tft18/pod_uno_r4_tft18.ino",
+    "esp8266/esp_eink_2.9BWR/epd2in9b_V4.h", "arduino_uno_r4/pod_uno_r4_eink29/epd29b.h", "docs/LOT_8B2A_INTEGRATION_CANARIS_2026_10_08.md"];
+  for (const f of files) {
+    const t = read(f);
+    assert.doesNotMatch(t, /rien n'est envoyé|n'a PAS été rafraîchi|garde son image|rien affiché de nouveau|aucune écriture si le rendu échoue|mais NON remis/, f);
+  }
+  const r4 = read("arduino_uno_r4/pod_uno_r4_eink29/pod_uno_r4_eink29.ino");
+  assert.match(r4, /FIN PHYSIQUE du rafraîchissement n'est pas confirmée/);
+  assert.match(r4, /données ET commande de rafraîchissement ENVOYÉES/);
+  assert.match(read("arduino_uno_r4/pod_uno_r4_eink29/epd29b.h"), /la fin physique du rafraîchissement n'est PAS confirmée/);
+  assert.match(read("esp8266/esp_eink_2.9BWR/esp_eink_2.9BWR.ino"), /clearDisplayWhite\(\) peut avoir affiché une page BLANCHE/);
 });
