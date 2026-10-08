@@ -114,7 +114,7 @@ Plus grand cadre de fonction du noyau : 112 o (R4) / 112 o (ESP). Pile principal
 * Le rendu e-ink calcule chaque plan séparément (le plan rouge re-évalue les pixels) : ≈ 2 × 4 736 octets × 8 pixels ; une version qui produit les deux plans en un passage est une optimisation possible, non faite.
 * Les cartels **gravés aujourd'hui** par les huit firmwares ne sont pas prouvés identiques à ce noyau (positions du texte, polices du TFT : voir lot 7) — ce sera l'objet de l'intégration, avec les mêmes vecteurs.
 * Pas de signature `pod-render-v1`, pas de `cartelMode` exposé, pas d'OTA, pas de flash.
-* Les vecteurs d'or sont ceux de 8A (motifs structurés, textes aux bornes) ; des octets pseudo-aléatoires pour les écrans à cartel pourront être ajoutés au 8B-2 (le noyau les accepte déjà : toute combinaison d'octets est une image valide).
+* Les 409 exécutions sur plans bruts (§ 8) étendent les vecteurs d'or structurés de 8A et prouvent l'équivalence logicielle sur des octets arbitraires ; elles ne constituent toujours ni un essai du pilote réel, ni une mesure de temps, de pile ou de chien de garde sur carte.
 
 ## 6. Budget
 

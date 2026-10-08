@@ -126,3 +126,13 @@ test("CONTRÔLE NÉGATIF DU CODE : un noyau altéré (priorité du rouge invers�
     assert.match(r.stdout, /ÉCART/);
   }
 });
+
+test("documentation du lot 8B-1 : cohérente avec le correctif (plans bruts déjà livrés, plus « à ajouter »), structure intacte, § 8 présent", () => {
+  const doc = read("docs/LOT_8B1_NOYAU_RENDU_FLUX_2026_10_07.md");
+  assert.doesNotMatch(doc, /pourront être ajoutés/);
+  assert.ok(doc.includes("Les 409 exécutions sur plans bruts (§ 8) étendent les vecteurs d'or structurés de 8A"));
+  assert.ok(doc.includes("ni une mesure de temps, de pile ou de chien de garde sur carte"));
+  const heads = doc.split("\n").filter((l) => /^#{1,2} /.test(l));
+  assert.deepEqual(heads.slice(1).map((h) => h.slice(0, 5)), ["## 1.", "## 2.", "## 3.", "## 4.", "## 5.", "## 6.", "## 7.", "## 8."]);
+  assert.equal(heads.filter((h) => h.startsWith("# ")).length, 1);
+});
