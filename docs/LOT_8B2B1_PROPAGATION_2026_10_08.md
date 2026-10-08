@@ -75,7 +75,7 @@ Outillage : `arduino-cli 1.4.1`, `esp8266:esp8266 3.1.2`, `arduino:renesas_uno 1
 | ESP8266 TFT 1,8″ | 36 064 · 36 064 · 37 116 | +1 052 | 501 948 · 501 948 · 505 340 | +3 392 |
 | ESP8266 e-ink 2,7″ | 34 240 · 34 240 · 34 352 | +112 | 413 920 · 413 920 · 417 148 | +3 228 |
 | ESP8266 e-ink 2,7″ + OLED | 35 200 · 35 200 · 35 316 | +116 | 473 820 · 473 820 · 476 956 | +3 136 |
-| UNO R4 e-ink 2,9″ | 22 768 · 22 768 · 22 768 | **0** | 118 444 · 118 444 · 121 444 | +3 000 |
+| UNO R4 e-ink 2,9″ | 22 768 · 22 768 · 22 768 | **0** | 118 444 · 118 444 · 121 476 | +3 032 |
 | UNO R4 TFT 1,8″ | 20 864 · 20 864 · 21 424 | +560 | 128 168 · 128 168 · 130 792 | +2 624 |
 | UNO R4 e-ink 2,7″ | 19 128 · 19 128 · 19 128 | **0** | 117 572 · 117 572 · 120 284 | +2 712 |
 | UNO R4 e-ink 2,7″ + OLED | 21 500 · 21 500 · 21 500 | **0** | 132 192 · 132 184 · 134 896 | +2 712 |
@@ -94,10 +94,10 @@ Outillage : `arduino-cli 1.4.1`, `esp8266:esp8266 3.1.2`, `arduino:renesas_uno 1
 | ESP8266 e-ink 2,7″ + OLED `doFetchFrameE27` | 624 | 672 | +48 |
 | UNO R4 e-ink 2,9″ `doPull` | 408 | 432 | +24 |
 | UNO R4 TFT 1,8″ `doPull` | 424 | 480 | +56 |
-| UNO R4 e-ink 2,7″ `doPull` | 416 | 432 | +16 |
-| UNO R4 e-ink 2,7″ + OLED `doPull` | 440 | 448 | +8 |
+| UNO R4 e-ink 2,7″ `doPull` | 416 | 424 | +8 |
+| UNO R4 e-ink 2,7″ + OLED `doPull` | 440 | 440 | 0 |
 
-**Somme R4 e-ink (estimation par addition des cadres statiques, NON mesurée)** : `loop` 56 + `doPull` ON (432 / 432 / 448) + pilote (morceau de 32 o + appel) ≈ 56 + `podRenderProduce` 80 + SHA-256 `update` + `processChunk` 112 ≈ **736 à 752 o sur 1 024 o**, soit ≈ 270–290 o pour les interruptions et les bibliothèques. **Marge faible et NON validée** ; elle doit être mesurée sur carte (peinture de pile) avant toute activation. Les 2,7″ ne sont pas plus favorables que le 2,9″ côté pile (seule la marge statique l'est).
+**Somme R4 e-ink (estimation par addition des cadres statiques, NON mesurée)** : `loop` 56 + `doPull` ON (432 / 424 / 440) + pilote (morceau de 32 o + appel) ≈ 56 + `podRenderProduce` 80 + SHA-256 `update` + `processChunk` 112 ≈ **728 à 744 o sur 1 024 o**, soit ≈ 280–296 o pour les interruptions et les bibliothèques. **Marge faible et NON validée** ; elle doit être mesurée sur carte (peinture de pile) avant toute activation. Les 2,7″ ne sont pas plus favorables que le 2,9″ côté pile (seule la marge statique l'est).
 
 ## 6. Ce que ce lot n'établit PAS
 
@@ -110,3 +110,18 @@ Outillage : `arduino-cli 1.4.1`, `esp8266:esp8266 3.1.2`, `arduino:renesas_uno 1
 ## 7. Niveau d'assurance
 
 Aucun niveau de la synthèse « Apprendre » ne change (aucune activation) : `roadmap.ts` et `SynthesisPath.tsx` inchangés.
+
+## 8. LOT8B2B1-FIX1 — cycle de vie de `g_podScratch` (audit GPT)
+
+**Constat** : `SHA256` (bibliothèque Crypto) a un destructeur non trivial et probablement un alignement de 8 octets ; `alignas(4)` ne le garantissait pas (les ELF plaçaient la zone sur des multiples de 8 « par chance »), et l'objet n'était jamais détruit avant que le QR d'appairage réutilise la zone.
+
+| Correction (les trois R4 e-ink : 2,9″, 2,7″, 2,7″ + OLED) | Détail |
+|---|---|
+| **Alignement garanti par le type** | `alignas(PodScratch) static uint8_t g_podScratch[600];` (plus aucun nombre magique) |
+| **Destruction explicite sur tous les chemins** | la logique à sorties multiples est dans `podRenderRun(void* scratch)` ; le **point d'entrée unique** `podRenderAndShow()` fait exactement : `new (g_podScratch) PodScratch()` → `podRenderRun(S)` → `S->~PodScratch()` → `return code` (**sortie unique**, un seul `return`) |
+| Aucune allocation dynamique, aucune nouvelle variable globale | le `new` est PLACÉ dans la zone existante ; `g_podScratch` est toujours le tableau qui remplace `qrData[600]` |
+| Piège évité | le préprocesseur Arduino génère les prototypes **en tête de fichier** : une fonction à paramètre `PodScratch*` ne compilait pas (« 'PodScratch' was not declared ») — d'où le paramètre `void*` converti dans le corps |
+
+**Gardes** : (1) `tests/renderFirmware.test.ts` impose, pour les trois firmwares, `alignas(PodScratch)` (ni `alignas(4)` ni `alignas(8)`), **un seul** `new (g_podScratch)` et **un seul** `->~PodScratch()`, le wrapper réduit à ses quatre instructions, `podRenderRun()` sans construction ni destruction et appelée uniquement par le wrapper ; (2) `consensus-pod/host/scratch_cycle_test.cpp` exécute le **même schéma** avec un SHA-256 de type Crypto (destructeur non trivial, alignement 8) : alignement vérifié, 4 tours sur une zone remplie de débris (0xA5, 0xFF, 0x00, pseudo-aléatoire), `ctor == dtor` à chaque tour, résultats identiques à chaque tour, oubli de destruction détecté, zone réutilisable comme tableau de 600 octets.
+
+**Recompilation des trois R4 e-ink OFF / ON** (`--warnings all`, `-fstack-usage`) : **RAM statique inchangée à l'octet** (22 768 / 19 128 / 21 500 en OFF et en ON) ; **chemin désactivé inchangé** (flash et cadre `doPull` identiques, texte identique aux sauvegardes) ; chemin activé : flash +32 o sur le 2,9″, inchangé sur les 2,7″ ; cadre de `doPull` identique (2,9″) ou en baisse de 8 o (2,7″) ; **aucun avertissement du dépôt**. Aucun autre changement ; aucun flash, serveur, Redis, Neon, ACK ni OTA. Toujours jamais essayé sur une carte.

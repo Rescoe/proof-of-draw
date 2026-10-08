@@ -106,7 +106,7 @@ test("mesures de compilation ARCHIVÉES (docs/mesures/8B1_2026_10_07) : objets b
   const canary = ["esp8266/esp_eink_2.9BWR/", "esp8266/esp_tft1.8/", "arduino_uno_r4/pod_uno_r4_eink29/", "arduino_uno_r4/pod_uno_r4_tft18/", "esp8266/esp_eink_2.7BW/", "esp8266/esp_eink_2.7BW_OLED/", "arduino_uno_r4/pod_uno_r4_eink27/", "arduino_uno_r4/pod_uno_r4_eink27_oled/"];
   const outside = users.filter((u) => !canary.some((c) => u.startsWith(c)));
   assert.deepEqual(outside, [
-    "consensus-pod/examples/RenderProbeEsp8266/RenderProbeEsp8266.ino", "consensus-pod/examples/RenderProbeUnoR4/RenderProbeUnoR4.ino", "consensus-pod/host/render_stream_harness.cpp",
+    "consensus-pod/examples/RenderProbeEsp8266/RenderProbeEsp8266.ino", "consensus-pod/examples/RenderProbeUnoR4/RenderProbeUnoR4.ino", "consensus-pod/host/render_stream_harness.cpp", "consensus-pod/host/scratch_cycle_test.cpp",
     "consensus-pod/src/podRenderStream.h",
   ]);
   assert.deepEqual(users.filter((u) => canary.some((c) => u.startsWith(c))).map((u) => u.split("/")[2]).sort(), canarySorted());

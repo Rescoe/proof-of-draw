@@ -442,14 +442,15 @@ static bool refreshPanel(bool white) {
 // — la page blanche CLEAR_BEFORE_IMAGE peut venir d'être affichée ; une production interrompue laisse la RAM du panneau partiellement écrite sans lancer le rafraîchissement.
 struct PodScratch { PodEinkRenderer<PodSha256Rw> r; char hex[65]; };
 static_assert(sizeof(PodScratch) <= 600, "PodScratch doit tenir dans g_podScratch (la zone de qrData)");
-alignas(4) static uint8_t g_podScratch[600];
+alignas(PodScratch) static uint8_t g_podScratch[600];   // alignement GARANTI par le type (SHA256 de la bibliothèque Crypto : destructeur non trivial, alignement possible de 8 o)
 static uint32_t podRenderProduce(void* ctx, uint8_t* out, uint32_t cap) { return static_cast<PodEinkRenderer<PodSha256Rw>*>(ctx)->read(out, cap); }
 
-static uint8_t podRenderAndShow() {
+// ⚠ Paramètre `void*` et non `PodScratch*` : le préprocesseur Arduino génère les prototypes EN TÊTE de fichier, avant la déclaration de PodScratch.
+static uint8_t podRenderRun(void* scratch) {   // plusieurs sorties : l'objet est construit et DÉTRUIT par podRenderAndShow() (sortie unique)
+  PodScratch* S = static_cast<PodScratch*>(scratch);
   const PodRenderSpec spec = pod_render_spec(POD_R_EINK29);
   const PodRenderMeta meta = { (const uint8_t*)pendingDisplayTs.c_str(), (size_t)pendingDisplayTs.length(), (int32_t)currentBlockIndex,
                                (const uint8_t*)pendingArtistName.c_str(), (size_t)pendingArtistName.length(), (const uint8_t*)pendingWorkTitle.c_str(), (size_t)pendingWorkTitle.length() };
-  PodScratch* S = new (g_podScratch) PodScratch();   // objet neuf dans la zone partagée
   if (!S->r.frameHash(spec, blackBuf, redBuf, BUF_SIZE, S->hex)) { logf("[RENDER] frameHash impossible — abandon"); return 0; }
   logf("[RENDER] frameHash=%s", S->hex);
   if (!S->r.begin(spec, POD_RENDER_MODE_DEFAULT, meta, blackBuf, redBuf, BUF_SIZE)) { logf("[RENDER] paramètres refusés — abandon"); return 0; }
@@ -464,6 +465,15 @@ static uint8_t podRenderAndShow() {
   if (sent != 0) { logf("[RENDER] rendu CALCULÉ (renderHash=%s), données ET commande de rafraîchissement ENVOYÉES, mais fin physique du rafraîchissement NON confirmée (BUSY expiré) — pas d'ACK", S->hex); return 1; }
   logf("[RENDER] calculé ET remis au pilote en %lu ms — mode=%u renderHash=%s", millis() - t0, (unsigned)POD_RENDER_MODE_DEFAULT, S->hex);
   return 2;
+}
+
+// Point d'entrée UNIQUE du rendu v1 : construit l'objet par new PLACÉ dans g_podScratch (aucune allocation dynamique), exécute, puis le DÉTRUIT explicitement — sur tous les chemins, car podRenderRun() est
+// la seule fonction qui a plusieurs sorties et ce wrapper n'en a qu'une. La zone est donc réellement libre (durée de vie terminée, SHA256::~SHA256() a effacé son état) avant toute réutilisation par le QR d'appairage.
+static uint8_t podRenderAndShow() {
+  PodScratch* S = new (g_podScratch) PodScratch();
+  const uint8_t code = podRenderRun(S);
+  S->~PodScratch();
+  return code;
 }
 #endif
 

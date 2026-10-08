@@ -92,8 +92,21 @@ for (const s of SKETCHES) {
     if (s.family === "r4" && !s.scratch) assert.match(blocks, /static Pod(Eink|Tft)Renderer<PodSha256Rw> g_pod/);
     // R4 e-ink : AUCUNE nouvelle variable globale — le renderer vit dans la zone qui remplaçait qrData[600] (net 0 o de RAM statique)
     if (s.scratch) {
-      assert.match(code, /alignas\(4\) static uint8_t g_podScratch\[600\];/);
+      // alignement GARANTI par le type (et non 4 « par chance ») ; cycle de vie : un seul new placé, une seule destruction explicite, dans le seul point d'entrée à sortie unique
+      assert.match(code, /alignas\(PodScratch\) static uint8_t g_podScratch\[600\];/);
+      assert.doesNotMatch(code, /alignas\(4\)|alignas\(8\)/, "l'alignement vient du type, pas d'un nombre");
       assert.match(code, /static_assert\(sizeof\(PodScratch\) <= 600/);
+      assert.equal((code.match(/new \(g_podScratch\) PodScratch\(\)/g) ?? []).length, 1, "un seul new placé");
+      assert.equal((code.match(/->~PodScratch\(\)/g) ?? []).length, 1, "une seule destruction explicite");
+      const wrapper = /static uint8_t podRenderAndShow\(\) \{([\s\S]*?)\n\}/.exec(code);
+      assert.ok(wrapper, "point d'entrée podRenderAndShow()");
+      const wl = wrapper[1].split("\n").map((l) => l.trim()).filter(Boolean);
+      assert.deepEqual(wl, ["PodScratch* S = new (g_podScratch) PodScratch();", "const uint8_t code = podRenderRun(S);", "S->~PodScratch();", "return code;"], "construire → exécuter → détruire → UNE sortie");
+      const run = /static uint8_t podRenderRun\(void\* scratch\) \{([\s\S]*?)\n\}/.exec(code);
+      assert.ok(run, "podRenderRun()");
+      assert.doesNotMatch(run[1], /new \(|~PodScratch/, "la fonction à sorties multiples ne construit ni ne détruit");
+      assert.ok((run[1].match(/\breturn\b/g) ?? []).length >= 3, "podRenderRun() a bien plusieurs sorties (d'où le wrapper)");
+      assert.equal((code.match(/podRenderRun\(S\)/g) ?? []).length, 1, "podRenderRun() n'est appelée que par le wrapper");
       assert.match(code, /uint8_t \(&qrData\)\[600\] = g_podScratch;/);
       assert.doesNotMatch(code, /static PodEinkRenderer|static PodFrameHasher|static char (frameHex|hex)/, "aucun objet statique supplémentaire sur la R4 e-ink");
       assert.equal((offView(src).match(/static uint8_t qrData\[600\];/g) ?? []).length, 1, "le chemin désactivé garde son qrData[600] d'origine");
@@ -251,6 +264,16 @@ test("lot 8B-2B-1 : matrice ARCHIVÉE (docs/mesures/8B2B1_2026_10_08) — 8 firm
   const doc = read("docs/LOT_8B2B1_PROPAGATION_2026_10_08.md");
   for (const needle of ["aucune variable globale ajoutée", "g_podScratch[600]", "remplace", "ReadBusy()", "attend indéfiniment", "Jamais flashé", "NON validée", "16 / 16", "528 → **528**", "Aucun essai sur carte"]) assert.ok(doc.includes(needle), needle);
   const heads = doc.split("\n").filter((l) => /^#{1,2} /.test(l));
-  assert.deepEqual(heads.slice(1).map((h) => h.slice(0, 5)), ["## 1.", "## 2.", "## 3.", "## 4.", "## 5.", "## 6.", "## 7."]);
+  assert.deepEqual(heads.slice(1).map((h) => h.slice(0, 5)), ["## 1.", "## 2.", "## 3.", "## 4.", "## 5.", "## 6.", "## 7.", "## 8."]);
   assert.equal(heads.filter((h) => h.startsWith("# ")).length, 1);
+  for (const needle of ["alignas(PodScratch)", "S->~PodScratch()", "sortie unique", "void*", "inchangée à l'octet"]) assert.ok(doc.includes(needle), needle);
+});
+
+test("cycle de vie de g_podScratch (hôte) : alignement du type, construction par new placé, destruction explicite, ctor == dtor sur 4 tours malgré une zone pleine de débris (QR), oubli de destruction détecté", { skip }, () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "podscratch-"));
+  const exe = path.join(tmp, process.platform === "win32" ? "scratch.exe" : "scratch");
+  compileHarness(choice.path!, path.join(root, "consensus-pod", "host", "scratch_cycle_test.cpp"), exe);
+  const run = runProcess(exe, []);
+  assert.equal(run.status, 0, `${run.stdout}\n${run.stderr}`);
+  assert.match(run.stdout, /^PASS \d+ \(tours=4 alignof=(8|16) sizeof=\d+\)$/m);
 });

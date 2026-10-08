@@ -89,14 +89,14 @@
 0	podRenderStream.h:160:11:uint8_t PodEinkRenderer<Sha>::srcPixel(int, int) const [with Sha = PodSha256Br]
 0	podRender.h:37:24:uint32_t pod_render_plane_bytes(const PodRenderSpec&)
 == r4_eink29 POD_RENDER_V1=0
-408	pod_uno_r4_eink29.ino:645:13:bool doPull()
-176	pod_uno_r4_eink29.ino:832:6:void setup()
-56	pod_uno_r4_eink29.ino:875:6:void loop()
+408	pod_uno_r4_eink29.ino:655:13:bool doPull()
+176	pod_uno_r4_eink29.ino:842:6:void setup()
+56	pod_uno_r4_eink29.ino:885:6:void loop()
 == r4_eink29 POD_RENDER_V1=1
-432	pod_uno_r4_eink29.ino:645:13:bool doPull()
-176	pod_uno_r4_eink29.ino:832:6:void setup()
+432	pod_uno_r4_eink29.ino:655:13:bool doPull()
+176	pod_uno_r4_eink29.ino:842:6:void setup()
 80	pod_uno_r4_eink29.ino:446:17:uint32_t podRenderProduce(void*, uint8_t*, uint32_t)
-56	pod_uno_r4_eink29.ino:875:6:void loop()
+56	pod_uno_r4_eink29.ino:885:6:void loop()
 32	podRenderStream.h:63:41:void pod_render_hash_num(Sha&, uint32_t) [with Sha = PodSha256Rw]
 24	podRender.h:111:22:size_t pod_render_fold(const uint8_t*, size_t, char*, size_t)
 16	podRenderStream.h:62:41:void pod_render_hash_str(Sha&, const char*) [with Sha = PodSha256Rw]
@@ -120,14 +120,14 @@
 8	podRenderStream.h:24:20:bool pod_rline_bit(const PodRLine&, int, int)
 8	podRender.h:27:29:PodRenderSpec pod_render_spec(PodRenderScreen)
 == r4_eink27 POD_RENDER_V1=0
-416	pod_uno_r4_eink27.ino:653:13:bool doPull()
-176	pod_uno_r4_eink27.ino:814:6:void setup()
-56	pod_uno_r4_eink27.ino:857:6:void loop()
+416	pod_uno_r4_eink27.ino:663:13:bool doPull()
+176	pod_uno_r4_eink27.ino:824:6:void setup()
+56	pod_uno_r4_eink27.ino:867:6:void loop()
 == r4_eink27 POD_RENDER_V1=1
-432	pod_uno_r4_eink27.ino:653:13:bool doPull()
-176	pod_uno_r4_eink27.ino:814:6:void setup()
+424	pod_uno_r4_eink27.ino:663:13:bool doPull()
+176	pod_uno_r4_eink27.ino:824:6:void setup()
 80	pod_uno_r4_eink27.ino:452:21:unsigned int podRenderProduce(void*, unsigned char*, unsigned int)
-56	pod_uno_r4_eink27.ino:857:6:void loop()
+56	pod_uno_r4_eink27.ino:867:6:void loop()
 32	podRenderStream.h:63:41:void pod_render_hash_num(Sha&, uint32_t) [with Sha = PodSha256Rw]
 24	podRender.h:111:22:size_t pod_render_fold(const uint8_t*, size_t, char*, size_t)
 16	podRenderStream.h:62:41:void pod_render_hash_str(Sha&, const char*) [with Sha = PodSha256Rw]
@@ -136,14 +136,14 @@
 8	podRender.h:27:29:PodRenderSpec pod_render_spec(PodRenderScreen)
 0	podRender.h:37:24:uint32_t pod_render_plane_bytes(const PodRenderSpec&)
 == r4_eink27_oled POD_RENDER_V1=0
-440	pod_uno_r4_eink27_oled.ino:744:13:bool doPull()
-184	pod_uno_r4_eink27_oled.ino:917:6:void setup()
-56	pod_uno_r4_eink27_oled.ino:966:6:void loop()
+440	pod_uno_r4_eink27_oled.ino:754:13:bool doPull()
+184	pod_uno_r4_eink27_oled.ino:927:6:void setup()
+56	pod_uno_r4_eink27_oled.ino:976:6:void loop()
 == r4_eink27_oled POD_RENDER_V1=1
-448	pod_uno_r4_eink27_oled.ino:744:13:bool doPull()
-184	pod_uno_r4_eink27_oled.ino:917:6:void setup()
+440	pod_uno_r4_eink27_oled.ino:754:13:bool doPull()
+184	pod_uno_r4_eink27_oled.ino:927:6:void setup()
 80	pod_uno_r4_eink27_oled.ino:513:21:unsigned int podRenderProduce(void*, unsigned char*, unsigned int)
-56	pod_uno_r4_eink27_oled.ino:966:6:void loop()
+56	pod_uno_r4_eink27_oled.ino:976:6:void loop()
 32	podRenderStream.h:63:41:void pod_render_hash_num(Sha&, uint32_t) [with Sha = PodSha256Rw]
 24	podRender.h:111:22:size_t pod_render_fold(const uint8_t*, size_t, char*, size_t)
 16	podRenderStream.h:62:41:void pod_render_hash_str(Sha&, const char*) [with Sha = PodSha256Rw]
