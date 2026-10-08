@@ -1,0 +1,22 @@
+# Plan mémoire de l'ELF (arm-none-eabi-nm -n) — UNO R4 WiFi, RA4M1 : RAM 0x20000000–0x20008000 (32 768 o)
+# Tas réservé 0x2000 (8 192 o) : à partir de __HeapBase jusqu'à __HeapLimit ; pile principale 0x400 (1 024 o) : __StackLimit → __StackTop ; __StackLimit == __HeapLimit.
+## AVANT (commit c14df72, firmware stable)
+00000400 A BSP_CFG_STACK_MAIN_BYTES
+20005908 B __bss_end__
+20005908 B __HeapBase
+20005908 b g_heap
+20007b00 B __HeapLimit
+20007b00 B __StackLimit
+20007b00 b g_main_stack
+20007f00 B __StackTop
+## APRÈS (correctif de pile)
+00000400 A BSP_CFG_STACK_MAIN_BYTES
+20005908 B __bss_end__
+20005908 B __HeapBase
+20005908 b g_heap
+20007b00 B __HeapLimit
+20007b00 B __StackLimit
+20007b00 b g_main_stack
+20007f00 B __StackTop
+
+calculs : RAM statique = __HeapBase - 0x20000000 = 0x5908 = 22 792 o (le compilateur annonce 22 768 o : mêmes variables, sans l'alignement final) ; région du tas = 0x20007B00 - 0x20005908 = 8 696 o = 8 192 o réservés + 504 o de marge statique libre ; pile principale = 0x20007F00 - 0x20007B00 = 1 024 o ; table des vecteurs en RAM 0x20007F00-0x20008000 = 256 o. L'avant et l'après ont la MÊME RAM statique.

@@ -1,0 +1,64 @@
+# -fstack-usage de la bibliothèque Crypto 0.4.0 (cadres FIXES en octets, colonne 3 ; « static » = taille connue à la compilation) — compilée pour UNO R4 (arduino:renesas_uno:unor4wifi, arm-none-eabi-gcc 7-2017q4, -Os)
+# Source : build de pod_uno_r4_eink29 au commit c14df72 (firmware stable) ; extraits : Ed25519, Curve25519, BigNumberUtil, SHA512, Hash
+## Ed25519.cpp
+Ed25519.cpp:189:6:static bool Ed25519::verify(const uint8_t*, const uint8_t*, const void*, size_t)	760	static
+Ed25519.cpp:127:6:static void Ed25519::sign(uint8_t*, const uint8_t*, const uint8_t*, const void*, size_t)	544	static
+Ed25519.cpp:256:6:static void Ed25519::derivePublicKey(uint8_t*, const uint8_t*)	400	static
+Ed25519.cpp:352:6:static void Ed25519::mul(Ed25519::Point&, const limb_t*, Ed25519::Point&, bool)	312	static
+Ed25519.cpp:471:6:static void Ed25519::add(Ed25519::Point&, const Ed25519::Point&)	152	static
+Ed25519.cpp:454:6:static void Ed25519::mul(Ed25519::Point&, const limb_t*, bool)	144	static
+Ed25519.cpp:302:6:static void Ed25519::reduceQ(limb_t*, limb_t*)	136	static
+Ed25519.cpp:511:6:static bool Ed25519::equal(const Ed25519::Point&, const Ed25519::Point&)	88	static
+Ed25519.cpp:569:6:static bool Ed25519::decodePoint(Ed25519::Point&, const uint8_t*)	56	static
+Ed25519.cpp:629:6:static void Ed25519::deriveKeys(SHA512*, limb_t*, const uint8_t*)	24	static
+Ed25519.cpp:539:6:static void Ed25519::encodePoint(uint8_t*, Ed25519::Point&)	24	static
+Ed25519.cpp:283:6:static void Ed25519::reduceQFromBuffer(limb_t*, const uint8_t*, limb_t*)	16	static
+Ed25519.cpp:243:6:static void Ed25519::generatePrivateKey(uint8_t*)	0	static
+Crypto.h:32:13:void clean(T&) [with T = long unsigned int [8]]	0	static
+## Curve25519.cpp
+Curve25519.cpp:80:6:static bool Curve25519::eval(uint8_t*, const uint8_t*, const uint8_t*)	504	static
+Curve25519.cpp:1068:6:static void Curve25519::mul_P(limb_t*, const limb_t*, const limb_t*)	112	static
+Curve25519.cpp:959:6:static void Curve25519::mulA24(limb_t*, const limb_t*)	88	static
+Curve25519.cpp:931:6:static void Curve25519::mul(limb_t*, const limb_t*, const limb_t*)	72	static
+Curve25519.cpp:646:8:static limb_t Curve25519::reduceQuick(limb_t*)	56	static
+Curve25519.cpp:1573:6:static bool Curve25519::sqrt(limb_t*, const limb_t*)	48	static
+Curve25519.cpp:1491:6:static void Curve25519::pow250(limb_t*, const limb_t*)	48	static
+Curve25519.cpp:779:6:static void Curve25519::mulNoReduce(limb_t*, const limb_t*, const limb_t*)	36	static
+Curve25519.cpp:366:6:static void Curve25519::reduce(limb_t*, limb_t*, uint8_t)	36	static
+Curve25519.cpp:1194:6:static void Curve25519::sub(limb_t*, const limb_t*, const limb_t*)	36	static
+Curve25519.cpp:307:9:static uint8_t Curve25519::isWeakPoint(const uint8_t*)	28	static
+Curve25519.cpp:1119:6:static void Curve25519::add(limb_t*, const limb_t*, const limb_t*)	28	static
+Curve25519.cpp:283:6:static bool Curve25519::dh2(uint8_t*, uint8_t*)	24	static
+Curve25519.cpp:245:6:static void Curve25519::dh1(uint8_t*, uint8_t*)	16	static
+## BigNumberUtil.cpp
+BigNumberUtil.cpp:546:6:static void BigNumberUtil::mul(limb_t*, const limb_t*, size_t, const limb_t*, size_t)	36	static
+BigNumberUtil.cpp:522:8:static limb_t BigNumberUtil::sub(limb_t*, const limb_t*, const limb_t*, size_t)	36	static
+BigNumberUtil.cpp:598:6:static void BigNumberUtil::reduceQuick(limb_t*, const limb_t*, const limb_t*, size_t)	32	static
+BigNumberUtil.cpp:495:8:static limb_t BigNumberUtil::add(limb_t*, const limb_t*, const limb_t*, size_t)	28	static
+BigNumberUtil.cpp:55:6:static void BigNumberUtil::unpackLE(limb_t*, size_t, const uint8_t*, size_t)	24	static
+BigNumberUtil.cpp:375:6:static void BigNumberUtil::packBE(uint8_t*, size_t, const limb_t*, size_t)	24	static
+BigNumberUtil.cpp:264:6:static void BigNumberUtil::packLE(uint8_t*, size_t, const limb_t*, size_t)	16	static
+BigNumberUtil.cpp:761:8:static limb_t BigNumberUtil::isZero(const limb_t*, size_t)	8	static
+BigNumberUtil.cpp:163:6:static void BigNumberUtil::unpackBE(limb_t*, size_t, const uint8_t*, size_t)	4	static
+BigNumberUtil.cpp:734:6:static void BigNumberUtil::reduceQuick_P(limb_t*, const limb_t*, const limb_t*, size_t)	0	static
+BigNumberUtil.cpp:680:6:static void BigNumberUtil::mul_P(limb_t*, const limb_t*, size_t, const limb_t*, size_t)	0	static
+BigNumberUtil.cpp:655:8:static limb_t BigNumberUtil::sub_P(limb_t*, const limb_t*, const limb_t*, size_t)	0	static
+BigNumberUtil.cpp:628:8:static limb_t BigNumberUtil::add_P(limb_t*, const limb_t*, const limb_t*, size_t)	0	static
+## SHA512.cpp
+SHA512.cpp:177:6:void SHA512::processChunk()	296	static
+SHA512.cpp:160:6:virtual void SHA512::finalizeHMAC(const void*, size_t, void*, size_t)	96	static
+SHA512.cpp:89:6:virtual void SHA512::update(const void*, size_t)	40	static
+SHA512.cpp:115:6:virtual void SHA512::finalize(void*, size_t)	24	static
+SHA512.cpp:153:6:virtual void SHA512::resetHMAC(const void*, size_t)	16	static
+SHA512.cpp:76:6:virtual void SHA512::reset()	8	static
+SHA512.cpp:61:1:virtual SHA512::~SHA512()	8	static
+SHA512.cpp:61:1:SHA512::~SHA512()	8	static
+SHA512.cpp:52:1:SHA512::SHA512()	8	static
+SHA512.cpp:147:6:virtual void SHA512::clear()	8	static
+SHA512.cpp:71:8:virtual size_t SHA512::blockSize() const	0	static
+SHA512.cpp:66:8:virtual size_t SHA512::hashSize() const	0	static
+## Hash.cpp
+Hash.cpp:162:6:void Hash::formatHMACKey(void*, const void*, size_t, uint8_t)	32	static
+Hash.cpp:48:1:virtual Hash::~Hash()	8	static
+Hash.cpp:48:1:Hash::~Hash()	0	static
+Hash.cpp:36:1:Hash::Hash()	0	static

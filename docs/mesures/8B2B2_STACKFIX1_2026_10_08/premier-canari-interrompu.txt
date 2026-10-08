@@ -1,0 +1,15 @@
+# Trace du premier canari matériel INTERROMPU — UNO R4 WiFi + e-ink 2,9″ BWR, build local POD_RENDER_V1=1 POD_CANARY=1 (08/10/2026)
+# Source : extraits fournis par le porteur (docs/CORRECTIF_CANARI_R4_PILE_ED25519_2026_10_08.md § 1) ; la carte a seulement DÉMARRÉ : aucune frame, aucun rendu v1 exécuté, aucun ACK, carte débranchée aussitôt.
+# Les lignes ci-dessous sont reproduites telles que transmises (les « ... » du document d'origine marquent les lignes omises).
+
+[MEM] boot: tas libre 8532 o, pile max ~1024 o
+[SELFTEST] Ed25519 signature 177 ms, vérification 274 ms -> OK
+[MEM] après Ed25519: tas libre 8532 o, pile max ~1732 o
+...
+[CANARY] prêt: ALERTE PILE — marqueur de fond écrasé ou absent : la pile principale a touché son extrémité basse → ARRÊT
+
+# Lecture (voir docs/LOT_8B2B2_PILE_ED25519_R4_2026_10_08.md § 2) :
+#  - « pile max ~1024 o » au boot = aucune écriture sous __StackLimit (paintStack() peint 2 048 o SOUS la limite) ;
+#  - « pile max ~1732 o » après l'auto-test = 708 o écrits sous __StackLimit, dans le haut de la région du tas (0x20007836 – 0x20007B00) ;
+#  - le marqueur « CNRY » posé à __StackLimit par l'instrumentation du canari a été détruit : même événement, vu par deux sondes indépendantes.
+#  - le tas libre n'a pas bougé (8532 o) : le débordement n'a pas été détecté par mallinfo(), il écrit dans une zone que le tas n'avait pas (encore) allouée.

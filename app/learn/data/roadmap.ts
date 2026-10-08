@@ -65,6 +65,7 @@ export const ROADMAP: RoadmapPhase[] = [
       { id: "fw-tested", title: "Vote v2 sur ESP8266 (e-ink 2,9″, multiscreen, TFT 1,8″) et R4 (e-ink 2,9″, 2,7″, 2,7″+OLED, TFT 1,8″)", status: "done", note: "Essai réel à 4 appareils, 06/10/2026." },
       { id: "fw-27solo", title: "Vote v2 sur l’ESP8266 e-ink 2,7″ « seul »", status: "doing", note: "Firmware eink27bw-2.1 compilé ; essai sur la carte à faire." },
       { id: "fw-tft28", title: "Vote v2 sur R4 + TFT 2,8″ tactile", status: "doing", note: "Code livré (r4tft28-2.5), essai matériel à faire." },
+      { id: "r4-stack", title: "Ed25519 sur les cartes UNO R4 : calcul sur une pile dédiée", status: "doing", note: "Le premier démarrage d’un canari a montré que la pile principale (1 024 o) était dépassée par la signature Ed25519 (≈ 1,4 Ko requis). Correctif compilé et vérifié sur l’hôte ; micro-canari sur la carte à faire." },
       { id: "traces", title: "Archiver une trace série par variante (octets, hash, métriques, verdict)", status: "todo", note: "Preuve reproductible à joindre aux notes de canari." },
     ],
   },

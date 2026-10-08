@@ -1,0 +1,7 @@
+# Harnais hôte consensus-pod/host/ed_stack_harness.cpp — podEdStack.h + VRAIE bibliothèque Crypto 0.4.0 (g++ 10.2.0 MSYS2, -Wall -Wextra -Werror)
+# Vecteurs : RFC 8032 (3) + 17 longueurs + 1 vote, signés par Node/OpenSSL (20 lignes dans ce fichier de contrôle ; tests/edStack.test.ts en génère 21)
+# Sortie attendue : PASS <n vérifications>
+PASS 339
+code de sortie : 0
+
+# Rejoué par « npm test » (tests/edStack.test.ts) : 16 tests dont 5 mutations refusées et la signature de vote vérifiée par lib/ed25519.ts

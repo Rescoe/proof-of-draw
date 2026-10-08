@@ -33,7 +33,6 @@
 #include <Adafruit_STMPE610.h>
 #include <qrcode.h>
 #include <Ed25519.h>
-#include "podEdStack.h"   // POD_ED_STACK : Ed25519 sur PILE DÉDIÉE (la pile principale de la R4 n'a que 1 024 o) — docs/LOT_8B2B2_PILE_ED25519_R4_2026_10_08.md
 #include <SHA256.h>
 #include "pod_http.h"
 #include "pod_bench.h"
@@ -173,7 +172,7 @@ static void logf(const char* fmt, ...) {
 
 // ─── MÉMOIRE : 32 Ko de RAM, PILE PRINCIPALE DE 1 Ko SEULEMENT (cœur Arduino R4, BSP_CFG_STACK_MAIN_BYTES = 0x400) ─────────
 // Le cœur désactive la protection de pile (MSPLIM = 0) : une pile qui dépasse 1 Ko descend dans le HAUT du tas (zone libre tant que
-// le tas est peu rempli). Ed25519 a besoin d'environ 1,4 Ko : il s'exécute désormais sur une PILE DÉDIÉE (podEdStack.h), plus dans le haut du tas (POD_ED_STACK).
+// le tas est peu rempli). Ed25519 a besoin d'environ 1,7 Ko : ça tient parce que le tas est presque vide à ce moment-là.
 // Règle de ce firmware : aucun gros bloc ni gros tableau local (tampons statiques). Les diagnostics [MEM] affichent le tas libre et
 // la profondeur de pile atteinte : à relever au premier essai.
 extern "C" char* sbrk(int incr);
@@ -225,8 +224,8 @@ static void loadKeysFromEEPROM() {
   for (int i = 0; i < 32; i++) privateKey[i] = EEPROM.read(EEPROM_PRIVKEY_OFF + i);
   for (int i = 0; i < 32; i++) publicKey[i]  = EEPROM.read(EEPROM_PUBKEY_OFF + i);
   uint8_t derived[32];
-  if (!PodEd::derivePublicKey(derived, privateKey)) logf("[KEYS] cohérence NON vérifiée : calcul Ed25519 impossible (pile dédiée) — clé publique de l'EEPROM conservée");   // POD_ED_STACK
-  else if (memcmp(derived, publicKey, 32) != 0) {   // écriture interrompue entre clé privée et publique
+  Ed25519::derivePublicKey(derived, privateKey);
+  if (memcmp(derived, publicKey, 32) != 0) {   // écriture interrompue entre clé privée et publique
     logf("[KEYS] Clé publique incohérente -> recalcul depuis la clé privée");
     memcpy(publicKey, derived, 32);
     for (int i = 0; i < 32; i++) EEPROM.update(EEPROM_PUBKEY_OFF + i, publicKey[i]);
@@ -301,7 +300,7 @@ static void gatherEntropy(uint8_t out[32]) {
 static void generateKeys() {
   logf("[KEYS] Génération de la paire Ed25519...");
   gatherEntropy(privateKey);
-  if (!PodEd::derivePublicKey(publicKey, privateKey)) { logf("[KEYS] génération ANNULÉE : calcul Ed25519 impossible (pile dédiée) — aucune clé enregistrée"); memset(privateKey, 0, 32); return; }   // POD_ED_STACK
+  Ed25519::derivePublicKey(publicKey, privateKey);
   keysLoaded = true;
   saveKeysToEEPROM();
   logf("[KEYS] PubKey: %s", bytesToHex(publicKey, 32).c_str());
@@ -311,7 +310,7 @@ static String signED25519(const String& candidateId, float score) {
   char scoreStr[12]; snprintf(scoreStr, sizeof(scoreStr), "%d.%03d", m / 1000, m % 1000);
   const String message = deviceId + ":" + candidateId + ":" + scoreStr;
   uint8_t sig[64];
-  if (!PodEd::sign(sig, privateKey, publicKey, (const uint8_t*)message.c_str(), message.length())) { logf("[VOTE] signature impossible (pile Ed25519 dédiée) — vote NON envoyé"); return String(); }   // POD_ED_STACK
+  Ed25519::sign(sig, privateKey, publicKey, (const uint8_t*)message.c_str(), message.length());
   return bytesToHex(sig, 64);
 }
 
@@ -792,7 +791,7 @@ static bool doValidateV2(const String& candidateId, const String& screenName, si
   const String msg = podVoteMessage(deviceId, candidateId, chk.hash, chk.m, accept);
   uint8_t sig[64];
   const unsigned long ts = millis();
-  if (!PodEd::sign(sig, privateKey, publicKey, (const uint8_t*)msg.c_str(), msg.length())) { logf("[VALIDATE2] signature impossible (pile Ed25519 dédiée) — vote NON envoyé"); return false; }   // POD_ED_STACK
+  Ed25519::sign(sig, privateKey, publicKey, (const uint8_t*)msg.c_str(), msg.length());
   logf("[VALIDATE2] signature en %lu ms", millis() - ts);
   const String body = String("{\"v\":2,\"deviceId\":\"") + deviceId + "\",\"candidateId\":\"" + candidateId + "\",\"rawHash\":\"" + chk.hash + "\"," +
                       "\"e\":" + String((unsigned long)chk.m.e) + ",\"t\":" + String((unsigned long)chk.m.t) + ",\"r\":" + String((unsigned long)chk.m.r) + "," +
@@ -836,7 +835,6 @@ static bool doValidate() {
   const float score = cand["score_server"] | 0.5f;
 
   const String signature = signED25519(candidateId, score);
-  if (signature.length() == 0) { pendingCandidateId = ""; return false; }   // POD_ED_STACK : signature impossible → pas de vote
   const int m = (int)(score * 1000.0f + 0.5f);
   char sc[12]; snprintf(sc, sizeof(sc), "%d.%03d", m / 1000, m % 1000);
   const String body = String("{\"deviceId\":\"") + deviceId + "\",\"candidateId\":\"" + candidateId + "\","
@@ -1135,20 +1133,18 @@ static unsigned long msUntilNextTask() {
   return r < 0 ? 0UL : (unsigned long)r;
 }
 
-// ─── AUTO-TEST Ed25519 (au boot) : signature + vérification sur la pile dédiée (podEdStack.h), garde et marge mesurées (POD_ED_STACK) ────────────
+// ─── AUTO-TEST Ed25519 (au boot) : prouve que signature + vérification passent dans 1 Ko de pile + marge du tas ────────────
 static void selfTestEd25519() {
   static const char msg[] = "pod-r4-selftest";
   uint8_t sig[64];
   unsigned long t = millis();
-  PodEdInfo infoS, infoV; memset(&infoV, 0, sizeof(infoV));   // POD_ED_STACK
-  const bool signedOk = PodEd::sign(sig, privateKey, publicKey, msg, strlen(msg), &infoS);
+  Ed25519::sign(sig, privateKey, publicKey, msg, strlen(msg));
   const unsigned long tSign = millis() - t;
   t = millis();
-  const bool ok = signedOk && PodEd::verify(sig, publicKey, msg, strlen(msg), &infoV);   // POD_ED_STACK
+  const bool ok = Ed25519::verify(sig, publicKey, msg, strlen(msg));
   const unsigned long tVerify = millis() - t;
   logf("[SELFTEST] Ed25519 signature %lu ms, vérification %lu ms -> %s", tSign, tVerify, ok ? "OK" : "ECHEC");
   reportMem("après Ed25519");
-  logf("[ED25519] pile dédiée (utilisé/marge, o) : sign %u/%u, verify %u/%u ; erreurs sign=%u verify=%u (0 = aucune) ; alloué %u o (garde %u o, marge minimale exigée %u o)", (unsigned)infoS.used, (unsigned)infoS.margin, (unsigned)infoV.used, (unsigned)infoV.margin, (unsigned)infoS.err, (unsigned)infoV.err, (unsigned)POD_ED_STACK_TOTAL, (unsigned)POD_ED_GUARD_BYTES, (unsigned)POD_ED_MARGIN_MIN);   // POD_ED_STACK
 }
 
 // ─── SETUP / LOOP ──────────────────────────────────────────────────────────

@@ -1,0 +1,8 @@
+# Profondeur de pile STATIQUE (octets) — pile principale du cœur UNO R4 = 1024 o (BSP_CFG_STACK_MAIN_BYTES = 0x400)
+Ed25519::derive               (bibliothèque seule, depuis son entrée)  1004 o   Ed2551915derivePublicKeyEPhPKh(400) > Ed255193mulERNS_5PointEPKmb(144) > Ed255193mulERNS_5PointEPKmS1_b(312) > Curve255195mul_PEPmPKmS2_(112) > Curve255196reduceEPmS0_h(36)
+Ed25519::sign                 (bibliothèque seule, depuis son entrée)  1148 o   Ed255194signEPhPKhS2_PKvj(544) > Ed255193mulERNS_5PointEPKmb(144) > Ed255193mulERNS_5PointEPKmS1_b(312) > Curve255195mul_PEPmPKmS2_(112) > Curve255196reduceEPmS0_h(36)
+Ed25519::verify               (bibliothèque seule, depuis son entrée)  1364 o   Ed255196verifyEPKhS1_PKvj(760) > Ed255193mulERNS_5PointEPKmb(144) > Ed255193mulERNS_5PointEPKmS1_b(312) > Curve255195mul_PEPmPKmS2_(112) > Curve255196reduceEPmS0_h(36)
+hal_entry > arduino_mainv > setup > Ed2551915derivePublicKeyEPhPKh  1204 o  DÉPASSE de 180 o
+hal_entry > arduino_mainv > loop > doValidatev > Ed255194signEPhPKhS2_PKvj  1876 o  DÉPASSE de 852 o
+hal_entry > arduino_mainv > setup > Ed255194signEPhPKhS2_PKvj  1348 o  DÉPASSE de 324 o
+hal_entry > arduino_mainv > setup > Ed255196verifyEPKhS1_PKvj  1564 o  DÉPASSE de 540 o

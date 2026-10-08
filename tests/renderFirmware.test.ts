@@ -4,12 +4,16 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { compileHarness, describeChoice, findCompiler, runProcess } from "./helpers/cppHarness";
+import { undoEdStack } from "./helpers/edStackEdits";
 
 // Lot 8B-2A — INTÉGRATION INACTIVE du noyau de rendu en flux dans QUATRE firmwares canaris (ESP8266 e-ink 2,9″ BWR, ESP8266 TFT 1,8″, UNO R4 e-ink 2,9″ BWR, UNO R4 TFT 1,8″).
 // Compilés seulement (arduino-cli, chemin désactivé puis activé) ; JAMAIS flashés, JAMAIS essayés sur une carte. Garantie testée ici : avec POD_RENDER_V1 = 0 (défaut), chaque firmware et chaque pilote modifié
 // sont, au texte près (lignes vides ignorées), IDENTIQUES à la sauvegarde d'avant le lot — le chemin d'avant n'a donc pas changé.
 const root = path.join(__dirname, "..");
 const read = (p: string) => fs.readFileSync(path.join(root, p), "utf8").replace(/\r\n/g, "\n");
+// Lot 8B-2B-2-STACK-FIX1 : les sketches UNO R4 passent désormais Ed25519 par podEdStack.h (tests/helpers/edStackEdits.ts, tests/edStack.test.ts). Les garanties du lot 8B (vue POD_RENDER_V1 = 0 == firmware d'avant, ACK/routes inchangés)
+// s'évaluent donc sur le sketch dont ces modifications EXACTES sont annulées ; tests/edStack.test.ts prouve séparément que cette annulation redonne le sketch d'avant le correctif, au texte près.
+const readIno = (p: string) => { const m = /\/(pod_uno_r4[a-z0-9_]*)\.ino$/.exec(p); return m ? undoEdStack(read(p), m[1]) : read(p); };
 const BACKUP = "firmware-backups/2026-10-08_avant-rendu-v1-canaris";
 const BACKUP2 = "firmware-backups/2026-10-08_avant-propagation-8b2b1";
 
@@ -53,7 +57,7 @@ const plain = (src: string) => src.split("\n").map((l) => l.replace(/\s+$/, ""))
 
 for (const s of SKETCHES) {
   test(`${s.name} : POD_RENDER_V1 vaut 0 par défaut, le noyau n'est inclus QUE si 1, et la vue « chemin désactivé » est IDENTIQUE au firmware d'avant le lot`, () => {
-    const src = read(s.ino);
+    const src = readIno(s.ino);
     assert.match(src, /#ifndef POD_RENDER_V1\n#define POD_RENDER_V1 0\n#endif/);
     assert.match(src, /#ifndef POD_RENDER_MODE_DEFAULT\n#define POD_RENDER_MODE_DEFAULT POD_R_FIT/);
     // le noyau n'est inclus que sous #if POD_RENDER_V1
@@ -73,7 +77,7 @@ for (const s of SKETCHES) {
   });
 
   test(`${s.name} : chemin ACTIVÉ — aucune allocation dynamique, AUCUN ACK hors succès (l'écran peut rester blanc ou partiellement dessiné : documenté), hashes seulement journalisés`, () => {
-    const src = read(s.ino);
+    const src = readIno(s.ino);
     const on = src.replace(/#if POD_RENDER_V1 && POD_CANARY\n[\s\S]*?\n#endif\n/g, "");   // l'instrumentation de canari (POD_CANARY, 0 par défaut) est gardée par tests/canaryPrep.test.ts
     // blocs actifs seulement avec POD_RENDER_V1 = 1
     const blocks = [...on.matchAll(/#if POD_RENDER_V1\n([\s\S]*?)\n#(?:else|endif)/g)].map((m) => m[1]).join("\n");
