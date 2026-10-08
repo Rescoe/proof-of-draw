@@ -7,6 +7,7 @@
 | **Statut** | **Noyau C++ vérifié sur l'HÔTE** (différentiel contre les 228 vecteurs d'or et contre la référence à grille) **et COMPILÉ pour ESP8266 et UNO R4. Jamais essayé sur une carte, branché sur aucun firmware.** |
 | **Interdits respectés** | aucun `.ino` de production, aucun flash, aucune variable Vercel, aucun secret, aucune route, aucun Redis (+0), aucun Neon (0), pas d'OTA, pas de signature `pod-render-v1`, pas de réglage `cartelMode` exposé, référence TypeScript / hashes / police / géométrie / modes **inchangés** |
 | **Rollback** | `git revert` du commit ; aucune donnée, aucun état à défaire |
+| **Correctif** | **LOT8B1-FIX1** (audit GPT : accepté sous réserve) : sémantique de `read()` précisée, preuve sur plans BRUTS, avertissement sur `PodRenderSpec` — voir § 8 |
 | **Suite** | **arrêt pour audit GPT avant LOT8B-2** |
 
 ## 1. Ce que livre le lot
@@ -15,7 +16,7 @@
 |---|---|
 | `consensus-pod/src/podRenderStream.h` | le noyau : `PodEinkRenderer`, `PodTftRenderer`, `PodFrameHasher`, `PodPassHasher` (C++11, sans STL, sans allocation, sans flottant, sans `virtual`) |
 | `consensus-pod/src/podRender.h` | **seule modification** : `pod_render_bottom_line` n'a plus de tampons temporaires (2 × 64 o de pile en moins) — résultat identique, vérifié par les 495 contrôles de la référence |
-| `consensus-pod/host/render_stream_harness.cpp` | harnais différentiel (1 976 vérifications) : vecteurs d'or, octets du pilote, paramètres invalides, entrées tronquées, ordre d'appels |
+| `consensus-pod/host/render_stream_harness.cpp` | harnais différentiel (3 823 vérifications dont 409 exécutions sur plans bruts) : vecteurs d'or, octets du pilote, paramètres invalides, entrées tronquées, ordre d'appels |
 | `consensus-pod/examples/RenderProbeEsp8266`, `RenderProbeUnoR4` | **sondes d'encombrement** (« NE PAS DÉPLOYER ») compilées pour mesurer ; ce ne sont pas des tests d'exactitude |
 | `docs/mesures/8B1_2026_10_07/*` | mesures archivées (versions, compilation, tailles `nm -S`, piles `-fstack-usage -fno-inline`) |
 | `tests/renderStream.test.ts` | 5 tests (différentiel, contrôle négatif, portabilité, refactor, mesures archivées) |
@@ -122,3 +123,26 @@ Redis **+0**, Neon **0**, Vercel : aucune route, aucun octet servi. Aucune varia
 ## 7. Niveau d'assurance
 
 Aucun niveau de la synthèse « Apprendre » ne change (rien n'est branché) : `roadmap.ts` et `SynthesisPath.tsx` inchangés.
+
+## 8. LOT8B1-FIX1 (réserves de l'audit GPT)
+
+**1. Sémantique de `PodEinkRenderer::read`** (ce n'est plus ambigu entre erreur et no-op) :
+
+| Appel | Retour | État |
+|---|---|---|
+| `cap == 0` (sortie valide **ou nulle**) | 0 | **inchangé** (no-op) |
+| `out == nullptr` avec `cap > 0` | 0 | **FAILED** (erreur de l'appelant ; plus rien ne sort, `finish()` refusé) |
+| lecture après la fin (DONE / FINISHED), ou hors état de marche | 0 | **inchangé** — le résultat reste récupérable par `finish()` |
+| appel valide en cours de rendu | ≥ 1 octet | RUNNING, puis DONE quand tout est produit |
+
+Tests d'état ajoutés au harnais (no-op au début, au milieu et après la fin ; sortie nulle au début et en cours de route ; hash identique à une lecture sans incident ; second `finish` refusé).
+
+**2. Preuve sur plans BRUTS pseudo-aléatoires** (409 exécutions, indépendantes du fichier de vecteurs) : octets arbitraires dans **chaque plan** e-ink (donc des pixels « noir ET rouge » simultanés : 6 graines × 3 densités — uniforme, surtout blanc, surtout coloré), mots RGB565 arbitraires sur le TFT 1,8″ (plus tout à 0x00, tout à 0xFF, alternance 0x55 / 0xAA), `eink29bwr` + `eink27bw` + `tft18` × `overlay` / `fit` / `hidden`, trois découpages de sortie e-ink dont un à **1 octet** et un dont le deuxième appel **traverse la frontière entre le plan noir et le plan rouge** (`n−3`, 7, `n+1`, 1). Chaque exécution compare (a) les octets du pilote à ceux de la **référence à grille**, octet par octet, (b) `frameHash` et `renderHash`, et (c) un **oracle indépendant** (formules du contrat recalculées dans le harnais, sans `podRender.h`) pixel par pixel sur la zone sûre — toute l'image en `hidden` : **priorité du rouge** (un pixel noir+rouge efface le plan rouge et laisse le plan noir à 1 en `overlay` / `fit`, garde ses deux bits en `hidden`), projection du `fit`, blanc hors de l'image ajustée. Des centaines de milliers de pixels sont ainsi contrôlés ; le harnais exige d'avoir rencontré des collisions noir+rouge.
+
+**Contrôle négatif du code** (`tests/renderStream.test.ts`) : trois altérations du noyau — priorité du rouge inversée, `read()` qui n'échoue plus sur sortie nulle, frontière entre les plans décalée d'un octet — sont **refusées** par le harnais compilé sur une copie mutante.
+
+**3. `PodRenderSpec`** provient **uniquement** des profils compilés (`pod_render_spec()`), jamais d'une valeur réseau, d'un JSON ou d'un champ non validé : le noyau suppose une géométrie cohérente (largeur, hauteur, bandes, nombre de plans) et ne la revalide pas ; seuls les **arguments d'appel** (plans, longueurs, mode, métadonnées, tampons) sont contrôlés. Un écran inconnu se refuse **avant**, au choix du profil. L'avertissement figure dans `podRender.h` et `podRenderStream.h`.
+
+**Recompilation** : le header ayant changé, les sondes ESP8266 / R4 ont été recompilées et les mesures ré-archivées — **mêmes tailles d'objets, même RAM / flash, mêmes cadres de pile** (seuls les numéros de ligne des fichiers d'analyse changent). Aucun avertissement des fichiers du dépôt.
+
+Rien d'autre n'a changé : aucun firmware, route, secret, variable ; Redis +0, Neon 0 ; toujours jamais essayé sur une carte.

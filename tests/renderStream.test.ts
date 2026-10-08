@@ -19,13 +19,13 @@ const vectors = path.join(root, "consensus-pod", "test-vectors", "render-vectors
 let compiled = false;
 function ensureCompiled() { if (!compiled && choice.path) { console.log(`[podRenderStream] ${compileHarness(choice.path, path.join(root, "consensus-pod", "host", "render_stream_harness.cpp"), exe)}`); compiled = true; } }
 
-test("NOYAU EN FLUX C++ (g++ -Wall -Wextra -Werror) == vecteurs d'or ET == référence à grille, octet par octet : e-ink 2 découpages, TFT 1,8″ ligne par ligne, sans traitement ; paramètres invalides et entrées tronquées refusés", { skip }, () => {
+test("NOYAU EN FLUX C++ (g++ -Wall -Wextra -Werror) == vecteurs d'or ET == référence à grille, octet par octet : e-ink 2 découpages, TFT 1,8″ ligne par ligne, sans traitement ; PLANS BRUTS pseudo-aléatoires (noir+rouge simultanés, RGB565 arbitraires, 3 modes, découpages traversant la frontière des plans) avec oracle indépendant ; paramètres invalides et entrées tronquées refusés", { skip }, () => {
   ensureCompiled();
   const r = runProcess(exe, [vectors]);
   assert.equal(r.status, 0, `${r.stdout}\n${r.stderr}`);
-  const m = /^PASS (\d+) \(rvec=(\d+) flux=(\d+) retardSourceMax=(\d+) lignes\)$/m.exec(r.stdout);
+  const m = /^PASS (\d+) \(rvec=(\d+) flux=(\d+) raw=(\d+) retardSourceMax=(\d+) lignes\)$/m.exec(r.stdout);
   assert.ok(m, r.stdout);
-  assert.ok(Number(m[1]) >= 1900 && Number(m[2]) >= 228 && Number(m[3]) >= 440, `vérifications : ${m[0]}`);
+  assert.ok(Number(m[1]) >= 3800 && Number(m[2]) >= 228 && Number(m[3]) >= 440 && Number(m[4]) >= 400, `vérifications : ${m[0]}`);
 });
 
 test("CONTRÔLE NÉGATIF : hash modifié, mode changé, n° de bloc changé, commande inconnue, ligne mal formée, mode inconnu, fichier vide → détectés", { skip }, () => {
@@ -105,4 +105,24 @@ test("mesures de compilation ARCHIVÉES (docs/mesures/8B1_2026_10_07) : objets b
     "consensus-pod/src/podRenderStream.h",
   ]);
   for (const ino of ["RenderProbeEsp8266/RenderProbeEsp8266.ino", "RenderProbeUnoR4/RenderProbeUnoR4.ino"]) assert.match(read(`consensus-pod/examples/${ino}`), /NE PAS DÉPLOYER[\s\S]*JAMAIS essayé sur la carte/);
+});
+
+test("CONTRÔLE NÉGATIF DU CODE : un noyau altéré (priorité du rouge inversée ; read() qui n'échoue plus sur sortie nulle ; frontière entre les plans décalée) est REFUSÉ par le harnais différentiel", { skip }, () => {
+  const copy = path.join(tmp, "mutant"); fs.rmSync(copy, { recursive: true, force: true });
+  for (const d of ["src", "host"]) fs.cpSync(path.join(root, "consensus-pod", d), path.join(copy, d), { recursive: true });
+  const hdr = path.join(copy, "src", "podRenderStream.h"), orig = fs.readFileSync(hdr, "utf8");
+  const mutations: Array<[string, string, string]> = [
+    ["rouge", "if (src[1] && !((src[1][idx] >> bit) & 1)) return POD_R_RED;", "if (!((src[0][idx] >> bit) & 1)) return POD_R_BLACK;\n    if (src[1] && !((src[1][idx] >> bit) & 1)) return POD_R_RED;"],
+    ["sortie nulle", "if (!out) { state = POD_RS_FAILED; return 0; }", "if (!out) return 0;"],
+    ["frontiere des plans", "const int plane = pos >= perPlane ? 1 : 0;", "const int plane = pos > perPlane ? 1 : 0;"],
+  ];
+  for (const [name, from, to] of mutations) {
+    assert.ok(orig.includes(from), `mutation « ${name} » : repère absent`);
+    fs.writeFileSync(hdr, orig.split(from).join(to));
+    const mexe = path.join(tmp, `mutant-${name.replace(/ /g, "_")}${process.platform === "win32" ? ".exe" : ""}`);
+    compileHarness(choice.path!, path.join(copy, "host", "render_stream_harness.cpp"), mexe);
+    const r = runProcess(mexe, [vectors]);
+    assert.equal(r.status, 1, `mutation « ${name} » non détectée\n${r.stdout.slice(-300)}`);
+    assert.match(r.stdout, /ÉCART/);
+  }
 });

@@ -19,7 +19,7 @@ static_assert(sizeof(PodTftRenderer<Sha>) <= 560, "PodTftRenderer trop gros");
 static_assert(sizeof(PodFrameHasher<Sha>) <= 192, "PodFrameHasher trop gros");
 static_assert(sizeof(PodPassHasher<Sha>) <= 304, "PodPassHasher trop gros");
 
-static int g_pass = 0, g_fail = 0, g_rvec = 0, g_stream = 0;
+static int g_pass = 0, g_fail = 0, g_rvec = 0, g_stream = 0, g_raw = 0, g_collisions = 0;
 static void check(int line, const char* what, const std::string& want, const std::string& got) {
   if (want == got) { g_pass++; return; }
   g_fail++;
@@ -70,7 +70,7 @@ static bool run_eink(const PodRenderSpec& s, PodRenderMode mode, const PodRender
   if (!fh.finish(fx)) return false;
   PodEinkRenderer<Sha> r;
   if (!r.begin(s, mode, m, g_planes[0], s.planes > 1 ? g_planes[1] : 0, n)) return false;
-  outBytes.clear(); uint8_t buf[4096]; int i = 0;
+  outBytes.clear(); uint8_t buf[8192]; int i = 0;
   for (;;) {
     uint32_t cap = sched[i++ % ns]; if (cap > sizeof(buf)) cap = sizeof(buf);
     const uint32_t got = r.read(buf, cap);
@@ -118,10 +118,23 @@ static void invalid_and_truncated(int ln) {
   { PodEinkRenderer<Sha> r; expect(ln, "e-ink : meta vide acceptée", r.begin(e29, POD_R_OVERLAY, noTs, pl[0], pl[1], 4736)); }
   // ── e-ink : ordre d'appels ──
   { PodEinkRenderer<Sha> r; r.begin(e29, POD_R_FIT, ok, pl[0], pl[1], 4736); expect(ln, "e-ink : finish avant la fin = faux", !r.finish(hx)); expect(ln, "e-ink : puis FAILED (plus de lecture)", r.read(out, 16) == 0); }
-  { PodEinkRenderer<Sha> r; r.begin(e29, POD_R_FIT, ok, pl[0], pl[1], 4736); expect(ln, "e-ink : sortie nulle = 0", r.read(0, 16) == 0 && r.read(out, 0) == 0);
-    uint8_t big[4096]; uint32_t tot = 0, g; while ((g = r.read(big, sizeof(big)))) tot += g;
-    expect(ln, "e-ink : total produit = 2 × 4736", tot == 9472 && r.done()); expect(ln, "e-ink : lecture après la fin = 0", r.read(out, 16) == 0);
-    expect(ln, "e-ink : finish ok", r.finish(hx)); expect(ln, "e-ink : second finish = faux", !r.finish(hy)); }
+  // read() : cap == 0 = no-op sans effet sur l'état ; out nul avec cap > 0 = erreur de l'appelant (FAILED) ; lecture après la fin = 0 sans altérer le résultat
+  { char base[65], mixed[65]; uint8_t big[4096]; uint32_t tot = 0, g;
+    PodEinkRenderer<Sha> p; p.begin(e29, POD_R_FIT, ok, pl[0], pl[1], 4736); while ((g = p.read(big, sizeof(big)))) tot += g; p.finish(base);
+    PodEinkRenderer<Sha> r; r.begin(e29, POD_R_FIT, ok, pl[0], pl[1], 4736); tot = 0;
+    expect(ln, "e-ink : cap == 0 = no-op (sortie valide ou nulle), 0 octet", r.read(out, 0) == 0 && r.read(0, 0) == 0 && r.produced() == 0);
+    expect(ln, "e-ink : cap == 0 ne change pas l'état (la lecture normale suit)", r.read(out, 16) == 16 && r.produced() == 16);
+    expect(ln, "e-ink : cap == 0 en cours de route = no-op", r.read(0, 0) == 0 && r.produced() == 16);
+    tot = 16; while ((g = r.read(big, sizeof(big)))) tot += g;
+    expect(ln, "e-ink : total produit = 2 × 4736 et terminé", tot == 9472 && r.done());
+    expect(ln, "e-ink : lecture après la fin = 0 (sortie valide)", r.read(out, 16) == 0 && r.done());
+    expect(ln, "e-ink : lecture après la fin avec sortie nulle = 0, SANS erreur", r.read(0, 16) == 0 && r.done());
+    expect(ln, "e-ink : cap == 0 après la fin = 0, état inchangé", r.read(out, 0) == 0 && r.done());
+    expect(ln, "e-ink : finish reste possible après ces appels", r.finish(mixed)); expect(ln, "e-ink : hash identique à une lecture sans incident", std::string(base) == std::string(mixed));
+    expect(ln, "e-ink : second finish = faux", !r.finish(hy)); }
+  { PodEinkRenderer<Sha> r; r.begin(e29, POD_R_FIT, ok, pl[0], pl[1], 4736); expect(ln, "e-ink : sortie nulle avec cap > 0 = 0", r.read(0, 16) == 0);
+    expect(ln, "e-ink : … et ÉTAT FAILED (plus rien ne sort)", !r.done() && r.read(out, 16) == 0 && r.produced() == 0); expect(ln, "e-ink : … finish refusé", !r.finish(hx)); }
+  { PodEinkRenderer<Sha> r; r.begin(e29, POD_R_FIT, ok, pl[0], pl[1], 4736); r.read(out, 16); expect(ln, "e-ink : sortie nulle en cours de route = FAILED", r.read(0, 16) == 0 && r.read(out, 16) == 0 && !r.finish(hx)); }
   // ── frameHash : entrées tronquées / excédentaires ──
   { PodFrameHasher<Sha> f; f.begin(e29); f.update(pl[0], 4736); expect(ln, "frame : image tronquée (un plan sur deux) = faux", !f.finish(hx)); }
   { PodFrameHasher<Sha> f; f.begin(e29); f.update(pl[0], 4736); f.update(pl[1], 4735); expect(ln, "frame : un octet manquant = faux", !f.finish(hx)); }
@@ -155,11 +168,139 @@ static void invalid_and_truncated(int ln) {
     char a[65], b[65]; expect(ln, "tft fit : la dernière ligne source (159) est précisément la dernière requise : rien à drainer, finish vrai", !r.sourceRemaining() && r.finish(a, b)); }
 }
 
+// ─── Plans BRUTS pseudo-aléatoires (lot 8B1-FIX1) : le noyau doit se comporter comme la référence sur N'IMPORTE QUELS octets, pas seulement sur des images produites par l'encodeur ──────────────────────────────
+// e-ink : octets arbitraires dans chaque plan (donc des pixels « noir ET rouge » : le rouge l'emporte) ; TFT : mots RGB565 arbitraires. Trois densités, trois modes, trois découpages (dont des morceaux qui
+// traversent la frontière entre le plan noir et le plan rouge). Comparaison : (1) octets du pilote et deux hashes avec la référence à GRILLE ; (2) un ORACLE indépendant (formules du contrat, sans podRender.h)
+// vérifie pixel par pixel la zone sûre — priorité du rouge, fit, hidden.
+static uint8_t raw_byte(int density, uint32_t seed, uint32_t i, uint32_t plane) {
+  const uint8_t a = (uint8_t)(pod_render_hash32(seed, i, plane * 3 + 1) >> 8), b = (uint8_t)(pod_render_hash32(seed, i, plane * 3 + 2) >> 8), c = (uint8_t)(pod_render_hash32(seed, i, plane * 3 + 3) >> 8);
+  return density == 1 ? (uint8_t)(a | b | c) : density == 2 ? (uint8_t)(a & b & c) : a;   // 0 uniforme · 1 surtout blanc (bits à 1) · 2 surtout coloré (bits à 0)
+}
+static bool in_bit_cleared(const PodRenderSpec& s, int plane, int x, int y) {   // bit 0 d'un plan D'ENTRÉE (g_planes) = pixel allumé dans ce plan
+  const int bpr = s.h / 8, bufCol = s.h - 1 - y, idx = x * bpr + (bufCol >> 3), bit = 7 - (bufCol & 7);
+  return !((g_planes[plane][idx] >> bit) & 1);
+}
+static int logical_in(const PodRenderSpec& s, int sx, int sy) {   // 0 blanc, 1 noir, 2 rouge — lu DIRECTEMENT dans les plans d'entrée
+  return (s.planes > 1 && in_bit_cleared(s, 1, sx, sy)) ? 2 : in_bit_cleared(s, 0, sx, sy) ? 1 : 0;
+}
+static bool out_bit_cleared(const PodRenderSpec& s, const std::vector<uint8_t>& got, int plane, int x, int y) {
+  const int bpr = s.h / 8, bufCol = s.h - 1 - y, idx = x * bpr + (bufCol >> 3), bit = 7 - (bufCol & 7);
+  return !((got[(size_t)plane * pod_render_plane_bytes(s) + (size_t)idx] >> bit) & 1);
+}
+/** Oracle e-ink : chaque pixel de la zone sûre (toute l'image en hidden) se déduit des plans d'entrée par les formules du contrat. Retourne le nombre de pixels contrôlés (0 = échec). */
+static long oracle_eink(int ln, const std::string& tag, const PodRenderSpec& s, PodRenderMode mode, const std::vector<uint8_t>& got) {
+  const int safe0 = s.top1 + 1, safeH = s.bot0 - 1 - s.top1;
+  const int nw = (int)(((uint32_t)s.w * (uint32_t)safeH) / s.h), x0 = (s.w - nw) / 2;
+  long checked = 0;
+  for (int y = (mode == POD_R_HIDDEN ? 0 : safe0); y < (mode == POD_R_HIDDEN ? s.h : s.bot0); y++) for (int x = 0; x < s.w; x++) {
+    bool wantBlk, wantRed;
+    if (mode == POD_R_HIDDEN) {   // copie conforme des BITS : un pixel noir+rouge garde ses deux bits
+      wantBlk = in_bit_cleared(s, 0, x, y); wantRed = s.planes > 1 && in_bit_cleared(s, 1, x, y);
+    } else {
+      int want;
+      if (mode == POD_R_FIT) {
+        if (x < x0 || x >= x0 + nw) want = 0;
+        else want = logical_in(s, (int)(((uint32_t)(2 * (x - x0) + 1) * (uint32_t)s.w) / (uint32_t)(2 * nw)), (int)(((uint32_t)(2 * (y - safe0) + 1) * (uint32_t)s.h) / (uint32_t)(2 * safeH)));
+      } else want = logical_in(s, x, y);
+      wantBlk = want == 1; wantRed = want == 2;   // le rouge l'emporte : un pixel noir+rouge efface le plan rouge et LAISSE le plan noir à 1
+    }
+    const bool blkCleared = out_bit_cleared(s, got, 0, x, y), redCleared = s.planes > 1 && out_bit_cleared(s, got, 1, x, y);
+    if (blkCleared != wantBlk || redCleared != wantRed) { g_fail++; std::printf("ÉCART ligne %d oracle e-ink %s pixel (%d,%d) : attendu noir=%d rouge=%d, obtenu noir=%d rouge=%d\n", ln, tag.c_str(), x, y, wantBlk, wantRed, blkCleared, redCleared); return 0; }
+    checked++;
+  }
+  g_pass++; return checked;
+}
+static void raw_differential() {
+  static const char* NAMES[] = { "overlay", "fit", "hidden" };
+  const uint8_t lea[] = { 'L', 0xC3, 0xA9, 'a' }, chat[] = { 'L', 'e', ' ', 'C', 'h', 'a', 't', ' ', 'N', 'o', 'i', 'r' }, ts[] = { '0', '7', '/', '1', '0', ' ', '2', '0', ':', '3', '7' };
+  uint8_t longTitle[60]; for (int i = 0; i < 60; i++) longTitle[i] = (uint8_t)('A' + i % 26);
+  const PodRenderMeta metas[3] = { { ts, sizeof(ts), 42, lea, sizeof(lea), chat, sizeof(chat) }, { 0, 0, -1, 0, 0, 0, 0 }, { ts, sizeof(ts), 123456789, longTitle, 60, longTitle, 60 } };
+  const uint32_t seeds[] = { 1, 7, 99, 12345, 0xDEADBEEFu, 424242 };
+  int run = 0; long oraclePixels = 0;
+  for (int si = 0; si < 6; si++) for (int d = 0; d < 3; d++) for (int sc = 0; sc < 3; sc++) for (int mi = 0; mi < 3; mi++) {
+    const PodRenderScreen screen = sc == 0 ? POD_R_EINK29 : sc == 1 ? POD_R_EINK27 : POD_R_TFT18;
+    const PodRenderSpec s = pod_render_spec(screen); const PodRenderMode mode = (PodRenderMode)mi; const PodRenderMeta& m = metas[(si + d + mi) % 3];
+    if (sc == 2 && d != 0 && si >= 2) continue;   // TFT : graines 0-1 sous les 3 densités (mots à bits biaisés), les autres en uniforme seulement
+    const uint32_t n = pod_render_plane_bytes(s);
+    for (int p = 0; p < s.planes; p++) for (uint32_t i = 0; i < n; i++) g_planes[p][i] = raw_byte(d, seeds[si], i, (uint32_t)p);
+    int collisions = 0;
+    if (s.eink && s.planes > 1) for (uint32_t i = 0; i < n; i++) collisions += ((~g_planes[0][i] & ~g_planes[1][i] & 0xFF) != 0) ? 1 : 0;
+    g_collisions += collisions;
+    const std::string tag = std::string(s.name) + " " + NAMES[mi] + " graine=" + std::to_string(seeds[si]) + " densité=" + std::to_string(d);
+    const uint8_t* in[2] = { g_planes[0], g_planes[1] }; uint8_t* fin[2] = { g_final[0], g_final[1] }; char fh[65], rh[65];
+    pod_render_frame<Sha>(s, mode, m, in, g_in, g_out, fin, fh, rh);
+    std::vector<uint8_t> want; for (int p = 0; p < s.planes; p++) want.insert(want.end(), g_final[p], g_final[p] + n);
+    std::string fx, rx; std::vector<uint8_t> got;
+    if (s.eink) {
+      const uint32_t schedC[4] = { n - 3, 7, n + 1, 1 };   // le 2e appel traverse la frontière entre le plan noir et le plan rouge
+      for (int k = 0; k < 3; k++) {
+        const bool okRun = k == 0 ? run_eink(s, mode, m, SCHED_A, 9, got, fx, rx) : k == 1 ? run_eink(s, mode, m, SCHED_B, 4, got, fx, rx) : run_eink(s, mode, m, schedC, 4, got, fx, rx);
+        expect(run, ("raw e-ink exécution : " + tag).c_str(), okRun);
+        if (!okRun) continue;
+        check(run, ("raw e-ink frameHash : " + tag).c_str(), fh, fx);
+        check(run, ("raw e-ink renderHash : " + tag).c_str(), rh, rx);
+        expect(run, ("raw e-ink octets identiques à la référence à grille : " + tag).c_str(), got == want);
+        if (k == 0) { const long c = oracle_eink(run, tag, s, mode, got); expect(run, ("raw e-ink oracle indépendant : " + tag).c_str(), c > 0); oraclePixels += c; }
+        g_raw++;
+      }
+    } else {   // tft18 : mots RGB565 arbitraires
+      int lag = 0;
+      const bool okRun = run_tft(s, mode, m, got, fx, rx, &lag);
+      expect(run, ("raw tft exécution : " + tag).c_str(), okRun);
+      if (okRun) {
+        check(run, ("raw tft frameHash : " + tag).c_str(), fh, fx);
+        check(run, ("raw tft renderHash : " + tag).c_str(), rh, rx);
+        expect(run, ("raw tft octets identiques à la référence à grille : " + tag).c_str(), got == want);
+        const int safe0 = s.top1 + 1, safeH = s.bot0 - 1 - s.top1, nw = (int)(((uint32_t)s.w * (uint32_t)safeH) / s.h), x0 = (s.w - nw) / 2; bool ok = true;
+        for (int y = (mode == POD_R_HIDDEN ? 0 : safe0); ok && y < (mode == POD_R_HIDDEN ? s.h : s.bot0); y++) for (int x = 0; ok && x < s.w; x++) {
+          uint16_t w16;
+          if (mode == POD_R_FIT) {
+            if (x < x0 || x >= x0 + nw) w16 = 0xFFFF;
+            else {
+              const int sx = (int)(((uint32_t)(2 * (x - x0) + 1) * (uint32_t)s.w) / (uint32_t)(2 * nw)), sy = (int)(((uint32_t)(2 * (y - safe0) + 1) * (uint32_t)s.h) / (uint32_t)(2 * safeH));
+              w16 = (uint16_t)(g_planes[0][(sy * s.w + sx) * 2] | (g_planes[0][(sy * s.w + sx) * 2 + 1] << 8));
+            }
+          } else w16 = (uint16_t)(g_planes[0][(y * s.w + x) * 2] | (g_planes[0][(y * s.w + x) * 2 + 1] << 8));
+          const uint16_t o16 = (uint16_t)(got[(size_t)(y * s.w + x) * 2] | (got[(size_t)(y * s.w + x) * 2 + 1] << 8));
+          if (o16 != w16) { ok = false; g_fail++; std::printf("ÉCART oracle tft %s pixel (%d,%d) : attendu %04x obtenu %04x\n", tag.c_str(), x, y, w16, o16); }
+        }
+        expect(run, ("raw tft oracle indépendant : " + tag).c_str(), ok);
+        g_raw++;
+      }
+    }
+    if (!s.cartel || mode == POD_R_HIDDEN) {   // sans traitement, sur des octets bruts
+      PodPassHasher<Sha> ph; char a[65], b[65];
+      const bool okPass = ph.begin(s, mode) && feed_chunked(ph, g_planes[0], n, SCHED_A, 9) && (s.planes < 2 || feed_chunked(ph, g_planes[1], n, SCHED_B, 4)) && ph.finish(a, b);
+      expect(run, ("raw pass exécution : " + tag).c_str(), okPass);
+      if (okPass) { check(run, ("raw pass frameHash : " + tag).c_str(), fh, a); check(run, ("raw pass renderHash : " + tag).c_str(), rh, b); g_raw++; }
+    }
+    run++;
+  }
+  // TFT : cas dégénérés (tout à 0x00, tout à 0xFF, alternance 0x55/0xAA) dans les trois modes
+  for (int pat = 0; pat < 3; pat++) for (int mi = 0; mi < 3; mi++) {
+    const PodRenderSpec s = pod_render_spec(POD_R_TFT18); const PodRenderMode mode = (PodRenderMode)mi; const uint32_t n = pod_render_plane_bytes(s);
+    for (uint32_t i = 0; i < n; i++) g_planes[0][i] = pat == 0 ? 0x00 : pat == 1 ? 0xFF : (uint8_t)((i & 1) ? 0xAA : 0x55);
+    const uint8_t* in[2] = { g_planes[0], g_planes[0] }; uint8_t* fin[2] = { g_final[0], g_final[1] }; char fh[65], rh[65];
+    pod_render_frame<Sha>(s, mode, metas[0], in, g_in, g_out, fin, fh, rh);
+    std::vector<uint8_t> got; std::string fx, rx; int lag = 0;
+    const bool okRun = run_tft(s, mode, metas[0], got, fx, rx, &lag);
+    expect(run, "raw tft dégénéré : exécution", okRun);
+    if (okRun) {
+      check(run, "raw tft dégénéré frameHash", fh, fx); check(run, "raw tft dégénéré renderHash", rh, rx);
+      expect(run, "raw tft dégénéré octets", got == std::vector<uint8_t>(g_final[0], g_final[0] + n)); g_raw++;
+    }
+    run++;
+  }
+  expect(run, "raw : des pixels noir+rouge simultanés ont bien été testés", g_collisions > 0);
+  expect(run, "raw : l'oracle a contrôlé des centaines de milliers de pixels", oraclePixels > 100000);
+}
+
 int main(int argc, char** argv) {
   if (argc < 2) { std::printf("usage : render_stream_harness <render-vectors.txt>\n"); return 2; }
   std::ifstream f(argv[1]);
   if (!f) { std::printf("fichier introuvable : %s\n", argv[1]); return 2; }
   invalid_and_truncated(0);
+  raw_differential();
   std::string line; int ln = 0, maxLag = 0;
   while (std::getline(f, line)) {
     ln++;
@@ -216,7 +357,7 @@ int main(int argc, char** argv) {
     g_rvec++;
   }
   if (g_fail) { std::printf("ÉCHEC : %d écart(s), %d vérifications réussies\n", g_fail, g_pass); return 1; }
-  if (g_rvec == 0 || g_stream == 0) { std::printf("ÉCHEC : fichier de vecteurs vide (rvec=%d flux=%d)\n", g_rvec, g_stream); return 1; }
-  std::printf("PASS %d (rvec=%d flux=%d retardSourceMax=%d lignes)\n", g_pass, g_rvec, g_stream, maxLag);
+  if (g_rvec == 0 || g_stream == 0 || g_raw == 0) { std::printf("ÉCHEC : fichier de vecteurs vide (rvec=%d flux=%d raw=%d)\n", g_rvec, g_stream, g_raw); return 1; }
+  std::printf("PASS %d (rvec=%d flux=%d raw=%d retardSourceMax=%d lignes)\n", g_pass, g_rvec, g_stream, g_raw, maxLag);
   return 0;
 }

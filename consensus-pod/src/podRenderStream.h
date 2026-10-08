@@ -46,6 +46,8 @@ static inline PodRGeom pod_render_geom(const PodRenderSpec& s) {
 static inline bool pod_render_mode_valid(PodRenderMode m) { return (unsigned)m <= (unsigned)POD_R_HIDDEN; }
 static inline bool pod_render_meta_valid(const PodRenderMeta& m) { return (m.tsLen == 0 || m.ts) && (m.artistLen == 0 || m.artist) && (m.titleLen == 0 || m.title); }
 
+// ⚠ `PodRenderSpec` ne vient QUE des profils compilés (`pod_render_spec()`), jamais d'une valeur réseau, d'un JSON ou d'un champ non validé : le noyau suppose une géométrie cohérente (largeur, hauteur,
+// bandes, nombre de plans) et ne la revalide pas. Seuls les ARGUMENTS d'appel (plans, longueurs, mode, métadonnées, tampons) sont contrôlés. Un écran inconnu se refuse AVANT, au choix du profil.
 /** Préfixes de hash (domaines gelés) ; retournent la longueur écrite, 0 en cas de dépassement. */
 static inline size_t pod_render_frame_prefix(const PodRenderSpec& s, char* pre, size_t cap) {
   PodOut o(pre, cap); o.str("pod-frame-v1|"); o.str(s.name); o.ch('|'); o.u64(s.w); o.ch('x'); o.u64(s.h); o.ch('|'); o.u64(s.planes); o.ch('|');
@@ -170,9 +172,17 @@ template <class Sha> struct PodEinkRenderer {
   uint32_t produced() const { return pos; }
   bool done() const { return state == POD_RS_DONE || state == POD_RS_FINISHED; }
 
-  /** Produit au plus `cap` octets du pilote (plan noir en entier, puis plan rouge), les hache, les range dans `out`. Retourne le nombre d'octets (0 : terminé ou erreur). */
+  /**
+   * Produit au plus `cap` octets du pilote (plan noir en entier, puis plan rouge), les hache, les range dans `out`. Retourne le nombre d'octets.
+   *   • `cap == 0` : NO-OP, retourne 0, l'état n'est PAS modifié (même si `out` est nul) ;
+   *   • `out` nul avec `cap > 0` : ERREUR de l'appelant, état FAILED, retourne 0 ;
+   *   • lecture après la fin (DONE / FINISHED) ou hors état de marche : retourne 0 SANS rien altérer (le résultat reste récupérable par finish()) ;
+   *   • 0 retourné en cours de rendu = impossible (un appel valide produit au moins un octet) : 0 signifie « terminé » ou « erreur » — distinguer par done() / state.
+   */
   uint32_t read(uint8_t* out, uint32_t cap) {
-    if (state != POD_RS_RUNNING || !out || cap == 0) return 0;
+    if (cap == 0) return 0;
+    if (state != POD_RS_RUNNING) return 0;
+    if (!out) { state = POD_RS_FAILED; return 0; }
     uint32_t n = 0;
     while (n < cap && pos < total) {
       const int plane = pos >= perPlane ? 1 : 0;

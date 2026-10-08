@@ -12,6 +12,7 @@
 enum PodRenderScreen { POD_R_EINK29 = 0, POD_R_EINK27, POD_R_TFT18, POD_R_OLED96, POD_R_TFT28 };
 enum PodRenderMode { POD_R_OVERLAY = 0, POD_R_FIT, POD_R_HIDDEN };
 
+// ⚠ Ne jamais construire un PodRenderSpec à partir d'une valeur réseau non validée : seulement via pod_render_spec() (profils compilés).
 struct PodRenderSpec {
   const char* name; uint16_t w, h; uint8_t planes; bool eink; bool cartel; uint16_t top1, bot0;   // top1 : ligne du séparateur haut ; bot0 : ligne du séparateur bas
 };
