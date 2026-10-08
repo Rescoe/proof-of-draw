@@ -135,6 +135,12 @@ static void invalid_and_truncated(int ln) {
   { PodEinkRenderer<Sha> r; r.begin(e29, POD_R_FIT, ok, pl[0], pl[1], 4736); expect(ln, "e-ink : sortie nulle avec cap > 0 = 0", r.read(0, 16) == 0);
     expect(ln, "e-ink : … et ÉTAT FAILED (plus rien ne sort)", !r.done() && r.read(out, 16) == 0 && r.produced() == 0); expect(ln, "e-ink : … finish refusé", !r.finish(hx)); }
   { PodEinkRenderer<Sha> r; r.begin(e29, POD_R_FIT, ok, pl[0], pl[1], 4736); r.read(out, 16); expect(ln, "e-ink : sortie nulle en cours de route = FAILED", r.read(0, 16) == 0 && r.read(out, 16) == 0 && !r.finish(hx)); }
+  // ── frameHash par le renderer : paramètres invalides, refus en cours de rendu ──
+  { PodEinkRenderer<Sha> r; expect(ln, "renderer.frameHash : plan nul refusé", !r.frameHash(e29, 0, pl[1], 4736, hx) && !r.frameHash(e29, pl[0], 0, 4736, hx));
+    expect(ln, "renderer.frameHash : taille fausse refusée", !r.frameHash(e29, pl[0], pl[1], 4735, hx) && !r.frameHash(e29, pl[0], pl[1], 4737, hx));
+    expect(ln, "renderer.frameHash : écran TFT / OLED refusé", !r.frameHash(t18, pl[0], pl[1], 40960, hx) && !r.frameHash(oled, pl[0], pl[1], 1024, hx));
+    expect(ln, "renderer.frameHash : BW sans plan rouge accepté", r.frameHash(e27, pl[0], 0, pod_render_plane_bytes(e27), hx)); }
+  { PodEinkRenderer<Sha> r; r.begin(e29, POD_R_FIT, ok, pl[0], pl[1], 4736); expect(ln, "renderer.frameHash : refusé en cours de rendu", !r.frameHash(e29, pl[0], pl[1], 4736, hx) && r.read(out, 16) == 16); }
   // ── frameHash : entrées tronquées / excédentaires ──
   { PodFrameHasher<Sha> f; f.begin(e29); f.update(pl[0], 4736); expect(ln, "frame : image tronquée (un plan sur deux) = faux", !f.finish(hx)); }
   { PodFrameHasher<Sha> f; f.begin(e29); f.update(pl[0], 4736); f.update(pl[1], 4735); expect(ln, "frame : un octet manquant = faux", !f.finish(hx)); }
@@ -240,6 +246,13 @@ static void raw_differential() {
         check(run, ("raw e-ink frameHash : " + tag).c_str(), fh, fx);
         check(run, ("raw e-ink renderHash : " + tag).c_str(), rh, rx);
         expect(run, ("raw e-ink octets identiques à la référence à grille : " + tag).c_str(), got == want);
+        if (k == 0) {   // frameHash calculé avec le contexte du renderer (économie d'un contexte sur R4) puis rendu complet avec le MÊME objet : mêmes hashes, mêmes octets
+          PodEinkRenderer<Sha> r2; char h2[65], h3[65]; std::vector<uint8_t> got2; uint8_t b2[64];
+          const bool okF = r2.frameHash(s, g_planes[0], s.planes > 1 ? g_planes[1] : 0, n, h2) && r2.begin(s, mode, m, g_planes[0], s.planes > 1 ? g_planes[1] : 0, n);
+          expect(run, ("raw e-ink frameHash par le renderer : " + tag).c_str(), okF);
+          if (okF) { check(run, ("raw e-ink frameHash par le renderer == PodFrameHasher : " + tag).c_str(), fx, h2); uint32_t g2; while ((g2 = r2.read(b2, sizeof(b2)))) got2.insert(got2.end(), b2, b2 + g2);
+            expect(run, ("raw e-ink objet réutilisé : octets identiques : " + tag).c_str(), got2 == want && r2.finish(h3)); check(run, ("raw e-ink objet réutilisé : renderHash : " + tag).c_str(), rx, h3); }
+        }
         if (k == 0) { const long c = oracle_eink(run, tag, s, mode, got); expect(run, ("raw e-ink oracle indépendant : " + tag).c_str(), c > 0); oraclePixels += c; }
         g_raw++;
       }
@@ -295,12 +308,68 @@ static void raw_differential() {
   expect(run, "raw : l'oracle a contrôlé des centaines de milliers de pixels", oraclePixels > 100000);
 }
 
+// ─── Émulation du contrat des pilotes e-ink (lot 8B-2A) : Epd::DisplayStream (ESP8266) et Epd29b::displayStream (R4) ───────────────────────────────────────────────────────────────────────────
+// Ce n'est PAS le code des pilotes (qui ne se compile que sous Arduino) : c'est leur algorithme, recopié, exécuté contre le vrai renderer avec INJECTION DE PANNES. Il vérifie que (1) aucun appel ne franchit la frontière
+// entre les plans, (2) le plan noir est remis tel quel et le plan rouge INVERSÉ, (3) un arrêt de production avant la fin n'atteint jamais le rafraîchissement, (4) les octets remis sont exactement ceux hachés.
+struct DriverEmu { std::vector<uint8_t> wire; bool refreshed; int commands; };
+struct FaultyProducer { PodEinkRenderer<Sha>* r; uint32_t stopAfter; uint32_t given; };
+static uint32_t faulty_produce(void* ctx, uint8_t* out, uint32_t cap) {
+  FaultyProducer* f = static_cast<FaultyProducer*>(ctx);
+  if (f->given >= f->stopAfter) return 0;                       // la production s'arrête (erreur ou fin prématurée)
+  uint32_t c = cap; if (f->given + c > f->stopAfter) c = f->stopAfter - f->given;
+  const uint32_t n = f->r->read(out, c); f->given += n; return n;
+}
+static bool emu_display_stream(DriverEmu& d, uint32_t (*produce)(void*, uint8_t*, uint32_t), void* ctx, uint32_t plane, bool* boundaryCrossed) {
+  uint8_t chunk[32]; uint32_t sent = 0; d.wire.clear(); d.refreshed = false; d.commands = 1;   // commande 0x24
+  *boundaryCrossed = false;
+  while (sent < 2 * plane) {
+    const uint32_t toBoundary = (sent < plane ? plane : 2 * plane) - sent, cap = toBoundary < sizeof(chunk) ? toBoundary : (uint32_t)sizeof(chunk);
+    const uint32_t n = produce(ctx, chunk, cap);
+    if (n == 0 || n > cap) return false;
+    if (sent < plane && sent + n > plane) *boundaryCrossed = true;
+    for (uint32_t i = 0; i < n; i++) d.wire.push_back(sent < plane ? chunk[i] : (uint8_t)~chunk[i]);
+    sent += n;
+    if (sent == plane) d.commands++;                            // commande 0x26
+  }
+  d.refreshed = true; return true;
+}
+static void driver_contract() {
+  const PodRenderSpec s = pod_render_spec(POD_R_EINK29); const uint32_t n = pod_render_plane_bytes(s);
+  const uint8_t ab[] = { 'a', 'b' }; PodRenderMeta m = { ab, 2, 5, ab, 2, ab, 2 };
+  for (int seed = 0; seed < 3; seed++) {
+    for (uint32_t p = 0; p < 2; p++) for (uint32_t i = 0; i < n; i++) g_planes[p][i] = raw_byte(seed, 77 + (uint32_t)seed, i, p);
+    const uint8_t* in[2] = { g_planes[0], g_planes[1] }; uint8_t* fin[2] = { g_final[0], g_final[1] }; char fh[65], rh[65];
+    pod_render_frame<Sha>(s, POD_R_FIT, m, in, g_in, g_out, fin, fh, rh);
+    // 1. chemin nominal : octets remis = plan noir tel quel + plan rouge inversé de la RÉFÉRENCE ; le hash du renderer = le hash des octets avant inversion
+    { PodEinkRenderer<Sha> r; r.begin(s, POD_R_FIT, m, g_planes[0], g_planes[1], n); FaultyProducer f = { &r, 2 * n, 0 }; DriverEmu d; bool crossed = true; char rx[65];
+      expect(seed, "pilote émulé : remise complète", emu_display_stream(d, faulty_produce, &f, n, &crossed) && d.refreshed && r.finish(rx));
+      expect(seed, "pilote émulé : aucun appel ne franchit la frontière entre les plans", !crossed);
+      expect(seed, "pilote émulé : 2 commandes (0x24 puis 0x26)", d.commands == 2);
+      bool same = d.wire.size() == 2 * n; for (uint32_t i = 0; same && i < n; i++) same = d.wire[i] == g_final[0][i] && d.wire[n + i] == (uint8_t)~g_final[1][i];
+      expect(seed, "pilote émulé : plan noir tel quel, plan rouge inversé == référence à grille", same);
+      check(seed, "pilote émulé : renderHash == référence", rh, rx); }
+    // 2. pannes : arrêt de la production à divers points, dont les frontières — jamais de rafraîchissement, le renderHash refuse
+    const uint32_t stops[] = { 0, 1, 31, 32, 33, n - 1, n, n + 1, 2 * n - 33, 2 * n - 1 };
+    for (uint32_t st : stops) {
+      PodEinkRenderer<Sha> r; r.begin(s, POD_R_FIT, m, g_planes[0], g_planes[1], n); FaultyProducer f = { &r, st, 0 }; DriverEmu d; bool crossed = false; char rx[65];
+      const bool ok = emu_display_stream(d, faulty_produce, &f, n, &crossed);
+      expect(seed, "pilote émulé : production interrompue => échec, JAMAIS de rafraîchissement", !ok && !d.refreshed);
+      expect(seed, "pilote émulé : production interrompue => renderHash refusé (rendu non calculé en entier)", !r.finish(rx));
+      expect(seed, "pilote émulé : seuls les octets déjà produits ont été remis", d.wire.size() <= st);
+    }
+    // 3. production qui rend plus que demandé (bug de l'appelant) => échec
+    { struct Over { static uint32_t produce(void*, uint8_t*, uint32_t cap) { return cap + 1; } }; DriverEmu d; bool crossed = false;
+      expect(seed, "pilote émulé : n > cap refusé", !emu_display_stream(d, Over::produce, 0, n, &crossed) && !d.refreshed); }
+  }
+}
+
 int main(int argc, char** argv) {
   if (argc < 2) { std::printf("usage : render_stream_harness <render-vectors.txt>\n"); return 2; }
   std::ifstream f(argv[1]);
   if (!f) { std::printf("fichier introuvable : %s\n", argv[1]); return 2; }
   invalid_and_truncated(0);
   raw_differential();
+  driver_contract();
   std::string line; int ln = 0, maxLag = 0;
   while (std::getline(f, line)) {
     ln++;

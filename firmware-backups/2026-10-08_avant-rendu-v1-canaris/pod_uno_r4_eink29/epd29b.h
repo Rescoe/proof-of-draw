@@ -69,35 +69,6 @@ class Epd29b {
     return refresh();
   }
 
-// POD_RENDER_V1_BEGIN
-  /**
-   * Rendu en flux (lot 8B-2A) : `produce(ctx, out, cap)` remplit `out` d'au plus `cap` octets et retourne leur nombre (0 = fin ou erreur). Mêmes écritures que display() : plan noir (0x24) tel quel, plan rouge (0x26)
-   * INVERSÉ (~octet), sans tampon intermédiaire ; un appel de `produce` ne franchit jamais la frontière entre les plans. Retourne 0 = rafraîchi ; -1 = production interrompue (le panneau n'est PAS rafraîchi,
-   * il garde son image) ; -2 = le panneau n'a pas fini son rafraîchissement (BUSY resté actif). Le chunk (32 o) vit sur la pile : l'appelant garde ses gros objets en global (pile principale R4 : 1 Ko).
-   */
-  typedef uint32_t (*ProduceFn)(void* ctx, uint8_t* out, uint32_t cap);
-  int8_t displayStream(ProduceFn produce, void* ctx) {
-    uint8_t chunk[32];
-    for (uint8_t plane = 0; plane < 2; plane++) {
-      command(plane == 0 ? 0x24 : 0x26);
-      SPI.beginTransaction(settings());
-      digitalWrite(EPD_DC_PIN, HIGH);
-      digitalWrite(EPD_CS_PIN, LOW);
-      uint32_t sent = 0;
-      while (sent < EPD_BUF_SIZE) {
-        const uint32_t left = EPD_BUF_SIZE - sent, cap = left < sizeof(chunk) ? left : (uint32_t)sizeof(chunk);
-        const uint32_t n = produce(ctx, chunk, cap);
-        if (n == 0 || n > cap) { digitalWrite(EPD_CS_PIN, HIGH); SPI.endTransaction(); return -1; }
-        for (uint32_t i = 0; i < n; i++) SPI.transfer(plane == 0 ? chunk[i] : (uint8_t)~chunk[i]);
-        sent += n;
-      }
-      digitalWrite(EPD_CS_PIN, HIGH);
-      SPI.endTransaction();
-    }
-    return refresh() ? 0 : -2;
-  }
-// POD_RENDER_V1_END
-
   /** Page entièrement blanche (efface les rémanences avant une nouvelle image). */
   bool displayWhite() {
     writeRam(0x24, nullptr, 0xFF, false);

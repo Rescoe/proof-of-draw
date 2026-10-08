@@ -94,5 +94,7 @@ test("aucun firmware du dépôt n'utilise encore consensusPoD.h (adoption au gra
     else if (/\.(ino|h|cpp)$/.test(e.name) && fs.readFileSync(path.join(root, rel), "utf8").includes("consensusPoD")) offenders.push(rel.replace(/\\/g, "/"));
   } };
   for (const d of ["esp8266", "arduino_uno_r4"]) walk(d);
-  assert.deepEqual(offenders, []);
+  // lot 8B-2A : seuls les 4 dossiers canaris portent des COPIES du noyau (rendu v1 inactif par défaut, POD_RENDER_V1 = 0) — vérifié par tests/renderFirmware.test.ts
+  const canary = ["esp8266/esp_eink_2.9BWR/", "esp8266/esp_tft1.8/", "arduino_uno_r4/pod_uno_r4_eink29/", "arduino_uno_r4/pod_uno_r4_tft18/"];
+  assert.deepEqual(offenders.filter((o) => !canary.some((c) => o.startsWith(c))), []);
 });

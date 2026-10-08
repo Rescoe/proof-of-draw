@@ -1,0 +1,49 @@
+# sonde esp — -fstack-usage -fno-inline (cadres du noyau)
+288	RenderProbeEsp8266.ino:22:6:void setup()
+112	podRenderStream.h:240:8:bool PodTftRenderer<Sha>::begin(const PodRenderSpec&, PodRenderMode, const PodRenderMeta&) [with Sha = PodSha256Br]
+96	podRenderStream.h:134:8:bool PodEinkRenderer<Sha>::begin(const PodRenderSpec&, PodRenderMode, const PodRenderMeta&, const uint8_t*, const uint8_t*, uint32_t) [with Sha = PodSha256Br]
+96	consensusPoD.h:196:19:int pod_utoa(uint64_t, char*)
+64	podRenderStream.h:63:41:void pod_render_hash_num(Sha&, uint32_t) [with Sha = PodSha256Br]
+64	podRenderStream.h:238:3:PodTftRenderer<Sha>::PodTftRenderer() [with Sha = PodSha256Br]
+64	podRenderStream.h:179:11:uint8_t PodEinkRenderer<Sha>::byteAt(int, uint32_t) const [with Sha = PodSha256Br]
+64	podRenderStream.h:131:3:PodEinkRenderer<Sha>::PodEinkRenderer() [with Sha = PodSha256Br]
+64	podRender.h:140:22:size_t pod_render_bottom_line(const PodRenderMeta&, size_t, char*)
+64	podRender.h:132:22:size_t pod_render_top_line(const PodRenderSpec&, const PodRenderMeta&, char*)
+64	podRender.h:111:22:size_t pod_render_fold(const uint8_t*, size_t, char*, size_t)
+48	podRenderStream.h:73:41:void pod_render_hash_end(Sha&, char*) [with Sha = PodSha256Br]
+48	podRenderStream.h:281:8:bool PodTftRenderer<Sha>::emitRow(const uint8_t*, uint8_t*) [with Sha = PodSha256Br]
+48	podRenderStream.h:24:20:bool pod_rline_bit(const PodRLine&, int, int)
+48	podRenderStream.h:203:12:uint32_t PodEinkRenderer<Sha>::read(uint8_t*, uint32_t) [with Sha = PodSha256Br]
+32	podRenderStream.h:81:8:bool PodFrameHasher<Sha>::begin(const PodRenderSpec&) [with Sha = PodSha256Br]
+32	podRenderStream.h:68:41:bool pod_render_hash_begin_render(Sha&, const PodRenderSpec&, PodRenderMode) [with Sha = PodSha256Br]
+32	podRenderStream.h:62:41:void pod_render_hash_str(Sha&, const char*) [with Sha = PodSha256Br]
+32	podRenderStream.h:38:24:PodRGeom pod_render_geom(const PodRenderSpec&)
+32	podRenderStream.h:31:20:void pod_rline_set(PodRLine&, int, bool, int)
+32	podRenderStream.h:296:8:bool PodTftRenderer<Sha>::finish(char*, char*) [with Sha = PodSha256Br]
+32	podRenderStream.h:272:12:uint16_t PodTftRenderer<Sha>::cartelWord(int, int) const [with Sha = PodSha256Br]
+32	podRender.h:27:29:PodRenderSpec pod_render_spec(PodRenderScreen)
+16	podRenderStream.h:94:8:bool PodFrameHasher<Sha>::finish(char*) [with Sha = PodSha256Br]
+16	podRenderStream.h:87:8:bool PodFrameHasher<Sha>::update(const void*, size_t) [with Sha = PodSha256Br]
+16	podRenderStream.h:75:24:uint32_t pod_render_frame_bytes(const PodRenderSpec&)
+16	podRenderStream.h:64:41:bool pod_render_hash_begin_frame(Sha&, const PodRenderSpec&) [with Sha = PodSha256Br]
+16	podRenderStream.h:268:8:bool PodTftRenderer<Sha>::consumeSource(const uint8_t*) [with Sha = PodSha256Br]
+16	podRenderStream.h:266:8:bool PodTftRenderer<Sha>::needsSource() const [with Sha = PodSha256Br]
+16	podRenderStream.h:258:7:int PodTftRenderer<Sha>::sourceRowNeeded() const [with Sha = PodSha256Br]
+16	podRenderStream.h:217:8:bool PodEinkRenderer<Sha>::finish(char*) [with Sha = PodSha256Br]
+16	podRenderStream.h:172:11:uint8_t PodEinkRenderer<Sha>::pixel(int, int, int) const [with Sha = PodSha256Br]
+16	podRenderStream.h:111:8:bool PodPassHasher<Sha>::update(const void*, size_t) [with Sha = PodSha256Br]
+16	podRenderStream.h:105:8:bool PodPassHasher<Sha>::begin(const PodRenderSpec&, PodRenderMode) [with Sha = PodSha256Br]
+0	podRenderStream.h:80:3:PodFrameHasher<Sha>::PodFrameHasher() [with Sha = PodSha256Br]
+0	podRenderStream.h:47:20:bool pod_render_meta_valid(const PodRenderMeta&)
+0	podRenderStream.h:46:20:bool pod_render_mode_valid(PodRenderMode)
+0	podRenderStream.h:256:8:bool PodTftRenderer<Sha>::sourceRemaining() const [with Sha = PodSha256Br]
+0	podRenderStream.h:255:8:bool PodTftRenderer<Sha>::allRowsEmitted() const [with Sha = PodSha256Br]
+0	podRenderStream.h:166:11:uint8_t PodEinkRenderer<Sha>::cartelPixel(int, int) const [with Sha = PodSha256Br]
+0	podRenderStream.h:160:11:uint8_t PodEinkRenderer<Sha>::srcPixel(int, int) const [with Sha = PodSha256Br]
+0	podRenderStream.h:103:3:PodPassHasher<Sha>::PodPassHasher() [with Sha = PodSha256Br]
+0	podRender.h:99:19:int pod_render_glyph(char)
+0	podRender.h:37:24:uint32_t pod_render_plane_bytes(const PodRenderSpec&)
+0	podRender.h:246:24:uint32_t pod_render_hash32(uint32_t, uint32_t, uint32_t)
+0	podRender.h:213:27:const char* pod_render_mode_name(PodRenderMode)
+0	podRender.h:168:19:int pod_render_strlen(const char*)
+0	consensusPoD.h:51:20:void pod_hex(const uint8_t*, size_t, char*)

@@ -2,7 +2,7 @@
  *  @filename   :   epd2in9b_V4.h
  *  @brief      :   Header file for e-paper library epd2in9b_V4.cpp
  *  @author     :   Waveshare
- *  
+ *
  *  Copyright (C) Waveshare     2023-12-20
  *
  * Permission is hereby granted, free of charge, to any person obtaining a copy
@@ -50,20 +50,13 @@ public:
     void TurnOnDisplay_Fast(void);
     void Display(const UBYTE *blackimage, const UBYTE *ryimage);
     void Display_Fast(const UBYTE *blackimage, const UBYTE *ryimage);
-// POD_RENDER_V1_BEGIN
-    // Rendu en flux (lot 8B-2A) : `produce(ctx, out, cap)` remplit `out` d'au plus `cap` octets et retourne leur nombre (0 = fin ou erreur). Les octets sont envoyés tels quels au plan noir (0x24), puis
-    // INVERSÉS (~octet, comme Display) au plan rouge (0x26) — exactement le contrat de Display(), sans tampon intermédiaire. Un appel de `produce` ne franchit jamais la frontière entre les deux plans.
-    // Retourne false SANS rafraîchir le panneau si `produce` s'arrête avant les 2 × 4 736 octets (l'écran garde son image) ; le pilote ne rapporte aucune erreur SPI (TurnOnDisplay est void) : true = « tout a été remis ».
-    typedef unsigned int (*ProduceFn)(void* ctx, unsigned char* out, unsigned int cap);
-    bool DisplayStream(ProduceFn produce, void* ctx);
-// POD_RENDER_V1_END
     void Partial(const UBYTE *Image, UWORD Xstart, UWORD Ystart, UWORD Xend, UWORD Yend);
     void Clear_Base();
     void SendCommand(unsigned char command);
     void SendData(unsigned char data);
     void Sleep(void);
     void Clear(void);
-    
+
 private:
     unsigned int reset_pin;
     unsigned int dc_pin;

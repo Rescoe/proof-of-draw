@@ -1,0 +1,76 @@
+# octets de pile STATIQUES par fonction (-fstack-usage, build optimisé) — analyse statique, PAS une mesure d'exécution
+== esp_eink POD_RENDER_V1=0
+272	esp_eink_2.9BWR.ino:1013:6:bool doFetchFrame(const String&, const String&)
+32	esp_eink_2.9BWR.ino:1061:21:doFetchFrame(const String&, const String&)::<lambda(WiFiClient*, uint8_t*, size_t)>
+-- les 6 plus gros cadres du sketch (fonctions de colle éventuellement inlinées dans leur appelant)
+944	pod_vote_esp.h:41:13:bool podFetchAndCheck(const String&, PodScreenKind, size_t, uint8_t*, size_t, PodCheck*)
+592	esp_eink_2.9BWR.ino:1320:6:bool doValidateV2(const String&, const String&, size_t, const String&)
+560	esp_eink_2.9BWR.ino:1133:6:bool doPull()
+416	esp_eink_2.9BWR.ino:1366:6:bool doValidate()
+272	esp_eink_2.9BWR.ino:1013:6:bool doFetchFrame(const String&, const String&)
+272	ConverterImpl.hpp:278:13:void ArduinoJson::V743PB22::convertFromJson(ArduinoJson::V743PB22::JsonVariantConst, String&)
+== esp_eink POD_RENDER_V1=1
+448	esp_eink_2.9BWR.ino:1013:6:bool doFetchFrame(const String&, const String&)
+48	esp_eink_2.9BWR.ino:987:21:unsigned int podRenderProduce(void*, unsigned char*, unsigned int)
+32	esp_eink_2.9BWR.ino:1061:21:doFetchFrame(const String&, const String&)::<lambda(WiFiClient*, uint8_t*, size_t)>
+-- les 6 plus gros cadres du sketch (fonctions de colle éventuellement inlinées dans leur appelant)
+944	pod_vote_esp.h:41:13:bool podFetchAndCheck(const String&, PodScreenKind, size_t, uint8_t*, size_t, PodCheck*)
+592	esp_eink_2.9BWR.ino:1320:6:bool doValidateV2(const String&, const String&, size_t, const String&)
+560	esp_eink_2.9BWR.ino:1133:6:bool doPull()
+448	esp_eink_2.9BWR.ino:1013:6:bool doFetchFrame(const String&, const String&)
+416	esp_eink_2.9BWR.ino:1366:6:bool doValidate()
+272	ConverterImpl.hpp:278:13:void ArduinoJson::V743PB22::convertFromJson(ArduinoJson::V743PB22::JsonVariantConst, String&)
+== esp_tft POD_RENDER_V1=0
+576	esp_tft1.8.ino:994:6:bool doFetchFrame(const String&, const String&)
+-- les 6 plus gros cadres du sketch (fonctions de colle éventuellement inlinées dans leur appelant)
+944	pod_vote_esp.h:41:13:bool podFetchAndCheck(const String&, PodScreenKind, size_t, uint8_t*, size_t, PodCheck*)
+656	pod_bench_esp.h:93:13:void podbenchesp::postResult(const String&, const String&, const String&, uint32_t, long unsigned int, long unsigned int, long unsigned int, long unsigned int, uint32_t, long
+592	esp_tft1.8.ino:1521:6:bool doValidateV2(const String&, const String&, size_t, const String&)
+576	esp_tft1.8.ino:994:6:bool doFetchFrame(const String&, const String&)
+560	pod_anim_esp.h:123:13:bool podanimesp::downloadToFile(const String&, const String&, size_t, const char*, long unsigned int&)
+544	esp_tft1.8.ino:1332:6:bool doPull()
+== esp_tft POD_RENDER_V1=1
+512	esp_tft1.8.ino:994:6:bool doFetchFrame(const String&, const String&)
+32	esp_tft1.8.ino:956:13:bool podReadSourceRow(WiFiClient*)
+-- les 6 plus gros cadres du sketch (fonctions de colle éventuellement inlinées dans leur appelant)
+944	pod_vote_esp.h:41:13:bool podFetchAndCheck(const String&, PodScreenKind, size_t, uint8_t*, size_t, PodCheck*)
+656	pod_bench_esp.h:93:13:void podbenchesp::postResult(const String&, const String&, const String&, uint32_t, long unsigned int, long unsigned int, long unsigned int, long unsigned int, uint32_t, long
+592	esp_tft1.8.ino:1521:6:bool doValidateV2(const String&, const String&, size_t, const String&)
+560	pod_anim_esp.h:123:13:bool podanimesp::downloadToFile(const String&, const String&, size_t, const char*, long unsigned int&)
+544	esp_tft1.8.ino:1332:6:bool doPull()
+512	esp_tft1.8.ino:994:6:bool doFetchFrame(const String&, const String&)
+== r4_eink POD_RENDER_V1=0
+24	pod_uno_r4_eink29.ino:423:13:bool refreshPanel(bool)
+-- les 6 plus gros cadres du sketch (fonctions de colle éventuellement inlinées dans leur appelant)
+648	pod_uno_r4_eink29.ino:766:13:bool doValidate()
+408	pod_uno_r4_eink29.ino:634:13:bool doPull()
+272	pod_uno_r4_eink29.ino:312:12:int httpCall(const char*, const arduino::String&, const arduino::String*, arduino::String&)
+264	pod_uno_r4_eink29.ino:601:13:bool doRegister()
+240	JsonSerializer.hpp:135:8:size_t ArduinoJson::V743PB22::serializeJson(ArduinoJson::V743PB22::JsonVariantConst, TDestination&) [with TDestination = arduino::String; typename ArduinoJson::V743PB22::d
+184	pod_http.h:27:7:int podhttp::Reader<C>::readHeaders() [with C = WiFiSSLClient]
+== r4_eink POD_RENDER_V1=1
+80	pod_uno_r4_eink29.ino:439:17:uint32_t podRenderProduce(void*, uint8_t*, uint32_t)
+24	pod_uno_r4_eink29.ino:423:13:bool refreshPanel(bool)
+-- les 6 plus gros cadres du sketch (fonctions de colle éventuellement inlinées dans leur appelant)
+648	pod_uno_r4_eink29.ino:766:13:bool doValidate()
+432	pod_uno_r4_eink29.ino:634:13:bool doPull()
+272	pod_uno_r4_eink29.ino:312:12:int httpCall(const char*, const arduino::String&, const arduino::String*, arduino::String&)
+264	pod_uno_r4_eink29.ino:601:13:bool doRegister()
+240	JsonSerializer.hpp:135:8:size_t ArduinoJson::V743PB22::serializeJson(ArduinoJson::V743PB22::JsonVariantConst, TDestination&) [with TDestination = arduino::String; typename ArduinoJson::V743PB22::d
+184	pod_http.h:27:7:int podhttp::Reader<C>::readHeaders() [with C = WiFiSSLClient]
+== r4_tft POD_RENDER_V1=0
+-- les 6 plus gros cadres du sketch (fonctions de colle éventuellement inlinées dans leur appelant)
+640	pod_uno_r4_tft18.ino:639:13:bool doValidate()
+424	pod_uno_r4_tft18.ino:532:13:bool doPull()
+272	pod_uno_r4_tft18.ino:297:12:int httpCall(const char*, const arduino::String&, const arduino::String*, arduino::String&)
+240	JsonSerializer.hpp:135:8:size_t ArduinoJson::V743PB22::serializeJson(ArduinoJson::V743PB22::JsonVariantConst, TDestination&) [with TDestination = arduino::String; typename ArduinoJson::V743PB22::d
+224	pod_uno_r4_tft18.ino:499:13:bool doRegister()
+184	pod_uno_r4_tft18.ino:693:6:void setup()
+== r4_tft POD_RENDER_V1=1
+-- les 6 plus gros cadres du sketch (fonctions de colle éventuellement inlinées dans leur appelant)
+640	pod_uno_r4_tft18.ino:639:13:bool doValidate()
+480	pod_uno_r4_tft18.ino:532:13:bool doPull()
+272	pod_uno_r4_tft18.ino:297:12:int httpCall(const char*, const arduino::String&, const arduino::String*, arduino::String&)
+240	JsonSerializer.hpp:135:8:size_t ArduinoJson::V743PB22::serializeJson(ArduinoJson::V743PB22::JsonVariantConst, TDestination&) [with TDestination = arduino::String; typename ArduinoJson::V743PB22::d
+224	pod_uno_r4_tft18.ino:499:13:bool doRegister()
+184	pod_uno_r4_tft18.ino:693:6:void setup()

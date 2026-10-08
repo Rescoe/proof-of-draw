@@ -46,14 +46,14 @@ int Epd::Init(void) {
     }
     Reset();
     DelayMs(100);        // ← ajoute ce délai avant le premier ReadBusy
-    
+
     ReadBusy();
     SendCommand(0x12);   // SWRESET
     DelayMs(20);         // ← ajoute ce délai après SWRESET
     ReadBusy();
 
     SendCommand(0x01);
-    SendData((height-1)%256);    
+    SendData((height-1)%256);
     SendData((height-1)/256);
     SendData(0x00);
 
@@ -62,28 +62,28 @@ int Epd::Init(void) {
 
     SendCommand(0x44);
     SendData(0x00);
-    SendData(width/8-1);   
+    SendData(width/8-1);
 
     SendCommand(0x45);
     SendData(0x00);
-    SendData(0x00); 
-    SendData((height-1)%256);    
+    SendData(0x00);
+    SendData((height-1)%256);
     SendData((height-1)/256);
 
     SendCommand(0x3C);
-    SendData(0x05);	
+    SendData(0x05);
 
     SendCommand(0x21);
-    SendData(0x00);		
-    SendData(0x80);	
+    SendData(0x00);
+    SendData(0x80);
 
     SendCommand(0x18);
-    SendData(0x80);	
+    SendData(0x80);
 
     SendCommand(0x4E);
     SendData(0x00);
     SendCommand(0x4F);
-    SendData(0x00);    
+    SendData(0x00);
     SendData(0x00);
     ReadBusy();
 
@@ -96,51 +96,51 @@ int Epd::Init_Fast(void) {
     }
     Reset();
 
-    ReadBusy();   
+    ReadBusy();
     SendCommand(0x12);  //SWRESET
-    ReadBusy();   	
+    ReadBusy();
 
     SendCommand(0x18); //Read built-in temperature sensor
     SendData(0x80);
 
     SendCommand(0x22); // Load temperature value
-    SendData(0xB1);		
-    SendCommand(0x20);	
-    ReadBusy();   
+    SendData(0xB1);
+    SendCommand(0x20);
+    ReadBusy();
 
     SendCommand(0x1A); // Write to temperature register
-    SendData(0x5a);		// 90		
-    SendData(0x00);	
-                
-    SendCommand(0x22); // Load temperature value
-    SendData(0x91);		
-    SendCommand(0x20);	
-    ReadBusy();  
+    SendData(0x5a);		// 90
+    SendData(0x00);
 
-    SendCommand(0x01); //Driver output control      
-    SendData((height-1)%256);    
+    SendCommand(0x22); // Load temperature value
+    SendData(0x91);
+    SendCommand(0x20);
+    ReadBusy();
+
+    SendCommand(0x01); //Driver output control
+    SendData((height-1)%256);
     SendData((height-1)/256);
     SendData(0x00);
 
-    SendCommand(0x11); //data entry mode       
+    SendCommand(0x11); //data entry mode
     SendData(0x03);
 
-    SendCommand(0x44); //set Ram-X address start/end position   
+    SendCommand(0x44); //set Ram-X address start/end position
     SendData(0x00);
-    SendData(width/8-1);   
+    SendData(width/8-1);
 
-    SendCommand(0x45); //set Ram-Y address start/end position          
+    SendCommand(0x45); //set Ram-Y address start/end position
     SendData(0x00);
-    SendData(0x00); 
-    SendData((height-1)%256);    
-    SendData((height-1)/256);	
+    SendData(0x00);
+    SendData((height-1)%256);
+    SendData((height-1)/256);
 
     SendCommand(0x4E);   // set RAM x address count to 0;
     SendData(0x00);
-    SendCommand(0x4F);   // set RAM y address count to 0X199;    
-    SendData(0x00);    
+    SendCommand(0x4F);   // set RAM y address count to 0X199;
     SendData(0x00);
-    ReadBusy();	
+    SendData(0x00);
+    ReadBusy();
 
     return 0;
 }
@@ -237,7 +237,7 @@ void Epd::Display(const UBYTE *blackimage, const UBYTE *ryimage) {
           SendData(pgm_read_byte(&blackimage[i + (j*width/8)]));
         }
     }
-    
+
     SendCommand(0x26);
     for (UWORD j = 0; j < height; j++) {
         for (UWORD i = 0; i < width/8; i++) {
@@ -248,27 +248,6 @@ void Epd::Display(const UBYTE *blackimage, const UBYTE *ryimage) {
     TurnOnDisplay();
 }
 
-// POD_RENDER_V1_BEGIN
-bool Epd::DisplayStream(ProduceFn produce, void* ctx) {
-    const unsigned int plane = (unsigned int)(width / 8) * (unsigned int)height;   // 4 736 octets
-    unsigned char chunk[32];
-    unsigned int sent = 0;
-    SendCommand(0x24);
-    while (sent < 2 * plane) {
-        const unsigned int toBoundary = (sent < plane ? plane : 2 * plane) - sent;
-        const unsigned int cap = toBoundary < sizeof(chunk) ? toBoundary : (unsigned int)sizeof(chunk);
-        const unsigned int n = produce(ctx, chunk, cap);
-        if (n == 0 || n > cap) return false;   // production interrompue : le panneau n'est PAS rafraîchi
-        if (sent < plane) { for (unsigned int i = 0; i < n; i++) SendData(chunk[i]); }
-        else              { for (unsigned int i = 0; i < n; i++) SendData((unsigned char)~chunk[i]); }
-        sent += n;
-        if (sent == plane) SendCommand(0x26);
-        yield();   // le watchdog logiciel de l'ESP8266 : un appel = au plus 32 octets
-    }
-    TurnOnDisplay();
-    return true;
-}
-// POD_RENDER_V1_END
 void Epd::Display_Fast(const UBYTE *blackimage, const UBYTE *ryimage) {
     UBYTE k;
     SendCommand(0x24);
@@ -277,7 +256,7 @@ void Epd::Display_Fast(const UBYTE *blackimage, const UBYTE *ryimage) {
           SendData(pgm_read_byte(&blackimage[i + (j*width/8)]));
         }
     }
-    
+
     SendCommand(0x26);
     for (UWORD j = 0; j < height; j++) {
         for (UWORD i = 0; i < width/8; i++) {
@@ -345,27 +324,27 @@ void Epd::Partial(const UBYTE *Image, UWORD Xstart, UWORD Ystart, UWORD Xend, UW
         Xstart = Xstart / 8 ;
         Xend = Xend % 8 == 0 ? Xend / 8 : Xend / 8 + 1;
     }
-    
+
 
     UWORD i, Width;
 	Width = Xend -  Xstart;
 	UWORD IMAGE_COUNTER = Width * (Yend-Ystart);
 
 	Xend -= 1;
-	Yend -= 1;	
+	Yend -= 1;
 
     SendCommand(0x44);       // set RAM x address start/end, in page 35
     SendData(Xstart & 0xff);    // RAM x address start at 00h;
-    SendData(Xend & 0xff);    // RAM x address end at 0fh(15+1)*8->128 
+    SendData(Xend & 0xff);    // RAM x address end at 0fh(15+1)*8->128
     SendCommand(0x45);       // set RAM y address start/end, in page 35
     SendData(Ystart & 0xff);    // RAM y address start at 0127h;
     SendData((Ystart>>8) & 0x01);    // RAM y address start at 0127h;
     SendData(Yend & 0xff);    // RAM y address end at 00h;
-    SendData((Yend>>8) & 0x01); 
+    SendData((Yend>>8) & 0x01);
 
     SendCommand(0x4E);   // set RAM x address count to 0;
-    SendData(Xstart & 0xff); 
-    SendCommand(0x4F);   // set RAM y address count to 0X127;    
+    SendData(Xstart & 0xff);
+    SendCommand(0x4F);   // set RAM y address count to 0X127;
     SendData(Ystart & 0xff);
     SendData((Ystart>>8) & 0x01);
 
@@ -378,9 +357,9 @@ void Epd::Partial(const UBYTE *Image, UWORD Xstart, UWORD Ystart, UWORD Xend, UW
 
 }
 /**
- *  @brief: After this command is transmitted, the chip would enter the 
- *          deep-sleep mode to save power. 
- *          The deep sleep mode would return to standby by hardware reset. 
+ *  @brief: After this command is transmitted, the chip would enter the
+ *          deep-sleep mode to save power.
+ *          The deep sleep mode would return to standby by hardware reset.
  *          The only one parameter is a check code, the command would be
  *          You can use EPD_Reset() to awaken
  */

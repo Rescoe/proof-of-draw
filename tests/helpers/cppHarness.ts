@@ -77,8 +77,8 @@ export function runProcess(program: string, args: string[]): ProcessReport {
 }
 
 /** Compile le harnais ; lève une erreur DIAGNOSTIQUÉE en cas d'échec. Retourne la ligne de commande exécutée (pour l'afficher). */
-export function compileHarness(compiler: string, source: string, exe: string): string {
-  const args = ["-std=c++11", "-Wall", "-Wextra", "-Werror", "-O2", source, "-o", exe];
+export function compileHarness(compiler: string, source: string, exe: string, extraArgs: string[] = []): string {
+  const args = ["-std=c++11", "-Wall", "-Wextra", "-Werror", "-O2", ...extraArgs, source, "-o", exe];
   const report = runProcess(compiler, args);
   if (report.status !== 0 || report.spawnError) throw new Error(formatFailure("compilation du harnais C++ (pod_metrics.h) impossible", report));
   return report.command;

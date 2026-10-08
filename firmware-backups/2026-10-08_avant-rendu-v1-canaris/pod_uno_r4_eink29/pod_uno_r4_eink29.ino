@@ -1,23 +1,20 @@
-// pod_uno_r4_tft18.ino
-// Proof-of-Draw — Firmware UNO R4 WiFi + TFT 1.8" ST7735S (128×160 RGB565)
+// pod_uno_r4_eink29.ino
+// Proof-of-Draw — Firmware UNO R4 WiFi + écran e-ink Waveshare 2.9" module B (noir / blanc / rouge, 296×128)
 //
-// ⚠ NON TESTÉ SUR LE MATÉRIEL (06/10/2026).
-// Le protocole réseau dérive des ports R4 existants et le câblage du firmware ESP8266 TFT 1.8".
-// Le sketch doit être compilé et mesuré sur une vraie UNO R4 WiFi + ST7735S avant de retirer cet avertissement.
-// Images fixes RGB565 prises en charge. Animations et scene-v1 restent volontairement non annoncées avant ce test.
-//
-// Même protocole et même type d'écran serveur (« tft18 ») que esp8266/esp_tft1.8 :
-//   register → pull (métadonnées légères) → pull-frame?fmt=bin (40960 o) → affichage en flux → ACK,
+// Même protocole et même type d'écran serveur (« eink29bwr ») que esp8266/esp_eink_2.9BWR :
+//   register → pull (métadonnées ~300 o) → pull-frame?fmt=bin (9472 o : noir 4736 + rouge 4736) → affichage → ACK,
 //   validation distribuée (validate-candidate → vote signé Ed25519 → validation-result), ré-validation (obs-confirm), blocs possédés.
-// Le serveur ne change pas : cet appareil est un écran tft18 comme les autres.
+// Le serveur ne change pas : cet appareil est un écran eink29bwr comme les autres.
 //
 // Différences avec l'ESP8266 (toutes voulues) :
 //   • Wi-Fi/TLS sur le coprocesseur ESP32-S3 (WiFiSSLClient) : plus de BearSSL dans la RAM → pas de free()/malloc() des buffers autour
-//     des connexions ; une seule ligne RGB565 (256 o) est gardée en RAM pendant le flux ;
+//     des connexions ; les deux plans pixel (2 × 4736 o) sont des tampons STATIQUES ;
 //   • lecture du flux par pod_http.h (lecture « readFull » sur réponse fragmentée, chunked accepté), identique au firmware TFT ;
 //   • pile principale de 1 Ko seulement sur la R4 (cœur Arduino) : aucun gros tableau local, tout est statique ;
-//   • aucune image complète de 40 Ko n'est allouée : chaque ligne reçue est immédiatement envoyée au TFT ;
-//   • après un redémarrage l'écran est repeint par le serveur, car ce TFT ne conserve pas naturellement son image.
+//   • la dernière image reste affichée (e-ink) ET son frameId est mémorisé en EEPROM : un redémarrage ne ré-affiche pas (et ne re-ACK pas)
+//     une œuvre déjà à l'écran. Le frameId est effacé dès qu'un écran d'appairage remplace l'œuvre ;
+//   • le cartel est dessiné dans le repère de l'IMAGE du serveur (haut = haut), voir setPix() ;
+//   • pas de seconde connexion pendant un rafraîchissement : l'écran e-ink bloque ~15 s, le réseau n'est pas touché pendant ce temps.
 //
 // Câblage (module 8 fils → UNO R4 WiFi) : VCC→3.3V · GND→GND · DIN→D11 · CLK→D13 · CS→D10 · DC→D9 · RST→D8 · BUSY→D7
 // Bibliothèques : ArduinoJson (≥ 6, testé 7.x), QRCode (ricmoo), Crypto (rweather), WiFiS3 / SPI / EEPROM (fournies avec le cœur R4).
@@ -34,31 +31,12 @@
 #include <SPI.h>
 #include <EEPROM.h>
 #include <ArduinoJson.h>
-#include <Adafruit_GFX.h>
-#include <Adafruit_ST7735.h>
 #include <qrcode.h>
 #include <Ed25519.h>
 #include <SHA256.h>
 #include "pod_http.h"
-#include "pod_vote_r4.h"
-
-// POD_RENDER_V1_BEGIN
-// ─── Rendu v1 EN FLUX (lot 8B-2A) — INACTIF PAR DÉFAUT ────────────────────────────────────────────────────────────────────────────────────────────
-// 0 (défaut) : comportement d'avant, octet pour octet (image streamée ligne par ligne, cartel dessiné ensuite par drawCartel).
-// 1 : chaque ligne reçue est composée par le noyau gelé consensus-pod/src/podRenderStream.h (layoutVersion 1 : cartel, fit) — UNE ligne source + UNE ligne de sortie, les tampons g_rowBytes / g_rowPixels
-//     EXISTANTS — et écrite au TFT telle qu'elle est hachée (renderHash) ; frameHash (octets reçus) et renderHash sont CALCULÉS et seulement journalisés — l'ACK, les routes et le rapport de rendu ne sont PAS modifiés.
-// ⚠ NON ESSAYÉ SUR LA CARTE. Ne pas activer sans le lot 8B-2B (canari) : docs/LOT_8B2A_INTEGRATION_CANARIS_2026_10_08.md.
-#ifndef POD_RENDER_V1
-#define POD_RENDER_V1 0
-#endif
-#ifndef POD_RENDER_MODE_DEFAULT
-#define POD_RENDER_MODE_DEFAULT POD_R_FIT   // constante de compilation : le réglage cartelMode n'est PAS exposé (pas d'interface, pas de réglage serveur)
-#endif
-#if POD_RENDER_V1
-#include "podRenderStream.h"
-#include "crypto_uno_r4.h"
-#endif
-// POD_RENDER_V1_END
+#include "epd29b.h"
+#include "pod_vote_r4.h"       // validation réelle (vote v2) : SHA-256 + métriques entières en flux — ⚠ NON TESTÉ sur la carte
 
 // ─── CONFIG ────────────────────────────────────────────────────────────────
 #if __has_include("secrets.h")
@@ -71,20 +49,19 @@
 #endif
 
 #define SERVER_HOST         "proof-of-draw.vercel.app"
-#define SCREEN_TYPE         "tft18"
-#define FIRMWARE_VERSION    "r4tft18-1.1"
+#define SCREEN_TYPE         "eink29bwr"            // profil serveur 296×128 noir/blanc/rouge (lib/screenProfiles.ts)
+#define FIRMWARE_VERSION    "r4eink29-1.1"
 #define PULL_INTERVAL       60000UL                // 1 min
 #define VALIDATE_INTERVAL   30000UL                // 30 s : candidat en attente
 #define HTTP_TIMEOUT_MS     20000UL
+#define EINK_MIN_REFRESH_MS 10000UL                // jamais deux rafraîchissements à moins de 10 s (durée de vie du panneau)
+#define CLEAR_BEFORE_IMAGE  1                      // page blanche avant chaque nouvelle œuvre (comme l'ESP) : limite les rémanences, +15 s
 
 // ─── GÉOMÉTRIE ─────────────────────────────────────────────────────────────
-#define TFT_CS  10
-#define TFT_DC  9
-#define TFT_RST 8
-#define IMG_W 128
-#define IMG_H 160
-#define ROW_BYTES (IMG_W * 2)
-#define FRAME_BYTES (IMG_W * IMG_H * 2)
+#define IMG_W    296                               // image du serveur (paysage)
+#define IMG_H    128
+#define BUF_SIZE EPD_BUF_SIZE                      // 4736 = 16 octets × 296 lignes
+#define FRAME_BYTES (BUF_SIZE * 2)                 // 9472
 
 // ─── EEPROM (flash de données de la R4, pas de commit) — même carte mémoire que les firmwares ESP ─────────────
 #define EEPROM_PRIVKEY_OFF     0
@@ -99,6 +76,8 @@
 #define EEPROM_OWNED_SLOTS_OFF 100
 #define OWNED_SLOTS_MAX        10
 #define OWNED_HASH_LEN         32
+#define EEPROM_FRAMEID_OFF     420                 // 32 caractères : début du frameId affiché (zone « réservée » des ESP)
+#define FRAMEID_LEN            32
 
 #if ARDUINOJSON_VERSION_MAJOR >= 7
   #define JSON_DOC(name, cap) JsonDocument name
@@ -107,9 +86,11 @@
 #endif
 
 // ─── OBJETS / ÉTAT ─────────────────────────────────────────────────────────
-Adafruit_ST7735 tft(TFT_CS, TFT_DC, TFT_RST);
-static uint8_t g_rowBytes[ROW_BYTES];
-static uint16_t g_rowPixels[IMG_W];
+Epd29b epd;
+static uint8_t blackBuf[BUF_SIZE];                 // 0 = noir
+static uint8_t redBuf[BUF_SIZE];                   // 0 = rouge
+unsigned long lastRefreshMs = 0;
+bool hasRefreshed = false;
 bool onboardingDrawn = false;                      // écran d'appairage déjà dessiné depuis ce démarrage
 
 String deviceId, pairCode;
@@ -203,6 +184,22 @@ static String loadBlockHashFromEEPROM() {
   String hash = "";
   for (int i = 0; i < 32; i++) { char c = (char)EEPROM.read(EEPROM_BLOCKHASH_OFF + i); if (c == ' ' || c == '\0') break; hash += c; }
   return hash;
+}
+
+// frameId affiché : on n'en garde que le début (32 car.), suffisant pour reconnaître une œuvre déjà à l'écran
+static String frameKey(const String& id) { return id.length() > FRAMEID_LEN ? id.substring(0, FRAMEID_LEN) : id; }
+static void persistFrameId(const String& id) {
+  const String k = frameKey(id);
+  for (int i = 0; i < FRAMEID_LEN; i++) EEPROM.update(EEPROM_FRAMEID_OFF + i, i < (int)k.length() ? (uint8_t)k[i] : (uint8_t)' ');
+}
+static String loadFrameId() {
+  String s = "";
+  for (int i = 0; i < FRAMEID_LEN; i++) {
+    const uint8_t c = EEPROM.read(EEPROM_FRAMEID_OFF + i);
+    if (c == ' ' || c < 33 || c > 126) break;       // EEPROM vierge (0xFF) ou fin de chaîne -> chaîne vide
+    s += (char)c;
+  }
+  return s;
 }
 
 // Anneau des blocs possédés (10 × 32 caractères), identique aux autres firmwares
@@ -308,127 +305,170 @@ static int httpCall(const char* method, const String& path, const String* body, 
   return code;
 }
 
-// ─── TFT : affichage en flux, sans tampon plein écran ────────────────────────
-#define C_BLACK 0x0000
-#define C_WHITE 0xFFFF
-#define C_NAVY  0x08C5
-#define C_GOLD  0xFEA0
-#define C_DARK  0x10C4
-#define C_GREY  0x7BEF
-#define C_RED   0xF800
-
-static void tftStatus(const String& line1, const String& line2 = "", uint16_t bg = C_NAVY) {
-  tft.fillScreen(bg);
-  tft.setTextWrap(false);
-  tft.setTextColor(C_GOLD, bg); tft.setTextSize(2); tft.setCursor(5, 8); tft.print("PoD");
-  tft.drawFastHLine(0, 28, IMG_W, C_GOLD);
-  tft.setTextColor(C_WHITE, bg); tft.setTextSize(1); tft.setCursor(5, 44); tft.print(line1);
-  if (line2.length()) { tft.setTextColor(C_GREY, bg); tft.setCursor(5, 60); tft.print(line2); }
+// ─── DESSIN dans les plans e-ink ───────────────────────────────────────────
+// Repère = celui de l'IMAGE du serveur (lib/canvasToScreen.ts, eink29bwr) : x 0..295 vers la droite, y 0..127 vers le bas.
+//   bufRow = x          bufCol = 127 - y          octet = bufRow*16 + bufCol/8          bit = 7 - bufCol%8
+// Un bit à 0 = pixel actif (noir dans blackBuf, rouge dans redBuf).
+static inline void setPix(uint8_t* buf, int x, int y) {
+  if ((unsigned)x >= IMG_W || (unsigned)y >= IMG_H) return;
+  const int bufCol = (IMG_H - 1) - y;
+  buf[x * EPD_BYTES_PER_ROW + (bufCol >> 3)] &= (uint8_t)~(0x80 >> (bufCol & 7));
 }
-
-#if !POD_RENDER_V1   // cartel dessiné par-dessus / image streamée d'avant : remplacés par le noyau de rendu v1
-static String fitText(const String& input, int chars) {
-  String out = asciiFold(input);
-  if ((int)out.length() > chars) out = out.substring(0, max(0, chars - 1)) + ".";
-  return out;
+static inline void clearPix(uint8_t* buf, int x, int y) {
+  if ((unsigned)x >= IMG_W || (unsigned)y >= IMG_H) return;
+  const int bufCol = (IMG_H - 1) - y;
+  buf[x * EPD_BYTES_PER_ROW + (bufCol >> 3)] |= (uint8_t)(0x80 >> (bufCol & 7));
 }
-
-static void drawCartel() {
-  const int topH = 13, botY = IMG_H - 14;
-  tft.fillRect(0, 0, IMG_W, topH, C_DARK);
-  tft.fillRect(0, botY, IMG_W, IMG_H - botY, C_DARK);
-  tft.setTextSize(1); tft.setTextWrap(false);
-  tft.setTextColor(C_GOLD, C_DARK); tft.setCursor(2, 3);
-  tft.print(currentBlockIndex >= 0 ? "PoD #" + String(currentBlockIndex) : String("Proof-of-Draw"));
-  String label = pendingArtistName.length() ? pendingArtistName + " - " + pendingWorkTitle : pendingWorkTitle;
-  tft.setTextColor(C_WHITE, C_DARK); tft.setCursor(2, botY + 3); tft.print(fitText(label, 20));
+static void clearBothPlanes() { memset(blackBuf, 0xFF, BUF_SIZE); memset(redBuf, 0xFF, BUF_SIZE); }
+/** Lignes y0..y1 de l'image remises à blanc (noir ET rouge). */
+static void whiteRows(int y0, int y1) {
+  for (int x = 0; x < IMG_W; x++) for (int y = y0; y <= y1; y++) { clearPix(blackBuf, x, y); clearPix(redBuf, x, y); }
 }
+static void hLine(uint8_t* buf, int y, int x0 = 0, int x1 = IMG_W - 1) { for (int x = x0; x <= x1; x++) setPix(buf, x, y); }
 
-static bool streamFrame(podhttp::Reader<WiFiSSLClient>& rd) {
-  tft.startWrite();
-  tft.setAddrWindow(0, 0, IMG_W, IMG_H);
-  bool ok = true;
-  for (int y = 0; y < IMG_H; y++) {
-    if (rd.readBody(g_rowBytes, ROW_BYTES) != ROW_BYTES) { ok = false; break; }
-    for (int x = 0; x < IMG_W; x++) {
-      g_rowPixels[x] = (uint16_t)g_rowBytes[x * 2] | ((uint16_t)g_rowBytes[x * 2 + 1] << 8);
+// Police 5×7 : une colonne = un octet, bit 0 = ligne du HAUT (police classique). Chiffres, A-Z, « : . - / # », espace.
+static const uint8_t FONT_5x7[][5] = {
+  {0x3E,0x51,0x49,0x45,0x3E},{0x00,0x42,0x7F,0x40,0x00},{0x42,0x61,0x51,0x49,0x46},
+  {0x21,0x41,0x45,0x4B,0x31},{0x18,0x14,0x12,0x7F,0x10},{0x27,0x45,0x45,0x45,0x39},
+  {0x3C,0x4A,0x49,0x49,0x30},{0x01,0x71,0x09,0x05,0x03},{0x36,0x49,0x49,0x49,0x36},
+  {0x06,0x49,0x49,0x29,0x1E},{0x7C,0x12,0x11,0x12,0x7C},{0x7F,0x49,0x49,0x49,0x36},
+  {0x3E,0x41,0x41,0x41,0x22},{0x7F,0x41,0x41,0x22,0x1C},{0x7F,0x49,0x49,0x49,0x41},
+  {0x7F,0x09,0x09,0x09,0x01},{0x3E,0x41,0x49,0x49,0x7A},{0x7F,0x08,0x08,0x08,0x7F},
+  {0x00,0x41,0x7F,0x41,0x00},{0x20,0x40,0x41,0x3F,0x01},{0x7F,0x08,0x14,0x22,0x41},
+  {0x7F,0x40,0x40,0x40,0x40},{0x7F,0x02,0x0C,0x02,0x7F},{0x7F,0x04,0x08,0x10,0x7F},
+  {0x3E,0x41,0x41,0x41,0x3E},{0x7F,0x09,0x09,0x09,0x06},{0x3E,0x41,0x51,0x21,0x5E},
+  {0x7F,0x09,0x19,0x29,0x46},{0x46,0x49,0x49,0x49,0x31},{0x01,0x01,0x7F,0x01,0x01},
+  {0x3F,0x40,0x40,0x40,0x3F},{0x1F,0x20,0x40,0x20,0x1F},{0x3F,0x40,0x38,0x40,0x3F},
+  {0x63,0x14,0x08,0x14,0x63},{0x07,0x08,0x70,0x08,0x07},{0x61,0x51,0x49,0x45,0x43},
+  {0x00,0x36,0x36,0x00,0x00},{0x00,0x60,0x60,0x00,0x00},{0x08,0x08,0x08,0x08,0x08},
+  {0x02,0x01,0x02,0x04,0x02},{0x00,0x00,0x00,0x00,0x00},{0x14,0x7F,0x14,0x7F,0x14},
+};
+static int charIndex(char c) {
+  if (c >= '0' && c <= '9') return c - '0';
+  if (c >= 'A' && c <= 'Z') return c - 'A' + 10;
+  if (c >= 'a' && c <= 'z') return c - 'a' + 10;     // minuscules rendues en majuscules
+  if (c == ':') return 36; if (c == '.') return 37;
+  if (c == '-') return 38; if (c == '/') return 39;
+  if (c == '#') return 41;
+  return 40;                                          // espace / inconnu
+}
+static void drawChar(uint8_t* buf, int x, int y, char c, int scale) {
+  const int idx = charIndex(c);
+  for (int col = 0; col < 5; col++) {
+    const uint8_t bits = FONT_5x7[idx][col];
+    for (int row = 0; row < 7; row++) {
+      if (!(bits & (1 << row))) continue;
+      for (int dy = 0; dy < scale; dy++) for (int dx = 0; dx < scale; dx++) setPix(buf, x + col * scale + dx, y + row * scale + dy);
     }
-    tft.writePixels(g_rowPixels, IMG_W, true);
   }
-  tft.endWrite();
+}
+static void drawText(uint8_t* buf, int x, int y, const String& text, int scale = 1) {
+  for (unsigned i = 0; i < text.length(); i++) { drawChar(buf, x, y, text[i], scale); x += 6 * scale; }
+}
+static int textWidth(const String& t, int scale = 1) { return (int)t.length() * 6 * scale; }
+static int centerX(const String& t, int scale = 1) { const int w = (IMG_W - textWidth(t, scale)) / 2; return w < 0 ? 0 : w; }
+
+/** Cartel PAR-DESSUS l'œuvre : bande haute (date · #bloc), bande basse (artiste - titre), 13 px chacune, texte noir sur blanc. */
+static void burnCartel(const String& workTitle, const String& artistName, const String& ts, int blockIndex) {
+  const int BAND = 13;
+  whiteRows(0, BAND - 1);
+  hLine(blackBuf, BAND);
+  String top = ts.length() > 0 ? asciiFold(ts) : String("PROOF-OF-DRAW");
+  if (blockIndex >= 0) top += " #" + String(blockIndex);
+  top.toUpperCase();
+  while (top.length() > 0 && textWidth(top) > IMG_W - 4) top.remove(top.length() - 1);
+  drawText(blackBuf, centerX(top), 3, top);
+
+  const int sep = IMG_H - BAND - 1;                  // 114
+  whiteRows(sep + 1, IMG_H - 1);
+  hLine(blackBuf, sep);
+  const String t = asciiFold(workTitle), a = asciiFold(artistName);
+  String bot = (a.length() && t.length()) ? a + " - " + t : (a.length() ? a : t);
+  if (bot.length() == 0) bot = "Proof-of-Draw";
+  bot.toUpperCase();
+  while (bot.length() > 0 && textWidth(bot) > IMG_W - 4) bot.remove(bot.length() - 1);
+  drawText(blackBuf, centerX(bot), sep + 3, bot);
+}
+
+// ─── Écran e-ink ───────────────────────────────────────────────────────────
+static void waitMinRefreshGap() {
+  if (!hasRefreshed) return;
+  const unsigned long elapsed = millis() - lastRefreshMs;
+  if (elapsed < EINK_MIN_REFRESH_MS) { logf("[EINK] attente %lu ms (écart minimal entre rafraîchissements)", EINK_MIN_REFRESH_MS - elapsed); delay(EINK_MIN_REFRESH_MS - elapsed); }
+}
+/** Réveille, envoie blackBuf/redBuf (ou page blanche), met en veille. true = rafraîchissement terminé. */
+static bool refreshPanel(bool white) {
+  waitMinRefreshGap();
+  const unsigned long t0 = millis();
+  if (!epd.init()) { logf("[EINK] init échoué"); lastRefreshMs = millis(); hasRefreshed = true; return false; }
+  const bool ok = white ? epd.displayWhite() : epd.display(blackBuf, redBuf);
+  epd.sleep();
+  lastRefreshMs = millis(); hasRefreshed = true;
+  logf("[EINK] %s %s en %lu ms", white ? "page blanche" : "image", ok ? "affichée" : "ECHEC", millis() - t0);
   return ok;
 }
-
-#endif
-
-#if POD_RENDER_V1
-// ─── Rendu v1 en flux : composition ligne par ligne ──────────────────────────────────────────────────────────────────────────────────────────────
-// Mémoire (UNO R4, pile principale ≈ 1 Ko : objet et tampons GLOBAUX) : PodTftRenderer 424 o + ligne source g_rowBytes 256 o + ligne de sortie g_rowPixels 256 o (ces deux tampons existaient déjà) + 130 o de hashes.
-// Aucune image entière, aucune grille. Ordre des octets : le noyau produit le RGB565 LITTLE-ENDIAN du plan (les octets hachés dans renderHash) ; sur la R4 (little-endian) g_rowPixels les lit comme des mots natifs,
-// exactement comme l'ancien chemin (`g_rowPixels[x] = lo | hi << 8`), et writePixels(..., block=true, bigEndian=false) les envoie : le tampon remis au pilote EST celui qui alimente renderHash.
-// L'API du pilote (writePixels) ne retourne aucune erreur : une écriture partielle n'est détectable que par l'échec de lecture / de composition AVANT la fin (alors : abandon, aucun ACK).
-static PodTftRenderer<PodSha256Rw> g_podTft;
-static char g_podFrameHex[65], g_podRenderHex[65];
-
-// Retour : 0 = échec (aucun ACK) · 2 = rendu calculé ET remis au TFT.
-static uint8_t podStreamFrame(podhttp::Reader<WiFiSSLClient>& rd) {
-  const PodRenderSpec spec = pod_render_spec(POD_R_TFT18);
-  const PodRenderMeta meta = { (const uint8_t*)pendingDisplayTs.c_str(), (size_t)pendingDisplayTs.length(), (int32_t)currentBlockIndex,
-                               (const uint8_t*)pendingArtistName.c_str(), (size_t)pendingArtistName.length(), (const uint8_t*)pendingWorkTitle.c_str(), (size_t)pendingWorkTitle.length() };
-  if (!g_podTft.begin(spec, POD_RENDER_MODE_DEFAULT, meta)) { logf("[RENDER] paramètres refusés — abandon"); return 0; }
-  tft.startWrite();
-  tft.setAddrWindow(0, 0, IMG_W, IMG_H);
-  bool ok = true;
-  while (ok && !g_podTft.allRowsEmitted()) {
-    while (ok && g_podTft.needsSource()) ok = rd.readBody(g_rowBytes, ROW_BYTES) == ROW_BYTES && g_podTft.consumeSource(g_rowBytes);
-    if (!ok) { logf("[RENDER] ligne source %u illisible", (unsigned)g_podTft.outY); break; }
-    ok = g_podTft.emitRow(g_rowBytes, (uint8_t*)g_rowPixels);
-    if (!ok) { logf("[RENDER] composition refusée"); break; }
-    tft.writePixels(g_rowPixels, IMG_W, true);   // exactement les octets hachés
-  }
-  while (ok && g_podTft.sourceRemaining()) ok = rd.readBody(g_rowBytes, ROW_BYTES) == ROW_BYTES && g_podTft.consumeSource(g_rowBytes);   // l'image reçue est lue et hachée EN ENTIER
-  tft.endWrite();
-  if (!ok || !g_podTft.finish(g_podFrameHex, g_podRenderHex)) { logf("[RENDER] image abandonnée (aucun ACK)"); return 0; }
-  return 2;
-}
-#endif
 
 // ─── Onboarding ────────────────────────────────────────────────────────────
 static void displayKeyMaterialOnce() {
   const String pubHex = bytesToHex(publicKey, 32), privHex = bytesToHex(privateKey, 32);
-  logf("[KEYS] PubKey: %s", pubHex.c_str());
-  tft.fillScreen(C_WHITE);
-  tft.setTextWrap(false); tft.setTextSize(1);
-  tft.setTextColor(C_BLACK, C_WHITE); tft.setCursor(3, 3); tft.print("PROOF-OF-DRAW / CLES");
-  tft.drawFastHLine(0, 14, IMG_W, C_BLACK);
-  tft.setCursor(3, 20); tft.print("PUBLIQUE:");
-  for (int l = 0; l < 4; l++) { tft.setCursor(3, 31 + l * 10); tft.print(pubHex.substring(l * 16, l * 16 + 16)); }
-  tft.setTextColor(C_RED, C_WHITE); tft.setCursor(3, 76); tft.print("PRIVEE - A NOTER:");
-  for (int l = 0; l < 4; l++) { tft.setCursor(3, 87 + l * 10); tft.print(privHex.substring(l * 16, l * 16 + 16)); }
-  tft.setTextColor(C_BLACK, C_WHITE); tft.setCursor(3, 134); tft.print("Affichee une seule fois");
-  logf("[KEYS] clés affichées — 60 s pour les noter");
+  logf("[KEYS] PubKey: %s", pubHex.c_str());         // la clé privée n'est JAMAIS écrite au Serial
+  clearBothPlanes();
+  const String title = "PROOF-OF-DRAW KEYS";
+  drawText(blackBuf, centerX(title), 3, title);
+  hLine(blackBuf, 13, 10, IMG_W - 11);
+  drawText(blackBuf, 4, 20, "PUB:");
+  drawText(redBuf, 4, 66, "PRIV:");
+  for (int l = 0; l < 4; l++) {
+    drawText(blackBuf, 34, 20 + l * 10, pubHex.substring(l * 16, l * 16 + 16));
+    drawText(redBuf, 34, 66 + l * 10, privHex.substring(l * 16, l * 16 + 16));
+  }
+  hLine(blackBuf, 109, 10, IMG_W - 11);
+  const String w1 = "SAVE THESE KEYS NOW", w2 = "PRIVATE KEY SHOWN ONCE";
+  drawText(redBuf, centerX(w1), 112, w1);
+  drawText(redBuf, centerX(w2), 120, w2);
+  persistFrameId("");                                // l'œuvre précédente n'est plus à l'écran
+  lastFrameId = "";
+  refreshPanel(false);
+  logf("[KEYS] Clés affichées — 60 s pour les noter");
   delay(60000UL);
 }
 
 static void displayOnboardingQR(const String& onboardUrl, const String& code, const String& mac) {
   static QRCode qr;
-  static uint8_t qrData[600];
+  static uint8_t qrData[600];                        // qrcode_getBufferSize(5) tient largement dedans (vérifié ci-dessous)
+  if (qrcode_getBufferSize(5) > sizeof(qrData)) { logf("[QR] tampon trop petit"); return; }
   memset(qrData, 0, sizeof(qrData));
-  int res = qrcode_initText(&qr, qrData, 4, ECC_LOW, onboardUrl.c_str());
-  if (res < 0) res = qrcode_initText(&qr, qrData, 5, ECC_LOW, onboardUrl.c_str());
-  tft.fillScreen(C_NAVY);
-  tft.setTextWrap(false); tft.setTextSize(1); tft.setTextColor(C_GOLD, C_NAVY); tft.setCursor(3, 3); tft.print("SCAN TO PAIR");
-  if (res >= 0) {
-    int scale = min(2, (IMG_W - 12) / qr.size); if (scale < 1) scale = 1;
-    const int px = qr.size * scale, x0 = (IMG_W - px) / 2, y0 = 16;
-    tft.fillRect(x0 - 3, y0 - 3, px + 6, px + 6, C_WHITE);
-    for (int y = 0; y < qr.size; y++) for (int x = 0; x < qr.size; x++)
-      if (qrcode_getModule(&qr, x, y)) tft.fillRect(x0 + x * scale, y0 + y * scale, scale, scale, C_BLACK);
-  }
-  tft.setTextColor(C_GOLD, C_NAVY); tft.setTextSize(2);
-  int cx = max(0, (IMG_W - (int)code.length() * 12) / 2); tft.setCursor(cx, 126); tft.print(code);
+  int res = qrcode_initText(&qr, qrData, 4, ECC_MEDIUM, onboardUrl.c_str());
+  if (res < 0) res = qrcode_initText(&qr, qrData, 5, ECC_MEDIUM, onboardUrl.c_str());
+  if (res < 0) { logf("[QR] URL trop longue pour le QR"); return; }
+
+  clearBothPlanes();
+  const String title = "PROOF-OF-DRAW", sub = "SCAN TO PAIR";
   String m = mac; m.replace(":", ""); m.toUpperCase();
-  tft.setTextSize(1); tft.setTextColor(C_GREY, C_NAVY); tft.setCursor(3, 150); tft.print("MAC:" + m);
+  const String macLine = "MAC:" + m, codeLine = "CODE:" + code;
+
+  const int quiet = 2, topPad = 4, sidePad = 6, bottomPad = 4, titleH = 16, infoH = 17, gap = 6;
+  const int total = qr.size + quiet * 2;
+  const int usableW = IMG_W - sidePad * 2;
+  const int usableH = IMG_H - topPad - titleH - gap - gap - infoH - bottomPad;
+  int scale = min(usableW / total, usableH / total); if (scale < 1) scale = 1;
+  const int qrPx = total * scale;
+  const int qrX0 = (IMG_W - qrPx) / 2, qrY0 = topPad + titleH + gap;
+  const int textY1 = qrY0 + qrPx + gap;
+
+  drawText(blackBuf, centerX(title), topPad, title);
+  drawText(blackBuf, centerX(sub), topPad + 9, sub);
+  for (int my = 0; my < qr.size; my++)
+    for (int mx = 0; mx < qr.size; mx++) {
+      if (!qrcode_getModule(&qr, mx, my)) continue;
+      for (int dy = 0; dy < scale; dy++) for (int dx = 0; dx < scale; dx++)
+        setPix(blackBuf, qrX0 + (mx + quiet) * scale + dx, qrY0 + (my + quiet) * scale + dy);
+    }
+  drawText(blackBuf, centerX(macLine), textY1, macLine);
+  drawText(redBuf, centerX(codeLine), textY1 + 10, codeLine);   // code d'appairage en rouge
+  persistFrameId("");
+  lastFrameId = "";
+  refreshPanel(false);
 }
 
 // ─── ACK / image ───────────────────────────────────────────────────────────
@@ -443,33 +483,37 @@ static bool ackFrame(const String& frameId) {
 
 static bool doFetchFrame(const String& frameId, const String& frameSource) {
   const unsigned long t0 = millis();
-  bool shown = false, noFrame = false;
+  bool got = false, noFrame = false;
   {
     Conn c(HTTP_TIMEOUT_MS);
     const int code = c.request("GET", "/api/pull-frame?deviceId=" + deviceId + "&screen=" SCREEN_TYPE "&fmt=bin", nullptr);
     logf("[HTTP GET] /api/pull-frame -> %d (contenu %ld)", code, c.rd.contentLength());
     if (code == 404) noFrame = true;
     else if (code == 200 && (c.rd.contentLength() < 0 || c.rd.contentLength() == FRAME_BYTES)) {
-#if POD_RENDER_V1
-      shown = podStreamFrame(c.rd) == 2 && c.rd.complete();
-#else
-      shown = streamFrame(c.rd) && c.rd.complete();
-#endif
+      // Lecture complète garantie par pod_http.h (boucle jusqu'au compte exact ou au timeout) : jamais d'image hachée
+      const size_t b = c.rd.readBody(blackBuf, BUF_SIZE);
+      const size_t r = (b == BUF_SIZE) ? c.rd.readBody(redBuf, BUF_SIZE) : 0;
+      logf("[FRAME] lu noir=%u rouge=%u attendu=%u", (unsigned)b, (unsigned)r, (unsigned)BUF_SIZE);
+      got = (b == BUF_SIZE && r == BUF_SIZE);
     } else if (code == 200) {
-      logf("[FRAME] taille annoncée %ld != %d (le serveur sert-il bien tft18 ?)", c.rd.contentLength(), FRAME_BYTES);
+      logf("[FRAME] taille annoncée %ld != %d (le serveur sert-il bien eink29bwr ?)", c.rd.contentLength(), FRAME_BYTES);
     }
     c.client.stop();
   }
   if (noFrame) { logf("[FRAME] pas de frame disponible"); return true; }
-  if (!shown) { logf("[FRAME] image incomplète — pas d'ACK, nouvel essai au prochain pull"); return false; }
+  if (!got) { logf("[FRAME] image incomplète — pas d'ACK, nouvel essai au prochain pull"); return false; }
 
-#if POD_RENDER_V1
-  logf("[RENDER] calculé ET remis au TFT — mode=%u frameHash=%s renderHash=%s", (unsigned)POD_RENDER_MODE_DEFAULT, g_podFrameHex, g_podRenderHex);   // le cartel fait partie de l'image rendue
-#else
-  drawCartel();
+  burnCartel(pendingWorkTitle, pendingArtistName, pendingDisplayTs, currentBlockIndex);
+
+  persistFrameId("");                                // pendant le rafraîchissement l'écran est dans un état incertain
+#if CLEAR_BEFORE_IMAGE
+  if (hasRefreshed || lastFrameId.length() > 0) refreshPanel(true);
 #endif
-  lastFrameId = frameId;                              // RAM seulement : après reboot le TFT doit être repeint
-  lastFrameWasConsensus = frameSource == "consensus";
+  if (!refreshPanel(false)) { logf("[FRAME] affichage échoué — frame conservée côté serveur"); return false; }
+
+  lastFrameId = frameKey(frameId);
+  persistFrameId(frameId);
+  lastFrameWasConsensus = (frameSource == "consensus");
   pendingCandidateId = "";
   logf("[FRAME] OK en %lu ms (frameId=%s source=%s)", millis() - t0, frameId.c_str(), frameSource.c_str());
   ackFrame(frameId);
@@ -594,7 +638,7 @@ static bool doPull() {
   if (newCandId.length() > 0) pendingCandidateId = newCandId;
 
   if (newFrameSource == "none" || newFrameId.length() == 0) { logf("[PULL] aucune frame"); return true; }
-  if (newFrameId == lastFrameId) { logf("[PULL] frame déjà affichée"); return true; }
+  if (frameKey(newFrameId) == lastFrameId) { logf("[PULL] frame déjà affichée"); return true; }
   logf("[PULL] nouvelle frame %s (%s)", newFrameId.c_str(), newFrameSource.c_str());
 
   doFetchFrame(newFrameId, newFrameSource);          // échec : on retourne quand même true (pas de boucle pull→échec→pull)
@@ -602,37 +646,62 @@ static bool doPull() {
   return true;
 }
 
-// ─── VALIDATION RÉELLE (vote v2) — ⚠ NON TESTÉE SUR LA CARTE ─────────────
+// ─── VALIDATION RÉELLE (vote v2) ───────────────────────────────────────────
+// ⚠ NON TESTÉ sur la carte (docs/CANARI_R4_EINK29.md). Le serveur annonce le candidat (écran, taille, SHA-256) ; ici la R4 lit le contenu BRUT en flux, recalcule
+// le hash et les métriques entières, décide d'un verdict objectif, le signe (Ed25519) et vote. Aucune image n'est gardée : blackBuf sert de tampon « noir » pendant
+// la lecture (il est ré-écrit en entier avant le prochain affichage) ; le morceau de lecture est statique (la pile de la R4 est petite).
+// Un appareil relit un candidat de N'IMPORTE QUEL écran (le serveur ne l'oblige pas à voter pour son type) : blackBuf (≥ 4 736 o) sert de tampon pour l'OLED et l'e-ink 2,9".
 static uint8_t g_voteChunk[256];
-static uint8_t g_voteScratch[4736];   // tampon de l'OLED (1 024 o) et de l'e-ink 2,9" (4 736 o) : un candidat de N'IMPORTE QUEL écran est relu (le serveur ne l'oblige pas à voter pour son type)
 
 static bool doValidateV2(const String& candidateId, const String& screenName, size_t bytes, const String& announcedHash) {
   PodScreenKind kind;
-  if (!podKindFromName(screenName.c_str(), &kind)) {
-    logf("[VALIDATE2] écran inconnu : %s", screenName.c_str());
-    return false;
-  }
-  PodCheck chk; memset(&chk, 0, sizeof(chk));
+  if (!podKindFromName(screenName.c_str(), &kind)) { logf("[VALIDATE2] écran inconnu: %s", screenName.c_str()); return false; }
+  reportMem("VALIDATE2-avant");
+
+  PodCheck chk;
+  memset(&chk, 0, sizeof(chk));
   {
     Conn c(HTTP_TIMEOUT_MS);
     const int code = c.request("GET", String("/api/candidate-frame?candidateId=") + candidateId, nullptr);
     chk.http = code;
-    if (code == 200) podCheckStream(c.rd, kind, bytes, g_voteScratch, sizeof(g_voteScratch), g_voteChunk, sizeof(g_voteChunk), &chk);
+    logf("[HTTP GET] /api/candidate-frame -> %d", code);
+    if (code == 200) podCheckStream(c.rd, kind, bytes, blackBuf, BUF_SIZE, g_voteChunk, sizeof(g_voteChunk), &chk);
     c.client.stop();
   }
-  if (!chk.ok) { logf("[VALIDATE2] calcul impossible (%u/%u octets)", (unsigned)chk.bytes, (unsigned)bytes); return false; }
-  bool accept = false; const char* reason = podVerdict(chk, announcedHash, &accept);
+  if (!chk.ok) {
+    logf("[VALIDATE2] lecture/calcul impossible (http=%d, %u/%u octets)", chk.http, (unsigned)chk.bytes, (unsigned)bytes);
+    return false;
+  }
+
+  bool accept = false;
+  const char* reason = podVerdict(chk, announcedHash, &accept);
+  logf("[VALIDATE2] %s %u o en %lu ms | e=%lu t=%lu r=%lu s=%lu | verdict=%s %s", screenName.c_str(), (unsigned)chk.bytes, (unsigned long)chk.ms,
+       (unsigned long)chk.m.e, (unsigned long)chk.m.t, (unsigned long)chk.m.r, (unsigned long)chk.m.s, accept ? "accept" : "reject", reason);
+  logf("[VALIDATE2] hash=%s", chk.hash);
+
   const String msg = podVoteMessage(deviceId, candidateId, chk.hash, chk.m, accept);
-  uint8_t sig[64]; Ed25519::sign(sig, privateKey, publicKey, (const uint8_t*)msg.c_str(), msg.length());
-  const String body = String("{\"v\":2,\"deviceId\":\"") + deviceId + "\",\"candidateId\":\"" + candidateId + "\",\"rawHash\":\"" + chk.hash + "\"," +
-                      "\"e\":" + String((unsigned long)chk.m.e) + ",\"t\":" + String((unsigned long)chk.m.t) + ",\"r\":" + String((unsigned long)chk.m.r) + "," +
+  uint8_t sig[64];
+  unsigned long ts = millis();
+  Ed25519::sign(sig, privateKey, publicKey, (const uint8_t*)msg.c_str(), msg.length());
+  logf("[VALIDATE2] signature en %lu ms", millis() - ts);
+
+  const String body = String("{\"v\":2,\"deviceId\":\"") + deviceId + "\",\"candidateId\":\"" + candidateId + "\",\"rawHash\":\"" + chk.hash + "\","
+                      "\"e\":" + String((unsigned long)chk.m.e) + ",\"t\":" + String((unsigned long)chk.m.t) + ",\"r\":" + String((unsigned long)chk.m.r) + ","
                       "\"verdict\":\"" + (accept ? "accept" : "reject") + "\"" + (accept ? String("") : String(",\"reason\":\"") + reason + "\"") +
                       ",\"signature\":\"" + bytesToHex(sig, 64) + "\"}";
-  String resp; const int code = httpCall("POST", "/api/validation-result", &body, resp);
-  logf("[VALIDATE2] e=%lu t=%lu r=%lu verdict=%s HTTP=%d", (unsigned long)chk.m.e, (unsigned long)chk.m.t, (unsigned long)chk.m.r, accept ? "accept" : reason, code);
-  // 403 « Signature » = clé publique désynchronisée côté serveur : on se ré-enregistre pour la renvoyer (comme le chemin v1), le prochain cycle votera.
-  if (code != 200 && resp.indexOf("Signature") >= 0) { logf("[VALIDATE2] resynchronisation de la clé publique (re-register)"); doRegister(); }
-  return code == 200 && resp.indexOf("\"blockMined\":true") >= 0;
+  String vResp;
+  const int vCode = httpCall("POST", "/api/validation-result", &body, vResp);
+  bool mined = false;
+  if (vCode == 200) {
+    logf("[VALIDATE2] Vote OK");
+    if (vResp.indexOf("\"blockMined\":true") >= 0) { logf("[VALIDATE2] BLOC MINÉ"); mined = true; }
+    if (vResp.indexOf("\"rejectObserved\":true") >= 0) logf("[VALIDATE2] refus enregistré par le serveur (non bloquant)");
+  } else {
+    logf("[VALIDATE2] Echec vote (%d) : 403 = signature, 422 = hash/métriques différents du serveur — %s", vCode, vResp.c_str());
+    if (vResp.indexOf("Signature") >= 0) { logf("[VALIDATE2] resynchronisation de la clé publique (re-register)"); doRegister(); }
+  }
+  reportMem("VALIDATE2-après");
+  return mined;
 }
 
 // ─── VALIDATION ────────────────────────────────────────────────────────────
@@ -640,18 +709,19 @@ static bool doValidate() {
   if (pendingCandidateId.length() == 0) return false;
   String resp;
   if (httpCall("GET", "/api/validate-candidate?deviceId=" + deviceId, nullptr, resp) != 200 || resp.length() == 0) { pendingCandidateId = ""; return false; }
-  JSON_DOC(doc, 768);
+  JSON_DOC(doc, 768);   // 512 avant la validation réelle : la réponse porte aussi { v2: écran, taille, hash } (≈ 110 o)
   if (deserializeJson(doc, resp)) { pendingCandidateId = ""; return false; }
   if ((doc["alreadyVoted"] | false) || doc["candidate"].isNull()) { pendingCandidateId = ""; return false; }
   JsonObject cand = doc["candidate"];
   const String candidateId = cand["candidateId"] | "";
   if (candidateId.length() == 0) { pendingCandidateId = ""; return false; }
+  // Validation RÉELLE : si le serveur annonce { v2 }, on revérifie le contenu au lieu de recopier son score (anciens serveurs / animations : chemin v1 ci-dessous).
   if (!cand["v2"].isNull()) {
-    const String screen = cand["v2"]["screen"] | "";
-    const size_t bytes = cand["v2"]["bytes"] | 0;
-    const String hash = cand["v2"]["hash"] | "";
+    const String v2screen = cand["v2"]["screen"] | "";
+    const size_t v2bytes  = cand["v2"]["bytes"] | 0;
+    const String v2hash   = cand["v2"]["hash"] | "";
     pendingCandidateId = "";
-    return doValidateV2(candidateId, screen, bytes, hash);
+    return doValidateV2(candidateId, v2screen, v2bytes, v2hash);
   }
   const float score = cand["score_server"] | 0.5f;
 
@@ -694,14 +764,11 @@ void setup() {
   paintStack();
   Serial.begin(115200);
   while (!Serial && millis() < 2500) {}
-  logf("\n[BOOT] Proof-of-Draw UNO R4 WiFi + TFT 1.8\" — %s", FIRMWARE_VERSION);
-  logf("[WARNING] PORT NON TESTE SUR LE MATERIEL — 06/10/2026");
+  logf("\n[BOOT] Proof-of-Draw UNO R4 WiFi + e-ink 2.9\" BWR — %s", FIRMWARE_VERSION);
   reportMem("boot");
 
-  pinMode(TFT_CS, OUTPUT); digitalWrite(TFT_CS, HIGH);
-  tft.initR(INITR_BLACKTAB);
-  tft.setRotation(0);
-  tftStatus("Connexion Wi-Fi...");
+  epd.begin();
+  clearBothPlanes();
 
   if (WiFi.status() == WL_NO_MODULE) { logf("[WIFI] module absent"); while (true) delay(1000); }
   logf("[WIFI] firmware du module: %s", WiFi.firmwareVersion());
@@ -711,9 +778,8 @@ void setup() {
     WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
     for (int i = 0; i < 20 && WiFi.status() != WL_CONNECTED; i++) delay(500);
   }
-  if (WiFi.status() != WL_CONNECTED) { logf("[WIFI] échec — redémarrage"); tftStatus("Wi-Fi impossible", "Redemarrage...", C_RED); delay(3000); NVIC_SystemReset(); }
+  if (WiFi.status() != WL_CONNECTED) { logf("[WIFI] échec — redémarrage"); delay(3000); NVIC_SystemReset(); }
   logf("[WIFI] IP: %s", WiFi.localIP().toString().c_str());
-  tftStatus("Wi-Fi connecte", WiFi.localIP().toString());
 
   if (!keysAlreadyGenerated()) generateKeys();
   else { loadKeysFromEEPROM(); logf("[KEYS] clés chargées: %s", bytesToHex(publicKey, 32).c_str()); }
@@ -725,7 +791,8 @@ void setup() {
     for (unsigned i = 0; i < currentBlockHash.length() && ok; i++) { const char c = currentBlockHash[i]; ok = (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F'); }
     if (!ok) currentBlockHash = "";
   }
-  lastFrameId = "";                                 // le TFT perd son image : forcer un nouveau fetch après chaque démarrage
+  lastFrameId = loadFrameId();                       // œuvre déjà à l'écran avant le redémarrage (l'e-ink la conserve)
+  if (lastFrameId.length() > 0) logf("[BOOT] œuvre déjà affichée : %s", lastFrameId.c_str());
 
   while (!registered) { if (doRegister()) break; delay(5000); }
   if (paired) {

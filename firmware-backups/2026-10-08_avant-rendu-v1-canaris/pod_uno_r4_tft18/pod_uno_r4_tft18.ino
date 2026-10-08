@@ -42,24 +42,6 @@
 #include "pod_http.h"
 #include "pod_vote_r4.h"
 
-// POD_RENDER_V1_BEGIN
-// ─── Rendu v1 EN FLUX (lot 8B-2A) — INACTIF PAR DÉFAUT ────────────────────────────────────────────────────────────────────────────────────────────
-// 0 (défaut) : comportement d'avant, octet pour octet (image streamée ligne par ligne, cartel dessiné ensuite par drawCartel).
-// 1 : chaque ligne reçue est composée par le noyau gelé consensus-pod/src/podRenderStream.h (layoutVersion 1 : cartel, fit) — UNE ligne source + UNE ligne de sortie, les tampons g_rowBytes / g_rowPixels
-//     EXISTANTS — et écrite au TFT telle qu'elle est hachée (renderHash) ; frameHash (octets reçus) et renderHash sont CALCULÉS et seulement journalisés — l'ACK, les routes et le rapport de rendu ne sont PAS modifiés.
-// ⚠ NON ESSAYÉ SUR LA CARTE. Ne pas activer sans le lot 8B-2B (canari) : docs/LOT_8B2A_INTEGRATION_CANARIS_2026_10_08.md.
-#ifndef POD_RENDER_V1
-#define POD_RENDER_V1 0
-#endif
-#ifndef POD_RENDER_MODE_DEFAULT
-#define POD_RENDER_MODE_DEFAULT POD_R_FIT   // constante de compilation : le réglage cartelMode n'est PAS exposé (pas d'interface, pas de réglage serveur)
-#endif
-#if POD_RENDER_V1
-#include "podRenderStream.h"
-#include "crypto_uno_r4.h"
-#endif
-// POD_RENDER_V1_END
-
 // ─── CONFIG ────────────────────────────────────────────────────────────────
 #if __has_include("secrets.h")
   #include "secrets.h"
@@ -326,7 +308,6 @@ static void tftStatus(const String& line1, const String& line2 = "", uint16_t bg
   if (line2.length()) { tft.setTextColor(C_GREY, bg); tft.setCursor(5, 60); tft.print(line2); }
 }
 
-#if !POD_RENDER_V1   // cartel dessiné par-dessus / image streamée d'avant : remplacés par le noyau de rendu v1
 static String fitText(const String& input, int chars) {
   String out = asciiFold(input);
   if ((int)out.length() > chars) out = out.substring(0, max(0, chars - 1)) + ".";
@@ -358,40 +339,6 @@ static bool streamFrame(podhttp::Reader<WiFiSSLClient>& rd) {
   tft.endWrite();
   return ok;
 }
-
-#endif
-
-#if POD_RENDER_V1
-// ─── Rendu v1 en flux : composition ligne par ligne ──────────────────────────────────────────────────────────────────────────────────────────────
-// Mémoire (UNO R4, pile principale ≈ 1 Ko : objet et tampons GLOBAUX) : PodTftRenderer 424 o + ligne source g_rowBytes 256 o + ligne de sortie g_rowPixels 256 o (ces deux tampons existaient déjà) + 130 o de hashes.
-// Aucune image entière, aucune grille. Ordre des octets : le noyau produit le RGB565 LITTLE-ENDIAN du plan (les octets hachés dans renderHash) ; sur la R4 (little-endian) g_rowPixels les lit comme des mots natifs,
-// exactement comme l'ancien chemin (`g_rowPixels[x] = lo | hi << 8`), et writePixels(..., block=true, bigEndian=false) les envoie : le tampon remis au pilote EST celui qui alimente renderHash.
-// L'API du pilote (writePixels) ne retourne aucune erreur : une écriture partielle n'est détectable que par l'échec de lecture / de composition AVANT la fin (alors : abandon, aucun ACK).
-static PodTftRenderer<PodSha256Rw> g_podTft;
-static char g_podFrameHex[65], g_podRenderHex[65];
-
-// Retour : 0 = échec (aucun ACK) · 2 = rendu calculé ET remis au TFT.
-static uint8_t podStreamFrame(podhttp::Reader<WiFiSSLClient>& rd) {
-  const PodRenderSpec spec = pod_render_spec(POD_R_TFT18);
-  const PodRenderMeta meta = { (const uint8_t*)pendingDisplayTs.c_str(), (size_t)pendingDisplayTs.length(), (int32_t)currentBlockIndex,
-                               (const uint8_t*)pendingArtistName.c_str(), (size_t)pendingArtistName.length(), (const uint8_t*)pendingWorkTitle.c_str(), (size_t)pendingWorkTitle.length() };
-  if (!g_podTft.begin(spec, POD_RENDER_MODE_DEFAULT, meta)) { logf("[RENDER] paramètres refusés — abandon"); return 0; }
-  tft.startWrite();
-  tft.setAddrWindow(0, 0, IMG_W, IMG_H);
-  bool ok = true;
-  while (ok && !g_podTft.allRowsEmitted()) {
-    while (ok && g_podTft.needsSource()) ok = rd.readBody(g_rowBytes, ROW_BYTES) == ROW_BYTES && g_podTft.consumeSource(g_rowBytes);
-    if (!ok) { logf("[RENDER] ligne source %u illisible", (unsigned)g_podTft.outY); break; }
-    ok = g_podTft.emitRow(g_rowBytes, (uint8_t*)g_rowPixels);
-    if (!ok) { logf("[RENDER] composition refusée"); break; }
-    tft.writePixels(g_rowPixels, IMG_W, true);   // exactement les octets hachés
-  }
-  while (ok && g_podTft.sourceRemaining()) ok = rd.readBody(g_rowBytes, ROW_BYTES) == ROW_BYTES && g_podTft.consumeSource(g_rowBytes);   // l'image reçue est lue et hachée EN ENTIER
-  tft.endWrite();
-  if (!ok || !g_podTft.finish(g_podFrameHex, g_podRenderHex)) { logf("[RENDER] image abandonnée (aucun ACK)"); return 0; }
-  return 2;
-}
-#endif
 
 // ─── Onboarding ────────────────────────────────────────────────────────────
 static void displayKeyMaterialOnce() {
@@ -450,11 +397,7 @@ static bool doFetchFrame(const String& frameId, const String& frameSource) {
     logf("[HTTP GET] /api/pull-frame -> %d (contenu %ld)", code, c.rd.contentLength());
     if (code == 404) noFrame = true;
     else if (code == 200 && (c.rd.contentLength() < 0 || c.rd.contentLength() == FRAME_BYTES)) {
-#if POD_RENDER_V1
-      shown = podStreamFrame(c.rd) == 2 && c.rd.complete();
-#else
       shown = streamFrame(c.rd) && c.rd.complete();
-#endif
     } else if (code == 200) {
       logf("[FRAME] taille annoncée %ld != %d (le serveur sert-il bien tft18 ?)", c.rd.contentLength(), FRAME_BYTES);
     }
@@ -463,11 +406,7 @@ static bool doFetchFrame(const String& frameId, const String& frameSource) {
   if (noFrame) { logf("[FRAME] pas de frame disponible"); return true; }
   if (!shown) { logf("[FRAME] image incomplète — pas d'ACK, nouvel essai au prochain pull"); return false; }
 
-#if POD_RENDER_V1
-  logf("[RENDER] calculé ET remis au TFT — mode=%u frameHash=%s renderHash=%s", (unsigned)POD_RENDER_MODE_DEFAULT, g_podFrameHex, g_podRenderHex);   // le cartel fait partie de l'image rendue
-#else
   drawCartel();
-#endif
   lastFrameId = frameId;                              // RAM seulement : après reboot le TFT doit être repeint
   lastFrameWasConsensus = frameSource == "consensus";
   pendingCandidateId = "";

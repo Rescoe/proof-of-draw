@@ -41,24 +41,6 @@
 #include <Ed25519.h>       // Bibliothèque Crypto (rhempel) — ED25519 réel // Crypto by Rhys Weatherley
 #include "pod_vote_esp.h"  // validation réelle (vote v2) : SHA-256 + métriques entières en flux — ⚠ NON TESTÉ sur le matériel
 
-// POD_RENDER_V1_BEGIN
-// ─── Rendu v1 EN FLUX (lot 8B-2A) — INACTIF PAR DÉFAUT ────────────────────────────────────────────────────────────────────────────────────────────
-// 0 (défaut) : comportement d'avant, octet pour octet (cartel gravé par burnEinkCartel_29, Display() des plans complets).
-// 1 : l'image reçue (blackBuf / redBuf, JAMAIS modifiés) est rendue par le noyau gelé consensus-pod/src/podRenderStream.h (layoutVersion 1 : cartel, fit) et remise au pilote PAR MORCEAUX de 32 octets
-//     (Epd::DisplayStream) ; frameHash (octets reçus) et renderHash (octets remis) sont CALCULÉS et seulement journalisés — l'ACK, les routes et le rapport de rendu ne sont PAS modifiés.
-// ⚠ NON ESSAYÉ SUR LA CARTE. Ne pas activer sans le lot 8B-2B (canari) : docs/LOT_8B2A_INTEGRATION_CANARIS_2026_10_08.md.
-#ifndef POD_RENDER_V1
-#define POD_RENDER_V1 0
-#endif
-#ifndef POD_RENDER_MODE_DEFAULT
-#define POD_RENDER_MODE_DEFAULT POD_R_FIT   // constante de compilation : le réglage cartelMode n'est PAS exposé (pas d'interface, pas de réglage serveur)
-#endif
-#if POD_RENDER_V1
-#include "podRenderStream.h"
-#include "crypto_esp8266.h"
-#endif
-// POD_RENDER_V1_END
-
 // ─── CONFIG ────────────────────────────────────────────────────────────────
 // Wi-Fi : copier secrets.h.example en secrets.h (ignoré par git : les identifiants ne doivent JAMAIS être commités), puis renseigner SSID / mot de passe (2,4 GHz).
 #if __has_include("secrets.h")
@@ -978,36 +960,6 @@ void logHeapState(const char* tag) {
 
 
 
-#if POD_RENDER_V1
-// ─── Rendu v1 en flux : calcul ET remise au pilote ───────────────────────────────────────────────────────────────────────────────────────────────
-// Ordre exact de la mémoire (ESP8266, TLS FERMÉ à l'entrée) :
-//   TAS    blackBuf 4 736 o + redBuf 4 736 o   (alloués AVANT le TLS par doFetchFrame, comme avant : ce sont les tampons de réception) — jamais modifiés ici
-//   PILE   PodFrameHasher (128 o, libéré avant la suite) puis PodEinkRenderer (264 o) + 32 o de morceau dans le pilote ; AUCUNE allocation, aucun tampon final, aucune grille
-// Pic ajouté par ce chemin : ≈ 300 o de pile. Retour : 0 = échec AVANT la remise · 1 = rendu calculé mais NON remis · 2 = rendu calculé ET remis au pilote (seul 2 est un succès).
-static unsigned int podRenderProduce(void* ctx, unsigned char* out, unsigned int cap) { return ((PodEinkRenderer<PodSha256Br>*)ctx)->read(out, cap); }
-
-static uint8_t podRenderAndShow() {
-  const PodRenderSpec spec = pod_render_spec(POD_R_EINK29);
-  const PodRenderMeta meta = { (const uint8_t*)pendingDisplayTs.c_str(), (size_t)pendingDisplayTs.length(), (int32_t)currentBlockIndex,
-                               (const uint8_t*)pendingArtistName.c_str(), (size_t)pendingArtistName.length(), (const uint8_t*)pendingWorkTitle.c_str(), (size_t)pendingWorkTitle.length() };
-  static char frameHex[65], renderHex[65];   // statiques (130 o de BSS) : la pile de la tâche reste libre
-  {
-    PodFrameHasher<PodSha256Br> fh;
-    if (!fh.begin(spec) || !fh.update(blackBuf, BUF_SIZE) || !fh.update(redBuf, BUF_SIZE) || !fh.finish(frameHex)) { Serial.println(F("[RENDER] frameHash impossible — abandon")); return 0; }
-  }
-  PodEinkRenderer<PodSha256Br> r;
-  if (!r.begin(spec, POD_RENDER_MODE_DEFAULT, meta, blackBuf, redBuf, BUF_SIZE)) { Serial.println(F("[RENDER] paramètres refusés — abandon")); return 0; }
-  if (!initDisplayForRefresh()) { Serial.println(F("[RENDER] panneau non initialisé — abandon, rien n'est envoyé")); return 0; }
-  const bool delivered = epd.DisplayStream(podRenderProduce, &r);
-  epd.Sleep();
-  lastRefreshMs = millis();
-  if (!delivered) { Serial.println(F("[RENDER] production interrompue — le panneau n'a PAS été rafraîchi")); return 0; }
-  if (!r.finish(renderHex)) { Serial.println(F("[RENDER] renderHash incomplet — abandon")); return 1; }
-  Serial.printf_P(PSTR("[RENDER] calculé ET remis au pilote — mode=%u frameHash=%s renderHash=%s\n"), (unsigned)POD_RENDER_MODE_DEFAULT, frameHex, renderHex);
-  return 2;
-}
-#endif
-
 // ─── FETCH FRAME (route séparée, heap propre après pull léger) ──────────────
 // ─── FETCH FRAME ─────────────────────────────────────────────────────────────
 bool doFetchFrame(const String& frameId, const String& frameSource) {
@@ -1088,11 +1040,6 @@ bool doFetchFrame(const String& frameId, const String& frameSource) {
   }
   // TLS fermé ici — le panel a eu le temps de finir son refresh précédent
 
-#if POD_RENDER_V1
-  // ── Rendu v1 en flux : cartel + fit calculés par le noyau, remis au pilote par morceaux (aucune gravure en place) ──
-  if (hasDisplayedFrame) clearDisplayWhite();
-  if (podRenderAndShow() != 2) {   // 2 = rendu calculé ET remis au pilote
-#else
   // ── Cartel (bandes de métadonnées en haut et bas) ────────────────────────
   burnEinkCartel_29(blackBuf, redBuf,
                     pendingWorkTitle, pendingArtistName,
@@ -1105,7 +1052,6 @@ bool doFetchFrame(const String& frameId, const String& frameSource) {
   }
 
   if (!refreshDisplay()) {
-#endif
     Serial.println("[FETCHFRAME] refreshDisplay failed — frame conservée côté serveur");
     free(blackBuf); blackBuf = nullptr;
     free(redBuf);   redBuf   = nullptr;

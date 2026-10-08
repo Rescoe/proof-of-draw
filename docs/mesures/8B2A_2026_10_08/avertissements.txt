@@ -1,0 +1,12 @@
+== esp_eink : avertissements du dépôt — avant: 1 · OFF: 1 · ON: 1
+   OFF : aucun avertissement nouveau
+   ON  : aucun avertissement nouveau
+== esp_tft : avertissements du dépôt — avant: 4 · OFF: 4 · ON: 4
+   OFF : aucun avertissement nouveau
+   ON  : aucun avertissement nouveau
+== r4_eink : avertissements du dépôt — avant: 0 · OFF: 0 · ON: 0
+   OFF : aucun avertissement nouveau
+   ON  : aucun avertissement nouveau
+== r4_tft : avertissements du dépôt — avant: 0 · OFF: 0 · ON: 0
+   OFF : aucun avertissement nouveau
+   ON  : aucun avertissement nouveau

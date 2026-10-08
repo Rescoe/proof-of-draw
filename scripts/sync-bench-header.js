@@ -13,15 +13,28 @@ const MASTERS = {
   "pod_metrics.h": "esp8266/_shared/pod_metrics.h",                // validation réelle : métriques entières en flux (pur C++)
   "pod_metrics_table.h": "esp8266/_shared/pod_metrics_table.h",    // table d'entropie (générée : scripts/gen-pod-metrics-table.js)
   "pod_vote_esp.h": "esp8266/_shared/pod_vote_esp.h",              // validation réelle : lecture en flux + SHA-256 (ESP8266)
+  // Rendu v1 (lot 8B-2A) : noyau de rendu en flux, INACTIF par défaut (POD_RENDER_V1 = 0) — voir docs/LOT_8B2A_INTEGRATION_CANARIS_2026_10_08.md
+  "consensusPoD.h": "consensus-pod/src/consensusPoD.h",
+  "podRender.h": "consensus-pod/src/podRender.h",
+  "podRenderStream.h": "consensus-pod/src/podRenderStream.h",
+  "crypto_esp8266.h": "consensus-pod/src/adapters/crypto_esp8266.h",
+  "crypto_uno_r4.h": "consensus-pod/src/adapters/crypto_uno_r4.h",
 };
+const RENDER_ESP = ["esp8266/esp_eink_2.9BWR", "esp8266/esp_tft1.8"], RENDER_R4 = ["arduino_uno_r4/pod_uno_r4_eink29", "arduino_uno_r4/pod_uno_r4_tft18"];
 const COPIES = {
   "pod_bench.h": ["esp8266/esp_tft1.8/pod_bench.h", "esp8266/esp_eink_2.7BW_OLED/pod_bench.h"],
   "pod_bench_esp.h": ["esp8266/esp_tft1.8/pod_bench_esp.h", "esp8266/esp_eink_2.7BW_OLED/pod_bench_esp.h"],
   "pod_anim_esp.h": ["esp8266/esp_tft1.8/pod_anim_esp.h", "esp8266/esp_eink_2.7BW_OLED/pod_anim_esp.h"],
   // Validation réelle : e-ink 2,9" BWR, TFT 1,8", multiscreen et e-ink 2,7" seul (ESP8266)
-  "pod_metrics.h": ["esp8266/esp_eink_2.9BWR/pod_metrics.h", "esp8266/esp_tft1.8/pod_metrics.h", "esp8266/esp_eink_2.7BW_OLED/pod_metrics.h", "esp8266/esp_eink_2.7BW/pod_metrics.h", "consensus-pod/src/pod_metrics.h"],
-  "pod_metrics_table.h": ["esp8266/esp_eink_2.9BWR/pod_metrics_table.h", "esp8266/esp_tft1.8/pod_metrics_table.h", "esp8266/esp_eink_2.7BW_OLED/pod_metrics_table.h", "esp8266/esp_eink_2.7BW/pod_metrics_table.h", "consensus-pod/src/pod_metrics_table.h"],
+  "pod_metrics.h": ["esp8266/esp_eink_2.9BWR/pod_metrics.h", "esp8266/esp_tft1.8/pod_metrics.h", "esp8266/esp_eink_2.7BW_OLED/pod_metrics.h", "esp8266/esp_eink_2.7BW/pod_metrics.h", "consensus-pod/src/pod_metrics.h", "arduino_uno_r4/pod_uno_r4_eink29/pod_metrics.h", "arduino_uno_r4/pod_uno_r4_tft18/pod_metrics.h"],
+  "pod_metrics_table.h": ["esp8266/esp_eink_2.9BWR/pod_metrics_table.h", "esp8266/esp_tft1.8/pod_metrics_table.h", "esp8266/esp_eink_2.7BW_OLED/pod_metrics_table.h", "esp8266/esp_eink_2.7BW/pod_metrics_table.h", "consensus-pod/src/pod_metrics_table.h", "arduino_uno_r4/pod_uno_r4_eink29/pod_metrics_table.h", "arduino_uno_r4/pod_uno_r4_tft18/pod_metrics_table.h"],
   "pod_vote_esp.h": ["esp8266/esp_eink_2.9BWR/pod_vote_esp.h", "esp8266/esp_tft1.8/pod_vote_esp.h", "esp8266/esp_eink_2.7BW_OLED/pod_vote_esp.h", "esp8266/esp_eink_2.7BW/pod_vote_esp.h"],
+  // Rendu v1 : QUATRE dossiers canaris seulement (les huit firmwares viendront au lot 8B-2B)
+  "consensusPoD.h": [...RENDER_ESP, ...RENDER_R4].map((d) => d + "/consensusPoD.h"),
+  "podRender.h": [...RENDER_ESP, ...RENDER_R4].map((d) => d + "/podRender.h"),
+  "podRenderStream.h": [...RENDER_ESP, ...RENDER_R4].map((d) => d + "/podRenderStream.h"),
+  "crypto_esp8266.h": RENDER_ESP.map((d) => d + "/crypto_esp8266.h"),
+  "crypto_uno_r4.h": RENDER_R4.map((d) => d + "/crypto_uno_r4.h"),
 };
 module.exports = { MASTERS, COPIES };
 

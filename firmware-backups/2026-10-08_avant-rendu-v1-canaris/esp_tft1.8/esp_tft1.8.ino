@@ -74,24 +74,6 @@
 #include "pod_anim_esp.h"  // animation résidente en boucle (blocs d'animation) — ⚠ NON TESTÉ sur le matériel (voir en-tête)
 #include "pod_vote_esp.h"  // validation réelle (vote v2) : SHA-256 + métriques entières en flux — ⚠ NON TESTÉ sur le matériel
 
-// POD_RENDER_V1_BEGIN
-// ─── Rendu v1 EN FLUX (lot 8B-2A) — INACTIF PAR DÉFAUT ────────────────────────────────────────────────────────────────────────────────────────────
-// 0 (défaut) : comportement d'avant, octet pour octet (image streamée ligne par ligne, cartel gravé ensuite par burnTFTCartel).
-// 1 : chaque ligne reçue est composée par le noyau gelé consensus-pod/src/podRenderStream.h (layoutVersion 1 : cartel, fit) — UNE ligne source + UNE ligne de sortie — et écrite au TFT telle qu'elle est hachée
-//     (renderHash) ; frameHash (octets reçus) et renderHash sont CALCULÉS et seulement journalisés — l'ACK, les routes et le rapport de rendu ne sont PAS modifiés.
-// ⚠ NON ESSAYÉ SUR LA CARTE. Ne pas activer sans le lot 8B-2B (canari) : docs/LOT_8B2A_INTEGRATION_CANARIS_2026_10_08.md.
-#ifndef POD_RENDER_V1
-#define POD_RENDER_V1 0
-#endif
-#ifndef POD_RENDER_MODE_DEFAULT
-#define POD_RENDER_MODE_DEFAULT POD_R_FIT   // constante de compilation : le réglage cartelMode n'est PAS exposé (pas d'interface, pas de réglage serveur)
-#endif
-#if POD_RENDER_V1
-#include "podRenderStream.h"
-#include "crypto_esp8266.h"
-#endif
-// POD_RENDER_V1_END
-
 // ─── CONFIG ────────────────────────────────────────────────────────────────
 // Wi-Fi : copier secrets.h.example en secrets.h (ignoré par git : les identifiants ne doivent JAMAIS être commités), puis renseigner SSID / mot de passe (2,4 GHz).
 #if __has_include("secrets.h")
@@ -941,52 +923,6 @@ bool doRegister() {
   return true;
 }
 
-#if POD_RENDER_V1
-// ─── Rendu v1 en flux : composition ligne par ligne ──────────────────────────────────────────────────────────────────────────────────────────────
-// Mémoire (statique, hors TAS : le TLS garde tout le tas) : PodTftRenderer 408 o + ligne source 256 o + ligne de sortie 256 o = 920 o. Aucune allocation, aucune image entière, aucune grille.
-// Ordre des octets : le noyau produit le RGB565 LITTLE-ENDIAN du plan (les octets hachés dans renderHash) ; ils sont lus comme des mots 16 bits natifs et passés à writePixels(..., bigEndian=false) — chemin
-// générique d'Adafruit_GFX 1.12.6 (SPI logiciel) : SPI_WRITE16(mot) envoie l'octet de poids FORT d'abord = l'ordre attendu par le ST7735. L'ancien chemin (échange d'octets explicite puis bigEndian=true) donnait
-// le même signal sur le fil (la bibliothèque rééchangeait). Le tampon remis au pilote EST donc, octet pour octet, celui qui alimente renderHash (le pilote ne le modifie pas).
-// L'API du pilote (writePixels) ne retourne aucune erreur : une écriture partielle n'est détectable que par l'échec de lecture / de composition AVANT la fin (alors : abandon, aucun ACK).
-static PodTftRenderer<PodSha256Br> g_podTft;
-static uint8_t  g_podSrcRow[TFT_ROW_BYTES];
-static uint16_t g_podOutRow[TFT_W];
-
-// Lit EXACTEMENT une ligne source dans g_podSrcRow (timeout 4 s par ligne, comme l'ancien chemin).
-static bool podReadSourceRow(WiFiClient* stream) {
-  size_t rowRead = 0;
-  const unsigned long rowT0 = millis();
-  while (rowRead < (size_t)TFT_ROW_BYTES && millis() - rowT0 < 4000) {
-    if (stream->available()) rowRead += stream->readBytes(g_podSrcRow + rowRead, TFT_ROW_BYTES - rowRead);
-    else delay(2);
-  }
-  return rowRead == (size_t)TFT_ROW_BYTES;
-}
-
-// Compose et écrit tout l'écran. Retour : 0 = échec (aucun ACK) · 2 = rendu calculé ET remis au TFT. `frameHex` / `renderHex` : 65 octets chacun, remplis seulement au succès.
-static uint8_t podRenderStreamToTft(WiFiClient* stream, char* frameHex, char* renderHex) {
-  const PodRenderSpec spec = pod_render_spec(POD_R_TFT18);
-  const PodRenderMeta meta = { (const uint8_t*)pendingDisplayTs.c_str(), (size_t)pendingDisplayTs.length(), (int32_t)currentBlockIndex,
-                               (const uint8_t*)pendingArtistName.c_str(), (size_t)pendingArtistName.length(), (const uint8_t*)pendingWorkTitle.c_str(), (size_t)pendingWorkTitle.length() };
-  if (!g_podTft.begin(spec, POD_RENDER_MODE_DEFAULT, meta)) { Serial.println(F("[RENDER] paramètres refusés — abandon")); return 0; }
-  tft.startWrite();
-  tft.setAddrWindow(0, 0, TFT_W, TFT_H);   // fenêtre exacte 128×160
-  bool ok = true;
-  while (ok && !g_podTft.allRowsEmitted()) {
-    while (ok && g_podTft.needsSource()) ok = podReadSourceRow(stream) && g_podTft.consumeSource(g_podSrcRow);
-    if (!ok) { Serial.printf_P(PSTR("[RENDER] ligne source %u illisible — timeout\n"), (unsigned)g_podTft.outY); break; }
-    ok = g_podTft.emitRow(g_podSrcRow, (uint8_t*)g_podOutRow);
-    if (!ok) { Serial.println(F("[RENDER] composition refusée")); break; }
-    tft.writePixels(g_podOutRow, TFT_W, true, false);   // exactement les octets hachés (voir ci-dessus)
-    yield();   // watchdog ESP8266 : une ligne = au plus 128 pixels composés
-  }
-  while (ok && g_podTft.sourceRemaining()) ok = podReadSourceRow(stream) && g_podTft.consumeSource(g_podSrcRow);   // l'image reçue est lue et hachée EN ENTIER
-  tft.endWrite();
-  if (!ok || !g_podTft.finish(frameHex, renderHex)) { Serial.println(F("[RENDER] image abandonnée (aucun ACK)")); return 0; }
-  return 2;
-}
-#endif
-
 // ─── FETCH FRAME ────────────────────────────────────────────────────────────
 // Streaming ligne par ligne RGB565 — AUCUN malloc TFT_BUF_SIZE (40960 bytes).
 // Un seul rowBuf[256] sur la stack, lu depuis le stream réseau puis envoyé
@@ -997,10 +933,6 @@ bool doFetchFrame(const String& frameId, const String& frameSource) {
   size_t totalRead = 0;
   bool   success   = true;
   unsigned long t0 = millis();
-#if POD_RENDER_V1
-  uint8_t podResult = 0;   // 0 échec · 2 rendu calculé ET remis au TFT
-  char    podFrameHex[65], podRenderHex[65];
-#endif
   {   // ── connexion TLS : fermée AVANT l'ACK (sinon le second TLS manque de mémoire : « ACK → -1 », tas à 7 Ko) ──
   WiFiClientSecure client;
   client.setInsecure();
@@ -1036,13 +968,6 @@ bool doFetchFrame(const String& frameId, const String& frameSource) {
   // puis écrit immédiatement au ST7735 via writePixels.
   // La fenêtre d'adresse couvre l'écran entier — le contrôleur avance
   // automatiquement de ligne en ligne sans re-envoyer CASET/RASET.
-#if POD_RENDER_V1
-  // Rendu v1 en flux : le noyau compose chaque ligne (cartel + fit), le TFT reçoit exactement les octets qui alimentent renderHash. TLS ouvert pendant la lecture.
-  podResult = podRenderStreamToTft(http.getStreamPtr(), podFrameHex, podRenderHex);
-  success   = (podResult == 2);
-  totalRead = success ? (size_t)TFT_BUF_SIZE : 0;
-  http.end();
-#else
   WiFiClient* stream = http.getStreamPtr();
   uint8_t rowBuf[TFT_ROW_BYTES];  // 256 bytes sur la stack — sûr ✓
 
@@ -1085,7 +1010,6 @@ bool doFetchFrame(const String& frameId, const String& frameSource) {
 
   tft.endWrite();
   http.end();
-#endif
   }   // TLS fermé
 
   Serial.printf_P(PSTR("[FETCHFRAME] lu=%u/%u en %lums — %s\n"),
@@ -1097,13 +1021,8 @@ bool doFetchFrame(const String& frameId, const String& frameSource) {
     return false;
   }
 
-#if POD_RENDER_V1
-  // Le cartel fait partie de l'image rendue (aucune gravure par-dessus). Rendu calculé ET remis au TFT : seul cas de succès.
-  Serial.printf_P(PSTR("[RENDER] calculé ET remis au TFT — mode=%u frameHash=%s renderHash=%s\n"), (unsigned)POD_RENDER_MODE_DEFAULT, podFrameHex, podRenderHex);
-#else
   // Superposer le cartel (header RESCOE + footer artiste/titre)
   burnTFTCartel();
-#endif
 
   hasDisplayedFrame     = true;
   lastFrameId           = frameId;

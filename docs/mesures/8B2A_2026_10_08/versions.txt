@@ -1,0 +1,7 @@
+arduino-cli  Version: 1.4.1 Commit: e39419312 Date: 2026-01-19T16:12:56Z
+GNU nm (GNU Binutils) 2.32
+GNU nm (GNU Tools for Arm Embedded Processors 7-2017-q4-major) 2.29.51.20171128
+arduino:renesas_uno 1.5.3    1.6.0  Arduino UNO R4 Boards
+esp8266:esp8266     3.1.2    3.1.2  esp8266
+g++ (hôte) : g++.exe (Rev6, Built by MSYS2 project) 10.2.0
+Adafruit GFX : version=1.12.6

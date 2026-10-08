@@ -38,6 +38,24 @@
 #include "epd29b.h"
 #include "pod_vote_r4.h"       // validation réelle (vote v2) : SHA-256 + métriques entières en flux — ⚠ NON TESTÉ sur la carte
 
+// POD_RENDER_V1_BEGIN
+// ─── Rendu v1 EN FLUX (lot 8B-2A) — INACTIF PAR DÉFAUT ────────────────────────────────────────────────────────────────────────────────────────────
+// 0 (défaut) : comportement d'avant, octet pour octet (cartel gravé par burnCartel dans blackBuf, epd.display des plans complets).
+// 1 : l'image reçue (blackBuf / redBuf, JAMAIS modifiés) est rendue par le noyau gelé consensus-pod/src/podRenderStream.h (layoutVersion 1 : cartel, fit) et remise au pilote PAR MORCEAUX de 32 octets
+//     (Epd29b::displayStream) ; frameHash (octets reçus) et renderHash (octets remis) sont CALCULÉS et seulement journalisés — l'ACK, les routes et le rapport de rendu ne sont PAS modifiés.
+// ⚠ NON ESSAYÉ SUR LA CARTE. Ne pas activer sans le lot 8B-2B (canari) : docs/LOT_8B2A_INTEGRATION_CANARIS_2026_10_08.md.
+#ifndef POD_RENDER_V1
+#define POD_RENDER_V1 0
+#endif
+#ifndef POD_RENDER_MODE_DEFAULT
+#define POD_RENDER_MODE_DEFAULT POD_R_FIT   // constante de compilation : le réglage cartelMode n'est PAS exposé (pas d'interface, pas de réglage serveur)
+#endif
+#if POD_RENDER_V1
+#include "podRenderStream.h"
+#include "crypto_uno_r4.h"
+#endif
+// POD_RENDER_V1_END
+
 // ─── CONFIG ────────────────────────────────────────────────────────────────
 #if __has_include("secrets.h")
   #include "secrets.h"
@@ -321,9 +339,11 @@ static inline void clearPix(uint8_t* buf, int x, int y) {
 }
 static void clearBothPlanes() { memset(blackBuf, 0xFF, BUF_SIZE); memset(redBuf, 0xFF, BUF_SIZE); }
 /** Lignes y0..y1 de l'image remises à blanc (noir ET rouge). */
+#if !POD_RENDER_V1   // utilisé seulement par burnCartel
 static void whiteRows(int y0, int y1) {
   for (int x = 0; x < IMG_W; x++) for (int y = y0; y <= y1; y++) { clearPix(blackBuf, x, y); clearPix(redBuf, x, y); }
 }
+#endif
 static void hLine(uint8_t* buf, int y, int x0 = 0, int x1 = IMG_W - 1) { for (int x = x0; x <= x1; x++) setPix(buf, x, y); }
 
 // Police 5×7 : une colonne = un octet, bit 0 = ligne du HAUT (police classique). Chiffres, A-Z, « : . - / # », espace.
@@ -368,6 +388,7 @@ static void drawText(uint8_t* buf, int x, int y, const String& text, int scale =
 static int textWidth(const String& t, int scale = 1) { return (int)t.length() * 6 * scale; }
 static int centerX(const String& t, int scale = 1) { const int w = (IMG_W - textWidth(t, scale)) / 2; return w < 0 ? 0 : w; }
 
+#if !POD_RENDER_V1   // le cartel gravé en place n'existe pas avec le rendu v1 (cartel calculé par le noyau)
 /** Cartel PAR-DESSUS l'œuvre : bande haute (date · #bloc), bande basse (artiste - titre), 13 px chacune, texte noir sur blanc. */
 static void burnCartel(const String& workTitle, const String& artistName, const String& ts, int blockIndex) {
   const int BAND = 13;
@@ -390,6 +411,8 @@ static void burnCartel(const String& workTitle, const String& artistName, const 
   drawText(blackBuf, centerX(bot), sep + 3, bot);
 }
 
+#endif
+
 // ─── Écran e-ink ───────────────────────────────────────────────────────────
 static void waitMinRefreshGap() {
   if (!hasRefreshed) return;
@@ -407,6 +430,35 @@ static bool refreshPanel(bool white) {
   logf("[EINK] %s %s en %lu ms", white ? "page blanche" : "image", ok ? "affichée" : "ECHEC", millis() - t0);
   return ok;
 }
+
+#if POD_RENDER_V1
+// ─── Rendu v1 en flux : calcul ET remise au pilote ───────────────────────────────────────────────────────────────────────────────────────────────
+// Mémoire (UNO R4, pile principale ≈ 1 Ko : TOUS les objets sont GLOBAUX) : PodEinkRenderer 272 o (son contexte SHA sert AUSSI au frameHash : pas de second contexte) + 65 o de hash (statique), plus les plans blackBuf / redBuf EXISTANTS (2 × 4 736 o, jamais modifiés) ; le seul
+// tampon de pile est le morceau de 32 o du pilote. Aucune grille, aucun tampon final. Retour : 0 = échec AVANT la remise · 1 = rendu calculé mais NON remis (panneau resté BUSY) · 2 = calculé ET remis.
+static PodEinkRenderer<PodSha256Rw> g_podEink;
+static uint32_t podRenderProduce(void* ctx, uint8_t* out, uint32_t cap) { return static_cast<PodEinkRenderer<PodSha256Rw>*>(ctx)->read(out, cap); }
+
+static uint8_t podRenderAndShow() {
+  const PodRenderSpec spec = pod_render_spec(POD_R_EINK29);
+  const PodRenderMeta meta = { (const uint8_t*)pendingDisplayTs.c_str(), (size_t)pendingDisplayTs.length(), (int32_t)currentBlockIndex,
+                               (const uint8_t*)pendingArtistName.c_str(), (size_t)pendingArtistName.length(), (const uint8_t*)pendingWorkTitle.c_str(), (size_t)pendingWorkTitle.length() };
+  static char hex[65];   // statique (65 o de BSS, partagé frameHash puis renderHash) : rien sur la pile de 1 Ko — marge statique de ce firmware : voir docs/LOT_8B2A
+  if (!g_podEink.frameHash(spec, blackBuf, redBuf, BUF_SIZE, hex)) { logf("[RENDER] frameHash impossible — abandon"); return 0; }
+  logf("[RENDER] frameHash=%s", hex);
+  if (!g_podEink.begin(spec, POD_RENDER_MODE_DEFAULT, meta, blackBuf, redBuf, BUF_SIZE)) { logf("[RENDER] paramètres refusés — abandon"); return 0; }
+  waitMinRefreshGap();
+  const unsigned long t0 = millis();
+  if (!epd.init()) { logf("[RENDER] panneau non initialisé — abandon, rien n'est envoyé"); lastRefreshMs = millis(); hasRefreshed = true; return 0; }
+  const int8_t sent = epd.displayStream(podRenderProduce, &g_podEink);
+  epd.sleep();
+  lastRefreshMs = millis(); hasRefreshed = true;
+  if (sent == -1) { logf("[RENDER] production interrompue — le panneau n'a PAS été rafraîchi"); return 0; }
+  if (!g_podEink.finish(hex)) { logf("[RENDER] renderHash incomplet — abandon"); return 0; }
+  if (sent != 0) { logf("[RENDER] rendu CALCULÉ (renderHash=%s) mais NON remis : le panneau n'a pas fini (BUSY)", hex); return 1; }
+  logf("[RENDER] calculé ET remis au pilote en %lu ms — mode=%u renderHash=%s", millis() - t0, (unsigned)POD_RENDER_MODE_DEFAULT, hex);
+  return 2;
+}
+#endif
 
 // ─── Onboarding ────────────────────────────────────────────────────────────
 static void displayKeyMaterialOnce() {
@@ -503,13 +555,19 @@ static bool doFetchFrame(const String& frameId, const String& frameSource) {
   if (noFrame) { logf("[FRAME] pas de frame disponible"); return true; }
   if (!got) { logf("[FRAME] image incomplète — pas d'ACK, nouvel essai au prochain pull"); return false; }
 
+#if !POD_RENDER_V1
   burnCartel(pendingWorkTitle, pendingArtistName, pendingDisplayTs, currentBlockIndex);
+#endif
 
   persistFrameId("");                                // pendant le rafraîchissement l'écran est dans un état incertain
 #if CLEAR_BEFORE_IMAGE
   if (hasRefreshed || lastFrameId.length() > 0) refreshPanel(true);
 #endif
+#if POD_RENDER_V1
+  if (podRenderAndShow() != 2) { logf("[FRAME] affichage échoué — frame conservée côté serveur"); return false; }   // 2 = rendu calculé ET remis au pilote
+#else
   if (!refreshPanel(false)) { logf("[FRAME] affichage échoué — frame conservée côté serveur"); return false; }
+#endif
 
   lastFrameId = frameKey(frameId);
   persistFrameId(frameId);
