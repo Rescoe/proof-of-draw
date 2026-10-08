@@ -50,6 +50,9 @@
 #ifndef POD_RENDER_MODE_DEFAULT
 #define POD_RENDER_MODE_DEFAULT POD_R_FIT   // constante de compilation : le réglage cartelMode n'est PAS exposé (pas d'interface, pas de réglage serveur)
 #endif
+#ifndef POD_CANARY
+#define POD_CANARY 0   // 1 = BUILD LOCAL TEMPORAIRE de CANARI (journal [CANARY] : pile réelle, mémoire, métadonnées) ; sans effet si POD_RENDER_V1 = 0 — docs/CANARY_R4_EINK29_RENDU_V1_2026_10_08.md
+#endif
 #if POD_RENDER_V1
 #include "podRenderStream.h"
 #include "crypto_uno_r4.h"
@@ -152,6 +155,36 @@ static uint32_t stackDepthBytes() {
   while (p < (const uint8_t*)&__HeapLimit && *p == 0xA5) p++;
   return 1024 + (uint32_t)((const uint8_t*)&__HeapLimit - p);
 }
+#if POD_RENDER_V1 && POD_CANARY
+// ─── CANARI : pile RÉELLE de la pile principale (1 024 o) — aucune variable globale ───────────────────────────────────────────────────────────────────────────────
+// Le cœur R4 exécute setup() et loop() directement dans main(), donc sur la pile principale [__StackLimit, __StackTop] (symboles du script d'édition de liens, déjà utilisés par paintStack() via __HeapLimit == __StackLimit).
+// podCanaryPaint() peint la zone LIBRE sous le cadre courant (moins 192 o de sécurité) avec 0x5A et écrit au fond un marqueur « CNRY » + le nombre d'octets peints ; podCanaryReport() cherche le plus bas octet
+// modifié : usage maximal observé = __StackTop − cet octet. Marqueur de fond détruit = la pile a touché son extrémité basse (arrêt). La peinture n'est pas concurrente d'une interruption (monoprocesseur : une ISR
+// s'exécute entre deux octets peints, puis rend la main).
+extern char __StackLimit, __StackTop, __HeapBase;
+static const uint8_t CANARY_PAINT = 0x5A;
+static const uint32_t CANARY_MAGIC = 0x434E5259UL;   // « CNRY »
+static void podCanaryPaint() {
+  volatile uint8_t* lo = (volatile uint8_t*)&__StackLimit;
+  volatile uint8_t* hi = (volatile uint8_t*)__builtin_frame_address(0) - 192;
+  if (hi <= lo + 16) return;
+  for (volatile uint8_t* p = lo + 8; p < hi; p++) *p = CANARY_PAINT;
+  *(volatile uint32_t*)lo = CANARY_MAGIC;
+  *(volatile uint32_t*)(lo + 4) = (uint32_t)(hi - lo);
+}
+static void podCanaryReport(const char* tag) {
+  volatile uint8_t* lo = (volatile uint8_t*)&__StackLimit;
+  const uint32_t magic = *(volatile uint32_t*)lo, painted = *(volatile uint32_t*)(lo + 4);
+  if (magic != CANARY_MAGIC || painted < 16 || painted > 1024) { logf("[CANARY] %s: ALERTE PILE — marqueur de fond écrasé ou absent : la pile principale a touché son extrémité basse → ARRÊT", tag); return; }
+  volatile uint8_t* p = lo + 8; volatile uint8_t* end = lo + painted;
+  while (p < end && *p == CANARY_PAINT) p++;
+  const uint32_t used = (uint32_t)((uint8_t*)&__StackTop - (uint8_t*)p);
+  const long margin = 1024L - (long)used;
+  logf("[CANARY] %s: pile utilisée au plus %lu o / 1024 (marge %ld o)%s | tas libre %lu o | RAM statique %lu o", tag, (unsigned long)used, margin, (p == end ? " [aucune écriture sous le point de peinture]" : ""),
+       (unsigned long)freeHeapBytes(), (unsigned long)((uint8_t*)&__HeapBase - (uint8_t*)0x20000000));
+  if (margin < 128) logf("[CANARY] %s: ALERTE PILE — marge < 128 o → ARRÊT", tag);
+}
+#endif
 static void reportMem(const char* tag) { logf("[MEM] %s: tas libre %lu o, pile max ~%lu o", tag, (unsigned long)freeHeapBytes(), (unsigned long)stackDepthBytes()); }
 
 // ─── Texte : ASCII seulement (police 5×7, majuscules) — replie les accents UTF-8 ─────────────────
@@ -451,6 +484,9 @@ static uint8_t podRenderRun(void* scratch) {   // plusieurs sorties : l'objet es
   const PodRenderSpec spec = pod_render_spec(POD_R_EINK29);
   const PodRenderMeta meta = { (const uint8_t*)pendingDisplayTs.c_str(), (size_t)pendingDisplayTs.length(), (int32_t)currentBlockIndex,
                                (const uint8_t*)pendingArtistName.c_str(), (size_t)pendingArtistName.length(), (const uint8_t*)pendingWorkTitle.c_str(), (size_t)pendingWorkTitle.length() };
+#if POD_RENDER_V1 && POD_CANARY
+  logf("[CANARY] meta ts=\"%.40s\" artist=\"%.60s\" title=\"%.60s\" bloc=%d mode=%u", pendingDisplayTs.c_str(), pendingArtistName.c_str(), pendingWorkTitle.c_str(), (int)currentBlockIndex, (unsigned)POD_RENDER_MODE_DEFAULT);
+#endif
   if (!S->r.frameHash(spec, blackBuf, redBuf, BUF_SIZE, S->hex)) { logf("[RENDER] frameHash impossible — abandon"); return 0; }
   logf("[RENDER] frameHash=%s", S->hex);
   if (!S->r.begin(spec, POD_RENDER_MODE_DEFAULT, meta, blackBuf, redBuf, BUF_SIZE)) { logf("[RENDER] paramètres refusés — abandon"); return 0; }
@@ -595,7 +631,13 @@ static bool doFetchFrame(const String& frameId, const String& frameSource) {
   lastFrameWasConsensus = (frameSource == "consensus");
   pendingCandidateId = "";
   logf("[FRAME] OK en %lu ms (frameId=%s source=%s)", millis() - t0, frameId.c_str(), frameSource.c_str());
+#if POD_RENDER_V1 && POD_CANARY
+  podCanaryReport("après affichage");
+#endif
   ackFrame(frameId);
+#if POD_RENDER_V1 && POD_CANARY
+  podCanaryReport("après ACK");
+#endif
   return true;
 }
 
@@ -722,6 +764,9 @@ static bool doPull() {
 
   doFetchFrame(newFrameId, newFrameSource);          // échec : on retourne quand même true (pas de boucle pull→échec→pull)
   reportMem("après pull");
+#if POD_RENDER_V1 && POD_CANARY
+  podCanaryReport("après pull");
+#endif
   return true;
 }
 
@@ -845,6 +890,12 @@ void setup() {
   while (!Serial && millis() < 2500) {}
   logf("\n[BOOT] Proof-of-Draw UNO R4 WiFi + e-ink 2.9\" BWR — %s", FIRMWARE_VERSION);
   reportMem("boot");
+#if POD_RENDER_V1 && POD_CANARY
+  logf("[CANARY] ===== BUILD LOCAL TEMPORAIRE DE CANARI — rendu v1 ACTIF (POD_RENDER_V1=1, mode=%u) — NE PAS DÉPLOYER, NE PAS COMMITER LE BINAIRE =====", (unsigned)POD_RENDER_MODE_DEFAULT);
+  logf("[CANARY] firmware annoncé au serveur : %s (inchangé) ; pile principale [0x%08lx, 0x%08lx] ; SP=0x%08lx", FIRMWARE_VERSION, (unsigned long)&__StackLimit, (unsigned long)&__StackTop, (unsigned long)__builtin_frame_address(0));
+  podCanaryPaint();
+  podCanaryReport("boot");
+#endif
 
   epd.begin();
   clearBothPlanes();
@@ -880,6 +931,9 @@ void setup() {
   }
   lastPullMs = millis(); lastValidateMs = millis();
   logf("[BOOT] prêt — pull toutes les %lu s", PULL_INTERVAL / 1000UL);
+#if POD_RENDER_V1 && POD_CANARY
+  podCanaryReport("prêt");
+#endif
 }
 
 void loop() {

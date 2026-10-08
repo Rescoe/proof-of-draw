@@ -64,3 +64,6 @@ next-env.d.ts
 # Firmware : identifiants Wi-Fi locaux
 arduino_uno_r4/**/secrets.h
 esp8266/**/secrets.h
+
+# builds locaux de canari (contiennent les identifiants Wi-Fi de secrets.h : JAMAIS commités)
+/canary-builds/

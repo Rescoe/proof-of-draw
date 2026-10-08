@@ -74,7 +74,7 @@ for (const s of SKETCHES) {
 
   test(`${s.name} : chemin ACTIVÉ — aucune allocation dynamique, AUCUN ACK hors succès (l'écran peut rester blanc ou partiellement dessiné : documenté), hashes seulement journalisés`, () => {
     const src = read(s.ino);
-    const on = src.split("\n").join("\n");
+    const on = src.replace(/#if POD_RENDER_V1 && POD_CANARY\n[\s\S]*?\n#endif\n/g, "");   // l'instrumentation de canari (POD_CANARY, 0 par défaut) est gardée par tests/canaryPrep.test.ts
     // blocs actifs seulement avec POD_RENDER_V1 = 1
     const blocks = [...on.matchAll(/#if POD_RENDER_V1\n([\s\S]*?)\n#(?:else|endif)/g)].map((m) => m[1]).join("\n");
     const code = blocks.replace(/\/\/.*$/gm, "").replace(/^#include .*$/gm, "");   // sans les commentaires ni les #include
