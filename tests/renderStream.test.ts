@@ -78,7 +78,7 @@ test("pas de grille dans la référence refactorée non plus : pod_render_bottom
   assert.match(body, /char probe\[2\]/);
 });
 
-const canarySorted = () => ["esp_eink_2.9BWR.ino", "esp_tft1.8.ino", "podRenderStream.h", "podRenderStream.h", "pod_uno_r4_eink29.ino", "pod_uno_r4_tft18.ino", "podRenderStream.h", "podRenderStream.h"].sort();
+const canarySorted = () => ["esp_eink_2.9BWR.ino", "esp_tft1.8.ino", "esp_eink_2.7BW.ino", "esp_eink_2.7BW_OLED.ino", "pod_uno_r4_eink29.ino", "pod_uno_r4_tft18.ino", "pod_uno_r4_eink27.ino", "pod_uno_r4_eink27_oled.ino", ...Array(8).fill("podRenderStream.h")].sort();
 
 test("mesures de compilation ARCHIVÉES (docs/mesures/8B1_2026_10_07) : objets bornés, aucun tampon image ; ESP8266 ≤ 40 000 o de RAM statique ; pile de la bibliothèque documentée ; sondes jamais déployées", () => {
   const dir = "docs/mesures/8B1_2026_10_07";
@@ -103,7 +103,7 @@ test("mesures de compilation ARCHIVÉES (docs/mesures/8B1_2026_10_07) : objets b
   const walk = (d: string): string[] => fs.readdirSync(path.join(root, d), { withFileTypes: true }).flatMap((e) => e.name === "node_modules" || e.name === ".next" || e.name === ".claude" ? [] : e.isDirectory() ? walk(path.join(d, e.name)) : /\.(ino|h|cpp|ts|tsx)$/.test(e.name) ? [path.join(d, e.name)] : []);
   const users = ["esp8266", "arduino_uno_r4", "app", "lib", "consensus-pod", "scripts"].flatMap(walk).filter((f) => /podRenderStream/.test(fs.readFileSync(path.join(root, f), "utf8"))).map((f) => f.replace(/\\/g, "/")).sort();
   // lot 8B-2A : seuls les 4 dossiers canaris (4 .ino + 4 copies du noyau) l'utilisent, avec les sondes, le harnais et l'original
-  const canary = ["esp8266/esp_eink_2.9BWR/", "esp8266/esp_tft1.8/", "arduino_uno_r4/pod_uno_r4_eink29/", "arduino_uno_r4/pod_uno_r4_tft18/"];
+  const canary = ["esp8266/esp_eink_2.9BWR/", "esp8266/esp_tft1.8/", "arduino_uno_r4/pod_uno_r4_eink29/", "arduino_uno_r4/pod_uno_r4_tft18/", "esp8266/esp_eink_2.7BW/", "esp8266/esp_eink_2.7BW_OLED/", "arduino_uno_r4/pod_uno_r4_eink27/", "arduino_uno_r4/pod_uno_r4_eink27_oled/"];
   const outside = users.filter((u) => !canary.some((c) => u.startsWith(c)));
   assert.deepEqual(outside, [
     "consensus-pod/examples/RenderProbeEsp8266/RenderProbeEsp8266.ino", "consensus-pod/examples/RenderProbeUnoR4/RenderProbeUnoR4.ino", "consensus-pod/host/render_stream_harness.cpp",

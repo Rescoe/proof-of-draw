@@ -329,6 +329,27 @@ void Epd::Display(const unsigned char* Image)
 	TurnOnDisplay();
 }
 
+// POD_RENDER_V1_BEGIN
+bool Epd::DisplayStream(ProduceFn produce, void* ctx)
+{
+	const unsigned int Width = (WIDTH % 8 == 0)? (WIDTH / 8 ): (WIDTH / 8 + 1);
+	const unsigned int total = Width * HEIGHT;   // 5 808 octets
+	unsigned char chunk[32];
+	unsigned int sent = 0;
+	SendCommand(0x24);
+	while (sent < total) {
+		const unsigned int left = total - sent;
+		const unsigned int cap = left < sizeof(chunk) ? left : (unsigned int)sizeof(chunk);
+		const unsigned int n = produce(ctx, chunk, cap);
+		if (n == 0 || n > cap) return false;   // production interrompue : le rafraîchissement n'est PAS lancé
+		for (unsigned int i = 0; i < n; i++) SendData(chunk[i]);
+		sent += n;
+		yield();
+	}
+	TurnOnDisplay();
+	return true;
+}
+// POD_RENDER_V1_END
 void Epd::Display_Fast(const unsigned char* Image)
 {
 	unsigned int Width, Height;

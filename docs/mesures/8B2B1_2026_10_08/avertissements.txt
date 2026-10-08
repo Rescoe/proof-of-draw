@@ -1,0 +1,24 @@
+== esp_eink29 : avertissements du dépôt — base: 1 · OFF: 1 · ON: 1
+   OFF : aucun avertissement nouveau
+   ON  : aucun avertissement nouveau
+== esp_tft18 : avertissements du dépôt — base: 4 · OFF: 4 · ON: 4
+   OFF : aucun avertissement nouveau
+   ON  : aucun avertissement nouveau
+== esp_eink27 : avertissements du dépôt — base: 1 · OFF: 1 · ON: 1
+   OFF : aucun avertissement nouveau
+   ON  : aucun avertissement nouveau
+== esp_eink27_oled : avertissements du dépôt — base: 4 · OFF: 4 · ON: 4
+   OFF : aucun avertissement nouveau
+   ON  : aucun avertissement nouveau
+== r4_eink29 : avertissements du dépôt — base: 0 · OFF: 0 · ON: 0
+   OFF : aucun avertissement nouveau
+   ON  : aucun avertissement nouveau
+== r4_tft18 : avertissements du dépôt — base: 0 · OFF: 0 · ON: 0
+   OFF : aucun avertissement nouveau
+   ON  : aucun avertissement nouveau
+== r4_eink27 : avertissements du dépôt — base: 0 · OFF: 0 · ON: 0
+   OFF : aucun avertissement nouveau
+   ON  : aucun avertissement nouveau
+== r4_eink27_oled : avertissements du dépôt — base: 0 · OFF: 0 · ON: 0
+   OFF : aucun avertissement nouveau
+   ON  : aucun avertissement nouveau

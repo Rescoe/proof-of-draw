@@ -34,6 +34,13 @@ public:
     void TurnOnDisplay_4GRAY(void);
     void Clear(void);
     void Display(const unsigned char* Image);
+// POD_RENDER_V1_BEGIN
+    // Rendu en flux (lot 8B-2B-1) : `produce(ctx, out, cap)` remplit `out` d'au plus `cap` octets et retourne leur nombre (0 = fin ou erreur). Les octets sont envoyés tels quels au plan unique (0x24), comme Display(), sans tampon
+    // intermédiaire. Retourne false SANS lancer le rafraîchissement si `produce` s'arrête avant les WIDTH/8 × HEIGHT octets (la RAM du panneau est alors partiellement écrite ; l'écran garde son état physique du moment,
+    // éventuellement une page blanche). TurnOnDisplay() bloque jusqu'à la fin du rafraîchissement SANS délai maximal (ReadBusy() attend indéfiniment) : true = « tout a été remis ET le panneau a fini ».
+    typedef unsigned int (*ProduceFn)(void* ctx, unsigned char* out, unsigned int cap);
+    bool DisplayStream(ProduceFn produce, void* ctx);
+// POD_RENDER_V1_END
     void Display_Fast(const unsigned char* Image);
     void Display_Base(const unsigned char* Image);
     void Display_Base_color(unsigned char color);

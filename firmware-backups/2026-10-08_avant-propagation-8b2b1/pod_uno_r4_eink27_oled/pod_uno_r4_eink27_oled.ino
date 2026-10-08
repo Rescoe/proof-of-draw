@@ -1,9 +1,10 @@
-// pod_uno_r4_eink27.ino
-// Proof-of-Draw — Firmware UNO R4 WiFi + écran e-ink Waveshare 2.7" V2 (noir / blanc, 264×176)
+// pod_uno_r4_eink27_oled.ino
+// Proof-of-Draw — Firmware multiscreen UNO R4 WiFi + e-ink Waveshare 2.7" V2 + OLED SSD1306 0.96"
 //
 // ⚠ NON TESTÉ SUR LE MATÉRIEL (06/10/2026).
-// Le protocole réseau dérive du port R4 e-ink 2.9" et le pilote du firmware ESP8266 e-ink 2.7".
-// Le sketch doit être compilé et mesuré sur une vraie UNO R4 WiFi + Waveshare 2.7" avant de retirer cet avertissement.
+// Le protocole réseau dérive du port R4 e-ink 2.9" et les écrans du firmware multiscreen ESP8266.
+// Le sketch doit être compilé et mesuré sur une vraie UNO R4 WiFi + Waveshare 2.7" + SSD1306 avant de retirer cet avertissement.
+// Les images fixes sont prises en charge sur les deux écrans. Animations et scene-v1 restent volontairement non annoncées avant ce test.
 //
 // Même protocole et même type d'écran serveur (« eink27bw ») que esp8266/esp_eink_2.7BW :
 //   register → pull (métadonnées légères) → pull-frame?fmt=bin (5808 o) → affichage → ACK,
@@ -33,33 +34,17 @@
 #include <stdarg.h>
 #include <WiFiS3.h>
 #include <SPI.h>
+#include <Wire.h>
 #include <EEPROM.h>
 #include <ArduinoJson.h>
+#include <Adafruit_GFX.h>
+#include <Adafruit_SSD1306.h>
 #include <qrcode.h>
 #include <Ed25519.h>
 #include <SHA256.h>
 #include "pod_http.h"
 #include "epd2in7_V2.h"
 #include "pod_vote_r4.h"
-
-// POD_RENDER_V1_BEGIN
-// ─── Rendu v1 EN FLUX (lot 8B-2A / 8B-2B-1) — INACTIF PAR DÉFAUT ──────────────────────────────────────────────────────────────────────────────────────────
-// 0 (défaut) : comportement d'avant, octet pour octet (cartel gravé en place dans le tampon, affichage du tampon complet).
-// 1 : l'image reçue (plan unique, JAMAIS modifié) est rendue par le noyau gelé consensus-pod/src/podRenderStream.h (layoutVersion 1 : cartel, fit) et remise au pilote PAR MORCEAUX de 32 octets (DisplayStream) ;
-//     frameHash (octets reçus) et renderHash (octets remis) sont CALCULÉS et seulement journalisés — l'ACK, les routes et le rapport de rendu ne sont PAS modifiés.
-// ⚠ NON ESSAYÉ SUR LA CARTE. Ne pas activer sans canari matériel : docs/LOT_8B2B1_PROPAGATION_2026_10_08.md.
-#ifndef POD_RENDER_V1
-#define POD_RENDER_V1 0
-#endif
-#ifndef POD_RENDER_MODE_DEFAULT
-#define POD_RENDER_MODE_DEFAULT POD_R_FIT   // constante de compilation : le réglage cartelMode n'est PAS exposé (pas d'interface, pas de réglage serveur)
-#endif
-#if POD_RENDER_V1
-#include "podRenderStream.h"
-#include "crypto_uno_r4.h"
-#include <new>
-#endif
-// POD_RENDER_V1_END
 
 // ─── CONFIG ────────────────────────────────────────────────────────────────
 #if __has_include("secrets.h")
@@ -72,8 +57,9 @@
 #endif
 
 #define SERVER_HOST         "proof-of-draw.vercel.app"
-#define SCREEN_TYPE         "eink27bw"             // profil serveur 264×176 noir/blanc (lib/screenProfiles.ts)
-#define FIRMWARE_VERSION    "r4eink27-1.1"
+#define SCREEN_E27          "eink27bw"
+#define SCREEN_OLED         "oled096"
+#define FIRMWARE_VERSION    "r4multiscreen-1.1"
 #define PULL_INTERVAL       60000UL                // 1 min
 #define VALIDATE_INTERVAL   30000UL                // 30 s : candidat en attente
 #define HTTP_TIMEOUT_MS     20000UL
@@ -86,6 +72,10 @@
 #define EPD_BYTES_PER_ROW 22                       // 176 / 8
 #define BUF_SIZE ((EPD_WIDTH * EPD_HEIGHT) / 8)   // 5808
 #define FRAME_BYTES BUF_SIZE
+#define OLED_W 128
+#define OLED_H 64
+#define OLED_BUF_SIZE ((OLED_W * OLED_H) / 8)
+#define OLED_ADDR 0x3C
 
 // ─── EEPROM (flash de données de la R4, pas de commit) — même carte mémoire que les firmwares ESP ─────────────
 #define EEPROM_PRIVKEY_OFF     0
@@ -102,6 +92,10 @@
 #define OWNED_HASH_LEN         32
 #define EEPROM_FRAMEID_OFF     420                 // 32 caractères : début du frameId affiché (zone « réservée » des ESP)
 #define FRAMEID_LEN            32
+#define EEPROM_OLED_FLAG_OFF   452
+#define EEPROM_OLED_BUF_OFF    453
+#define EEPROM_OLED_FRAMEID_OFF (EEPROM_OLED_BUF_OFF + OLED_BUF_SIZE)
+#define OLED_SAVED_FLAG        0x5A
 
 #if ARDUINOJSON_VERSION_MAJOR >= 7
   #define JSON_DOC(name, cap) JsonDocument name
@@ -111,14 +105,17 @@
 
 // ─── OBJETS / ÉTAT ─────────────────────────────────────────────────────────
 Epd epd;
+Adafruit_SSD1306 oled(OLED_W, OLED_H, &Wire, -1);
 static uint8_t blackBuf[BUF_SIZE];                 // 0 = noir
+bool oledReady = false;
 unsigned long lastRefreshMs = 0;
 bool hasRefreshed = false;
 bool onboardingDrawn = false;                      // écran d'appairage déjà dessiné depuis ce démarrage
 
 String deviceId, pairCode;
 bool   registered = false, paired = false;
-String lastFrameId = "";
+String lastFrameId = "";                         // e-ink
+String lastFrameIdOLED = "";
 bool   lastFrameWasConsensus = false;
 
 uint8_t privateKey[32], publicKey[32];
@@ -225,6 +222,28 @@ static String loadFrameId() {
   return s;
 }
 
+static void saveOledFrame(const uint8_t* buf, const String& id) {
+  EEPROM.update(EEPROM_OLED_FLAG_OFF, 0x00);        // marqueur écrit en dernier : restauration toujours atomique
+  for (int i = 0; i < OLED_BUF_SIZE; i++) EEPROM.update(EEPROM_OLED_BUF_OFF + i, buf[i]);
+  const String k = frameKey(id);
+  for (int i = 0; i < FRAMEID_LEN; i++) EEPROM.update(EEPROM_OLED_FRAMEID_OFF + i, i < (int)k.length() ? (uint8_t)k[i] : (uint8_t)' ');
+  EEPROM.update(EEPROM_OLED_FLAG_OFF, OLED_SAVED_FLAG);
+}
+
+static bool restoreOledFrame() {
+  if (!oledReady || EEPROM.read(EEPROM_OLED_FLAG_OFF) != OLED_SAVED_FLAG) return false;
+  uint8_t* buf = oled.getBuffer();
+  for (int i = 0; i < OLED_BUF_SIZE; i++) buf[i] = EEPROM.read(EEPROM_OLED_BUF_OFF + i);
+  lastFrameIdOLED = "";
+  for (int i = 0; i < FRAMEID_LEN; i++) {
+    const uint8_t c = EEPROM.read(EEPROM_OLED_FRAMEID_OFF + i);
+    if (c == ' ' || c < 33 || c > 126) break;
+    lastFrameIdOLED += (char)c;
+  }
+  oled.display();
+  return lastFrameIdOLED.length() > 0;
+}
+
 // Anneau des blocs possédés (10 × 32 caractères), identique aux autres firmwares
 static void saveOwnedBlockHash(const String& fullHash) {
   if (fullHash.length() < 16) return;
@@ -329,8 +348,8 @@ static int httpCall(const char* method, const String& path, const String* body, 
 }
 
 // ─── DESSIN dans les plans e-ink ───────────────────────────────────────────
-// Repère = celui de l'IMAGE du serveur (lib/canvasToScreen.ts, eink27bw) : x 0..263 vers la droite, y 0..175 vers le bas.
-//   bufRow = x          bufCol = 175 - y          octet = bufRow*22 + bufCol/8          bit = 7 - bufCol%8
+// Repère = celui de l'IMAGE du serveur (lib/canvasToScreen.ts, eink29bwr) : x 0..295 vers la droite, y 0..127 vers le bas.
+//   bufRow = x          bufCol = 127 - y          octet = bufRow*16 + bufCol/8          bit = 7 - bufCol%8
 // Un bit à 0 = pixel noir.
 static inline void setPix(uint8_t* buf, int x, int y) {
   if ((unsigned)x >= IMG_W || (unsigned)y >= IMG_H) return;
@@ -344,11 +363,9 @@ static inline void clearPix(uint8_t* buf, int x, int y) {
 }
 static void clearBothPlanes() { memset(blackBuf, 0xFF, BUF_SIZE); }
 /** Lignes y0..y1 de l'image remises à blanc. */
-#if !POD_RENDER_V1   // utilisé seulement par burnCartel
 static void whiteRows(int y0, int y1) {
   for (int x = 0; x < IMG_W; x++) for (int y = y0; y <= y1; y++) clearPix(blackBuf, x, y);
 }
-#endif
 static void hLine(uint8_t* buf, int y, int x0 = 0, int x1 = IMG_W - 1) { for (int x = x0; x <= x1; x++) setPix(buf, x, y); }
 
 // Police 5×7 : une colonne = un octet, bit 0 = ligne du HAUT (police classique). Chiffres, A-Z, « : . - / # », espace.
@@ -393,7 +410,6 @@ static void drawText(uint8_t* buf, int x, int y, const String& text, int scale =
 static int textWidth(const String& t, int scale = 1) { return (int)t.length() * 6 * scale; }
 static int centerX(const String& t, int scale = 1) { const int w = (IMG_W - textWidth(t, scale)) / 2; return w < 0 ? 0 : w; }
 
-#if !POD_RENDER_V1   // le cartel gravé en place n'existe pas avec le rendu v1 (cartel calculé par le noyau)
 /** Cartel PAR-DESSUS l'œuvre : bande haute (date · #bloc), bande basse (artiste - titre), 13 px chacune, texte noir sur blanc. */
 static void burnCartel(const String& workTitle, const String& artistName, const String& ts, int blockIndex) {
   const int BAND = 13;
@@ -416,15 +432,13 @@ static void burnCartel(const String& workTitle, const String& artistName, const 
   drawText(blackBuf, centerX(bot), sep + 3, bot);
 }
 
-#endif
-
 // ─── Écran e-ink ───────────────────────────────────────────────────────────
 static void waitMinRefreshGap() {
   if (!hasRefreshed) return;
   const unsigned long elapsed = millis() - lastRefreshMs;
   if (elapsed < EINK_MIN_REFRESH_MS) { logf("[EINK] attente %lu ms (écart minimal entre rafraîchissements)", EINK_MIN_REFRESH_MS - elapsed); delay(EINK_MIN_REFRESH_MS - elapsed); }
 }
-/** Réveille, envoie blackBuf (ou une page blanche), puis met le panneau en veille. */
+/** Réveille, envoie le plan noir/blanc, puis met le panneau en veille. */
 static bool refreshPanel(bool white) {
   waitMinRefreshGap();
   const unsigned long t0 = millis();
@@ -438,43 +452,28 @@ static bool refreshPanel(bool white) {
   return ok;
 }
 
-#if POD_RENDER_V1
-// ─── Rendu v1 en flux : calcul ET remise au pilote ───────────────────────────────────────────────────────────────────────────────────────────────
-// Mémoire (UNO R4, pile principale ≈ 1 Ko : AUCUN objet sur la pile, et AUCUNE nouvelle variable globale) : le renderer (PodEinkRenderer) et son hash (65 o) vivent dans g_podScratch[600], qui REMPLACE le tableau
-// `static uint8_t qrData[600]` de displayOnboardingQR (désormais une référence sur la MÊME zone) : le QR d'appairage et le rendu d'une image ne sont jamais vivants en même temps (appairage avant le premier pull de
-// frame ; chaque rendu reconstruit son objet par new placé — la zone contient peut-être un QR périmé). Bilan statique : 0 o de plus qu'avant (le chemin v1 ne consomme que ce que qrData consommait déjà).
-// Retour : 0 = échec AVANT la fin de la remise · 1 = TOUTES les données ET la commande de rafraîchissement ont été envoyées, mais la FIN PHYSIQUE du rafraîchissement n'est pas confirmée (BUSY expiré : l'image peut être affichée
-// ou en cours d'affichage) · 2 = remis et rafraîchissement terminé (ReadBusy() bloque sans délai). Seul 2 est un succès (sinon AUCUN ACK, le serveur réessaiera). ⚠ État de l'écran après un échec : NON garanti inchangé
-// — la page blanche CLEAR_BEFORE_IMAGE peut venir d'être affichée ; une production interrompue laisse la RAM du panneau partiellement écrite sans lancer le rafraîchissement.
-struct PodScratch { PodEinkRenderer<PodSha256Rw> r; char hex[65]; };
-static_assert(sizeof(PodScratch) <= 600, "PodScratch doit tenir dans g_podScratch (la zone de qrData)");
-alignas(4) static uint8_t g_podScratch[600];
-static unsigned int podRenderProduce(void* ctx, unsigned char* out, unsigned int cap) { return static_cast<PodEinkRenderer<PodSha256Rw>*>(ctx)->read(out, cap); }
-
-static uint8_t podRenderAndShow() {
-  const PodRenderSpec spec = pod_render_spec(POD_R_EINK27);
-  const PodRenderMeta meta = { (const uint8_t*)pendingDisplayTs.c_str(), (size_t)pendingDisplayTs.length(), (int32_t)currentBlockIndex,
-                               (const uint8_t*)pendingArtistName.c_str(), (size_t)pendingArtistName.length(), (const uint8_t*)pendingWorkTitle.c_str(), (size_t)pendingWorkTitle.length() };
-  PodScratch* S = new (g_podScratch) PodScratch();   // objet neuf dans la zone partagée
-  if (!S->r.frameHash(spec, blackBuf, nullptr, BUF_SIZE, S->hex)) { logf("[RENDER] frameHash impossible — abandon"); return 0; }
-  logf("[RENDER] frameHash=%s", S->hex);
-  if (!S->r.begin(spec, POD_RENDER_MODE_DEFAULT, meta, blackBuf, nullptr, BUF_SIZE)) { logf("[RENDER] paramètres refusés — abandon"); return 0; }
-  waitMinRefreshGap();
-  const unsigned long t0 = millis();
-  SPI.begin();
-  SPI.beginTransaction(SPISettings(2000000, MSBFIRST, SPI_MODE0));
-  const bool initOk = epd.Init() == 0;
-  bool delivered = false;
-  if (initOk) { delivered = epd.DisplayStream(podRenderProduce, &S->r); epd.Sleep(); }
-  SPI.endTransaction();
-  lastRefreshMs = millis(); hasRefreshed = true;
-  if (!initOk) { logf("[RENDER] panneau non initialisé — abandon, aucune donnée envoyée (l'écran peut être resté blanc)"); return 0; }
-  if (!delivered) { logf("[RENDER] production interrompue — rafraîchissement NON lancé (RAM du panneau partiellement écrite ; l'écran garde son état physique, éventuellement blanc)"); return 0; }
-  if (!S->r.finish(S->hex)) { logf("[RENDER] renderHash incomplet — abandon"); return 0; }
-  logf("[RENDER] calculé ET remis au pilote en %lu ms — mode=%u renderHash=%s", millis() - t0, (unsigned)POD_RENDER_MODE_DEFAULT, S->hex);
-  return 2;
+static void oledStatus(const String& line1, const String& line2 = "") {
+  if (!oledReady) return;
+  oled.clearDisplay();
+  oled.setTextColor(SSD1306_WHITE);
+  oled.setTextSize(1);
+  oled.setCursor(0, 0); oled.println("Proof-of-Draw / R4");
+  oled.drawFastHLine(0, 10, OLED_W, SSD1306_WHITE);
+  oled.setCursor(0, 20); oled.println(line1);
+  if (line2.length()) { oled.setCursor(0, 36); oled.println(line2); }
+  oled.display();
 }
-#endif
+
+static void displayOnboardingOLED(const String& code) {
+  if (!oledReady) return;
+  oled.clearDisplay();
+  oled.setTextColor(SSD1306_WHITE);
+  oled.setTextSize(1); oled.setCursor(0, 0); oled.println("Associer cet ecran");
+  oled.drawFastHLine(0, 12, OLED_W, SSD1306_WHITE);
+  oled.setTextSize(2); oled.setCursor(10, 25); oled.println(code);
+  oled.setTextSize(1); oled.setCursor(0, 54); oled.println("proof-of-draw.vercel.app");
+  oled.display();
+}
 
 // ─── Onboarding ────────────────────────────────────────────────────────────
 static void displayKeyMaterialOnce() {
@@ -503,11 +502,7 @@ static void displayKeyMaterialOnce() {
 
 static void displayOnboardingQR(const String& onboardUrl, const String& code, const String& mac) {
   static QRCode qr;
-#if POD_RENDER_V1
-  uint8_t (&qrData)[600] = g_podScratch;             // zone PARTAGÉE avec le renderer (jamais vivants en même temps) : net 0 o de RAM statique — voir g_podScratch
-#else
   static uint8_t qrData[600];                        // qrcode_getBufferSize(5) tient largement dedans (vérifié ci-dessous)
-#endif
   if (qrcode_getBufferSize(5) > sizeof(qrData)) { logf("[QR] tampon trop petit"); return; }
   memset(qrData, 0, sizeof(qrData));
   int res = qrcode_initText(&qr, qrData, 4, ECC_MEDIUM, onboardUrl.c_str());
@@ -541,12 +536,13 @@ static void displayOnboardingQR(const String& onboardUrl, const String& code, co
   persistFrameId("");
   lastFrameId = "";
   refreshPanel(false);
+  displayOnboardingOLED(code);
 }
 
 // ─── ACK / image ───────────────────────────────────────────────────────────
-static bool ackFrame(const String& frameId) {
+static bool ackFrame(const String& frameId, const char* screen) {
   if (frameId.length() == 0) return false;
-  const String body = "{\"deviceId\":\"" + deviceId + "\",\"frameId\":\"" + frameId + "\"}";
+  const String body = "{\"deviceId\":\"" + deviceId + "\",\"frameId\":\"" + frameId + "\",\"screen\":\"" + String(screen) + "\"}";
   String resp;
   const bool ok = httpCall("POST", "/api/ack-frame", &body, resp) == 200;
   logf("[ACK] %s -> %s", frameId.c_str(), ok ? "OK" : "FAIL");
@@ -558,7 +554,7 @@ static bool doFetchFrame(const String& frameId, const String& frameSource) {
   bool got = false, noFrame = false;
   {
     Conn c(HTTP_TIMEOUT_MS);
-    const int code = c.request("GET", "/api/pull-frame?deviceId=" + deviceId + "&screen=" SCREEN_TYPE "&fmt=bin", nullptr);
+    const int code = c.request("GET", "/api/pull-frame?deviceId=" + deviceId + "&screen=" SCREEN_E27 "&fmt=bin", nullptr);
     logf("[HTTP GET] /api/pull-frame -> %d (contenu %ld)", code, c.rd.contentLength());
     if (code == 404) noFrame = true;
     else if (code == 200 && (c.rd.contentLength() < 0 || c.rd.contentLength() == FRAME_BYTES)) {
@@ -574,26 +570,49 @@ static bool doFetchFrame(const String& frameId, const String& frameSource) {
   if (noFrame) { logf("[FRAME] pas de frame disponible"); return true; }
   if (!got) { logf("[FRAME] image incomplète — pas d'ACK, nouvel essai au prochain pull"); return false; }
 
-#if !POD_RENDER_V1
   burnCartel(pendingWorkTitle, pendingArtistName, pendingDisplayTs, currentBlockIndex);
-#endif
 
   persistFrameId("");                                // pendant le rafraîchissement l'écran est dans un état incertain
 #if CLEAR_BEFORE_IMAGE
   if (hasRefreshed || lastFrameId.length() > 0) refreshPanel(true);
 #endif
-#if POD_RENDER_V1
-  if (podRenderAndShow() != 2) { logf("[FRAME] affichage échoué — frame conservée côté serveur"); return false; }   // 2 = rendu calculé ET remis au pilote
-#else
   if (!refreshPanel(false)) { logf("[FRAME] affichage échoué — frame conservée côté serveur"); return false; }
-#endif
 
   lastFrameId = frameKey(frameId);
   persistFrameId(frameId);
   lastFrameWasConsensus = (frameSource == "consensus");
   pendingCandidateId = "";
   logf("[FRAME] OK en %lu ms (frameId=%s source=%s)", millis() - t0, frameId.c_str(), frameSource.c_str());
-  ackFrame(frameId);
+  ackFrame(frameId, SCREEN_E27);
+  return true;
+}
+
+static bool doFetchFrameOLED(const String& frameId, const String& frameSource) {
+  if (!oledReady) { logf("[OLED] écran non détecté — pas d'ACK"); return false; }
+  bool got = false, noFrame = false;
+  uint8_t* buf = oled.getBuffer();
+  memset(buf, 0x00, OLED_BUF_SIZE);
+  {
+    Conn c(HTTP_TIMEOUT_MS);
+    const int code = c.request("GET", "/api/pull-frame?deviceId=" + deviceId + "&screen=" SCREEN_OLED "&fmt=bin", nullptr);
+    logf("[HTTP GET] /api/pull-frame (OLED) -> %d (contenu %ld)", code, c.rd.contentLength());
+    if (code == 404) noFrame = true;
+    else if (code == 200 && (c.rd.contentLength() < 0 || c.rd.contentLength() == OLED_BUF_SIZE)) {
+      const size_t n = c.rd.readBody(buf, OLED_BUF_SIZE);
+      got = n == OLED_BUF_SIZE && c.rd.complete();
+      logf("[OLED] lu=%u attendu=%u", (unsigned)n, (unsigned)OLED_BUF_SIZE);
+    }
+    c.client.stop();
+  }
+  if (noFrame) return true;
+  if (!got) { logf("[OLED] image incomplète — pas d'ACK"); return false; }
+  oled.display();
+  lastFrameIdOLED = frameKey(frameId);
+  saveOledFrame(buf, frameId);
+  lastFrameWasConsensus = frameSource == "consensus";
+  pendingCandidateId = "";
+  ackFrame(frameId, SCREEN_OLED);
+  logf("[OLED] frame affichée : %s", frameId.c_str());
   return true;
 }
 
@@ -619,7 +638,7 @@ static String macString() {
 
 static bool doRegister() {
   const String mac = macString();
-  const String body = "{\"mac\":\"" + mac + "\",\"screens\":[\"" SCREEN_TYPE "\"],"
+  const String body = "{\"mac\":\"" + mac + "\",\"screens\":[\"" SCREEN_E27 "\",\"" SCREEN_OLED "\"],"
                       "\"firmware\":\"" FIRMWARE_VERSION "\","
                       "\"publicKey\":\"" + (keysLoaded ? bytesToHex(publicKey, 32) : String("")) + "\","
                       "\"ownedHashes\":" + loadOwnedHashesJson() + "}";
@@ -651,7 +670,7 @@ static bool doRegister() {
 
 // ─── PULL ──────────────────────────────────────────────────────────────────
 static bool doPull() {
-  String newBlockHash = "", newCandId = "", newFrameId = "", newFrameSource = "none";
+  String newBlockHash = "", newCandId = "", newFrameId = "", newFrameSource = "none", newScreen = "";
   int newBlockIndex = -1, pullRetryAfter = 60;
 
   {
@@ -680,9 +699,13 @@ static bool doPull() {
 
     newFrameSource = doc["frameSource"] | "none";
     newFrameId     = doc["frameId"] | "";
+    newScreen      = doc["screen"] | "";
     pullRetryAfter = doc["retryAfter"] | 60;
     if (pullRetryAfter <= 0) pullRetryAfter = 60;
-    if (newFrameId.length() == 0) { JsonObject fo = doc["frame"]; if (!fo.isNull()) newFrameId = fo["frameId"] | ""; }
+    if (newFrameId.length() == 0) {
+      JsonObject fo = doc["frame"];
+      if (!fo.isNull()) { newFrameId = fo["frameId"] | ""; newScreen = fo["screen"] | newScreen; }
+    }
 
     JsonObject cm = doc["cartelMeta"];
     if (!cm.isNull()) {
@@ -715,10 +738,16 @@ static bool doPull() {
   if (newCandId.length() > 0) pendingCandidateId = newCandId;
 
   if (newFrameSource == "none" || newFrameId.length() == 0) { logf("[PULL] aucune frame"); return true; }
-  if (frameKey(newFrameId) == lastFrameId) { logf("[PULL] frame déjà affichée"); return true; }
-  logf("[PULL] nouvelle frame %s (%s)", newFrameId.c_str(), newFrameSource.c_str());
-
-  doFetchFrame(newFrameId, newFrameSource);          // échec : on retourne quand même true (pas de boucle pull→échec→pull)
+  const String key = frameKey(newFrameId);
+  if (newScreen == SCREEN_OLED) {
+    if (key == lastFrameIdOLED) { logf("[PULL] frame OLED déjà affichée"); return true; }
+    doFetchFrameOLED(newFrameId, newFrameSource);
+  } else {
+    if (key == lastFrameId) { logf("[PULL] frame e-ink déjà affichée"); return true; }
+    if (newScreen.length() == 0) logf("[PULL] écran absent : repli e-ink");
+    else if (newScreen != SCREEN_E27) { logf("[PULL] écran inconnu : %s", newScreen.c_str()); return true; }
+    doFetchFrame(newFrameId, newFrameSource);
+  }
   reportMem("après pull");
   return true;
 }
@@ -733,12 +762,14 @@ static bool doValidateV2(const String& candidateId, const String& screenName, si
     logf("[VALIDATE2] écran inconnu : %s", screenName.c_str());
     return false;
   }
+  uint8_t* scratch = blackBuf;
+  const size_t scratchLen = BUF_SIZE;
   PodCheck chk; memset(&chk, 0, sizeof(chk));
   {
     Conn c(HTTP_TIMEOUT_MS);
     const int code = c.request("GET", String("/api/candidate-frame?candidateId=") + candidateId, nullptr);
     chk.http = code;
-    if (code == 200) podCheckStream(c.rd, kind, bytes, blackBuf, BUF_SIZE, g_voteChunk, sizeof(g_voteChunk), &chk);
+    if (code == 200) podCheckStream(c.rd, kind, bytes, scratch, scratchLen, g_voteChunk, sizeof(g_voteChunk), &chk);
     c.client.stop();
   }
   if (!chk.ok) { logf("[VALIDATE2] calcul impossible (%u/%u octets)", (unsigned)chk.bytes, (unsigned)bytes); return false; }
@@ -750,7 +781,7 @@ static bool doValidateV2(const String& candidateId, const String& screenName, si
                       "\"verdict\":\"" + (accept ? "accept" : "reject") + "\"" + (accept ? String("") : String(",\"reason\":\"") + reason + "\"") +
                       ",\"signature\":\"" + bytesToHex(sig, 64) + "\"}";
   String resp; const int code = httpCall("POST", "/api/validation-result", &body, resp);
-  logf("[VALIDATE2] e=%lu t=%lu r=%lu verdict=%s HTTP=%d", (unsigned long)chk.m.e, (unsigned long)chk.m.t, (unsigned long)chk.m.r, accept ? "accept" : reason, code);
+  logf("[VALIDATE2] %s e=%lu t=%lu r=%lu verdict=%s HTTP=%d", screenName.c_str(), (unsigned long)chk.m.e, (unsigned long)chk.m.t, (unsigned long)chk.m.r, accept ? "accept" : reason, code);
   // 403 « Signature » = clé publique désynchronisée côté serveur : on se ré-enregistre pour la renvoyer (comme le chemin v1), le prochain cycle votera.
   if (code != 200 && resp.indexOf("Signature") >= 0) { logf("[VALIDATE2] resynchronisation de la clé publique (re-register)"); doRegister(); }
   return code == 200 && resp.indexOf("\"blockMined\":true") >= 0;
@@ -815,11 +846,16 @@ void setup() {
   paintStack();
   Serial.begin(115200);
   while (!Serial && millis() < 2500) {}
-  logf("\n[BOOT] Proof-of-Draw UNO R4 WiFi + e-ink 2.7\" BW — %s", FIRMWARE_VERSION);
+  logf("\n[BOOT] Proof-of-Draw UNO R4 WiFi multiscreen e-ink 2.7\" + OLED — %s", FIRMWARE_VERSION);
   logf("[WARNING] PORT NON TESTE SUR LE MATERIEL — 06/10/2026");
   reportMem("boot");
 
   clearBothPlanes();
+  Wire.begin();
+  Wire.setClock(400000);
+  oledReady = oled.begin(SSD1306_SWITCHCAPVCC, OLED_ADDR);
+  logf("[OLED] SSD1306 %s", oledReady ? "détecté" : "NON détecté");
+  if (oledReady) oledStatus("Connexion Wi-Fi...");
 
   if (WiFi.status() == WL_NO_MODULE) { logf("[WIFI] module absent"); while (true) delay(1000); }
   logf("[WIFI] firmware du module: %s", WiFi.firmwareVersion());
@@ -844,6 +880,7 @@ void setup() {
   }
   lastFrameId = loadFrameId();                       // œuvre déjà à l'écran avant le redémarrage (l'e-ink la conserve)
   if (lastFrameId.length() > 0) logf("[BOOT] œuvre déjà affichée : %s", lastFrameId.c_str());
+  if (restoreOledFrame()) logf("[BOOT] œuvre OLED restaurée : %s", lastFrameIdOLED.c_str());
 
   while (!registered) { if (doRegister()) break; delay(5000); }
   if (paired) {

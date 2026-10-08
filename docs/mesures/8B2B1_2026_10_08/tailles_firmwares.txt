@@ -1,0 +1,9 @@
+# firmware | RAM statique (o) base · OFF · ON | flash (o) base · OFF · ON
+esp_eink29 | RAM 34808 · 34808 · 35056 | flash 408120 · 408120 · 417708
+esp_tft18 | RAM 36064 · 36064 · 37116 | flash 501948 · 501948 · 505340
+esp_eink27 | RAM 34240 · 34240 · 34352 | flash 413920 · 413920 · 417148
+esp_eink27_oled | RAM 35200 · 35200 · 35316 | flash 473820 · 473820 · 476956
+r4_eink29 | RAM 22768 · 22768 · 22768 | flash 118444 · 118444 · 121444
+r4_tft18 | RAM 20864 · 20864 · 21424 | flash 128168 · 128168 · 130792
+r4_eink27 | RAM 19128 · 19128 · 19128 | flash 117572 · 117572 · 120284
+r4_eink27_oled | RAM 21500 · 21500 · 21500 | flash 132192 · 132184 · 134896

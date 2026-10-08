@@ -93,7 +93,7 @@ test("les exemples sont SÉPARÉS des firmwares, avertissent « ne pas déployer
 test("aucun firmware de production, aucune route de vote/finalisation, aucune variable ni secret modifiés : l'auto-test et les adaptateurs sont du code de VALIDATION ; le noyau d'animation reste inutilisé par les firmwares", () => {
   const walk = (dir: string): string[] => fs.readdirSync(path.join(root, dir), { withFileTypes: true }).flatMap((e) => e.isDirectory() ? walk(path.join(dir, e.name)) : /\.(ino|h|cpp)$/.test(e.name) ? [path.join(dir, e.name).replace(/\\/g, "/")] : []);
   // lot 8B-2A : le noyau de RENDU (copies de consensusPoD.h dans 4 dossiers canaris, inactif par défaut) est autorisé là ; le noyau d'ANIMATION ne l'est nulle part
-  const canary = ["esp8266/esp_eink_2.9BWR/", "esp8266/esp_tft1.8/", "arduino_uno_r4/pod_uno_r4_eink29/", "arduino_uno_r4/pod_uno_r4_tft18/"];
+  const canary = ["esp8266/esp_eink_2.9BWR/", "esp8266/esp_tft1.8/", "arduino_uno_r4/pod_uno_r4_eink29/", "arduino_uno_r4/pod_uno_r4_tft18/", "esp8266/esp_eink_2.7BW/", "esp8266/esp_eink_2.7BW_OLED/", "arduino_uno_r4/pod_uno_r4_eink27/", "arduino_uno_r4/pod_uno_r4_eink27_oled/"];
   for (const f of [...walk("esp8266"), ...walk("arduino_uno_r4")]) {
     assert.doesNotMatch(read(f), /podAnim|PodAnim|podAnimSelfTest|AnimSelfTest/, f);
     if (!canary.some((c) => f.startsWith(c))) assert.doesNotMatch(read(f), /consensusPoD/, f);

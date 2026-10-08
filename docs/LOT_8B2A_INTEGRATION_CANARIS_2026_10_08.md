@@ -9,6 +9,7 @@
 | **Interdits respectés** | aucun flash, aucun déploiement, aucune variable Vercel, aucun secret ; ACK, routes, rapport de rendu, `cartelMode` (non exposé), signature `pod-render-v1`, `AnaWorkMeta.contentHash`, OTA : **inchangés / non commencés** ; quatre firmwares seulement (pas les huit) |
 | **Budget** | Redis **+0**, Neon **0** (le chemin v1 ne parle pas au serveur ; aucune route modifiée) |
 | **Rollback** | `git revert` du commit (les sauvegardes d'avant sont aussi dans `firmware-backups/2026-10-08_avant-rendu-v1-canaris/`) ; rien à défaire ailleurs |
+| **Mise à jour (lot 8B-2B-1)** | la marge statique du R4 e-ink 2,9″ (184 o ci-dessous) a été **restituée à 528 o** : le renderer vit désormais dans la zone qui remplaçait `qrData[600]`, RAM statique ON == OFF == base — voir `docs/LOT_8B2B1_PROPAGATION_2026_10_08.md` § 3. Les chiffres de ce document restent ceux du lot 8B-2A |
 | **Suite** | **arrêt pour audit GPT avant LOT8B-2B** |
 
 ## 1. Audit des API réelles des pilotes (avant tout code)

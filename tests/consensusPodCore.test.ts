@@ -95,6 +95,6 @@ test("aucun firmware du dépôt n'utilise encore consensusPoD.h (adoption au gra
   } };
   for (const d of ["esp8266", "arduino_uno_r4"]) walk(d);
   // lot 8B-2A : seuls les 4 dossiers canaris portent des COPIES du noyau (rendu v1 inactif par défaut, POD_RENDER_V1 = 0) — vérifié par tests/renderFirmware.test.ts
-  const canary = ["esp8266/esp_eink_2.9BWR/", "esp8266/esp_tft1.8/", "arduino_uno_r4/pod_uno_r4_eink29/", "arduino_uno_r4/pod_uno_r4_tft18/"];
+  const canary = ["esp8266/esp_eink_2.9BWR/", "esp8266/esp_tft1.8/", "arduino_uno_r4/pod_uno_r4_eink29/", "arduino_uno_r4/pod_uno_r4_tft18/", "esp8266/esp_eink_2.7BW/", "esp8266/esp_eink_2.7BW_OLED/", "arduino_uno_r4/pod_uno_r4_eink27/", "arduino_uno_r4/pod_uno_r4_eink27_oled/"];
   assert.deepEqual(offenders.filter((o) => !canary.some((c) => o.startsWith(c))), []);
 });

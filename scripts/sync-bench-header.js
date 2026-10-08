@@ -20,16 +20,16 @@ const MASTERS = {
   "crypto_esp8266.h": "consensus-pod/src/adapters/crypto_esp8266.h",
   "crypto_uno_r4.h": "consensus-pod/src/adapters/crypto_uno_r4.h",
 };
-const RENDER_ESP = ["esp8266/esp_eink_2.9BWR", "esp8266/esp_tft1.8"], RENDER_R4 = ["arduino_uno_r4/pod_uno_r4_eink29", "arduino_uno_r4/pod_uno_r4_tft18"];
+const RENDER_ESP = ["esp8266/esp_eink_2.9BWR", "esp8266/esp_tft1.8", "esp8266/esp_eink_2.7BW", "esp8266/esp_eink_2.7BW_OLED"], RENDER_R4 = ["arduino_uno_r4/pod_uno_r4_eink29", "arduino_uno_r4/pod_uno_r4_tft18", "arduino_uno_r4/pod_uno_r4_eink27", "arduino_uno_r4/pod_uno_r4_eink27_oled"];
 const COPIES = {
   "pod_bench.h": ["esp8266/esp_tft1.8/pod_bench.h", "esp8266/esp_eink_2.7BW_OLED/pod_bench.h"],
   "pod_bench_esp.h": ["esp8266/esp_tft1.8/pod_bench_esp.h", "esp8266/esp_eink_2.7BW_OLED/pod_bench_esp.h"],
   "pod_anim_esp.h": ["esp8266/esp_tft1.8/pod_anim_esp.h", "esp8266/esp_eink_2.7BW_OLED/pod_anim_esp.h"],
   // Validation réelle : e-ink 2,9" BWR, TFT 1,8", multiscreen et e-ink 2,7" seul (ESP8266)
-  "pod_metrics.h": ["esp8266/esp_eink_2.9BWR/pod_metrics.h", "esp8266/esp_tft1.8/pod_metrics.h", "esp8266/esp_eink_2.7BW_OLED/pod_metrics.h", "esp8266/esp_eink_2.7BW/pod_metrics.h", "consensus-pod/src/pod_metrics.h", "arduino_uno_r4/pod_uno_r4_eink29/pod_metrics.h", "arduino_uno_r4/pod_uno_r4_tft18/pod_metrics.h"],
-  "pod_metrics_table.h": ["esp8266/esp_eink_2.9BWR/pod_metrics_table.h", "esp8266/esp_tft1.8/pod_metrics_table.h", "esp8266/esp_eink_2.7BW_OLED/pod_metrics_table.h", "esp8266/esp_eink_2.7BW/pod_metrics_table.h", "consensus-pod/src/pod_metrics_table.h", "arduino_uno_r4/pod_uno_r4_eink29/pod_metrics_table.h", "arduino_uno_r4/pod_uno_r4_tft18/pod_metrics_table.h"],
+  "pod_metrics.h": ["esp8266/esp_eink_2.9BWR/pod_metrics.h", "esp8266/esp_tft1.8/pod_metrics.h", "esp8266/esp_eink_2.7BW_OLED/pod_metrics.h", "esp8266/esp_eink_2.7BW/pod_metrics.h", "consensus-pod/src/pod_metrics.h", "arduino_uno_r4/pod_uno_r4_eink29/pod_metrics.h", "arduino_uno_r4/pod_uno_r4_tft18/pod_metrics.h", "arduino_uno_r4/pod_uno_r4_eink27/pod_metrics.h", "arduino_uno_r4/pod_uno_r4_eink27_oled/pod_metrics.h"],
+  "pod_metrics_table.h": ["esp8266/esp_eink_2.9BWR/pod_metrics_table.h", "esp8266/esp_tft1.8/pod_metrics_table.h", "esp8266/esp_eink_2.7BW_OLED/pod_metrics_table.h", "esp8266/esp_eink_2.7BW/pod_metrics_table.h", "consensus-pod/src/pod_metrics_table.h", "arduino_uno_r4/pod_uno_r4_eink29/pod_metrics_table.h", "arduino_uno_r4/pod_uno_r4_tft18/pod_metrics_table.h", "arduino_uno_r4/pod_uno_r4_eink27/pod_metrics_table.h", "arduino_uno_r4/pod_uno_r4_eink27_oled/pod_metrics_table.h"],
   "pod_vote_esp.h": ["esp8266/esp_eink_2.9BWR/pod_vote_esp.h", "esp8266/esp_tft1.8/pod_vote_esp.h", "esp8266/esp_eink_2.7BW_OLED/pod_vote_esp.h", "esp8266/esp_eink_2.7BW/pod_vote_esp.h"],
-  // Rendu v1 : QUATRE dossiers canaris seulement (les huit firmwares viendront au lot 8B-2B)
+  // Rendu v1 (INACTIF par défaut) : les HUIT firmwares à cartel gravé (lots 8B-2A + 8B-2B-1) ; les firmwares sans cartel (R4 TFT 2,8″, R4 OLED, multiscreen OLED) ne sont pas concernés
   "consensusPoD.h": [...RENDER_ESP, ...RENDER_R4].map((d) => d + "/consensusPoD.h"),
   "podRender.h": [...RENDER_ESP, ...RENDER_R4].map((d) => d + "/podRender.h"),
   "podRenderStream.h": [...RENDER_ESP, ...RENDER_R4].map((d) => d + "/podRenderStream.h"),

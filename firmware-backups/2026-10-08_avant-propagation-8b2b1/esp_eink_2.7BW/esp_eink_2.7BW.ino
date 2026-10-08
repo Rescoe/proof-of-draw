@@ -29,24 +29,6 @@
 #include <Ed25519.h>       // Bibliothèque Crypto (rhempel) — ED25519 réel
 #include "pod_vote_esp.h"  // validation réelle (vote v2) : SHA-256 + métriques entières en flux, sans tampon d'image (copie de esp8266/_shared)
 
-// POD_RENDER_V1_BEGIN
-// ─── Rendu v1 EN FLUX (lot 8B-2A / 8B-2B-1) — INACTIF PAR DÉFAUT ──────────────────────────────────────────────────────────────────────────────────────────
-// 0 (défaut) : comportement d'avant, octet pour octet (cartel gravé en place dans le tampon, affichage du tampon complet).
-// 1 : l'image reçue (plan unique, JAMAIS modifié) est rendue par le noyau gelé consensus-pod/src/podRenderStream.h (layoutVersion 1 : cartel, fit) et remise au pilote PAR MORCEAUX de 32 octets (DisplayStream) ;
-//     frameHash (octets reçus) et renderHash (octets remis) sont CALCULÉS et seulement journalisés — l'ACK, les routes et le rapport de rendu ne sont PAS modifiés.
-// ⚠ NON ESSAYÉ SUR LA CARTE. Ne pas activer sans canari matériel : docs/LOT_8B2B1_PROPAGATION_2026_10_08.md.
-#ifndef POD_RENDER_V1
-#define POD_RENDER_V1 0
-#endif
-#ifndef POD_RENDER_MODE_DEFAULT
-#define POD_RENDER_MODE_DEFAULT POD_R_FIT   // constante de compilation : le réglage cartelMode n'est PAS exposé (pas d'interface, pas de réglage serveur)
-#endif
-#if POD_RENDER_V1
-#include "podRenderStream.h"
-#include "crypto_esp8266.h"
-#endif
-// POD_RENDER_V1_END
-
 // ─── CONFIG ────────────────────────────────────────────────────────────────
 // Wi-Fi : copier secrets.h.example en secrets.h (ignoré par git : les identifiants ne doivent JAMAIS être commités), puis renseigner SSID / mot de passe (2,4 GHz).
 #if __has_include("secrets.h")
@@ -711,34 +693,6 @@ bool doRegister() {
   return true;
 }
 
-#if POD_RENDER_V1
-// ─── Rendu v1 en flux : calcul ET remise au pilote (e-ink 2,7″, plan unique) ──────────────────────────────────────────────────────────────────────────────
-// Ordre de la mémoire (ESP8266, TLS FERMÉ à l'entrée) : e27Buf 5 808 o (existant, alloué comme avant, JAMAIS modifié ici) ; PILE : PodEinkRenderer 264 o + 65 o de hash + 32 o de morceau dans le pilote. AUCUNE allocation, aucun
-// tampon final, aucune grille. Retour : 0 = échec AVANT la fin de la remise · 2 = rendu calculé ET remis. (L'état « 1 » des 2,9″ n'existe pas ici : ReadBusy() bloque sans délai.) Seul 2 est un succès (sinon AUCUN ACK, le serveur réessaiera).
-// ⚠ État de l'écran après un échec : NON garanti inchangé (page blanche éventuellement affichée avant ; RAM du panneau partiellement écrite si la production s'interrompt, sans rafraîchissement).
-static unsigned int podRenderProduce(void* ctx, unsigned char* out, unsigned int cap) { return ((PodEinkRenderer<PodSha256Br>*)ctx)->read(out, cap); }
-
-static uint8_t podRenderAndShowE27(const uint8_t* buf) {
-  if (!buf) return 0;
-  const PodRenderSpec spec = pod_render_spec(POD_R_EINK27);
-  const PodRenderMeta meta = { (const uint8_t*)pendingDisplayTs.c_str(), (size_t)pendingDisplayTs.length(), (int32_t)currentBlockIndex,
-                               (const uint8_t*)pendingArtistName.c_str(), (size_t)pendingArtistName.length(), (const uint8_t*)pendingWorkTitle.c_str(), (size_t)pendingWorkTitle.length() };
-  char hex[65];
-  PodEinkRenderer<PodSha256Br> r;
-  if (!r.frameHash(spec, buf, nullptr, E27_BUF_SIZE, hex)) { Serial.println(F("[RENDER] frameHash impossible — abandon")); return 0; }
-  Serial.printf_P(PSTR("[RENDER] frameHash=%s\n"), hex);
-  if (!r.begin(spec, POD_RENDER_MODE_DEFAULT, meta, buf, nullptr, E27_BUF_SIZE)) { Serial.println(F("[RENDER] paramètres refusés — abandon")); return 0; }
-  if (!initE27ForRefresh()) { Serial.println(F("[RENDER] panneau non initialisé — abandon, aucune donnée envoyée (l'écran peut être resté blanc)")); return 0; }
-  const bool delivered = epd27.DisplayStream(podRenderProduce, &r);
-  epd27.Sleep();
-  lastE27RefreshMs = millis();
-  if (!delivered) { Serial.println(F("[RENDER] production interrompue — rafraîchissement NON lancé (RAM du panneau partiellement écrite ; l'écran garde son état physique, éventuellement blanc)")); return 0; }
-  if (!r.finish(hex)) { Serial.println(F("[RENDER] renderHash incomplet — abandon")); return 0; }
-  Serial.printf_P(PSTR("[RENDER] calculé ET remis au pilote — mode=%u renderHash=%s\n"), (unsigned)POD_RENDER_MODE_DEFAULT, hex);
-  return 2;
-}
-#endif
-
 // ─── FETCH FRAME ───────────────────────────────────────────────────────────
 bool doFetchFrame(const String& frameId, const String& frameSource) {
   logHeapState("FETCHFRAME-BEFORE");
@@ -807,16 +761,11 @@ bool doFetchFrame(const String& frameId, const String& frameSource) {
   }
   // TLS fermé — heap libéré avant l'affichage e-ink
 
-#if POD_RENDER_V1
-  // Rendu v1 en flux : cartel + fit calculés par le noyau, remis au pilote par morceaux (aucune gravure en place)
-  if (podRenderAndShowE27(e27Buf) != 2) {   // 2 = rendu calculé ET remis au pilote
-#else
   // Cartel paysage (bandes de métadonnées haut/bas)
   burnEinkCartel_landscape(e27Buf, pendingWorkTitle, pendingArtistName,
                            pendingDisplayTs, currentBlockIndex);
 
   if (!displayE27Buffer(e27Buf)) {
-#endif
     Serial.println("[FETCHFRAME] display failed");
     free(e27Buf);
     return false;

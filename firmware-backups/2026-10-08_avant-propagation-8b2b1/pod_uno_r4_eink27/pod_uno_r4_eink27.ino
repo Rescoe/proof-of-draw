@@ -42,25 +42,6 @@
 #include "epd2in7_V2.h"
 #include "pod_vote_r4.h"
 
-// POD_RENDER_V1_BEGIN
-// ─── Rendu v1 EN FLUX (lot 8B-2A / 8B-2B-1) — INACTIF PAR DÉFAUT ──────────────────────────────────────────────────────────────────────────────────────────
-// 0 (défaut) : comportement d'avant, octet pour octet (cartel gravé en place dans le tampon, affichage du tampon complet).
-// 1 : l'image reçue (plan unique, JAMAIS modifié) est rendue par le noyau gelé consensus-pod/src/podRenderStream.h (layoutVersion 1 : cartel, fit) et remise au pilote PAR MORCEAUX de 32 octets (DisplayStream) ;
-//     frameHash (octets reçus) et renderHash (octets remis) sont CALCULÉS et seulement journalisés — l'ACK, les routes et le rapport de rendu ne sont PAS modifiés.
-// ⚠ NON ESSAYÉ SUR LA CARTE. Ne pas activer sans canari matériel : docs/LOT_8B2B1_PROPAGATION_2026_10_08.md.
-#ifndef POD_RENDER_V1
-#define POD_RENDER_V1 0
-#endif
-#ifndef POD_RENDER_MODE_DEFAULT
-#define POD_RENDER_MODE_DEFAULT POD_R_FIT   // constante de compilation : le réglage cartelMode n'est PAS exposé (pas d'interface, pas de réglage serveur)
-#endif
-#if POD_RENDER_V1
-#include "podRenderStream.h"
-#include "crypto_uno_r4.h"
-#include <new>
-#endif
-// POD_RENDER_V1_END
-
 // ─── CONFIG ────────────────────────────────────────────────────────────────
 #if __has_include("secrets.h")
   #include "secrets.h"
@@ -344,11 +325,9 @@ static inline void clearPix(uint8_t* buf, int x, int y) {
 }
 static void clearBothPlanes() { memset(blackBuf, 0xFF, BUF_SIZE); }
 /** Lignes y0..y1 de l'image remises à blanc. */
-#if !POD_RENDER_V1   // utilisé seulement par burnCartel
 static void whiteRows(int y0, int y1) {
   for (int x = 0; x < IMG_W; x++) for (int y = y0; y <= y1; y++) clearPix(blackBuf, x, y);
 }
-#endif
 static void hLine(uint8_t* buf, int y, int x0 = 0, int x1 = IMG_W - 1) { for (int x = x0; x <= x1; x++) setPix(buf, x, y); }
 
 // Police 5×7 : une colonne = un octet, bit 0 = ligne du HAUT (police classique). Chiffres, A-Z, « : . - / # », espace.
@@ -393,7 +372,6 @@ static void drawText(uint8_t* buf, int x, int y, const String& text, int scale =
 static int textWidth(const String& t, int scale = 1) { return (int)t.length() * 6 * scale; }
 static int centerX(const String& t, int scale = 1) { const int w = (IMG_W - textWidth(t, scale)) / 2; return w < 0 ? 0 : w; }
 
-#if !POD_RENDER_V1   // le cartel gravé en place n'existe pas avec le rendu v1 (cartel calculé par le noyau)
 /** Cartel PAR-DESSUS l'œuvre : bande haute (date · #bloc), bande basse (artiste - titre), 13 px chacune, texte noir sur blanc. */
 static void burnCartel(const String& workTitle, const String& artistName, const String& ts, int blockIndex) {
   const int BAND = 13;
@@ -416,8 +394,6 @@ static void burnCartel(const String& workTitle, const String& artistName, const 
   drawText(blackBuf, centerX(bot), sep + 3, bot);
 }
 
-#endif
-
 // ─── Écran e-ink ───────────────────────────────────────────────────────────
 static void waitMinRefreshGap() {
   if (!hasRefreshed) return;
@@ -437,44 +413,6 @@ static bool refreshPanel(bool white) {
   logf("[EINK] %s %s en %lu ms", white ? "page blanche" : "image", ok ? "affichée" : "ECHEC", millis() - t0);
   return ok;
 }
-
-#if POD_RENDER_V1
-// ─── Rendu v1 en flux : calcul ET remise au pilote ───────────────────────────────────────────────────────────────────────────────────────────────
-// Mémoire (UNO R4, pile principale ≈ 1 Ko : AUCUN objet sur la pile, et AUCUNE nouvelle variable globale) : le renderer (PodEinkRenderer) et son hash (65 o) vivent dans g_podScratch[600], qui REMPLACE le tableau
-// `static uint8_t qrData[600]` de displayOnboardingQR (désormais une référence sur la MÊME zone) : le QR d'appairage et le rendu d'une image ne sont jamais vivants en même temps (appairage avant le premier pull de
-// frame ; chaque rendu reconstruit son objet par new placé — la zone contient peut-être un QR périmé). Bilan statique : 0 o de plus qu'avant (le chemin v1 ne consomme que ce que qrData consommait déjà).
-// Retour : 0 = échec AVANT la fin de la remise · 1 = TOUTES les données ET la commande de rafraîchissement ont été envoyées, mais la FIN PHYSIQUE du rafraîchissement n'est pas confirmée (BUSY expiré : l'image peut être affichée
-// ou en cours d'affichage) · 2 = remis et rafraîchissement terminé (ReadBusy() bloque sans délai). Seul 2 est un succès (sinon AUCUN ACK, le serveur réessaiera). ⚠ État de l'écran après un échec : NON garanti inchangé
-// — la page blanche CLEAR_BEFORE_IMAGE peut venir d'être affichée ; une production interrompue laisse la RAM du panneau partiellement écrite sans lancer le rafraîchissement.
-struct PodScratch { PodEinkRenderer<PodSha256Rw> r; char hex[65]; };
-static_assert(sizeof(PodScratch) <= 600, "PodScratch doit tenir dans g_podScratch (la zone de qrData)");
-alignas(4) static uint8_t g_podScratch[600];
-static unsigned int podRenderProduce(void* ctx, unsigned char* out, unsigned int cap) { return static_cast<PodEinkRenderer<PodSha256Rw>*>(ctx)->read(out, cap); }
-
-static uint8_t podRenderAndShow() {
-  const PodRenderSpec spec = pod_render_spec(POD_R_EINK27);
-  const PodRenderMeta meta = { (const uint8_t*)pendingDisplayTs.c_str(), (size_t)pendingDisplayTs.length(), (int32_t)currentBlockIndex,
-                               (const uint8_t*)pendingArtistName.c_str(), (size_t)pendingArtistName.length(), (const uint8_t*)pendingWorkTitle.c_str(), (size_t)pendingWorkTitle.length() };
-  PodScratch* S = new (g_podScratch) PodScratch();   // objet neuf dans la zone partagée
-  if (!S->r.frameHash(spec, blackBuf, nullptr, BUF_SIZE, S->hex)) { logf("[RENDER] frameHash impossible — abandon"); return 0; }
-  logf("[RENDER] frameHash=%s", S->hex);
-  if (!S->r.begin(spec, POD_RENDER_MODE_DEFAULT, meta, blackBuf, nullptr, BUF_SIZE)) { logf("[RENDER] paramètres refusés — abandon"); return 0; }
-  waitMinRefreshGap();
-  const unsigned long t0 = millis();
-  SPI.begin();
-  SPI.beginTransaction(SPISettings(2000000, MSBFIRST, SPI_MODE0));
-  const bool initOk = epd.Init() == 0;
-  bool delivered = false;
-  if (initOk) { delivered = epd.DisplayStream(podRenderProduce, &S->r); epd.Sleep(); }
-  SPI.endTransaction();
-  lastRefreshMs = millis(); hasRefreshed = true;
-  if (!initOk) { logf("[RENDER] panneau non initialisé — abandon, aucune donnée envoyée (l'écran peut être resté blanc)"); return 0; }
-  if (!delivered) { logf("[RENDER] production interrompue — rafraîchissement NON lancé (RAM du panneau partiellement écrite ; l'écran garde son état physique, éventuellement blanc)"); return 0; }
-  if (!S->r.finish(S->hex)) { logf("[RENDER] renderHash incomplet — abandon"); return 0; }
-  logf("[RENDER] calculé ET remis au pilote en %lu ms — mode=%u renderHash=%s", millis() - t0, (unsigned)POD_RENDER_MODE_DEFAULT, S->hex);
-  return 2;
-}
-#endif
 
 // ─── Onboarding ────────────────────────────────────────────────────────────
 static void displayKeyMaterialOnce() {
@@ -503,11 +441,7 @@ static void displayKeyMaterialOnce() {
 
 static void displayOnboardingQR(const String& onboardUrl, const String& code, const String& mac) {
   static QRCode qr;
-#if POD_RENDER_V1
-  uint8_t (&qrData)[600] = g_podScratch;             // zone PARTAGÉE avec le renderer (jamais vivants en même temps) : net 0 o de RAM statique — voir g_podScratch
-#else
   static uint8_t qrData[600];                        // qrcode_getBufferSize(5) tient largement dedans (vérifié ci-dessous)
-#endif
   if (qrcode_getBufferSize(5) > sizeof(qrData)) { logf("[QR] tampon trop petit"); return; }
   memset(qrData, 0, sizeof(qrData));
   int res = qrcode_initText(&qr, qrData, 4, ECC_MEDIUM, onboardUrl.c_str());
@@ -574,19 +508,13 @@ static bool doFetchFrame(const String& frameId, const String& frameSource) {
   if (noFrame) { logf("[FRAME] pas de frame disponible"); return true; }
   if (!got) { logf("[FRAME] image incomplète — pas d'ACK, nouvel essai au prochain pull"); return false; }
 
-#if !POD_RENDER_V1
   burnCartel(pendingWorkTitle, pendingArtistName, pendingDisplayTs, currentBlockIndex);
-#endif
 
   persistFrameId("");                                // pendant le rafraîchissement l'écran est dans un état incertain
 #if CLEAR_BEFORE_IMAGE
   if (hasRefreshed || lastFrameId.length() > 0) refreshPanel(true);
 #endif
-#if POD_RENDER_V1
-  if (podRenderAndShow() != 2) { logf("[FRAME] affichage échoué — frame conservée côté serveur"); return false; }   // 2 = rendu calculé ET remis au pilote
-#else
   if (!refreshPanel(false)) { logf("[FRAME] affichage échoué — frame conservée côté serveur"); return false; }
-#endif
 
   lastFrameId = frameKey(frameId);
   persistFrameId(frameId);

@@ -211,7 +211,7 @@ test("périmètre : le rasteriseur n'importe ni Redis, ni route, ni firmware ; l
   for (const d of ["esp8266", "arduino_uno_r4", "app", "lib"]) for (const f of walk(d)) {
     const t = fs.readFileSync(path.join(root, f), "utf8");
     if (f.replace(/\\/g, "/") === "lib/renderLayout.ts") continue;
-    if (["esp8266/esp_eink_2.9BWR/", "esp8266/esp_tft1.8/", "arduino_uno_r4/pod_uno_r4_eink29/", "arduino_uno_r4/pod_uno_r4_tft18/"].some((c) => f.replace(/\\/g, "/").startsWith(c))) continue;   // lot 8B-2A : 4 dossiers canaris (copies du noyau + sketch, rendu v1 désactivé par défaut)
+    if (["esp8266/esp_eink_2.9BWR/", "esp8266/esp_tft1.8/", "arduino_uno_r4/pod_uno_r4_eink29/", "arduino_uno_r4/pod_uno_r4_tft18/", "esp8266/esp_eink_2.7BW/", "esp8266/esp_eink_2.7BW_OLED/", "arduino_uno_r4/pod_uno_r4_eink27/", "arduino_uno_r4/pod_uno_r4_eink27_oled/"].some((c) => f.replace(/\\/g, "/").startsWith(c))) continue;   // lot 8B-2A : 4 dossiers canaris (copies du noyau + sketch, rendu v1 désactivé par défaut)
     assert.doesNotMatch(t, /podRender\.h|renderLayout/, f);
   }
 });

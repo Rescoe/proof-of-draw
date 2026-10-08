@@ -53,6 +53,7 @@
 #if POD_RENDER_V1
 #include "podRenderStream.h"
 #include "crypto_uno_r4.h"
+#include <new>
 #endif
 // POD_RENDER_V1_END
 
@@ -433,30 +434,35 @@ static bool refreshPanel(bool white) {
 
 #if POD_RENDER_V1
 // ─── Rendu v1 en flux : calcul ET remise au pilote ───────────────────────────────────────────────────────────────────────────────────────────────
-// Mémoire (UNO R4, pile principale ≈ 1 Ko : TOUS les objets sont GLOBAUX) : PodEinkRenderer 272 o (son contexte SHA sert AUSSI au frameHash : pas de second contexte) + 65 o de hash (statique), plus les plans blackBuf / redBuf EXISTANTS (2 × 4 736 o, jamais modifiés) ; le seul
-// tampon de pile est le morceau de 32 o du pilote. Aucune grille, aucun tampon final. Retour : 0 = échec AVANT la fin de la remise · 1 = TOUTES les données ET la commande de rafraîchissement ont été envoyées, mais la FIN PHYSIQUE du rafraîchissement n'est pas confirmée (BUSY expiré : l'image peut être affichée ou en cours d'affichage) · 2 = remis et rafraîchissement confirmé.
-// Seul 2 est un succès (sinon AUCUN ACK, le serveur réessaiera). ⚠ État de l'écran après un échec : NON garanti inchangé — la page blanche CLEAR_BEFORE_IMAGE peut venir d'être affichée ; une production interrompue (−1) laisse la RAM du panneau partiellement écrite sans lancer le rafraîchissement.
-static PodEinkRenderer<PodSha256Rw> g_podEink;
+// Mémoire (UNO R4, pile principale ≈ 1 Ko : AUCUN objet sur la pile, et AUCUNE nouvelle variable globale) : le renderer (PodEinkRenderer) et son hash (65 o) vivent dans g_podScratch[600], qui REMPLACE le tableau
+// `static uint8_t qrData[600]` de displayOnboardingQR (désormais une référence sur la MÊME zone) : le QR d'appairage et le rendu d'une image ne sont jamais vivants en même temps (appairage avant le premier pull de
+// frame ; chaque rendu reconstruit son objet par new placé — la zone contient peut-être un QR périmé). Bilan statique : 0 o de plus qu'avant (le chemin v1 ne consomme que ce que qrData consommait déjà).
+// Retour : 0 = échec AVANT la fin de la remise · 1 = TOUTES les données ET la commande de rafraîchissement ont été envoyées, mais la FIN PHYSIQUE du rafraîchissement n'est pas confirmée (BUSY expiré : l'image peut être affichée
+// ou en cours d'affichage) · 2 = remis et rafraîchissement confirmé. Seul 2 est un succès (sinon AUCUN ACK, le serveur réessaiera). ⚠ État de l'écran après un échec : NON garanti inchangé
+// — la page blanche CLEAR_BEFORE_IMAGE peut venir d'être affichée ; une production interrompue laisse la RAM du panneau partiellement écrite sans lancer le rafraîchissement.
+struct PodScratch { PodEinkRenderer<PodSha256Rw> r; char hex[65]; };
+static_assert(sizeof(PodScratch) <= 600, "PodScratch doit tenir dans g_podScratch (la zone de qrData)");
+alignas(4) static uint8_t g_podScratch[600];
 static uint32_t podRenderProduce(void* ctx, uint8_t* out, uint32_t cap) { return static_cast<PodEinkRenderer<PodSha256Rw>*>(ctx)->read(out, cap); }
 
 static uint8_t podRenderAndShow() {
   const PodRenderSpec spec = pod_render_spec(POD_R_EINK29);
   const PodRenderMeta meta = { (const uint8_t*)pendingDisplayTs.c_str(), (size_t)pendingDisplayTs.length(), (int32_t)currentBlockIndex,
                                (const uint8_t*)pendingArtistName.c_str(), (size_t)pendingArtistName.length(), (const uint8_t*)pendingWorkTitle.c_str(), (size_t)pendingWorkTitle.length() };
-  static char hex[65];   // statique (65 o de BSS, partagé frameHash puis renderHash) : rien sur la pile de 1 Ko — marge statique de ce firmware : voir docs/LOT_8B2A
-  if (!g_podEink.frameHash(spec, blackBuf, redBuf, BUF_SIZE, hex)) { logf("[RENDER] frameHash impossible — abandon"); return 0; }
-  logf("[RENDER] frameHash=%s", hex);
-  if (!g_podEink.begin(spec, POD_RENDER_MODE_DEFAULT, meta, blackBuf, redBuf, BUF_SIZE)) { logf("[RENDER] paramètres refusés — abandon"); return 0; }
+  PodScratch* S = new (g_podScratch) PodScratch();   // objet neuf dans la zone partagée
+  if (!S->r.frameHash(spec, blackBuf, redBuf, BUF_SIZE, S->hex)) { logf("[RENDER] frameHash impossible — abandon"); return 0; }
+  logf("[RENDER] frameHash=%s", S->hex);
+  if (!S->r.begin(spec, POD_RENDER_MODE_DEFAULT, meta, blackBuf, redBuf, BUF_SIZE)) { logf("[RENDER] paramètres refusés — abandon"); return 0; }
   waitMinRefreshGap();
   const unsigned long t0 = millis();
   if (!epd.init()) { logf("[RENDER] panneau non initialisé — abandon, aucune donnée envoyée (l'écran peut être resté blanc)"); lastRefreshMs = millis(); hasRefreshed = true; return 0; }
-  const int8_t sent = epd.displayStream(podRenderProduce, &g_podEink);
+  const int8_t sent = epd.displayStream(podRenderProduce, &S->r);
   epd.sleep();
   lastRefreshMs = millis(); hasRefreshed = true;
   if (sent == -1) { logf("[RENDER] production interrompue — rafraîchissement NON lancé (RAM du panneau partiellement écrite ; l'écran garde son état physique, éventuellement blanc)"); return 0; }
-  if (!g_podEink.finish(hex)) { logf("[RENDER] renderHash incomplet — abandon"); return 0; }
-  if (sent != 0) { logf("[RENDER] rendu CALCULÉ (renderHash=%s), données ET commande de rafraîchissement ENVOYÉES, mais fin physique du rafraîchissement NON confirmée (BUSY expiré) — pas d'ACK", hex); return 1; }
-  logf("[RENDER] calculé ET remis au pilote en %lu ms — mode=%u renderHash=%s", millis() - t0, (unsigned)POD_RENDER_MODE_DEFAULT, hex);
+  if (!S->r.finish(S->hex)) { logf("[RENDER] renderHash incomplet — abandon"); return 0; }
+  if (sent != 0) { logf("[RENDER] rendu CALCULÉ (renderHash=%s), données ET commande de rafraîchissement ENVOYÉES, mais fin physique du rafraîchissement NON confirmée (BUSY expiré) — pas d'ACK", S->hex); return 1; }
+  logf("[RENDER] calculé ET remis au pilote en %lu ms — mode=%u renderHash=%s", millis() - t0, (unsigned)POD_RENDER_MODE_DEFAULT, S->hex);
   return 2;
 }
 #endif
@@ -488,7 +494,11 @@ static void displayKeyMaterialOnce() {
 
 static void displayOnboardingQR(const String& onboardUrl, const String& code, const String& mac) {
   static QRCode qr;
+#if POD_RENDER_V1
+  uint8_t (&qrData)[600] = g_podScratch;             // zone PARTAGÉE avec le renderer (jamais vivants en même temps) : net 0 o de RAM statique — voir g_podScratch
+#else
   static uint8_t qrData[600];                        // qrcode_getBufferSize(5) tient largement dedans (vérifié ci-dessous)
+#endif
   if (qrcode_getBufferSize(5) > sizeof(qrData)) { logf("[QR] tampon trop petit"); return; }
   memset(qrData, 0, sizeof(qrData));
   int res = qrcode_initText(&qr, qrData, 4, ECC_MEDIUM, onboardUrl.c_str());

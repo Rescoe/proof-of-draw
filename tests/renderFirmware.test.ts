@@ -11,14 +11,24 @@ import { compileHarness, describeChoice, findCompiler, runProcess } from "./help
 const root = path.join(__dirname, "..");
 const read = (p: string) => fs.readFileSync(path.join(root, p), "utf8").replace(/\r\n/g, "\n");
 const BACKUP = "firmware-backups/2026-10-08_avant-rendu-v1-canaris";
+const BACKUP2 = "firmware-backups/2026-10-08_avant-propagation-8b2b1";
 
-const SKETCHES: Array<{ name: string; ino: string; backup: string; drivers: Array<[string, string]>; crypto: string; family: "esp" | "r4" }> = [
+const SKETCHES: Array<{ name: string; ino: string; backup: string; drivers: Array<[string, string]>; crypto: string; family: "esp" | "r4"; fn?: string; states?: 2 | 3; scratch?: boolean }> = [
   { name: "ESP8266 e-ink 2,9″", ino: "esp8266/esp_eink_2.9BWR/esp_eink_2.9BWR.ino", backup: `${BACKUP}/esp_eink_2.9BWR/esp_eink_2.9BWR.ino`,
     drivers: [["esp8266/esp_eink_2.9BWR/epd2in9b_V4.h", `${BACKUP}/esp_eink_2.9BWR/epd2in9b_V4.h`], ["esp8266/esp_eink_2.9BWR/epd2in9b_V4.cpp", `${BACKUP}/esp_eink_2.9BWR/epd2in9b_V4.cpp`]], crypto: "crypto_esp8266.h", family: "esp" },
   { name: "ESP8266 TFT 1,8″", ino: "esp8266/esp_tft1.8/esp_tft1.8.ino", backup: `${BACKUP}/esp_tft1.8/esp_tft1.8.ino`, drivers: [], crypto: "crypto_esp8266.h", family: "esp" },
   { name: "UNO R4 e-ink 2,9″", ino: "arduino_uno_r4/pod_uno_r4_eink29/pod_uno_r4_eink29.ino", backup: `${BACKUP}/pod_uno_r4_eink29/pod_uno_r4_eink29.ino`,
-    drivers: [["arduino_uno_r4/pod_uno_r4_eink29/epd29b.h", `${BACKUP}/pod_uno_r4_eink29/epd29b.h`]], crypto: "crypto_uno_r4.h", family: "r4" },
+    drivers: [["arduino_uno_r4/pod_uno_r4_eink29/epd29b.h", `${BACKUP}/pod_uno_r4_eink29/epd29b.h`]], crypto: "crypto_uno_r4.h", family: "r4", scratch: true },
   { name: "UNO R4 TFT 1,8″", ino: "arduino_uno_r4/pod_uno_r4_tft18/pod_uno_r4_tft18.ino", backup: `${BACKUP}/pod_uno_r4_tft18/pod_uno_r4_tft18.ino`, drivers: [], crypto: "crypto_uno_r4.h", family: "r4" },
+  // lot 8B-2B-1 : les quatre derniers firmwares à cartel gravé (e-ink 2,7″, plan unique)
+  { name: "ESP8266 e-ink 2,7″", ino: "esp8266/esp_eink_2.7BW/esp_eink_2.7BW.ino", backup: `${BACKUP2}/esp_eink_2.7BW/esp_eink_2.7BW.ino`, crypto: "crypto_esp8266.h", family: "esp", fn: "podRenderAndShowE27", states: 2,
+    drivers: [["esp8266/esp_eink_2.7BW/epd2in7_V2.h", `${BACKUP2}/esp_eink_2.7BW/epd2in7_V2.h`], ["esp8266/esp_eink_2.7BW/epd2in7_V2.cpp", `${BACKUP2}/esp_eink_2.7BW/epd2in7_V2.cpp`]] },
+  { name: "ESP8266 e-ink 2,7″ + OLED", ino: "esp8266/esp_eink_2.7BW_OLED/esp_eink_2.7BW_OLED.ino", backup: `${BACKUP2}/esp_eink_2.7BW_OLED/esp_eink_2.7BW_OLED.ino`, crypto: "crypto_esp8266.h", family: "esp", fn: "podRenderAndShowE27", states: 2,
+    drivers: [["esp8266/esp_eink_2.7BW_OLED/epd2in7_V2.h", `${BACKUP2}/esp_eink_2.7BW_OLED/epd2in7_V2.h`], ["esp8266/esp_eink_2.7BW_OLED/epd2in7_V2.cpp", `${BACKUP2}/esp_eink_2.7BW_OLED/epd2in7_V2.cpp`]] },
+  { name: "UNO R4 e-ink 2,7″", ino: "arduino_uno_r4/pod_uno_r4_eink27/pod_uno_r4_eink27.ino", backup: `${BACKUP2}/pod_uno_r4_eink27/pod_uno_r4_eink27.ino`, crypto: "crypto_uno_r4.h", family: "r4", states: 2, scratch: true,
+    drivers: [["arduino_uno_r4/pod_uno_r4_eink27/epd2in7_V2.h", `${BACKUP2}/pod_uno_r4_eink27/epd2in7_V2.h`], ["arduino_uno_r4/pod_uno_r4_eink27/epd2in7_V2.cpp", `${BACKUP2}/pod_uno_r4_eink27/epd2in7_V2.cpp`]] },
+  { name: "UNO R4 e-ink 2,7″ + OLED", ino: "arduino_uno_r4/pod_uno_r4_eink27_oled/pod_uno_r4_eink27_oled.ino", backup: `${BACKUP2}/pod_uno_r4_eink27_oled/pod_uno_r4_eink27_oled.ino`, crypto: "crypto_uno_r4.h", family: "r4", states: 2, scratch: true,
+    drivers: [["arduino_uno_r4/pod_uno_r4_eink27_oled/epd2in7_V2.h", `${BACKUP2}/pod_uno_r4_eink27_oled/epd2in7_V2.h`], ["arduino_uno_r4/pod_uno_r4_eink27_oled/epd2in7_V2.cpp", `${BACKUP2}/pod_uno_r4_eink27_oled/epd2in7_V2.cpp`]] },
 ];
 
 /** Vue « POD_RENDER_V1 = 0 » : retire les blocs balisés POD_RENDER_V1_BEGIN / _END, évalue les `#if POD_RENDER_V1` / `#if !POD_RENDER_V1` (autres conditionnelles conservées telles quelles), ignore les lignes vides. */
@@ -47,7 +57,7 @@ for (const s of SKETCHES) {
     assert.match(src, /#ifndef POD_RENDER_V1\n#define POD_RENDER_V1 0\n#endif/);
     assert.match(src, /#ifndef POD_RENDER_MODE_DEFAULT\n#define POD_RENDER_MODE_DEFAULT POD_R_FIT/);
     // le noyau n'est inclus que sous #if POD_RENDER_V1
-    assert.match(src, new RegExp(`#if POD_RENDER_V1\\n#include "podRenderStream.h"\\n#include "${s.crypto.replace(".", "\\.")}"\\n#endif`));
+    assert.match(src, new RegExp(`#if POD_RENDER_V1\\n#include "podRenderStream.h"\\n#include "${s.crypto.replace(".", "\\.")}"\\n(#include <new>\\n)?#endif`));
     assert.equal((src.match(/#include "podRender(Stream)?\.h"/g) ?? []).length, 1);
     // chemin désactivé == avant
     assert.equal(offView(src), plain(read(s.backup)), `${s.name} : la vue POD_RENDER_V1=0 diffère du firmware d'origine`);
@@ -67,17 +77,27 @@ for (const s of SKETCHES) {
     const on = src.split("\n").join("\n");
     // blocs actifs seulement avec POD_RENDER_V1 = 1
     const blocks = [...on.matchAll(/#if POD_RENDER_V1\n([\s\S]*?)\n#(?:else|endif)/g)].map((m) => m[1]).join("\n");
-    assert.doesNotMatch(blocks, /\bmalloc\(|\bnew\b|\bString\s+\w+\s*=\s*String\(/, "aucune allocation dans le chemin v1");
+    const code = blocks.replace(/\/\/.*$/gm, "").replace(/^#include .*$/gm, "");   // sans les commentaires ni les #include
+    assert.doesNotMatch(code, /\bmalloc\(|\bnew\b(?!\s*\(g_podScratch\))|\bString\s+\w+\s*=\s*String\(/, "aucune allocation dans le chemin v1 (seul le new PLACÉ dans la zone statique partagée est permis)");
     assert.doesNotMatch(blocks, /ackFrame\(|httpPost\(|httpCall\(/, "le chemin v1 ne parle pas au serveur (ACK / routes inchangés)");
     assert.match(blocks, /renderHash/);
     assert.match(blocks, /calculé ET remis/);
-    if (s.family === "esp" && s.ino.includes("eink")) {
-      assert.match(blocks, /return 0;[\s\S]*return 1;[\s\S]*return 2;/, "trois états : échec · calculé non remis · calculé ET remis");
-      assert.match(src, /podRenderAndShow\(\) != 2/);
+    if (s.ino.includes("eink")) {
+      const fn = s.fn ?? "podRenderAndShow";
+      if ((s.states ?? 3) === 3) assert.match(blocks, /return 0;[\s\S]*return 1;[\s\S]*return 2;/, "trois états : échec · données remises sans confirmation · calculé ET remis");
+      else assert.match(blocks, /return 0;[\s\S]*return 2;/, "deux états (ReadBusy() bloque sans délai) : échec · calculé ET remis");
+      assert.match(src, new RegExp(fn + "\\(\\w*\\) != 2"));
     }
-    if (s.family === "r4" && s.ino.includes("eink")) assert.match(src, /podRenderAndShow\(\) != 2/);
     // R4 : objets GLOBAUX (pile principale de 1 Ko)
-    if (s.family === "r4") assert.match(blocks, /static Pod(Eink|Tft)Renderer<PodSha256Rw> g_pod/);
+    if (s.family === "r4" && !s.scratch) assert.match(blocks, /static Pod(Eink|Tft)Renderer<PodSha256Rw> g_pod/);
+    // R4 e-ink : AUCUNE nouvelle variable globale — le renderer vit dans la zone qui remplaçait qrData[600] (net 0 o de RAM statique)
+    if (s.scratch) {
+      assert.match(code, /alignas\(4\) static uint8_t g_podScratch\[600\];/);
+      assert.match(code, /static_assert\(sizeof\(PodScratch\) <= 600/);
+      assert.match(code, /uint8_t \(&qrData\)\[600\] = g_podScratch;/);
+      assert.doesNotMatch(code, /static PodEinkRenderer|static PodFrameHasher|static char (frameHex|hex)/, "aucun objet statique supplémentaire sur la R4 e-ink");
+      assert.equal((offView(src).match(/static uint8_t qrData\[600\];/g) ?? []).length, 1, "le chemin désactivé garde son qrData[600] d'origine");
+    }
     // ESP8266 TFT : tampons statiques (hors tas)
     if (s.ino.includes("esp_tft")) assert.match(blocks, /static PodTftRenderer<PodSha256Br> g_podTft;/);
     // succès seulement si calculé ET remis : les sketches TFT n'écrivent le succès (ACK) qu'après 2 / success
@@ -102,6 +122,16 @@ test("pilotes modifiés : seuls des AJOUTS balisés (DisplayStream / displayStre
   // contrat du pilote : plan noir tel quel (0x24), plan rouge inversé (0x26), jamais de franchissement de frontière, pas de rafraîchissement si la production s'arrête
   const esp = read("esp8266/esp_eink_2.9BWR/epd2in9b_V4.cpp"), r4 = read("arduino_uno_r4/pod_uno_r4_eink29/epd29b.h");
   assert.match(esp, /SendCommand\(0x24\);[\s\S]*if \(n == 0 \|\| n > cap\) return false;[\s\S]*SendData\(\(unsigned char\)~chunk\[i\]\)[\s\S]*SendCommand\(0x26\)[\s\S]*TurnOnDisplay\(\);\s*return true;/);
+  // e-ink 2,7″ (plan unique, quatre copies du pilote Waveshare) : 0x24 tel quel, aucun franchissement, pas de rafraîchissement si la production s'arrête, ReadBusy() sans délai documenté
+  const blocks27 = ["esp8266/esp_eink_2.7BW", "esp8266/esp_eink_2.7BW_OLED", "arduino_uno_r4/pod_uno_r4_eink27", "arduino_uno_r4/pod_uno_r4_eink27_oled"].map((d) => {
+    const t = read(`${d}/epd2in7_V2.cpp`), m = /\/\/ POD_RENDER_V1_BEGIN\n([\s\S]*?)\/\/ POD_RENDER_V1_END/.exec(t);
+    assert.ok(m, d);
+    assert.match(m[1], /SendCommand\(0x24\);[\s\S]*if \(n == 0 \|\| n > cap\) return false;[\s\S]*SendData\(chunk\[i\]\)[\s\S]*TurnOnDisplay\(\);\s*return true;/, d);
+    assert.doesNotMatch(m[1], /~chunk/, `${d} : le plan unique n'est pas inversé`);
+    assert.match(read(`${d}/epd2in7_V2.h`), /ReadBusy\(\) attend indéfiniment/);
+    return m[1];
+  });
+  assert.equal(new Set(blocks27).size, 1, "les quatre copies de DisplayStream (2,7″) sont identiques");
   assert.match(r4, /command\(plane == 0 \? 0x24 : 0x26\)[\s\S]*if \(n == 0 \|\| n > cap\) \{[^}]*return -1;[\s\S]*\(uint8_t\)~chunk\[i\][\s\S]*return refresh\(\) \? 0 : -2;/);
 });
 
@@ -182,4 +212,45 @@ test("honnêteté des messages et commentaires : aucun firmware ni pilote ne pr�
   assert.match(r4, /données ET commande de rafraîchissement ENVOYÉES/);
   assert.match(read("arduino_uno_r4/pod_uno_r4_eink29/epd29b.h"), /la fin physique du rafraîchissement n'est PAS confirmée/);
   assert.match(read("esp8266/esp_eink_2.9BWR/esp_eink_2.9BWR.ino"), /clearDisplayWhite\(\) peut avoir affiché une page BLANCHE/);
+});
+
+test("lot 8B-2B-1 : matrice ARCHIVÉE (docs/mesures/8B2B1_2026_10_08) — 8 firmwares, chemin désactivé == base, R4 e-ink SANS variable globale ajoutée, ESP8266 ≤ 40 000 o, aucun avertissement nouveau, surcoût de pile borné", () => {
+  const dir = "docs/mesures/8B2B1_2026_10_08";
+  const rows = read(`${dir}/tailles_firmwares.txt`).split("\n").filter((l) => l.includes("|") && !l.startsWith("#")).map((l) => {
+    const [name, ram, flash] = l.split(" | ");
+    const n = (s: string) => s.replace(/^(RAM|flash) /, "").split(" · ").map(Number);
+    return { name, ram: n(ram), flash: n(flash) };
+  });
+  assert.deepEqual(rows.map((r) => r.name).sort(), ["esp_eink27", "esp_eink27_oled", "esp_eink29", "esp_tft18", "r4_eink27", "r4_eink27_oled", "r4_eink29", "r4_tft18"]);
+  for (const r of rows) {
+    const [base, off, on] = r.ram, [fbase, foff, fon] = r.flash;
+    assert.equal(off, base, `${r.name} : RAM chemin désactivé ≠ base`);
+    assert.ok(Math.abs(foff - fbase) <= 16, `${r.name} : flash chemin désactivé trop différent de la base`);
+    assert.ok(fon > foff, `${r.name} : le chemin activé doit coûter du flash`);
+    if (r.name.startsWith("esp")) assert.ok(on <= 40000 && on >= off, `${r.name} : RAM statique ${on} (règle 8 : ≤ 40 000)`);
+    else {
+      assert.ok(32768 - 9472 - on >= 0, `${r.name} : RAM R4 au-delà de ce que l'éditeur de liens accepte`);
+      if (r.name.startsWith("r4_eink")) assert.equal(on, off, `${r.name} : AUCUNE variable globale ajoutée sur un R4 e-ink (RAM ON == OFF)`);
+    }
+  }
+  const warn = read(`${dir}/avertissements.txt`);
+  assert.equal((warn.match(/aucun avertissement nouveau/g) ?? []).length, 16);
+  assert.doesNotMatch(warn, /NOUVEAUX/);
+  const pile = read(`${dir}/pile_colle_firmwares.txt`).split(/^== /m);
+  const frame = (id: string, mode: number, fn: string) => {
+    const section = pile.find((s) => s.startsWith(`${id} POD_RENDER_V1=${mode}`))!;
+    const m = section.split("\n").map((l) => /^(\d+)\t(.*)$/.exec(l)).find((x) => x && x[2].includes(fn + "("));
+    assert.ok(m, `${id} ${mode} ${fn}`);
+    return Number(m[1]);
+  };
+  for (const id of ["r4_eink29", "r4_eink27", "r4_eink27_oled"]) assert.ok(frame(id, 1, "bool doPull") - frame(id, 0, "bool doPull") <= 64, id);
+  assert.ok(frame("r4_tft18", 1, "bool doPull") - frame("r4_tft18", 0, "bool doPull") <= 96);
+  assert.ok(frame("esp_eink27", 1, "bool doFetchFrame") - frame("esp_eink27", 0, "bool doFetchFrame") <= 256);
+  assert.ok(frame("esp_eink27_oled", 1, "bool doFetchFrameE27") - frame("esp_eink27_oled", 0, "bool doFetchFrameE27") <= 96);
+  // la note du lot annonce ces chiffres et ses limites, et sa structure est intacte
+  const doc = read("docs/LOT_8B2B1_PROPAGATION_2026_10_08.md");
+  for (const needle of ["aucune variable globale ajoutée", "g_podScratch[600]", "remplace", "ReadBusy()", "attend indéfiniment", "Jamais flashé", "NON validée", "16 / 16", "528 → **528**", "Aucun essai sur carte"]) assert.ok(doc.includes(needle), needle);
+  const heads = doc.split("\n").filter((l) => /^#{1,2} /.test(l));
+  assert.deepEqual(heads.slice(1).map((h) => h.slice(0, 5)), ["## 1.", "## 2.", "## 3.", "## 4.", "## 5.", "## 6.", "## 7."]);
+  assert.equal(heads.filter((h) => h.startsWith("# ")).length, 1);
 });
