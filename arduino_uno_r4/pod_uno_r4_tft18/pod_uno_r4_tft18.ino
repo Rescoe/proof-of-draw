@@ -39,7 +39,7 @@
 #include <qrcode.h>
 #include <Ed25519.h>
 #include "podEdStack.h"   // POD_ED_STACK : Ed25519 sur PILE DÉDIÉE (la pile principale de la R4 n'a que 1 024 o) — docs/LOT_8B2B2_PILE_ED25519_R4_2026_10_08.md
-#include "podNetStack.h"   // POD_NET_STACK : toute transaction réseau/TLS sur PILE DÉDIÉE (connect() déborde de 456 o sous __StackLimit) — docs/LOT_8B2B2_NETSTACK_FIX1_2026_10_09.md
+#include "podNetStack.h"   // POD_NET_STACK : transactions réseau/TLS ET journal sur PILE DÉDIÉE (connect() déborde de 456 o sous __StackLimit) — docs/LOT_8B2B2_NETSTACK_FIX1_2026_10_09.md, docs/LOT_8B2B2_NETSTACK_FIX2_2026_10_09.md
 #include <SHA256.h>
 #include "pod_http.h"
 #include "pod_vote_r4.h"
@@ -133,10 +133,22 @@ String pendingObsHashes = "", pendingObsTarget = "";
 static char g_body[3072];                          // corps JSON des réponses
 
 // ─── LOG ───────────────────────────────────────────────────────────────────
-static void logf(const char* fmt, ...) {
+// POD_LOG_STACK (NETSTACK-FIX2) : le formatage (vsnprintf) et l'écriture USB (Serial) descendent d'environ 450 o sous leur appelant ; appelés depuis setup → doRegister → httpCall (608 o de cadres) ils dépassent
+// les 1 024 o de la pile principale (canari du 09/10/2026 : 24 o sous __StackLimit). Sur la pile PRINCIPALE, logf s'exécute donc sur une petite pile dédiée (POD_LOG_STACK_TOTAL) ; sur une pile dédiée (dans une
+// transaction réseau), directement. Échec (malloc, garde, marge) : la ligne est ABANDONNÉE — un journal ne doit jamais arrêter le firmware.
+struct LogJob { const char* fmt; va_list* ap; };
+static void logfEmit(void* p) {
   static char b[256];                              // statique : la pile du cœur R4 ne fait que 1 Ko
-  va_list ap; va_start(ap, fmt); vsnprintf(b, sizeof(b), fmt, ap); va_end(ap);
+  LogJob* j = static_cast<LogJob*>(p);
+  vsnprintf(b, sizeof(b), j->fmt, *j->ap);
   Serial.println(b);
+}
+static void logf(const char* fmt, ...) {
+  va_list ap; va_start(ap, fmt);
+  LogJob j = { fmt, &ap };
+  if (podNetOnMainStack()) PodNet::runSized(logfEmit, &j, POD_LOG_STACK_TOTAL);
+  else logfEmit(&j);
+  va_end(ap);
 }
 
 // ─── MÉMOIRE (cf. pod_uno_r4.ino : pile principale de 1 Ko, protection désactivée) ─────────
@@ -295,21 +307,24 @@ struct Conn {
   }
 };
 
-/** Appel JSON : retourne le code HTTP (>0) et le corps dans resp ; <0 = échec réseau/lecture/corps incomplet. */
-static int httpCall(const char* method, const String& path, const String* body, String& resp) {
-  resp = "";
-  int code = -4; bool complete = false;              // POD_NET_STACK : résultats dans les variables de l'APPELANT ; TOUTE la transaction TLS (connect, envoi, en-têtes, corps, stop) tourne sur la pile réseau dédiée
+/** POD_NET_STACK : la transaction TLS COMPLÈTE (connect, requête, en-têtes, corps, stop) dans une fonction à part (noinline) : sa fermeture, son PodNetInfo et son cadre ont DISPARU avant le journal et le traitement
+ *  de la réponse. Résultats dans les variables de l'APPELANT ; client.stop() est TOUJOURS appelé, même si request() échoue après l'ouverture du client. */
+static bool __attribute__((noinline)) netHttpRaw(const char* method, const String& path, const String* body, int& code, bool& complete, PodNetInfo& ni) {
   auto tx = [&]() {
     Conn c(HTTP_TIMEOUT_MS);
     code = c.request(method, path, body);
-    if (code < 0) return;
-    size_t len = 0;
-    complete = c.rd.readBodyString(g_body, sizeof(g_body), &len);
+    if (code >= 0) { size_t len = 0; complete = c.rd.readBodyString(g_body, sizeof(g_body), &len); }
     c.client.stop();
   };
-  PodNetInfo ni;
-  const bool ran = podNetRun(tx, &ni);
-  if (!ran) { logf("[HTTP %s] pile réseau dédiée indisponible (erreur %u, marge %u o) — transaction ÉCHOUÉE", method, (unsigned)ni.err, (unsigned)ni.margin); return -4; }
+  return podNetRun(tx, &ni);
+}
+
+/** Appel JSON : retourne le code HTTP (>0) et le corps dans resp ; <0 = échec réseau/lecture/corps incomplet ; -4 = pile dédiée indisponible, transaction NON exécutée ; -5 = transaction EXÉCUTÉE mais résultat local REJETÉ (garde/marge). */
+static int httpCall(const char* method, const String& path, const String* body, String& resp) {
+  resp = "";
+  int code = -4; bool complete = false; PodNetInfo ni;
+  const bool ran = netHttpRaw(method, path, body, code, complete, ni);
+  if (!ran) { logf("[HTTP %s] pile réseau dédiée : %s (erreur %u, marge %u o)%s", method, podNetWhy(ni), (unsigned)ni.err, (unsigned)ni.margin, podNetExecuted(ni) ? " — la requête a PU atteindre le serveur (POST, vote ou ACK possibles)" : ""); return podNetExecuted(ni) ? -5 : -4; }
   logf("[HTTP %s] %s -> %d", method, path.length() > 60 ? (path.substring(0, 60) + "...").c_str() : path.c_str(), code);
   if (code < 0) { if (code == -2) logf("[HTTP] connexion TLS impossible (voir l'en-tête du sketch)"); return code; }
   if (!complete) { logf("[HTTP] corps incomplet ou > %u octets", (unsigned)sizeof(g_body) - 1); return -3; }
@@ -471,7 +486,7 @@ static bool doFetchFrame(const String& frameId, const String& frameSource) {
     c.client.stop();
   };
   const bool ran = podNetRun(tx, &ni);
-  if (!ran) { shown = false; noFrame = false; logf("[FRAME] pile réseau dédiée indisponible (erreur %u, marge %u o) — image NON présentée", (unsigned)ni.err, (unsigned)ni.margin); }
+  if (!ran) { shown = false; noFrame = false; logf("[FRAME] pile réseau dédiée : %s (erreur %u, marge %u o) — pas d'ACK ; l'écran a pu être partiellement ou totalement redessiné", podNetWhy(ni), (unsigned)ni.err, (unsigned)ni.margin); }
   if (noFrame) { logf("[FRAME] pas de frame disponible"); return true; }
   if (!shown) { logf("[FRAME] image incomplète — pas d'ACK, nouvel essai au prochain pull"); return false; }
 
@@ -630,7 +645,7 @@ static void __attribute__((noinline)) netReadCandidate(const String& candidateId
     c.client.stop();
   };
   const bool ran = podNetRun(tx, &ni);
-  if (!ran) { memset(&chk, 0, sizeof(chk)); logf("[VALIDATE2] pile réseau dédiée indisponible (erreur %u, marge %u o) — pas de vote", (unsigned)ni.err, (unsigned)ni.margin); }
+  if (!ran) { memset(&chk, 0, sizeof(chk)); logf("[VALIDATE2] pile réseau dédiée : %s (erreur %u, marge %u o) — pas de vote", podNetWhy(ni), (unsigned)ni.err, (unsigned)ni.margin); }
 }
 
 static bool doValidateV2(const String& candidateId, const String& screenName, size_t bytes, const String& announcedHash) {

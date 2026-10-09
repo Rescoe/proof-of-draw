@@ -68,8 +68,9 @@ export function formatFailure(title: string, r: ProcessReport, platform: string 
 
 const quote = (a: string) => (/\s/.test(a) ? `"${a}"` : a);
 
-export function runProcess(program: string, args: string[]): ProcessReport {
-  const r = spawnSync(program, args, { encoding: "utf8" });
+/** timeoutMs : un harnais qui ne rend jamais la main (verrou fatal d'un instrument muté) est TUÉ après ce délai ; status vaut alors null. */
+export function runProcess(program: string, args: string[], timeoutMs?: number): ProcessReport {
+  const r = spawnSync(program, args, { encoding: "utf8", ...(timeoutMs ? { timeout: timeoutMs, killSignal: "SIGKILL" } : {}) });
   return {
     command: [program, ...args].map(quote).join(" "), cwd: process.cwd(), status: r.status, signal: r.signal,
     spawnError: r.error as NodeJS.ErrnoException | undefined, stdout: r.stdout ?? "", stderr: r.stderr ?? "",

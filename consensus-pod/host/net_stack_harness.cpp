@@ -78,6 +78,24 @@ int main() {
   // 10) aucune fuite après un échec (le bloc est rendu) : même adresse réutilisée
   { podNetTestHook = touch; g_touchAt = 0; void* before = std::malloc(POD_NET_STACK_TOTAL); std::free(before); Ctx c = {0, 0, ""}; PodNet::run(fnSimple, &c);
     void* after = std::malloc(POD_NET_STACK_TOTAL); std::free(after); expect("échec (MARGIN) : aucun bloc perdu", before == after); podNetTestHook = nullptr; }
+  // 12) NETSTACK-FIX2 — « non exécutée » / « exécutée mais résultat local rejeté » : NOMEM et NESTED ne démarrent JAMAIS fn ; GUARD et MARGIN la laissent TOURNER (donc un POST, un vote ou un ACK a pu partir)
+  { PodNetInfo ni;
+    ni.err = POD_NET_NOMEM; expect("NOMEM : non exécutée", !podNetExecuted(ni) && std::strstr(podNetWhy(ni), "NON exécutée") != nullptr);
+    ni.err = POD_NET_NESTED; expect("NESTED : non exécutée", !podNetExecuted(ni));
+    ni.err = POD_NET_GUARD; expect("GUARD : EXÉCUTÉE, résultat rejeté", podNetExecuted(ni) && std::strstr(podNetWhy(ni), "EXÉCUTÉE") != nullptr);
+    ni.err = POD_NET_MARGIN; expect("MARGIN : EXÉCUTÉE, résultat rejeté", podNetExecuted(ni));
+    ni.err = POD_NET_OK; expect("OK : pas un échec", !podNetExecuted(ni)); }
+  { Ctx c = {0, 0, ""}; PodNetInfo ni; podNetTestHook = touch; g_touchAt = 5;   // marge 5 o → MARGIN
+    const bool ok = PodNet::run(fnSimple, &c, &ni);
+    expect("MARGIN : fn a bien tourné (calls == 1) bien que run() soit false → la transaction est EXÉCUTÉE", !ok && c.calls == 1 && podNetExecuted(ni)); podNetTestHook = nullptr; }
+  { Ctx c = {0, 0, ""}; PodNetInfo ni; podNetTestFailAlloc = 1; const bool ok = PodNet::run(fnSimple, &c, &ni); podNetTestFailAlloc = 0;
+    expect("NOMEM : fn n'a pas tourné (calls == 0) → NON exécutée", !ok && c.calls == 0 && !podNetExecuted(ni)); }
+  // 13) pile de journal : taille choisie, exécutée, effacée, refusée si trop petite, jamais imbriquée
+  { Ctx c = {0, 0, ""}; PodNetInfo ni; g_wipeChecked = 0; g_wipeAllZero = true;
+    expect("runSized(journal) réussit, fn appelée une fois", PodNet::runSized(fnSimple, &c, POD_LOG_STACK_TOTAL, &ni) && c.calls == 1 && ni.err == POD_NET_OK && ni.margin == POD_LOG_STACK_TOTAL - POD_NET_GUARD_BYTES);
+    expect("runSized(journal) : zone de 1536 o effacée", g_wipeChecked == 1 && g_wipeAllZero);
+    Ctx d = {0, 0, ""}; expect("runSized trop petite (< 512 o utilisables) : refusée, fn non appelée", !PodNet::runSized(fnSimple, &d, POD_NET_GUARD_BYTES + 511u, &ni) && d.calls == 0 && ni.err == POD_NET_NOMEM);
+    podNetTestNested = 1; Ctx e = {0, 0, ""}; expect("runSized imbriquée : NESTED", !PodNet::runSized(fnSimple, &e, POD_LOG_STACK_TOTAL, &ni) && e.calls == 0 && ni.err == POD_NET_NESTED); podNetTestNested = 0; }
   // 11) l'information est facultative
   { Ctx c = {0, 0, ""}; expect("PodNetInfo facultatif", PodNet::run(fnSimple, &c) && c.calls == 1); }
 

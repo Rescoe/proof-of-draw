@@ -30,6 +30,13 @@
 #define POD_NET_MARGIN_MIN 128u        // marge minimale exigée : en dessous, la transaction est déclarée ÉCHOUÉE
 #endif
 #define POD_NET_MARGIN_GOAL 256u       // objectif : en dessous, PodNetInfo::low est vrai (journalisé par le canari)
+// NETSTACK-FIX2 : pile de JOURNAL. Le formatage (vsnprintf) et l'écriture USB (Serial) descendent d'environ 450 o sous leur appelant ; appelés depuis les couches profondes (setup → doRegister → httpCall : 608 o de cadres)
+// ils dépassent les 1 024 o de la pile principale (canari du 09/10/2026 : 24 o sous __StackLimit, au retour de la transaction). logf() les exécute donc sur une petite pile dédiée : 1 536 o = garde 64 +
+// chaîne vsnprintf pire cas statique 736 (avec la branche flottante jamais exécutée) + cadre d'exception 104 + 256 de marge visée + réserve pour la chaîne USB mesurée (≈ 270 – 450).
+#ifndef POD_LOG_STACK_TOTAL
+#define POD_LOG_STACK_TOTAL 1536u
+#endif
+static_assert(POD_LOG_STACK_TOTAL >= POD_NET_GUARD_BYTES + 736u + 104u + POD_NET_MARGIN_GOAL, "pile de journal trop petite");
 static_assert(POD_NET_STACK_TOTAL >= POD_NET_GUARD_BYTES + 1024u + POD_NET_MARGIN_MIN, "pile réseau dédiée trop petite");
 
 #if defined(__arm__)
@@ -56,6 +63,12 @@ struct PodNetInfo {     // mesures de la dernière transaction (à placer par l'
   uint8_t low;          // 1 si margin < POD_NET_MARGIN_GOAL (réussie mais sous l'objectif)
   uint8_t pad[2];
 };
+
+/** true si la transaction a RÉELLEMENT été exécutée alors que son résultat local est rejeté (GUARD, MARGIN : détectés APRÈS coup) — un POST, un vote ou un ACK a pu atteindre le serveur ;
+ *  false si elle n'a jamais démarré (NOMEM, NESTED). */
+static inline bool podNetExecuted(const PodNetInfo& ni) { return ni.err == POD_NET_GUARD || ni.err == POD_NET_MARGIN; }
+/** Formulation honnête de l'échec, pour les journaux. */
+static inline const char* podNetWhy(const PodNetInfo& ni) { return podNetExecuted(ni) ? "transaction EXÉCUTÉE mais résultat local REJETÉ (garde/marge)" : "transaction NON exécutée (mémoire/imbrication)"; }
 
 #if POD_NET_SWITCH_STACK
 extern char __StackLimit, __StackTop;   // symboles de l'éditeur de liens du cœur R4 (pile principale = [__StackLimit, __StackTop])
@@ -101,19 +114,22 @@ class PodNet {
  public:
   /** Exécute fn(ctx) sur une pile dédiée. true = fn a tourné ET garde + marge sont saines (les résultats écrits par fn dans les objets de l'appelant sont exploitables).
    *  false = ÉCHEC FERMÉ : traiter la transaction comme échouée, ignorer tout résultat partiel. info->err donne la cause. */
-  static bool run(void (*fn)(void*), void* ctx, PodNetInfo* info = nullptr) {
+  static bool run(void (*fn)(void*), void* ctx, PodNetInfo* info = nullptr) { return runSized(fn, ctx, POD_NET_STACK_TOTAL, info); }
+  /** Même chose avec une taille choisie (garde comprise), p. ex. POD_LOG_STACK_TOTAL pour le journal. Moins de 512 o utilisables : refusé (NOMEM, fn non appelée). */
+  static bool runSized(void (*fn)(void*), void* ctx, size_t total, PodNetInfo* info = nullptr) {
     PodNetInfo local; PodNetInfo* I = info ? info : &local;
     I->used = 0; I->margin = 0; I->err = POD_NET_OK; I->low = 0; I->pad[0] = I->pad[1] = 0;
     if (!podNetOnMainStack()) { I->err = POD_NET_NESTED; return false; }
+    if (total < POD_NET_GUARD_BYTES + 512u) { I->err = POD_NET_NOMEM; return false; }
     uint8_t* blk =
 #ifdef POD_NET_HOST_TEST
       podNetTestFailAlloc ? nullptr :
 #endif
-      (uint8_t*)malloc(POD_NET_STACK_TOTAL);
+      (uint8_t*)malloc(total);
     if (!blk) { I->err = POD_NET_NOMEM; return false; }
     uint8_t* guard = blk;
     uint8_t* low = blk + POD_NET_GUARD_BYTES;
-    const size_t stackBytes = POD_NET_STACK_TOTAL - POD_NET_GUARD_BYTES;
+    const size_t stackBytes = total - POD_NET_GUARD_BYTES;
     memset(guard, POD_NET_GUARD_PAINT, POD_NET_GUARD_BYTES);
     memset(low, POD_NET_PAINT, stackBytes);
 #if POD_NET_SWITCH_STACK
@@ -132,9 +148,9 @@ class PodNet {
     bool good = true;
     if (!guardOk) { I->err = POD_NET_GUARD; good = false; }
     else if (untouched < POD_NET_MARGIN_MIN) { I->err = POD_NET_MARGIN; good = false; }
-    podnetimpl::wipe(blk, POD_NET_STACK_TOTAL);   // requêtes et réponses ont transité par cette pile
+    podnetimpl::wipe(blk, total);   // requêtes et réponses ont transité par cette pile
 #ifdef POD_NET_HOST_TEST
-    if (podNetTestAfterWipe) podNetTestAfterWipe(blk, POD_NET_STACK_TOTAL);
+    if (podNetTestAfterWipe) podNetTestAfterWipe(blk, total);
 #endif
     free(blk);
     return good;

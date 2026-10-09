@@ -1,0 +1,7 @@
+# Profondeur statique des transactions réseau (octets) — pile dédiée de 1984 o utilisables, cadre matériel d'exception 104 o
+# site (lambda)              cadre pire cas (avec %f) sans %f reste (pire cas) reste (sans %f)
+doFetchFrame                   328               1400    1080              480             800
+netReadCandidate               272               1344    1024              536             856
+netHttpRaw                     240               1312     992              568             888
+netGetBlockClip                240               1312     992              568             888
+netGetBenchClip                240               1312     992              568             888

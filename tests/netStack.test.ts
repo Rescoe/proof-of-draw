@@ -56,7 +56,8 @@ for (const sk of SKETCHES) {
     assert.equal(lambdas.length, conns, "autant de lambdas que de Conn");
     for (const b of lambdas) {
       assert.equal((b.match(/Conn c\(HTTP_TIMEOUT_MS\);/g) ?? []).length, 1, "un seul Conn par lambda");
-      assert.match(b, /c\.client\.stop\(\);|if \(code < 0\) return;/, "la connexion est fermée avant de quitter la pile dédiée");
+      assert.match(b, /c\.client\.stop\(\);\s*$/, "la connexion est fermée explicitement en DERNIER, avant de quitter la pile dédiée");
+      assert.doesNotMatch(b, /\breturn\b/, "aucune sortie anticipée de la lambda : client.stop() est toujours appelé (même si request() retourne un code négatif)");
       // jamais d'imbrication ni de travail non réseau dans la pile dédiée
       assert.doesNotMatch(b, /PodEd::|signED25519|podNetRun|httpCall\(|ackFrame\(|NVIC_SystemReset|EEPROM|display\(|refreshPanel\(/);
     }
@@ -65,9 +66,15 @@ for (const sk of SKETCHES) {
     assert.equal((outside.match(/\.request\(/g) ?? []).length, 0, "une requête est émise hors de la pile dédiée");
     assert.equal((outside.match(/client\.connect\(/g) ?? []).length, 1, "connect() n'existe que dans Conn::request");
     // chaque podNetRun : résultat stocké dans `ran` et exploité
-    const runs = [...code.matchAll(/const bool ran = podNetRun\(tx, &ni\);/g)];
-    assert.equal(runs.length, conns);
+    const runs = [...code.matchAll(/const bool ran = podNetRun\(tx, &ni\);/g)], raw = [...code.matchAll(/return podNetRun\(tx, &ni\);/g)];
+    assert.equal(runs.length + raw.length, conns);
+    assert.equal(raw.length, 1, "un seul helper brut : netHttpRaw");
     for (const m of runs) assert.match(code.slice(m.index!, m.index! + 1200), /if \(!ran\)/, "résultat de podNetRun non exploité");
+    const hc = code.slice(code.indexOf("static int httpCall"), code.indexOf("\n}\n", code.indexOf("static int httpCall")));
+    assert.match(hc, /const bool ran = netHttpRaw\(method, path, body, code, complete, ni\);[\s\S]*if \(!ran\)/, "httpCall exploite le résultat du helper");
+    // le helper brut est noinline : sa fermeture, son PodNetInfo et son cadre ont disparu avant le journal et le traitement de la réponse
+    assert.match(code, /static bool __attribute__\(\(noinline\)\) netHttpRaw\(/);
+    assert.doesNotMatch(hc, /auto tx|Conn c\(/, "httpCall ne porte plus la fermeture ni le Conn");
     assert.equal((code.match(/podNetRun\(/g) ?? []).length, conns, "un appel podNetRun par transaction");
     // le vote : la pile réseau est fermée AVANT la signature (jamais imbriquée dans PodEd)
     const v = code.indexOf("static bool doValidateV2"), end = code.indexOf("\n}\n", v), body = code.slice(v, end);
@@ -76,21 +83,48 @@ for (const sk of SKETCHES) {
   });
 }
 
-test("échec fermé aux sites : un échec de pile dédiée ne laisse aucun résultat présenté comme réussi (httpCall -4, image/clip/candidat comme échoués), jamais de vote ni d'ACK", () => {
+test("échec fermé aux sites : un échec de pile dédiée ne laisse aucun résultat présenté comme réussi, jamais de vote ni d'ACK ; formulations HONNÊTES : NON exécutée (NOMEM/NESTED) ≠ EXÉCUTÉE mais résultat local rejeté (GUARD/MARGIN)", () => {
   for (const sk of SKETCHES) {
     const code = stripLine(read(`arduino_uno_r4/${sk}/${sk}.ino`));
-    assert.match(code, /if \(!ran\) \{ logf\("\[HTTP %s\] pile réseau dédiée indisponible[^;]*; return -4; \}/, `${sk} : httpCall`);
+    // httpCall : code -5 si la transaction a été EXÉCUTÉE (un POST/vote/ACK a pu partir), -4 sinon ; le message le dit
+    assert.match(code, /if \(!ran\) \{ logf\("\[HTTP %s\] pile réseau dédiée : %s \(erreur %u, marge %u o\)%s", method, podNetWhy\(ni\), \(unsigned\)ni\.err, \(unsigned\)ni\.margin, podNetExecuted\(ni\) \? " — la requête a PU atteindre le serveur \(POST, vote ou ACK possibles\)" : ""\); return podNetExecuted\(ni\) \? -5 : -4; \}/, `${sk} : httpCall`);
     for (const m of code.matchAll(/if \(!ran\) \{([^\n]*)\}\n/g)) {
       const s = m[1];
-      // échec fermé : soit on sort (return false / -4), soit les indicateurs de succès sont remis à zéro AVANT le traitement d'échec existant
-      const closed = /return (false|-4);/.test(s) || /(got|shown) = false;/.test(s) || /memset\(&chk, 0, sizeof\(chk\)\)/.test(s);
+      if (/\[HTTP %s\]/.test(s)) continue;   // httpCall : vérifié ci-dessus
+      // échec fermé : les indicateurs de succès sont remis à zéro AVANT le traitement d'échec existant (ou : chk remis à zéro)
+      const closed = /(got|shown) = false;/.test(s) || /memset\(&chk, 0, sizeof\(chk\)\)/.test(s);
       assert.ok(closed, `${sk} : échec de pile dédiée non fermé : ${s.slice(0, 80)}`);
-      assert.match(s, /\(unsigned\)ni\.err, \(unsigned\)ni\.margin/, "l'erreur et la marge sont journalisées");
+      assert.match(s, /podNetWhy\(ni\), \(unsigned\)ni\.err, \(unsigned\)ni\.margin/, "la cause honnête (non exécutée / exécutée-rejetée), l'erreur et la marge sont journalisées");
+      assert.doesNotMatch(s, /indisponible/, "plus de « indisponible » : la formulation dépend de podNetWhy");
+    }
+    // TFT : l'écran a pu être redessiné AVANT la détection de la marge → jamais « image NON présentée » ; e-ink/OLED : l'image n'est affichée qu'après, donc la formule reste exacte
+    const frames = [...code.matchAll(/if \(!ran\) \{ (?:got|shown) = false; noFrame = false; logf\("(\[FRAME\]|\[OLED\])([^\n]*)\}\n/g)].map((m) => m[0]);
+    assert.ok(frames.length >= 1, `${sk} : échec de lecture d'image`);
+    for (const l of frames) {
+      if (sk === "pod_uno_r4_tft18" || sk === "pod_uno_r4") {
+        assert.doesNotMatch(l, /NON présentée/, `${sk} : formulation fausse sur TFT`);
+        assert.match(l, /l'écran a pu être partiellement ou totalement redessiné/);
+      } else assert.match(l, /image NON présentée, pas d'ACK/);
+      assert.match(l, /pas d'ACK/);
     }
   }
-  // e-ink 2,9″ : retours explicites (pas d'ACK, pas de vote)
-  const e = stripLine(read("arduino_uno_r4/pod_uno_r4_eink29/pod_uno_r4_eink29.ino"));
-  assert.match(e, /image NON présentée, pas d'ACK", \(unsigned\)ni\.err, \(unsigned\)ni\.margin\); return false; \}/);
+  // aucune formulation « NON présentée » ne subsiste dans les sketches TFT
+  for (const sk of ["pod_uno_r4_tft18", "pod_uno_r4"]) assert.doesNotMatch(read(`arduino_uno_r4/${sk}/${sk}.ino`), /image NON présentée/);
+});
+
+test("journal sur pile dédiée (NETSTACK-FIX2) : logf s'exécute sur la pile de journal quand l'appelant est sur la pile principale, directement sur une pile dédiée ; tampon statique unique ; abandon silencieux de la ligne en cas d'échec", () => {
+  for (const sk of SKETCHES) {
+    const src = read(`arduino_uno_r4/${sk}/${sk}.ino`), code = stripLine(src);
+    const fn = /static void logf\(const char\* fmt, \.\.\.\) \{[\s\S]*?\n\}\n/.exec(code)![0];
+    assert.match(fn, /LogJob j = \{ fmt, &ap \};\s*if \(podNetOnMainStack\(\)\) PodNet::runSized\(logfEmit, &j, POD_LOG_STACK_TOTAL\);\s*else logfEmit\(&j\);\s*va_end\(ap\);/, sk);
+    const emit = /static void logfEmit\(void\* p\) \{[\s\S]*?\n\}\n/.exec(code)![0];
+    assert.match(emit, /static char b\[256\];/); assert.match(emit, /vsnprintf\(b, sizeof\(b\), j->fmt, \*j->ap\);\s*Serial\.println\(b\);/);
+    assert.equal((code.match(/Serial\.println\(b\)/g) ?? []).length, 1, "une seule écriture du journal");
+    assert.doesNotMatch(fn, /Serial\./, "logf n'écrit pas lui-même");
+  }
+  // la taille de la pile de journal tient la chaîne vsnprintf du pire cas + exception + objectif de marge
+  const h = read(HDR);
+  assert.match(h, /#define POD_LOG_STACK_TOTAL 1536u/); assert.match(h, /POD_LOG_STACK_TOTAL >= POD_NET_GUARD_BYTES \+ 736u \+ 104u \+ POD_NET_MARGIN_GOAL/);
 });
 
 test("podNetStack.h : aucune variable globale (hors crochets de test), même trampoline de 8 instructions que PodEd (validé sur carte), imbrication refusée AVANT toute allocation, effacement AVANT free(), constantes", () => {
@@ -101,10 +135,12 @@ test("podNetStack.h : aucune variable globale (hors crochets de test), même tra
   assert.deepEqual(asm(raw), asm(read(EDH)), "le trampoline doit être EXACTEMENT celui de PodEd");
   assert.deepEqual(asm(raw), ["push {r4, r5, lr}", "mov r4, r0", "mov r5, sp", "mov r0, r1", "mov sp, r2", "blx r4", "mov sp, r5", "pop {r4, r5, pc}"]);
   assert.doesNotMatch(raw.slice(raw.indexOf("__asm volatile"), raw.indexOf("#else", raw.indexOf("__asm volatile"))).replace(/\/\/.*$/gm, ""), /\b(msr|mrs|control|psp|isb)\b/i);
-  const run = raw.slice(raw.indexOf("static bool run("));
+  const run = raw.slice(raw.indexOf("static bool runSized("));
   assert.ok(run.indexOf("podNetOnMainStack()") < run.indexOf("malloc(") && run.indexOf("malloc(") < run.indexOf("podNetCallOnStack(") && run.indexOf("podNetCallOnStack(") < run.indexOf("POD_NET_GUARD_PAINT) { guardOk") + 1000, "imbrication refusée avant malloc, appel avant les contrôles");
   assert.ok(run.indexOf("podNetCallOnStack(") < run.indexOf("wipe(blk") && run.indexOf("wipe(blk") < run.indexOf("free(blk)"), "effacement avant free()");
   assert.match(run, /if \(!blk\) \{ I->err = POD_NET_NOMEM; return false; \}/);
+  assert.match(raw, /static bool runSized\(void \(\*fn\)\(void\*\), void\* ctx, size_t total, PodNetInfo\* info = nullptr\)/);
+  assert.match(raw, /static inline bool podNetExecuted\(const PodNetInfo& ni\) \{ return ni\.err == POD_NET_GUARD \|\| ni\.err == POD_NET_MARGIN; \}/);
   assert.match(raw, /#define POD_NET_STACK_TOTAL 2048u/); assert.match(raw, /#define POD_NET_GUARD_BYTES 64u/); assert.match(raw, /#define POD_NET_MARGIN_MIN 128u/); assert.match(raw, /#define POD_NET_MARGIN_GOAL 256u/);
   // PodEd refuse aussi l'imbrication, avant toute allocation
   const ed = read(EDH), ex = ed.slice(ed.indexOf("static bool execute"));
@@ -139,7 +175,7 @@ test("CONTRÔLES NÉGATIFS : sans le contrôle de garde, de marge, d'imbrication
     ["marge", "else if (untouched < POD_NET_MARGIN_MIN) { I->err = POD_NET_MARGIN; good = false; }", "else if (untouched < POD_NET_MARGIN_MIN && false) { I->err = POD_NET_MARGIN; good = false; }"],
     ["imbrication", "if (!podNetOnMainStack()) { I->err = POD_NET_NESTED; return false; }", "if (!podNetOnMainStack() && false) { I->err = POD_NET_NESTED; return false; }"],
     ["malloc", "if (!blk) { I->err = POD_NET_NOMEM; return false; }", "if (!blk) { I->err = POD_NET_OK; fn(ctx); return true; }"],
-    ["effacement", "    podnetimpl::wipe(blk, POD_NET_STACK_TOTAL);   // requêtes et réponses ont transité par cette pile\n", "    if (!blk) podnetimpl::wipe(blk, 1);\n"],
+    ["effacement", "    podnetimpl::wipe(blk, total);   // requêtes et réponses ont transité par cette pile\n", "    if (!blk) podnetimpl::wipe(blk, 1);\n"],
     ["objectif", "I->low = (untouched < POD_NET_MARGIN_GOAL) ? 1 : 0;", "I->low = 0;"],
   ];
   for (const [name, a, b] of mutants) {

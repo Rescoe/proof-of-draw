@@ -1,0 +1,3 @@
+# Les vecteurs de test sont lus ligne a ligne par les harnais C++ et par les tests (mutations d un caractere de fin de ligne) : TOUJOURS en LF, meme sous Windows avec core.autocrlf=true
+# (un checkout propre les recevait en CRLF et faisait echouer 4 controles negatifs ; constate le 09/10/2026 lors du lot NETSTACK-FIX2).
+consensus-pod/test-vectors/*.txt text eol=lf

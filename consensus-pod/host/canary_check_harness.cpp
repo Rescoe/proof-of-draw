@@ -6,6 +6,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <cstdarg>
 #include <cstdint>
 #include <string>
 
@@ -104,5 +105,9 @@ int main() {
   fresh(3072 - 300);
   { PodNetInfo ni = { 0, 0, POD_NET_NOMEM, 0, {0, 0} }; try { podCanaryNet("http", ni, false); } catch (const Halted&) { g_out += "HALT"; }
     line("malloc impossible : ECHEC + verrou fatal (aucun redémarrage en boucle)", has("ECHEC") && has("HALT"), ""); }
+  // S16 : sonde de la pile de journal (NETSTACK-FIX2) — la ligne de 250 caractères est écrite, l'utilisation et la marge de la pile de journal sont imprimées
+  fresh(3072 - 300);
+  { podCanaryLogProbe();
+    line("sonde de la pile de journal : ligne de 250 caractères écrite + mesure imprimée", has("[CANARY] sonde journal: 1234567890") && has("[CANARY] pile de journal (ligne de 250 caracteres) : utilisee 0 o, marge 1472 o, erreur 0 (OK)"), ""); }
   return 0;
 }

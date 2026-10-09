@@ -3,7 +3,7 @@
 | | |
 |---|---|
 | **Date** | 09/10/2026 |
-| **Statut** | **COMPILÉ + testé sur l'hôte. JAMAIS flashé depuis ce lot, jamais essayé sur une carte.** Aucune frame, aucun dessin. Un canari **sans frame** (§ 6) précède tout le reste. |
+| **Statut** | **Pile réseau dédiée VALIDÉE sur carte** (canari du 09/10/2026 : 1 172 o utilisés, 812 o de marge, erreur 0) ; l'alerte qui a suivi (24 o sous `__StackLimit` après la transaction, E/S de journal) est traitée par `docs/LOT_8B2B2_NETSTACK_FIX2_2026_10_09.md`. Aucune frame, aucun dessin. |
 | **Origine** | Retour matériel du canari BOOT-FIX2 (`docs/mesures/8B2B2_NETSTACK_FIX1_2026_10_09/journal-bootfix2-materiel.txt`) : **`WiFiSSLClient::connect()` descend de 456 o sous `__StackLimit`** (pile max réelle 1 480 o), tas exclu, `PodEd` toujours validé (sign 1316/924, verify 1532/708, erreurs 0/0), verrou fatal efficace |
 | **Portée** | `consensus-pod/src/adapters/podNetStack.h` (nouveau, copié dans les 5 dossiers R4) ; les sites réseau des 5 sketches R4 ; contrôle d'imbrication ajouté à `podEdStack.h`. **Aucun** serveur, Redis, Neon, ACK, protocole, consensus, rendu, OTA, polling. Redis +0, Neon 0. |
 | **Défauts du dépôt** | `POD_RENDER_V1 = 0`, `POD_CANARY = 0` (commit). L'arbre local du porteur garde `1`/`1` (jamais commité). |

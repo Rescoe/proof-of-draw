@@ -1,0 +1,39 @@
+# Journal matériel du canari NETSTACK-FIX1 — UNO R4 WiFi + e-ink 2,9″ BWR, build local POD_RENDER_V1=1 POD_CANARY=1 (09/10/2026)
+# Source : retour du porteur (collé dans la conversation) ; aucune frame, aucun dessin ; carte arrêtée par le verrou fatal. Lignes reproduites telles que transmises.
+# Cœur flashé : celui du porteur (note du 09/10 : renesas 1.5.3, module Wi-Fi 0.5.2). Sketch : arduino_uno_r4/pod_uno_r4_eink29/pod_uno_r4_eink29.ino, commit c53f0c8 + drapeaux locaux 1/1.
+
+[BOOT] Proof-of-Draw UNO R4 WiFi + e-ink 2.9" BWR — r4eink29-1.1
+[MEM] boot: tas libre 8532 o, pile max ~1024 o
+[CANARY] ===== BUILD LOCAL TEMPORAIRE DE CANARI — rendu v1 ACTIF (POD_RENDER_V1=1, mode=1) — NE PAS DÉPLOYER, NE PAS COMMITER LE BINAIRE =====
+[CANARY] firmware annoncé au serveur : r4eink29-1.1 (inchangé) ; pile principale [0x20007b00, 0x20007f00] ; SP=0x20007e10
+[CANARY] 1 boot (apres peinture) : pile utilisee au plus 544 o / 1024 (marge 480 o) | SP=0x20007D88 | ecrit sous la limite ou pile max 1024 | tas libre 8532 | sbrk->limite 8532
+[CANARY] 1b calibration : meme profondeur, juste apres un rapport (cout de l'instrument) : pile utilisee au plus 648 o / 1024 (marge 376 o) | SP=0x20007D88 | ecrit sous la limite ou pile max 1024 | tas libre 8532 | sbrk->limite 8532
+[CANARY] 2 e-ink (begin + clearBothPlanes) : pile utilisee au plus 648 o / 1024 (marge 376 o) | SP=0x20007D88 | ecrit sous la limite ou pile max 1024 | tas libre 8532 | sbrk->limite 8532
+[WIFI] firmware du module: 0.5.2
+[WIFI] IP: 0.0.0.0
+[CANARY] 3 wifi connecte : pile utilisee au plus 864 o / 1024 (marge 160 o) | SP=0x20007D88 | ecrit sous la limite ou pile max 1024 | tas libre 8532 | sbrk->limite 8516
+[KEYS] clés chargées: 11e4193c89dc29bf26abe55d6a471d937eca8591fe00ee81b226403828a3b830
+[CANARY] 4 cles chargees : pile utilisee au plus 864 o / 1024 (marge 160 o) | SP=0x20007D88 | ecrit sous la limite ou pile max 1024 | tas libre 8532 | sbrk->limite 6204
+[SELFTEST] Ed25519 signature 179 ms, vérification 276 ms -> OK
+[MEM] après Ed25519: tas libre 8532 o, pile max ~1024 o
+[ED25519] pile dédiée (utilisé/marge, o) : sign 1316/924, verify 1532/708 ; erreurs sign=0 verify=0 (0 = aucune) ; alloué 2304 o (garde 64 o, marge minimale exigée 128 o)
+[CANARY] 5 selfTestEd25519 : pile utilisee au plus 864 o / 1024 (marge 160 o) | SP=0x20007D88 | ecrit sous la limite ou pile max 1024 | tas libre 8532 | sbrk->limite 6204
+[BOOT] œuvre déjà affichée : 8c97adf0-ee5b-4a2b-ab49-48a93548
+[CANARY] 6a avant doRegister : pile utilisee au plus 864 o / 1024 (marge 160 o) | SP=0x20007D88 | ecrit sous la limite ou pile max 1024 | tas libre 8468 | sbrk->limite 6204
+
+== Première transaction réseau sur la pile dédiée (POSITIF) ==
+[CANARY] net http : pile reseau dediee utilisee 1172 o, marge 812 o (objectif >= 256 : OK), erreur 0 | tas libre 8220
+
+== ALERTE juste après (verrou fatal posé) ==
+[CANARY]   net: pile principale apres la transaction : ALERTE PILE utilisee au plus 1016 o / 1024 (marge 8 o) | SP=0x20007C20 | ecrit sous la limite ou pile max 1048 | tas libre 8220 | sbrk->limite 2132
+[CANARY]   marqueur=0x0001D575 (DETRUIT, attendu 0x434E5259) longueur peinte=0x20007B3C (INCOHERENTE) | plus bas octet modifie au-dessus du marqueur : 0x20007B08 = marqueur+8
+[CANARY]   __StackLimit=0x20007B00 __StackTop=0x20007F00 __HeapBase=0x20005908 sbrk(0)=0x200072AC SP dans la pile
+[CANARY]   mallinfo : arene=6564 utilise=476 libre=6088
+[CANARY]   octets [__StackLimit-8, +24[ : 68 00 00 00 F1 FF FF FF | 30 7B 00 20 00 00 00 00 01 00 00 00 2C 42 00 20 80 00 00 00 43 0E 01 00
+[CANARY] ARRET FATAL (verrou) apres '  net: pile principale apres la transaction' : plus aucun pull, vote, ACK ni affichage. Debrancher la carte, reflasher le firmware stable."
+
+# Lecture (docs/LOT_8B2B2_NETSTACK_FIX2_2026_10_09.md § 1) :
+#  - la pile dédiée de 2 048 o est VALIDÉE sur ce chemin : 1 172 o utilisés, 812 o de marge (≥ 256 o visés), garde intacte, erreur 0 ; connect() ne déborde plus sur la pile principale.
+#  - l'alerte suivante est calculée AVANT toute impression du point de contrôle (used/pile max sont lus dans la peinture à l'entrée de podCanaryCheck) : les 24 o écrits sous __StackLimit viennent d'un passage
+#    antérieur à ce point — PodNet::run (retour), podCanaryNet (impressions Serial + freeHeapBytes/mallinfo) — pas des impressions de diagnostic de l'alerte elle-même.
+#  - SP du point de contrôle 0x20007C20 = 736 o de profondeur ; l'impression d'une ligne USB de ≈ 180 caractères depuis ≈ 620 o (podCanaryNet) descend de ≈ 420 o : 1048 = 620 + 428.
