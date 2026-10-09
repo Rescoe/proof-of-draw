@@ -50,7 +50,7 @@ for (const sk of SKETCHES) {
 
   test(`${sk} : plus AUCUNE transaction réseau hors de la pile dédiée — chaque Conn vit dans un « auto tx = [&]() » exécuté par podNetRun, résultat toujours testé, aucun PodEd ni autre transaction à l'intérieur, signature APRÈS la fermeture`, () => {
     const src = read(`arduino_uno_r4/${sk}/${sk}.ino`), code = stripLine(src);
-    assert.match(src, /#include "podEdStack\.h".*\n#include "podNetStack\.h"/);
+    assert.match(src, /#include "podEdStack\.h".*\n(?:[\s\S]*?\n)?#include "podNetStack\.h"/);
     const conns = (code.match(/Conn c\(HTTP_TIMEOUT_MS\);/g) ?? []).length, lambdas = lambdaBodies(code);
     assert.ok(conns >= 3, `${sk} : au moins 3 sites réseau`);
     assert.equal(lambdas.length, conns, "autant de lambdas que de Conn");
@@ -116,7 +116,11 @@ test("journal sur pile dédiée (NETSTACK-FIX2) : logf s'exécute sur la pile de
   for (const sk of SKETCHES) {
     const src = read(`arduino_uno_r4/${sk}/${sk}.ino`), code = stripLine(src);
     const fn = /static void logf\(const char\* fmt, \.\.\.\) \{[\s\S]*?\n\}\n/.exec(code)![0];
-    assert.match(fn, /LogJob j = \{ fmt, &ap \};\s*if \(podNetOnMainStack\(\)\) PodNet::runSized\(logfEmit, &j, POD_LOG_STACK_TOTAL\);\s*else logfEmit\(&j\);\s*va_end\(ap\);/, sk);
+    const tail = sk === "pod_uno_r4_eink29" ? String.raw`if \(li\.err == POD_NET_GUARD\s*#if POD_RENDER_V1 && POD_CANARY\s*\|\| li\.err == POD_NET_MARGIN\s*#endif\s*\) logfSafeStop\(\);` : String.raw`if \(li\.err == POD_NET_GUARD\) logfSafeStop\(\);`;   // MARGIN n'est fatal que dans le build de canari (e-ink 2,9″)
+    assert.match(fn, new RegExp(String.raw`LogJob j = \{ fmt, &ap \};\s*if \(podNetOnMainStack\(\)\) \{\s*PodNetInfo li;\s*PodNet::runSized\(logfEmit, &j, POD_LOG_STACK_TOTAL, &li\);\s*${tail}\s*\} else logfEmit\(&j\);\s*va_end\(ap\);`), sk);
+    // GUARD = garde écrasée = voisin du tas corrompu : ARRÊT SÛR définitif (noreturn, boucle sans fin, aucun retour) — pas une simple ligne perdue ; NOMEM : ligne abandonnée
+    const stop = /static void __attribute__\(\(noinline, noreturn\)\) logfSafeStop\(\) \{[\s\S]*?\n\}\n/.exec(code)![0];
+    assert.match(stop, /for \(;;\) \{ __asm volatile\("nop"\); \}/); assert.doesNotMatch(stop, /\b(return|break|goto)\b/);
     const emit = /static void logfEmit\(void\* p\) \{[\s\S]*?\n\}\n/.exec(code)![0];
     assert.match(emit, /static char b\[256\];/); assert.match(emit, /vsnprintf\(b, sizeof\(b\), j->fmt, \*j->ap\);\s*Serial\.println\(b\);/);
     assert.equal((code.match(/Serial\.println\(b\)/g) ?? []).length, 1, "une seule écriture du journal");
@@ -183,4 +187,49 @@ test("CONTRÔLES NÉGATIFS : sans le contrôle de garde, de marge, d'imbrication
     const r = runProcess(build(`net_mut_${name}`, hdr.split(a).join(b)), []);
     assert.notEqual(r.status, 0, `mutation « ${name} » NON détectée`);
   }
+});
+
+// ── NETSTACK-FIX3 : sondes de phase de PodNet (sans E/S) ────────────────────────────────────────────────────────
+test("sondes de phase : 8 phases dans l'ordre, première phase fautive mémorisée dans PodNetInfo::pad[0], aucune E/S ni appel de bibliothèque dans la sonde, no-op par défaut", () => {
+  const h = read(HDR);
+  assert.match(h, /#ifndef POD_NET_PROBE\n#define POD_NET_PROBE\(I, n\) \(\(void\)0\)\n#endif/);
+  const run = h.slice(h.indexOf("static bool runSized("));
+  const phases = [...run.matchAll(/POD_NET_PROBE\(I, (\d)\);/g)].map((m) => Number(m[1]));
+  assert.deepEqual(phases, [1, 2, 3, 4, 5, 6, 7], "sept sondes dans runSized, dans l'ordre du code");
+  assert.ok(run.indexOf("POD_NET_PROBE(I, 3)") > run.indexOf("podNetCallOnStack(") && run.indexOf("POD_NET_PROBE(I, 4)") > run.indexOf("guardOk") && run.indexOf("POD_NET_PROBE(I, 6)") > run.indexOf("wipe(blk") && run.indexOf("POD_NET_PROBE(I, 7)") > run.indexOf("free(blk)"));
+  assert.match(h, /if \(info\) \{ POD_NET_PROBE\(info, 8\); \}\n  return ok;/, "phase 8 : retour de podNetRun");
+  // la sonde du sketch : un seul mot lu, une seule écriture dans pad[0] si vide ; définie AVANT l'inclusion de podNetStack.h ; uniquement dans le build de canari
+  const src = read("arduino_uno_r4/pod_uno_r4_eink29/pod_uno_r4_eink29.ino");
+  const probe = /static inline void podNetProbe\(uint8_t\* slot, uint8_t phase\) \{([^\n]*)\}/.exec(src)![1];
+  assert.match(probe, /^ if \(\*slot == 0 && \*\(volatile uint32_t\*\)&__StackLimit != 0x434E5259UL\) \*slot = phase; $/);
+  assert.ok(src.indexOf("#define POD_NET_PROBE(I, n) podNetProbe((I)->pad, (n))") < src.indexOf('#include "podNetStack.h"'));
+  assert.match(src, /#if POD_RENDER_V1 && POD_CANARY\nextern char __StackLimit;[^\n]*\nstatic inline void podNetProbe/);
+  for (const sk of SKETCHES.filter((s) => s !== "pod_uno_r4_eink29")) assert.doesNotMatch(read(`arduino_uno_r4/${sk}/${sk}.ino`), /POD_NET_PROBE|podNetProbe/);
+});
+
+test("EXÉCUTION HÔTE des sondes de phase : chaque phase k destructrice est désignée (pad[0] == k), marqueur déjà détruit à l'entrée = phase 1 (cause antérieure à PodNet), première phase conservée, NOMEM = phases 1 et 8 seulement ; CONTRÔLES NÉGATIFS : sonde écrasante, phase supprimée ou déplacée → refusé", { skip }, () => {
+  const harness = path.join(root, "consensus-pod", "host", "net_probe_harness.cpp");
+  const exe = path.join(tmp, process.platform === "win32" ? "net_probe.exe" : "net_probe");
+  compileHarness(choice.path!, harness, exe);
+  const r = runProcess(exe, []); assert.equal(r.status, 0, r.stdout + r.stderr); assert.match(r.stdout.trim(), /^PASS \d+$/);
+  const hdr = read(HDR);
+  const mutants: Array<[string, (s: string) => string]> = [
+    ["phase 3 supprimée", (s) => s.split("    POD_NET_PROBE(I, 3);\n").join("")],
+    ["phase 7 avant free", (s) => s.split("    free(blk);\n    POD_NET_PROBE(I, 7);").join("    POD_NET_PROBE(I, 7);\n    free(blk);")],
+    ["phase 8 supprimée", (s) => s.split("  if (info) { POD_NET_PROBE(info, 8); }\n").join("")],
+  ];
+  for (const [name, f] of mutants) {
+    const dir = fs.mkdtempSync(path.join(tmp, "p-")); fs.mkdirSync(path.join(dir, "host")); fs.mkdirSync(path.join(dir, "src", "adapters"), { recursive: true });
+    const m = f(hdr); assert.notEqual(m, hdr, `mutation « ${name} » sans effet`);
+    fs.writeFileSync(path.join(dir, "src", "adapters", "podNetStack.h"), m); fs.copyFileSync(harness, path.join(dir, "host", "net_probe_harness.cpp"));
+    const e = path.join(dir, "p.exe"); compileHarness(choice.path!, path.join(dir, "host", "net_probe_harness.cpp"), e);
+    assert.notEqual(runProcess(e, [], 20000).status, 0, `mutation « ${name} » NON détectée`);
+  }
+  // sonde qui écrase au lieu de garder la première phase
+  const dir = fs.mkdtempSync(path.join(tmp, "p-")); fs.mkdirSync(path.join(dir, "host")); fs.mkdirSync(path.join(dir, "src", "adapters"), { recursive: true });
+  fs.writeFileSync(path.join(dir, "src", "adapters", "podNetStack.h"), hdr);
+  const h2 = fs.readFileSync(harness, "utf8").split("if (*slot == 0 && g_marker != MAGIC) *slot = phase;").join("if (g_marker != MAGIC) *slot = phase;");
+  assert.notEqual(h2, fs.readFileSync(harness, "utf8")); fs.writeFileSync(path.join(dir, "host", "net_probe_harness.cpp"), h2);
+  const e2 = path.join(dir, "p2.exe"); compileHarness(choice.path!, path.join(dir, "host", "net_probe_harness.cpp"), e2);
+  assert.notEqual(runProcess(e2, [], 20000).status, 0, "sonde écrasante NON détectée");
 });

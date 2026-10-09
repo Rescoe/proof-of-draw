@@ -1,0 +1,28 @@
+# ELF du canari NETSTACK-FIX3 (arbre de travail au moment du commit FIX3), cœur 1.5.3 — build local -DPOD_RENDER_V1=1 -DPOD_CANARY=1. Mesure STATIQUE : rien n'a été flashé.
+# 1. Cadres cumulés jusqu'à PodNet::runSized (octets) — pile principale du cœur UNO R4 = 1 024 o
+hal_entry            cadre    8  cumul     8
+arduino_main         cadre   16  cumul    24
+setup                cadre  224  cumul   248
+doRegister           cadre  264  cumul   512
+httpCall             cadre   80  cumul   592
+netHttpRaw           cadre   48  cumul   640
+PodNet::runSized     cadre   48  cumul   688
+
+# Épilogue de PodNet (appels directs de runSized, sans la branche flottante) :
+  malloc                             profondeur   40  malloc(tail)>_malloc_r(16)>_sbrk_r(16)>_sbrk(8)
+  free                               profondeur   16  free(tail)>_free_r(16)
+  podNetCallOnStack                  profondeur   12  podNetCallOnStac
+  podEdOnMainStackv                  profondeur    8  podEdOnMainStack
+  podNetProbePhh                     profondeur    0  podNetProbePhh(0
+  memset                             profondeur    0  memset(0)
+=> pire cas statique de l'épilogue, sous le cadre de runSized : cumul 688 + 40 = 728 o
+
+# 2. Appels faits par doRegister AVANT sa transaction : cumul des cadres jusqu'à doRegister = 512 o
+  CWifi5beginEPKcS1_             profondeur  664  cumul depuis hal_entry (si appelé par doRegister)  1176
+  CWifi10macAddressEPh           profondeur  592  cumul depuis hal_entry (si appelé par doRegister)  1104
+  CWifi7localIPEv                profondeur  592  cumul depuis hal_entry (si appelé par doRegister)  1104
+  CWifi6statusEv                 profondeur  576  cumul depuis hal_entry (si appelé par doRegister)  1088
+  CWifi15firmwareVersionEv       profondeur  576  cumul depuis hal_entry (si appelé par doRegister)  1088
+  CWifi4RSSIEv                   profondeur  480  cumul depuis hal_entry (si appelé par doRegister)   992
+  sniprintf                      profondeur  384  cumul depuis hal_entry (si appelé par doRegister)   896
+  appelés DIRECTEMENT par doRegister : CWifi10macAddressEPh, sniprintf

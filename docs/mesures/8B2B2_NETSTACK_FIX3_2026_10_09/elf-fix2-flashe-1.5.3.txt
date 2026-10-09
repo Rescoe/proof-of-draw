@@ -1,0 +1,34 @@
+# ELF du canari NETSTACK-FIX2 (commit 66d5b9d, celui flashé le 09/10/2026), cœur 1.5.3 — build local -DPOD_RENDER_V1=1 -DPOD_CANARY=1
+# Les adresses 0x1D805 et 0x1D893 sont les deux adresses de code relevées parmi les 32 octets détruits autour de __StackLimit (journal du porteur) ; elles n'ont de sens que pour CE build.
+# 1. Cadres cumulés jusqu'à PodNet::runSized (octets) — pile principale du cœur UNO R4 = 1 024 o
+hal_entry            cadre    8  cumul     8
+arduino_main         cadre   16  cumul    24
+setup                cadre  224  cumul   248
+doRegister           cadre  264  cumul   512
+httpCall             cadre   80  cumul   592
+netHttpRaw           cadre   40  cumul   632
+PodNet::runSized     cadre   40  cumul   672
+
+# Épilogue de PodNet (appels directs de runSized, sans la branche flottante) :
+  malloc                             profondeur   40  malloc(tail)>_malloc_r(16)>_sbrk_r(16)>_sbrk(8)
+  free                               profondeur   16  free(tail)>_free_r(16)
+  podNetCallOnStack                  profondeur   12  podNetCallOnStac
+  podEdOnMainStackv                  profondeur    8  podEdOnMainStack
+  memset                             profondeur    0  memset(0)
+=> pire cas statique de l'épilogue, sous le cadre de runSized : cumul 672 + 40 = 712 o
+
+# 2. Appels faits par doRegister AVANT sa transaction : cumul des cadres jusqu'à doRegister = 512 o
+  CWifi5beginEPKcS1_             profondeur  664  cumul depuis hal_entry (si appelé par doRegister)  1176
+  CWifi10macAddressEPh           profondeur  592  cumul depuis hal_entry (si appelé par doRegister)  1104
+  CWifi7localIPEv                profondeur  592  cumul depuis hal_entry (si appelé par doRegister)  1104
+  CWifi6statusEv                 profondeur  576  cumul depuis hal_entry (si appelé par doRegister)  1088
+  CWifi15firmwareVersionEv       profondeur  576  cumul depuis hal_entry (si appelé par doRegister)  1088
+  CWifi4RSSIEv                   profondeur  480  cumul depuis hal_entry (si appelé par doRegister)   992
+  sniprintf                      profondeur  384  cumul depuis hal_entry (si appelé par doRegister)   896
+  appelés DIRECTEMENT par doRegister : CWifi10macAddressEPh, sniprintf
+
+# 3. Adresses de code relevées parmi les octets détruits → fonction contenante
+  0x1d805 → __ssputs_r (+0x0)
+  0x1d893 → __ssputs_r (+0x8e)
+  0x1d804 → __ssputs_r (+0x0)
+  0x1d892 → __ssputs_r (+0x8e)

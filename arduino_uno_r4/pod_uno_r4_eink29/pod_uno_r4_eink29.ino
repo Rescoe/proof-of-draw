@@ -34,6 +34,11 @@
 #include <qrcode.h>
 #include <Ed25519.h>
 #include "podEdStack.h"   // POD_ED_STACK : Ed25519 sur PILE DÉDIÉE (la pile principale de la R4 n'a que 1 024 o) — docs/LOT_8B2B2_PILE_ED25519_R4_2026_10_08.md
+#if POD_RENDER_V1 && POD_CANARY
+extern char __StackLimit;   // NETSTACK-FIX3 : sonde de phase de PodNet — lit UN mot (le marqueur du canari) et mémorise la PREMIÈRE phase où il est détruit ; aucune E/S, aucune profondeur ajoutée
+static inline void podNetProbe(uint8_t* slot, uint8_t phase) { if (*slot == 0 && *(volatile uint32_t*)&__StackLimit != 0x434E5259UL) *slot = phase; }
+#define POD_NET_PROBE(I, n) podNetProbe((I)->pad, (n))
+#endif
 #include "podNetStack.h"   // POD_NET_STACK : transactions réseau/TLS ET journal sur PILE DÉDIÉE (connect() déborde de 456 o sous __StackLimit) — docs/LOT_8B2B2_NETSTACK_FIX1_2026_10_09.md, docs/LOT_8B2B2_NETSTACK_FIX2_2026_10_09.md
 #include <SHA256.h>
 #include "pod_http.h"
@@ -139,6 +144,12 @@ static char g_body[3072];                          // corps JSON des réponses
 // POD_LOG_STACK (NETSTACK-FIX2) : le formatage (vsnprintf) et l'écriture USB (Serial) descendent d'environ 450 o sous leur appelant ; appelés depuis setup → doRegister → httpCall (608 o de cadres) ils dépassent
 // les 1 024 o de la pile principale (canari du 09/10/2026 : 24 o sous __StackLimit). Sur la pile PRINCIPALE, logf s'exécute donc sur une petite pile dédiée (POD_LOG_STACK_TOTAL) ; sur une pile dédiée (dans une
 // transaction réseau), directement. Échec (malloc, garde, marge) : la ligne est ABANDONNÉE — un journal ne doit jamais arrêter le firmware.
+// NETSTACK-FIX3 : GUARD = la garde de la pile de journal a été écrasée → le voisin au tas est corrompu : faute persistante, ARRÊT SÛR (aucun pull, vote, ACK ni affichage), jamais « une ligne perdue ».
+// MARGIN (garde intacte, marge < 128 o) : fatal dans le build de canari seulement ; en production la ligne a été écrite et on continue (NOMEM : ligne abandonnée).
+static void __attribute__((noinline, noreturn)) logfSafeStop() {
+  Serial.println(F("[LOG] faute memoire persistante de la pile de journal (garde ecrasee) : ARRET SUR - aucun pull, vote, ACK ni affichage. Debrancher la carte, reflasher le firmware stable."));
+  for (;;) { __asm volatile("nop"); }
+}
 struct LogJob { const char* fmt; va_list* ap; };
 static void logfEmit(void* p) {
   static char b[256];                              // statique : la pile du cœur R4 ne fait que 1 Ko
@@ -149,8 +160,15 @@ static void logfEmit(void* p) {
 static void logf(const char* fmt, ...) {
   va_list ap; va_start(ap, fmt);
   LogJob j = { fmt, &ap };
-  if (podNetOnMainStack()) PodNet::runSized(logfEmit, &j, POD_LOG_STACK_TOTAL);
-  else logfEmit(&j);
+  if (podNetOnMainStack()) {
+    PodNetInfo li;
+    PodNet::runSized(logfEmit, &j, POD_LOG_STACK_TOTAL, &li);
+    if (li.err == POD_NET_GUARD
+#if POD_RENDER_V1 && POD_CANARY
+        || li.err == POD_NET_MARGIN
+#endif
+       ) logfSafeStop();
+  } else logfEmit(&j);
   va_end(ap);
 }
 
@@ -241,6 +259,21 @@ static void __attribute__((noinline)) podCanaryCheck(const char* tag, bool verbo
   podCanaryEmit(podCanaryPrint, &c);
   if (alert) for (;;) { __asm volatile("nop"); }                                   // l'impression a échoué (mémoire) : verrou SILENCIEUX
 }
+// NETSTACK-FIX3 : première phase de PodNet où le marqueur a été trouvé détruit (PodNetInfo::pad[0], sonde sans E/S) : 1 entrée de runSized · 2 après malloc + peinture · 3 après le trampoline · 4 après le scan garde/filigrane ·
+// 5 après le calcul de marge · 6 après l'effacement · 7 après free · 8 retour de podNetRun. 0 = aucune. Une phase non nulle imprime le diagnostic puis pose le verrou.
+struct PodCanaryPhaseCtx { uint8_t phase; };
+static void podCanaryPrintPhase(void* v) {
+  const PodCanaryPhaseCtx& c = *static_cast<const PodCanaryPhaseCtx*>(v);
+  Serial.print(F("[CANARY] PodNet : PREMIERE phase fautive = ")); Serial.print((unsigned)c.phase);
+  Serial.println(F(" (1 entree de runSized, 2 apres malloc+peinture, 3 apres le trampoline, 4 apres le scan garde/filigrane, 5 apres la marge, 6 apres l'effacement, 7 apres free, 8 retour de podNetRun) : le marqueur est detruit a CETTE phase ou avant"));
+  podCanaryHalt("phase PodNet");
+}
+static void __attribute__((noinline)) podCanaryPhase(uint8_t phase) {
+  if (phase == 0) return;
+  PodCanaryPhaseCtx c = { phase };
+  podCanaryEmit(podCanaryPrintPhase, &c);
+  for (;;) { __asm volatile("nop"); }
+}
 // NETSTACK-FIX1/2 : une ligne par transaction réseau (pile dédiée : utilisée / marge / erreur, tas libre) ; un échec de la pile dédiée (malloc, garde, marge < 128 o, imbrication) pose le verrou fatal.
 struct PodCanaryNetCtx { const char* tag; const PodNetInfo* ni; bool ran; };
 static void podCanaryPrintNet(void* v) {
@@ -251,6 +284,7 @@ static void podCanaryPrintNet(void* v) {
   if (!c.ran || ni.err != POD_NET_OK) { Serial.print(F("[CANARY] net ")); Serial.print(c.tag); Serial.println(F(" : ECHEC de la pile reseau dediee (ALERTE)")); podCanaryHalt(c.tag); }
 }
 static void __attribute__((noinline)) podCanaryNet(const char* tag, const PodNetInfo& ni, bool ran) {
+  podCanaryPhase(ni.pad[0]);
   PodCanaryNetCtx c = { tag, &ni, ran };
   podCanaryEmit(podCanaryPrintNet, &c);
   if (!ran || ni.err != POD_NET_OK) for (;;) { __asm volatile("nop"); }            // l'impression a échoué (mémoire) : verrou SILENCIEUX
@@ -262,6 +296,7 @@ static void podCanaryPrintLog(void* v) {
   const PodCanaryLogCtx& c = *static_cast<const PodCanaryLogCtx*>(v);
   Serial.print(F("[CANARY] pile de journal (ligne de 250 caracteres) : utilisee ")); Serial.print((unsigned)c.li.used); podCanaryNum(F(" o, marge "), c.li.margin); podCanaryNum(F(" o, erreur "), c.li.err);
   Serial.println(c.ok && c.li.margin >= POD_NET_MARGIN_GOAL ? F(" (OK)") : F(" (SOUS L'OBJECTIF OU ECHEC)"));
+  if (c.li.err == POD_NET_GUARD || c.li.err == POD_NET_MARGIN) podCanaryHalt("sonde de la pile de journal");   // GUARD/MARGIN : continuer n'est pas sûr
 }
 static void __attribute__((noinline)) podCanaryLogProbeV(const char* fmt, ...) {
   va_list ap; va_start(ap, fmt);
@@ -269,6 +304,7 @@ static void __attribute__((noinline)) podCanaryLogProbeV(const char* fmt, ...) {
   PodCanaryLogCtx c; c.ok = PodNet::runSized(logfEmit, &j, POD_LOG_STACK_TOTAL, &c.li);
   va_end(ap);
   podCanaryEmit(podCanaryPrintLog, &c);
+  if (c.li.err == POD_NET_GUARD || c.li.err == POD_NET_MARGIN) for (;;) { __asm volatile("nop"); }   // impression impossible : verrou silencieux
 }
 static void podCanaryLogProbe() {
   podCanaryLogProbeV("%s%s%s%s%s", "[CANARY] sonde journal: 1234567890123456789012345", "1234567890123456789012345678901234567890123456", "1234567890123456789012345678901234567890123456", "1234567890123456789012345678901234567890123456", "12345678901234567890123456789012345678901234567890");
@@ -448,6 +484,9 @@ static int httpCall(const char* method, const String& path, const String* body, 
   resp = "";
   int code = -4; bool complete = false; PodNetInfo ni;
   const bool ran = netHttpRaw(method, path, body, code, complete, ni);
+#if POD_RENDER_V1 && POD_CANARY
+  podCanaryPhase(ni.pad[0]);
+#endif
 #if POD_RENDER_V1 && POD_CANARY
   podCanaryCheck("  A: apres la transaction (silencieux)", false);
 #endif
@@ -776,11 +815,20 @@ static String macString() {
 }
 
 static bool doRegister() {
+#if POD_RENDER_V1 && POD_CANARY
+  podCanaryCheck("  R0: entree de doRegister (silencieux)", false);
+#endif
   const String mac = macString();
+#if POD_RENDER_V1 && POD_CANARY
+  podCanaryCheck("  R1: apres macString / macAddress du module (silencieux)", false);
+#endif
   const String body = "{\"mac\":\"" + mac + "\",\"screens\":[\"" SCREEN_TYPE "\"],"
                       "\"firmware\":\"" FIRMWARE_VERSION "\","
                       "\"publicKey\":\"" + (keysLoaded ? bytesToHex(publicKey, 32) : String("")) + "\","
                       "\"ownedHashes\":" + loadOwnedHashesJson() + "}";
+#if POD_RENDER_V1 && POD_CANARY
+  podCanaryCheck("  R2: avant httpCall, corps construit (silencieux)", false);
+#endif
   String resp;
   if (httpCall("POST", "/api/register", &body, resp) != 200) { logf("[REGISTER] échec — nouvel essai dans 5 s"); return false; }
   JSON_DOC(doc, 768);

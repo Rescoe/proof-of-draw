@@ -97,7 +97,7 @@ test("EXÉCUTION HÔTE du code extrait du sketch : pile saine → retour + mesur
   const r = runProcess(build(), []);
   assert.equal(r.status, 0, r.stdout + r.stderr);
   const lines = r.stdout.trim().split("\n").filter((l) => /^S\d+ /.test(l));
-  assert.equal(lines.length, 16, r.stdout);
+  assert.equal(lines.length, 18, r.stdout);
   for (const l of lines) assert.match(l, /^S\d+ OK /, l);
 });
 
@@ -118,4 +118,20 @@ test("CONTRÔLES NÉGATIFS : un instrument qui repeint, qui ne pose pas de verro
     const bad = r.status !== 0 || r.stdout.split("\n").some((l) => /^S\d+ ECART /.test(l));
     assert.ok(bad, `mutation « ${name} » NON détectée`);
   }
+});
+
+test("NETSTACK-FIX3 : points R0-R2 de doRegister (avant la transaction), phase PodNet contrôlée AVANT le point A, sonde du journal fatale sur GUARD/MARGIN", () => {
+  const src = read(INO), code = strip(src);
+  const dr = code.slice(code.indexOf("static bool doRegister()"), code.indexOf("\n}\n", code.indexOf("static bool doRegister()")));
+  const i0 = dr.indexOf("R0: entree de doRegister (silencieux)"), im = dr.indexOf("macString()"), i1 = dr.indexOf("R1: apres macString / macAddress du module (silencieux)"), i2 = dr.indexOf("R2: avant httpCall, corps construit (silencieux)"), ih = dr.indexOf('httpCall("POST", "/api/register"');
+  assert.ok(i0 >= 0 && i0 < im && im < i1 && i1 < i2 && i2 < ih, "R0 < macString < R1 < R2 < httpCall");
+  for (const p of ["R0", "R1", "R2"]) assert.match(dr, new RegExp(`podCanaryCheck\\("  ${p}:[^"]*\\(silencieux\\)", false\\);`));
+  const hc = code.slice(code.indexOf("static int httpCall"), code.indexOf("\n}\n", code.indexOf("static int httpCall")));
+  assert.ok(hc.indexOf("podCanaryPhase(ni.pad[0]);") > hc.indexOf("netHttpRaw(") && hc.indexOf("podCanaryPhase(ni.pad[0]);") < hc.indexOf("A: apres la transaction"), "la phase est contrôlée juste après la transaction, AVANT A");
+  assert.match(code, /static void __attribute__\(\(noinline\)\) podCanaryNet\(const char\* tag, const PodNetInfo& ni, bool ran\) \{\s*podCanaryPhase\(ni\.pad\[0\]\);/);
+  const phase = /static void __attribute__\(\(noinline\)\) podCanaryPhase[\s\S]*?\n\}\n/.exec(code)![0];
+  assert.match(phase, /if \(phase == 0\) return;[\s\S]*podCanaryEmit\(podCanaryPrintPhase, &c\);\s*for \(;;\) \{ __asm volatile\("nop"\); \}/);
+  const pl = /static void podCanaryPrintLog\(void\* v\) \{[\s\S]*?\n\}\n/.exec(code)![0];
+  assert.match(pl, /if \(c\.li\.err == POD_NET_GUARD \|\| c\.li\.err == POD_NET_MARGIN\) podCanaryHalt\("sonde de la pile de journal"\);/);
+  assert.match(code, /podCanaryEmit\(podCanaryPrintLog, &c\);\s*if \(c\.li\.err == POD_NET_GUARD \|\| c\.li\.err == POD_NET_MARGIN\) for \(;;\)/);
 });

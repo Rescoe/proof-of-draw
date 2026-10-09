@@ -109,5 +109,11 @@ int main() {
   fresh(3072 - 300);
   { podCanaryLogProbe();
     line("sonde de la pile de journal : ligne de 250 caractères écrite + mesure imprimée", has("[CANARY] sonde journal: 1234567890") && has("[CANARY] pile de journal (ligne de 250 caracteres) : utilisee 0 o, marge 1472 o, erreur 0 (OK)"), ""); }
+  // S17-S18 : phase fautive de PodNet (NETSTACK-FIX3) — 0 = silence ; non nulle = diagnostic de la phase puis verrou fatal
+  fresh(3072 - 300);
+  { podCanaryPhase(0); line("phase 0 (aucune) : silence, retour", g_out.empty(), ""); }
+  fresh(3072 - 300);
+  { try { podCanaryPhase(3); g_out += "RETURNED"; } catch (const Halted&) { g_out += "HALT"; }
+    line("phase fautive 3 : diagnostic + verrou fatal", has("PREMIERE phase fautive = 3") && has("HALT") && !has("RETURNED") && has("ARRET FATAL (verrou) apres 'phase PodNet'"), ""); }
   return 0;
 }

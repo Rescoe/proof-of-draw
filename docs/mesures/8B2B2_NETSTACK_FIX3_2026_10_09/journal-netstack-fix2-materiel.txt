@@ -1,0 +1,32 @@
+# Journal matériel du canari NETSTACK-FIX2 — UNO R4 WiFi + e-ink 2,9″ BWR, build local POD_RENDER_V1=1 POD_CANARY=1 (09/10/2026, 12:38, durée d'exécution 2 min 13 s)
+# Source : retour du porteur (collé dans la conversation) ; aucune frame, aucun dessin ; carte arrêtée par le verrou fatal puis débranchée. Lignes reproduites telles que transmises (début de log tronqué par le porteur).
+# Sketch : arduino_uno_r4/pod_uno_r4_eink29/pod_uno_r4_eink29.ino au commit 66d5b9d (NETSTACK-FIX2) + drapeaux locaux 1/1 ; cœur du porteur : renesas 1.5.3, module Wi-Fi 0.5.2.
+
+[WIFI] IP: 0.0.0.0
+[CANARY] 3 wifi connecte : pile utilisee au plus 864 o / 1024 (marge 160 o) | SP=0x20007D90 | ecrit sous la limite ou pile max 1024 | tas libre 6988 | sbrk->limite 5444
+[KEYS] clés chargées: 11e4193c89dc29bf26abe55d6a471d937eca8591fe00ee81b226403828a3b830
+[CANARY] 4 cles chargees : pile utilisee au plus 864 o / 1024 (marge 160 o) | SP=0x20007D90 | ecrit sous la limite ou pile max 1024 | tas libre 6988 | sbrk->limite 5444
+[SELFTEST] Ed25519 signature 178 ms, vérification 276 ms -> OK
+[MEM] après Ed25519: tas libre 8532 o, pile max ~1024 o
+[ED25519] pile dédiée (utilisé/marge, o) : sign 1316/924, verify 1532/708 ; erreurs sign=0 verify=0 (0 = aucune) ; alloué 2304 o (garde 64 o, marge minimale exigée 128 o)
+[CANARY] 5 selfTestEd25519 : pile utilisee au plus 864 o / 1024 (marge 160 o) | SP=0x20007D90 | ecrit sous la limite ou pile max 1024 | tas libre 6988 | sbrk->limite 5444
+[BOOT] œuvre déjà affichée : 8c97adf0-ee5b-4a2b-ab49-48a93548
+[CANARY] 6a avant doRegister : pile utilisee au plus 864 o / 1024 (marge 160 o) | SP=0x20007D90 | ecrit sous la limite ou pile max 1024 | tas libre 6924 | sbrk->limite 5444
+
+== ALERTE au point A (silencieux, immédiatement après netHttpRaw) ==
+[CANARY] A: apres la transaction (silencieux) : ALERTE PILE utilisee au plus 1016 o / 1024 (marge 8 o) | SP=0x20007C38 | ecrit sous la limite ou pile max 1048 | tas libre 6676 | sbrk->limite 1924
+[CANARY] marqueur=0x0001D805 (DETRUIT, attendu 0x434E5259) longueur peinte=0x20007B3C (INCOHERENTE) | plus bas octet modifie au-dessus du marqueur : 0x20007B08 = marqueur+8
+[CANARY] __StackLimit=0x20007B00 __StackTop=0x20007F00 __HeapBase=0x20005908 sbrk(0)=0x2000737C SP dans la pile
+[CANARY] mallinfo : arene=6772 utilise=2020 libre=4752
+[CANARY] octets [__StackLimit-8, +24[ : 68 01 00 20 F8 7B 00 20 | 05 D8 01 00 3C 7B 00 20 F8 7B 00 20 93 D8 01 00 70 7B 00 20 00 00 00 00
+[CANARY] ARRET FATAL (verrou) apres ' A: apres la transaction (silencieux)' : plus aucun pull, vote, ACK ni affichage. Debrancher la carte, reflasher le firmware stable.   (répété)
+
+# Lecture (docs/LOT_8B2B2_NETSTACK_FIX3_2026_10_09.md § 1-2) :
+#  - Ed25519 sain (sign 1316/924, verify 1532/708). L'alerte tombe au point A : AVANT le rapport PodNet et AVANT le journal HTTP → l'hypothèse « les 24 o viennent du journal » (FIX2) est RÉFUTÉE.
+#  - même dépassement qu'au canari FIX1 : pile max 1048 = 1024 + 24, deterministe → le code fautif est déterministe et ANTÉRIEUR à A.
+#  - décodage des 32 octets (little-endian) autour de __StackLimit 0x20007B00 :
+#      0x20007AF8 : 0x20000168 (RAM statique)   0x20007AFC : 0x20007BF8 (adresse de PILE)
+#      0x20007B00 : 0x0001D805 (pointeur de fonction thumb = __ssputs_r | 1)   0x20007B04 : 0x20007B3C (adresse de pile)
+#      0x20007B08 : 0x20007BF8 (adresse de pile)   0x20007B0C : 0x0001D893 (adresse de RETOUR dans __ssputs_r, +0x8e)   0x20007B10 : 0x20007B70 (adresse de pile)
+#    0x1D805 et 0x1D893 sont résolues contre l'ELF du build flashé (docs/mesures/8B2B2_NETSTACK_FIX3_2026_10_09/elf-fix2-flashe-*.txt) : ce sont des objets/cadres de la chaîne printf de newlib
+#    (vsniprintf → _svfiprintf_r → __ssputs_r → _realloc_r), pas du code de PodNet (dont l'épilogue n'appelle que malloc, memset et free).

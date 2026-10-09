@@ -48,6 +48,13 @@ static_assert(POD_NET_STACK_TOTAL >= POD_NET_GUARD_BYTES + 1024u + POD_NET_MARGI
   #define POD_NET_SWITCH_STACK 0
 #endif
 
+// NETSTACK-FIX3 : SONDES de phase, SANS entrée/sortie. POD_NET_PROBE(info, n) est un no-op par défaut ; le build de canari (sketch e-ink 2,9″) la définit AVANT l'inclusion pour mémoriser, dans info->pad[0], le numéro de
+// la PREMIÈRE phase où le marqueur de pile est trouvé détruit (lecture d'un mot déjà posé : aucune profondeur ajoutée, aucun appel de bibliothèque). Phases : 1 entrée de runSized · 2 après malloc + peinture ·
+// 3 juste après le trampoline · 4 après le scan garde/filigrane · 5 après le calcul de marge · 6 après l'effacement · 7 après free · 8 retour de podNetRun. (Le retour de netHttpRaw est le point A du sketch.)
+#ifndef POD_NET_PROBE
+#define POD_NET_PROBE(I, n) ((void)0)
+#endif
+
 enum PodNetErr : uint8_t {
   POD_NET_OK = 0,
   POD_NET_NOMEM = 1,    // malloc() impossible : rien n'a été exécuté
@@ -119,6 +126,7 @@ class PodNet {
   static bool runSized(void (*fn)(void*), void* ctx, size_t total, PodNetInfo* info = nullptr) {
     PodNetInfo local; PodNetInfo* I = info ? info : &local;
     I->used = 0; I->margin = 0; I->err = POD_NET_OK; I->low = 0; I->pad[0] = I->pad[1] = 0;
+    POD_NET_PROBE(I, 1);
     if (!podNetOnMainStack()) { I->err = POD_NET_NESTED; return false; }
     if (total < POD_NET_GUARD_BYTES + 512u) { I->err = POD_NET_NOMEM; return false; }
     uint8_t* blk =
@@ -132,32 +140,40 @@ class PodNet {
     const size_t stackBytes = total - POD_NET_GUARD_BYTES;
     memset(guard, POD_NET_GUARD_PAINT, POD_NET_GUARD_BYTES);
     memset(low, POD_NET_PAINT, stackBytes);
+    POD_NET_PROBE(I, 2);
 #if POD_NET_SWITCH_STACK
     podNetCallOnStack(fn, ctx, ((uint32_t)(uintptr_t)(low + stackBytes)) & ~7u);
 #else
     fn(ctx);
 #endif
+    POD_NET_PROBE(I, 3);
 #ifdef POD_NET_HOST_TEST
     if (podNetTestHook) podNetTestHook(low, stackBytes, guard);
 #endif
     bool guardOk = true;
     for (size_t i = 0; i < POD_NET_GUARD_BYTES; i++) if (guard[i] != POD_NET_GUARD_PAINT) { guardOk = false; break; }
     size_t untouched = 0; while (untouched < stackBytes && low[untouched] == POD_NET_PAINT) untouched++;   // octets intacts depuis le BAS de la pile
+    POD_NET_PROBE(I, 4);
     I->margin = (uint16_t)untouched; I->used = (uint16_t)(stackBytes - untouched);
     I->low = (untouched < POD_NET_MARGIN_GOAL) ? 1 : 0;
     bool good = true;
     if (!guardOk) { I->err = POD_NET_GUARD; good = false; }
     else if (untouched < POD_NET_MARGIN_MIN) { I->err = POD_NET_MARGIN; good = false; }
+    POD_NET_PROBE(I, 5);
     podnetimpl::wipe(blk, total);   // requêtes et réponses ont transité par cette pile
 #ifdef POD_NET_HOST_TEST
     if (podNetTestAfterWipe) podNetTestAfterWipe(blk, total);
 #endif
+    POD_NET_PROBE(I, 6);
     free(blk);
+    POD_NET_PROBE(I, 7);
     return good;
   }
 };
 
 /** Confort : exécute un objet appelable sans argument (typiquement une lambda [&]) sur la pile dédiée. L'objet appelable vit sur la pile de l'APPELANT ; il peut lire et écrire les variables de l'appelant. */
 template <typename F> static bool podNetRun(F& f, PodNetInfo* info = nullptr) {
-  return PodNet::run([](void* p) { (*static_cast<F*>(p))(); }, &f, info);
+  const bool ok = PodNet::run([](void* p) { (*static_cast<F*>(p))(); }, &f, info);
+  if (info) { POD_NET_PROBE(info, 8); }
+  return ok;
 }
