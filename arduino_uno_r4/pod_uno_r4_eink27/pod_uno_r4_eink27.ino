@@ -38,6 +38,7 @@
 #include <qrcode.h>
 #include <Ed25519.h>
 #include "podEdStack.h"   // POD_ED_STACK : Ed25519 sur PILE DÉDIÉE (la pile principale de la R4 n'a que 1 024 o) — docs/LOT_8B2B2_PILE_ED25519_R4_2026_10_08.md
+#include "podNetStack.h"   // POD_NET_STACK : toute transaction réseau/TLS sur PILE DÉDIÉE (connect() déborde de 456 o sous __StackLimit) — docs/LOT_8B2B2_NETSTACK_FIX1_2026_10_09.md
 #include <SHA256.h>
 #include "pod_http.h"
 #include "epd2in7_V2.h"
@@ -317,13 +318,20 @@ struct Conn {
 /** Appel JSON : retourne le code HTTP (>0) et le corps dans resp ; <0 = échec réseau/lecture/corps incomplet. */
 static int httpCall(const char* method, const String& path, const String* body, String& resp) {
   resp = "";
-  Conn c(HTTP_TIMEOUT_MS);
-  const int code = c.request(method, path, body);
+  int code = -4; bool complete = false;              // POD_NET_STACK : résultats dans les variables de l'APPELANT ; TOUTE la transaction TLS (connect, envoi, en-têtes, corps, stop) tourne sur la pile réseau dédiée
+  auto tx = [&]() {
+    Conn c(HTTP_TIMEOUT_MS);
+    code = c.request(method, path, body);
+    if (code < 0) return;
+    size_t len = 0;
+    complete = c.rd.readBodyString(g_body, sizeof(g_body), &len);
+    c.client.stop();
+  };
+  PodNetInfo ni;
+  const bool ran = podNetRun(tx, &ni);
+  if (!ran) { logf("[HTTP %s] pile réseau dédiée indisponible (erreur %u, marge %u o) — transaction ÉCHOUÉE", method, (unsigned)ni.err, (unsigned)ni.margin); return -4; }
   logf("[HTTP %s] %s -> %d", method, path.length() > 60 ? (path.substring(0, 60) + "...").c_str() : path.c_str(), code);
   if (code < 0) { if (code == -2) logf("[HTTP] connexion TLS impossible (voir l'en-tête du sketch)"); return code; }
-  size_t len = 0;
-  const bool complete = c.rd.readBodyString(g_body, sizeof(g_body), &len);
-  c.client.stop();
   if (!complete) { logf("[HTTP] corps incomplet ou > %u octets", (unsigned)sizeof(g_body) - 1); return -3; }
   resp = String(g_body);
   return code;
@@ -567,7 +575,8 @@ static bool ackFrame(const String& frameId) {
 static bool doFetchFrame(const String& frameId, const String& frameSource) {
   const unsigned long t0 = millis();
   bool got = false, noFrame = false;
-  {
+  PodNetInfo ni;                                     // POD_NET_STACK : la transaction tourne sur la pile réseau dédiée
+  auto tx = [&]() {
     Conn c(HTTP_TIMEOUT_MS);
     const int code = c.request("GET", "/api/pull-frame?deviceId=" + deviceId + "&screen=" SCREEN_TYPE "&fmt=bin", nullptr);
     logf("[HTTP GET] /api/pull-frame -> %d (contenu %ld)", code, c.rd.contentLength());
@@ -581,7 +590,9 @@ static bool doFetchFrame(const String& frameId, const String& frameSource) {
       logf("[FRAME] taille annoncée %ld != %d (le serveur sert-il bien eink27bw ?)", c.rd.contentLength(), FRAME_BYTES);
     }
     c.client.stop();
-  }
+  };
+  const bool ran = podNetRun(tx, &ni);
+  if (!ran) { got = false; noFrame = false; logf("[FRAME] pile réseau dédiée indisponible (erreur %u, marge %u o) — image NON présentée", (unsigned)ni.err, (unsigned)ni.margin); }
   if (noFrame) { logf("[FRAME] pas de frame disponible"); return true; }
   if (!got) { logf("[FRAME] image incomplète — pas d'ACK, nouvel essai au prochain pull"); return false; }
 
@@ -737,6 +748,21 @@ static bool doPull() {
 // ─── VALIDATION RÉELLE (vote v2) — ⚠ NON TESTÉE SUR LA CARTE ─────────────
 static uint8_t g_voteChunk[256];
 
+// POD_NET_STACK : lecture du candidat sur la pile réseau dédiée. Fonction à part (noinline) : ses variables ne vivent que pendant la transaction, FERMÉE avant la signature (jamais imbriquée dans PodEd),
+// et ne gonflent pas le cadre de doValidate, qui porte ensuite l'appel de signature. Échec de la pile dédiée : chk remis à zéro (chk.ok = false) → « calcul impossible », pas de vote.
+static void __attribute__((noinline)) netReadCandidate(const String& candidateId, PodScreenKind kind, size_t bytes, PodCheck& chk) {
+  PodNetInfo ni;
+  auto tx = [&]() {
+    Conn c(HTTP_TIMEOUT_MS);
+    const int code = c.request("GET", String("/api/candidate-frame?candidateId=") + candidateId, nullptr);
+    chk.http = code;
+    if (code == 200) podCheckStream(c.rd, kind, bytes, blackBuf, BUF_SIZE, g_voteChunk, sizeof(g_voteChunk), &chk);
+    c.client.stop();
+  };
+  const bool ran = podNetRun(tx, &ni);
+  if (!ran) { memset(&chk, 0, sizeof(chk)); logf("[VALIDATE2] pile réseau dédiée indisponible (erreur %u, marge %u o) — pas de vote", (unsigned)ni.err, (unsigned)ni.margin); }
+}
+
 static bool doValidateV2(const String& candidateId, const String& screenName, size_t bytes, const String& announcedHash) {
   PodScreenKind kind;
   // Un appareil relit un candidat de N'IMPORTE QUEL écran (le serveur ne l'oblige pas à voter pour son type) : blackBuf (≥ 4 736 o) sert de tampon pour l'OLED et l'e-ink 2,9".
@@ -745,13 +771,7 @@ static bool doValidateV2(const String& candidateId, const String& screenName, si
     return false;
   }
   PodCheck chk; memset(&chk, 0, sizeof(chk));
-  {
-    Conn c(HTTP_TIMEOUT_MS);
-    const int code = c.request("GET", String("/api/candidate-frame?candidateId=") + candidateId, nullptr);
-    chk.http = code;
-    if (code == 200) podCheckStream(c.rd, kind, bytes, blackBuf, BUF_SIZE, g_voteChunk, sizeof(g_voteChunk), &chk);
-    c.client.stop();
-  }
+  netReadCandidate(candidateId, kind, bytes, chk);
   if (!chk.ok) { logf("[VALIDATE2] calcul impossible (%u/%u octets)", (unsigned)chk.bytes, (unsigned)bytes); return false; }
   bool accept = false; const char* reason = podVerdict(chk, announcedHash, &accept);
   const String msg = podVoteMessage(deviceId, candidateId, chk.hash, chk.m, accept);

@@ -34,7 +34,6 @@
 #include <qrcode.h>
 #include <Ed25519.h>
 #include "podEdStack.h"   // POD_ED_STACK : Ed25519 sur PILE DÉDIÉE (la pile principale de la R4 n'a que 1 024 o) — docs/LOT_8B2B2_PILE_ED25519_R4_2026_10_08.md
-#include "podNetStack.h"   // POD_NET_STACK : toute transaction réseau/TLS sur PILE DÉDIÉE (connect() déborde de 456 o sous __StackLimit) — docs/LOT_8B2B2_NETSTACK_FIX1_2026_10_09.md
 #include <SHA256.h>
 #include "pod_http.h"
 #include "pod_bench.h"
@@ -336,20 +335,13 @@ struct Conn {
 /** Appel JSON : retourne le code HTTP (>0) et le corps dans resp ; <0 = échec réseau/lecture/corps incomplet. */
 static int httpCall(const char* method, const String& path, const String* body, String& resp) {
   resp = "";
-  int code = -4; bool complete = false;              // POD_NET_STACK : résultats dans les variables de l'APPELANT ; TOUTE la transaction TLS (connect, envoi, en-têtes, corps, stop) tourne sur la pile réseau dédiée
-  auto tx = [&]() {
-    Conn c(HTTP_TIMEOUT_MS);
-    code = c.request(method, path, body);
-    if (code < 0) return;
-    size_t len = 0;
-    complete = c.rd.readBodyString(g_body, sizeof(g_body), &len);
-    c.client.stop();
-  };
-  PodNetInfo ni;
-  const bool ran = podNetRun(tx, &ni);
-  if (!ran) { logf("[HTTP %s] pile réseau dédiée indisponible (erreur %u, marge %u o) — transaction ÉCHOUÉE", method, (unsigned)ni.err, (unsigned)ni.margin); return -4; }
+  Conn c(HTTP_TIMEOUT_MS);
+  const int code = c.request(method, path, body);
   if (!(g_quietHttp && code == 200)) logf("[HTTP %s] %s -> %d", method, path.length() > 60 ? (path.substring(0, 60) + "...").c_str() : path.c_str(), code);
   if (code < 0) { if (code == -2) logf("[HTTP] connexion TLS impossible (voir l'en-tête du sketch)"); return code; }
+  size_t len = 0;
+  const bool complete = c.rd.readBodyString(g_body, sizeof(g_body), &len);
+  c.client.stop();
   if (!complete) { logf("[HTTP] corps incomplet ou > %u octets", (unsigned)sizeof(g_body) - 1); return -3; }
   resp = String(g_body);
   return code;
@@ -497,8 +489,7 @@ static bool ackFrame(const String& frameId) {
 static bool doFetchFrame(const String& frameId, const String& frameSource) {
   const unsigned long t0 = millis();
   bool shown = false, noFrame = false;
-  PodNetInfo ni;                                     // POD_NET_STACK : la transaction tourne sur la pile réseau dédiée
-  auto tx = [&]() {
+  {
     Conn c(HTTP_TIMEOUT_MS);
     const int code = c.request("GET", "/api/pull-frame?deviceId=" + deviceId + "&screen=" SCREEN_TYPE "&fmt=bin", nullptr);
     logf("[HTTP GET] /api/pull-frame -> %d (contenu %ld)", code, c.rd.contentLength());
@@ -510,9 +501,7 @@ static bool doFetchFrame(const String& frameId, const String& frameSource) {
       logf("[FRAME] taille annoncée %ld != %d (le serveur sert-il bien tft28 ?)", c.rd.contentLength(), FRAME_BYTES);
     }
     c.client.stop();
-  };
-  const bool ran = podNetRun(tx, &ni);
-  if (!ran) { shown = false; noFrame = false; logf("[FRAME] pile réseau dédiée indisponible (erreur %u, marge %u o) — image NON présentée", (unsigned)ni.err, (unsigned)ni.margin); }
+  }
   if (noFrame) { logf("[FRAME] pas de frame disponible"); return true; }
   if (!shown) { logf("[FRAME] image incomplète — pas d'ACK, nouvel essai au prochain pull"); sdFrameValid = false; return false; }
   lastFrameId = frameId;
@@ -779,28 +768,19 @@ static bool doPull() {
 static uint8_t g_voteChunk[256];
 static uint8_t g_voteScratch[4736];
 
-// POD_NET_STACK : lecture du candidat sur la pile réseau dédiée. Fonction à part (noinline) : ses variables ne vivent que pendant la transaction, FERMÉE avant la signature (jamais imbriquée dans PodEd),
-// et ne gonflent pas le cadre de doValidate, qui porte ensuite l'appel de signature. Échec de la pile dédiée : chk remis à zéro (chk.ok = false) → « calcul impossible », pas de vote.
-static void __attribute__((noinline)) netReadCandidate(const String& candidateId, PodScreenKind kind, size_t bytes, PodCheck& chk) {
-  PodNetInfo ni;
-  auto tx = [&]() {
+static bool doValidateV2(const String& candidateId, const String& screenName, size_t bytes, const String& announcedHash) {
+  PodScreenKind kind;
+  if (!podKindFromName(screenName.c_str(), &kind)) { logf("[VALIDATE2] écran inconnu : %s", screenName.c_str()); return false; }
+  reportMem("VALIDATE2-avant");
+  PodCheck chk; memset(&chk, 0, sizeof(chk));
+  {
     Conn c(HTTP_TIMEOUT_MS);
     const int code = c.request("GET", String("/api/candidate-frame?candidateId=") + candidateId, nullptr);
     chk.http = code;
     logf("[HTTP GET] /api/candidate-frame -> %d", code);
     if (code == 200) podCheckStream(c.rd, kind, bytes, g_voteScratch, sizeof(g_voteScratch), g_voteChunk, sizeof(g_voteChunk), &chk);
     c.client.stop();
-  };
-  const bool ran = podNetRun(tx, &ni);
-  if (!ran) { memset(&chk, 0, sizeof(chk)); logf("[VALIDATE2] pile réseau dédiée indisponible (erreur %u, marge %u o) — pas de vote", (unsigned)ni.err, (unsigned)ni.margin); }
-}
-
-static bool doValidateV2(const String& candidateId, const String& screenName, size_t bytes, const String& announcedHash) {
-  PodScreenKind kind;
-  if (!podKindFromName(screenName.c_str(), &kind)) { logf("[VALIDATE2] écran inconnu : %s", screenName.c_str()); return false; }
-  reportMem("VALIDATE2-avant");
-  PodCheck chk; memset(&chk, 0, sizeof(chk));
-  netReadCandidate(candidateId, kind, bytes, chk);
+  }
   if (!chk.ok) { logf("[VALIDATE2] lecture/calcul impossible (http=%d, %u/%u octets)", chk.http, (unsigned)chk.bytes, (unsigned)bytes); return false; }
 
   bool accept = false;
@@ -934,22 +914,6 @@ enum BenchStop : uint8_t { BS_DONE = 0, BS_TOUCH, BS_CHECK, BS_CAP };
 #define BENCH_LOOP_MAX_MS   (60UL * 60UL * 1000UL)  // et on s'arrête de toute façon au bout d'une heure
 
 /** Télécharge le clip (TLS fermé ensuite), le valide entièrement, le joue en mesurant, renvoie les mesures, puis remet l'œuvre (carte SD). */
-// POD_NET_STACK : téléchargement du clip sur la pile réseau dédiée (fonction à part, noinline : ses variables ne gonflent pas le cadre de loop(), où ce code est inliné)
-static bool __attribute__((noinline)) netGetBenchClip(const String& clipId, uint8_t* clip, size_t announced) {
-  bool got = false;
-  PodNetInfo ni;
-  auto tx = [&]() {
-    Conn c(HTTP_TIMEOUT_MS);
-    const int code = c.request("GET", "/api/bench/clip?deviceId=" + deviceId + "&clipId=" + clipId, nullptr);
-    if (code == 200 && (c.rd.contentLength() < 0 || (size_t)c.rd.contentLength() == announced))
-      got = c.rd.readBody(clip, announced) == announced && c.rd.complete();
-    c.client.stop();
-  };
-  const bool ran = podNetRun(tx, &ni);
-  if (!ran) { got = false; logf("[BENCH] pile réseau dédiée indisponible (erreur %u, marge %u o) — clip NON reçu", (unsigned)ni.err, (unsigned)ni.margin); }
-  return got;
-}
-
 static void playBenchClip(const String& clipId, size_t announced) {
   logf("[BENCH] clip %s : %u octets annoncés", clipId.c_str(), (unsigned)announced);
   lastBenchClipId = clipId;                                   // jamais rejoué en boucle, même en cas d'échec
@@ -968,7 +932,14 @@ static void playBenchClip(const String& clipId, size_t announced) {
   }
 
   const unsigned long tDl = millis();
-  bool got = netGetBenchClip(clipId, clip, announced);
+  bool got = false;
+  {
+    Conn c(HTTP_TIMEOUT_MS);
+    const int code = c.request("GET", "/api/bench/clip?deviceId=" + deviceId + "&clipId=" + clipId, nullptr);
+    if (code == 200 && (c.rd.contentLength() < 0 || (size_t)c.rd.contentLength() == announced))
+      got = c.rd.readBody(clip, announced) == announced && c.rd.complete();
+    c.client.stop();
+  }
   const unsigned long downloadMs = millis() - tDl;
   podbench::Clip pc;
   podbench::Err perr = got ? podbench::parse(clip, announced, pc, cur) : podbench::ERR_SIZE;
@@ -1067,23 +1038,6 @@ static void animLoadMarker() {
 }
 
 /** Télécharge le clip du bloc (TLS fermé ensuite), le valide ENTIÈREMENT, le range sur la carte puis marque l'animation comme active. */
-// POD_NET_STACK : téléchargement du clip sur la pile réseau dédiée (fonction à part, noinline : ses variables ne gonflent pas le cadre de loop(), où ce code est inliné)
-static bool __attribute__((noinline)) netGetBlockClip(const String& hash, uint8_t* clip, size_t announced) {
-  bool got = false;
-  PodNetInfo ni;
-  auto tx = [&]() {
-    Conn c(HTTP_TIMEOUT_MS);
-    const int code = c.request("GET", "/api/block-clip?hash=" + hash, nullptr);
-    logf("[HTTP GET] /api/block-clip -> %d (contenu %ld)", code, c.rd.contentLength());
-    if (code == 200 && (c.rd.contentLength() < 0 || (size_t)c.rd.contentLength() == announced))
-      got = c.rd.readBody(clip, announced) == announced && c.rd.complete();
-    c.client.stop();
-  };
-  const bool ran = podNetRun(tx, &ni);
-  if (!ran) { got = false; logf("[ANIM] pile réseau dédiée indisponible (erreur %u, marge %u o) — clip NON reçu", (unsigned)ni.err, (unsigned)ni.margin); }
-  return got;
-}
-
 static bool fetchAnimToSd(const String& hash, size_t announced) {
   if (!sdOk) { logf("[ANIM] pas de carte SD : animation non lue (l'affiche reste à l'écran)"); return false; }
   if (announced < (size_t)(BENCH_HDR + 5 + BENCH_FRAME) || announced > BENCH_MAX_CLIP) { logf("[ANIM] taille refusée (%u)", (unsigned)announced); return false; }
@@ -1091,7 +1045,15 @@ static bool fetchAnimToSd(const String& hash, size_t announced) {
   uint8_t* cur = (uint8_t*)malloc(BENCH_FRAME);
   if (!clip || !cur) { free(clip); free(cur); logf("[ANIM] mémoire insuffisante"); return false; }
   const unsigned long t0 = millis();
-  bool got = netGetBlockClip(hash, clip, announced);
+  bool got = false;
+  {
+    Conn c(HTTP_TIMEOUT_MS);
+    const int code = c.request("GET", "/api/block-clip?hash=" + hash, nullptr);
+    logf("[HTTP GET] /api/block-clip -> %d (contenu %ld)", code, c.rd.contentLength());
+    if (code == 200 && (c.rd.contentLength() < 0 || (size_t)c.rd.contentLength() == announced))
+      got = c.rd.readBody(clip, announced) == announced && c.rd.complete();
+    c.client.stop();
+  }
   podbench::Clip pc;
   const podbench::Err perr = got ? podbench::parse(clip, announced, pc, cur) : podbench::ERR_SIZE;
   free(cur);

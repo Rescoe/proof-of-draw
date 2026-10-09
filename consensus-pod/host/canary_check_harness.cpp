@@ -43,6 +43,7 @@ static char* sbrk(int) { return reinterpret_cast<char*>(g_mem + 200); }
 #define __HeapLimit (reinterpret_cast<char*>(g_mem)[2048])
 #define __builtin_frame_address(x) (static_cast<void*>(g_mem + g_spoff))
 
+#include "../src/adapters/podNetStack.h"   // PodNetInfo / POD_NET_OK, utilisés par podCanaryNet (NETSTACK-FIX1)
 #include "canary_extract.inc"
 
 static void fresh(long sp) { std::memset(g_mem, 0, sizeof(g_mem)); g_out.clear(); g_fatalPrints = 0; g_spoff = sp; paintStack(); podCanaryPaint(); }
@@ -90,5 +91,18 @@ int main() {
   // S11 : un point silencieux n'imprime RIEN et ne compte pas comme appel de bibliothèque tant que tout va bien, même profond mais sain (800 o, marge 224)
   fresh(3072 - 300);
   { g_mem[3072 - 800] = 0x55; const char* r = check("profond sain silencieux", false); line("profond mais sain (marge 224) : silencieux", !std::strcmp(r, "ret") && g_out.empty(), ""); }
+  // S12-S15 : rapport de la pile réseau dédiée (NETSTACK-FIX1) — une ligne par transaction ; l'échec de la pile dédiée pose le verrou fatal
+  fresh(3072 - 300);
+  { PodNetInfo ni = { 800, 1000, POD_NET_OK, 0, {0, 0} }; try { podCanaryNet("http", ni, true); } catch (const Halted&) { g_out += "HALT"; }
+    line("pile réseau saine : une ligne, pas de verrou", has("[CANARY] net http : pile reseau dediee utilisee 800 o, marge 1000 o (objectif >= 256 : OK), erreur 0") && !has("HALT") && !has("ECHEC"), ""); }
+  fresh(3072 - 300);
+  { PodNetInfo ni = { 1800, 200, POD_NET_OK, 1, {0, 0} }; try { podCanaryNet("pull-frame", ni, true); } catch (const Halted&) { g_out += "HALT"; }
+    line("pile réseau sous l'objectif de 256 o mais >= 128 o : signalée, pas de verrou", has("SOUS L'OBJECTIF") && !has("HALT"), ""); }
+  fresh(3072 - 300);
+  { PodNetInfo ni = { 1900, 100, POD_NET_MARGIN, 1, {0, 0} }; try { podCanaryNet("candidate-frame", ni, false); } catch (const Halted&) { g_out += "HALT"; }
+    line("pile réseau échouée (marge < 128 o) : ECHEC + verrou fatal", has("ECHEC de la pile reseau dediee (ALERTE)") && has("HALT") && has("ARRET FATAL (verrou) apres 'candidate-frame'"), ""); }
+  fresh(3072 - 300);
+  { PodNetInfo ni = { 0, 0, POD_NET_NOMEM, 0, {0, 0} }; try { podCanaryNet("http", ni, false); } catch (const Halted&) { g_out += "HALT"; }
+    line("malloc impossible : ECHEC + verrou fatal (aucun redémarrage en boucle)", has("ECHEC") && has("HALT"), ""); }
   return 0;
 }

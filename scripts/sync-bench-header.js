@@ -21,6 +21,8 @@ const MASTERS = {
   "crypto_uno_r4.h": "consensus-pod/src/adapters/crypto_uno_r4.h",
   // Ed25519 sur pile dédiée (lot 8B-2B-2-STACK-FIX1) : les CINQ firmwares UNO R4 qui signent (le TFT 2,8″ inclus)
   "podEdStack.h": "consensus-pod/src/adapters/podEdStack.h",
+  // Transactions réseau/TLS sur pile dédiée (lot 8B-2B-2 NETSTACK-FIX1) : les CINQ firmwares UNO R4
+  "podNetStack.h": "consensus-pod/src/adapters/podNetStack.h",
 };
 const RENDER_ESP = ["esp8266/esp_eink_2.9BWR", "esp8266/esp_tft1.8", "esp8266/esp_eink_2.7BW", "esp8266/esp_eink_2.7BW_OLED"], RENDER_R4 = ["arduino_uno_r4/pod_uno_r4_eink29", "arduino_uno_r4/pod_uno_r4_tft18", "arduino_uno_r4/pod_uno_r4_eink27", "arduino_uno_r4/pod_uno_r4_eink27_oled"];
 const ED_STACK_R4 = [...RENDER_R4, "arduino_uno_r4/pod_uno_r4"];
@@ -39,6 +41,7 @@ const COPIES = {
   "crypto_esp8266.h": RENDER_ESP.map((d) => d + "/crypto_esp8266.h"),
   "crypto_uno_r4.h": RENDER_R4.map((d) => d + "/crypto_uno_r4.h"),
   "podEdStack.h": ED_STACK_R4.map((d) => d + "/podEdStack.h"),
+  "podNetStack.h": ED_STACK_R4.map((d) => d + "/podNetStack.h"),
 };
 module.exports = { MASTERS, COPIES };
 

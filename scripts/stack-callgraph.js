@@ -34,11 +34,12 @@ function parse(text) {
   return funcs;
 }
 
-function deepest(funcs, entry) {
+function deepest(funcs, entry, skip) {   // skip : Set de noms de fonctions à ne pas suivre (ex. _printf_float : branche jamais exécutée sans format %f)
   const memo = new Map();
   const visiting = new Set();
   const go = (name) => {
     if (memo.has(name)) return memo.get(name);
+    if (skip && skip.has(name)) return { depth: 0, path: [`${name}(ignorée)`] };
     const f = funcs.get(name);
     if (!f) return { depth: 0, path: [`${name}?`] };   // fonction externe / ROM : cadre inconnu = 0
     if (visiting.has(name)) return { depth: 0, path: [`${name}(récursion)`] };

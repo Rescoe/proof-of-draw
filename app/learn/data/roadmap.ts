@@ -66,6 +66,7 @@ export const ROADMAP: RoadmapPhase[] = [
       { id: "fw-27solo", title: "Vote v2 sur l’ESP8266 e-ink 2,7″ « seul »", status: "doing", note: "Firmware eink27bw-2.1 compilé ; essai sur la carte à faire." },
       { id: "fw-tft28", title: "Vote v2 sur R4 + TFT 2,8″ tactile", status: "doing", note: "Code livré (r4tft28-2.5), essai matériel à faire." },
       { id: "r4-stack", title: "Ed25519 sur les cartes UNO R4 : calcul sur une pile dédiée", status: "doing", note: "Le premier démarrage d’un canari a montré que la pile principale (1 024 o) était dépassée par la signature Ed25519 (≈ 1,4 Ko requis). Correctif compilé et vérifié sur l’hôte ; micro-canari sur la carte à faire." },
+      { id: "r4-net-stack", title: "Réseau sécurisé (TLS) des cartes UNO R4 : transactions sur une pile dédiée", status: "doing", note: "Mesuré sur la carte : la connexion TLS dépasse de 456 o la pile principale (défaut ancien, masqué tant que la mémoire voisine était libre). Correctif compilé et vérifié sur l’hôte pour les cinq firmwares ; canari sans image à faire avant tout essai de rendu." },
       { id: "traces", title: "Archiver une trace série par variante (octets, hash, métriques, verdict)", status: "todo", note: "Preuve reproductible à joindre aux notes de canari." },
     ],
   },

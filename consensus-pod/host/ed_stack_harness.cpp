@@ -151,6 +151,13 @@ int main(int argc, char** argv) {
     expect("malloc impossible : verify() ne dit pas « valide »", !PodEd::verify(sig.data(), pub.data(), msg.data(), msg.size(), &inf) && inf.err == POD_ED_NOMEM);
     expect("malloc impossible : derive() refuse, clé à zéro", !PodEd::derivePublicKey(p, seed.data(), &inf) && inf.err == POD_ED_NOMEM && allZero(p, 32)); }
   podEdTestFailAlloc = 0;
+  // NETSTACK-FIX1 : jamais imbriqué dans la pile réseau (ni dans lui-même) — refusé AVANT toute allocation, sortie à zéro, jamais « valide »
+  podEdTestNested = 1;
+  { PodEdInfo inf; uint8_t s[64]; std::memset(s, 0x55, 64); uint8_t p[32]; std::memset(p, 0x55, 32);
+    expect("imbrication : sign() refuse (NESTED), sortie à zéro", !PodEd::sign(s, seed.data(), pub.data(), msg.data(), msg.size(), &inf) && inf.err == POD_ED_NESTED && allZero(s, 64));
+    expect("imbrication : verify() ne dit pas « valide »", !PodEd::verify(sig.data(), pub.data(), msg.data(), msg.size(), &inf) && inf.err == POD_ED_NESTED);
+    expect("imbrication : derive() refuse, clé à zéro", !PodEd::derivePublicKey(p, seed.data(), &inf) && inf.err == POD_ED_NESTED && allZero(p, 32)); }
+  podEdTestNested = 0;
   // l'appelant n'est pas obligé de fournir un PodEdInfo
   { uint8_t s[64]; expect("info facultatif", PodEd::sign(s, seed.data(), pub.data(), msg.data(), msg.size()) && PodEd::verify(s, pub.data(), msg.data(), msg.size())); }
 

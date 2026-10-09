@@ -46,7 +46,7 @@ static_assert(POD_ED_STACK_TOTAL >= POD_ED_GUARD_BYTES + 1388u + 104u + POD_ED_M
 enum PodEdErr : uint8_t {
   POD_ED_OK = 0,
   POD_ED_NOMEM = 1,    // malloc() impossible : rien n'a été calculé
-                       // 2 : réservé (ancienne bascule PSP, supprimée)
+  POD_ED_NESTED = 2,   // déjà sur une pile dédiée (PodNet réseau ou PodEd) : rien n'a été calculé (NETSTACK-FIX1 : jamais d'imbrication)
   POD_ED_GUARD = 3,    // garde basse écrasée : débordement réel de la pile dédiée, résultat REJETÉ
   POD_ED_MARGIN = 4    // marge < POD_ED_MARGIN_MIN : résultat REJETÉ (alerte, jamais relâchée)
 };
@@ -59,6 +59,11 @@ struct PodEdInfo {     // mesures de la dernière opération (à placer par l'ap
 };
 
 #if POD_ED_SWITCH_STACK
+extern char __StackLimit, __StackTop;   // pile principale = [__StackLimit, __StackTop] (éditeur de liens du cœur R4)
+static inline bool podEdOnMainStack() {   // faux sur une pile dédiée (PodEd ou PodNet) → imbrication refusée
+  const uint32_t sp = (uint32_t)(uintptr_t)__builtin_frame_address(0);
+  return sp > (uint32_t)(uintptr_t)&__StackLimit && sp <= (uint32_t)(uintptr_t)&__StackTop;
+}
 // Trampoline : SP := top, appelle fn(arg), puis rétablit l'ancien SP. r4/r5 sont préservés par l'appelée (AAPCS) ; r5 garde l'ancien SP pendant l'appel.
 // Une interruption entre deux instructions est sans danger : SP désigne à tout instant soit l'ancienne pile, soit la pile dédiée, toutes deux valides.
 extern "C" __attribute__((naked, noinline, used)) void podEdCallOnStack(__attribute__((unused)) void (*fn)(void*), __attribute__((unused)) void* arg, __attribute__((unused)) uint32_t top) {
@@ -72,6 +77,15 @@ extern "C" __attribute__((naked, noinline, used)) void podEdCallOnStack(__attrib
     "mov  sp, r5            \n"   // retour sur la pile principale
     "pop  {r4, r5, pc}      \n");
 }
+#endif
+
+#if !POD_ED_SWITCH_STACK
+#ifdef POD_ED_HOST_TEST
+static int podEdTestNested = 0;
+static inline bool podEdOnMainStack() { return podEdTestNested == 0; }
+#else
+static inline bool podEdOnMainStack() { return true; }
+#endif
 #endif
 
 #ifdef POD_ED_HOST_TEST
@@ -97,6 +111,7 @@ namespace podedimpl {
   static bool execute(Job* job, PodEdInfo* info) {
     PodEdInfo local; PodEdInfo* I = info ? info : &local;
     I->used = 0; I->margin = 0; I->err = POD_ED_OK; I->pad[0] = I->pad[1] = I->pad[2] = 0;
+    if (!podEdOnMainStack()) { I->err = POD_ED_NESTED; return false; }
     uint8_t* blk =
 #ifdef POD_ED_HOST_TEST
       podEdTestFailAlloc ? nullptr :

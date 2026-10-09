@@ -34,7 +34,6 @@
 #include <qrcode.h>
 #include <Ed25519.h>
 #include "podEdStack.h"   // POD_ED_STACK : Ed25519 sur PILE DÉDIÉE (la pile principale de la R4 n'a que 1 024 o) — docs/LOT_8B2B2_PILE_ED25519_R4_2026_10_08.md
-#include "podNetStack.h"   // POD_NET_STACK : toute transaction réseau/TLS sur PILE DÉDIÉE (connect() déborde de 456 o sous __StackLimit) — docs/LOT_8B2B2_NETSTACK_FIX1_2026_10_09.md
 #include <SHA256.h>
 #include "pod_http.h"
 #include "epd29b.h"
@@ -180,11 +179,6 @@ static void podCanaryPaint() {
 // pull, vote, ACK ni affichage ne peut s'exécuter (le verrou n'existe que dans ce build POD_CANARY = 1 ; aucune variable globale).
 static void podCanaryHex(uint32_t v) { Serial.print(F("0x")); for (int s = 28; s >= 0; s -= 4) Serial.print((unsigned)((v >> s) & 15), HEX); }
 static void podCanaryNum(const __FlashStringHelper* label, unsigned long v) { Serial.print(label); Serial.print(v); }
-// VERROU FATAL : aucune sortie de cette fonction ; aucun delay(), aucun appel réseau, aucune écriture EEPROM
-static void __attribute__((noinline, noreturn)) podCanaryHalt(const char* tag) {
-  unsigned long t = millis() - 10000UL;
-  for (;;) if (millis() - t >= 10000UL) { t = millis(); Serial.print(F("[CANARY] ARRET FATAL (verrou) apres '")); Serial.print(tag); Serial.println(F("' : plus aucun pull, vote, ACK ni affichage. Debrancher la carte, reflasher le firmware stable.")); }
-}
 static void __attribute__((noinline)) podCanaryCheck(const char* tag, bool verbose) {
   volatile uint8_t* lo = (volatile uint8_t*)&__StackLimit;
   const uint32_t magic = *(volatile uint32_t*)lo, painted = *(volatile uint32_t*)(lo + 4);
@@ -213,14 +207,9 @@ static void __attribute__((noinline)) podCanaryCheck(const char* tag, bool verbo
   Serial.print(F("[CANARY]   octets [__StackLimit-8, +24[ : "));
   for (int i = -8; i < 24; i++) { const uint8_t b = lo[i]; if (b < 16) Serial.print('0'); Serial.print((unsigned)b, HEX); Serial.print(i == -1 ? F(" | ") : F(" ")); }
   Serial.println();
-  podCanaryHalt(tag);
-}
-// NETSTACK-FIX1 : une ligne par transaction réseau (pile dédiée : utilisée / marge / erreur, tas libre) ; un échec de la pile dédiée (malloc, garde, marge < 128 o, imbrication) pose le verrou fatal.
-static void __attribute__((noinline)) podCanaryNet(const char* tag, const PodNetInfo& ni, bool ran) {
-  Serial.print(F("[CANARY] net ")); Serial.print(tag); Serial.print(F(" : pile reseau dediee utilisee ")); Serial.print((unsigned)ni.used); podCanaryNum(F(" o, marge "), ni.margin);
-  Serial.print(ni.low ? F(" o (objectif >= 256 : SOUS L'OBJECTIF)") : F(" o (objectif >= 256 : OK)")); podCanaryNum(F(", erreur "), ni.err); podCanaryNum(F(" | tas libre "), freeHeapBytes()); Serial.println();
-  if (!ran || ni.err != POD_NET_OK) { Serial.print(F("[CANARY] net ")); Serial.print(tag); Serial.println(F(" : ECHEC de la pile reseau dediee (ALERTE)")); podCanaryHalt(tag); }
-  podCanaryCheck("  net: pile principale apres la transaction", false);
+  // VERROU FATAL : aucune sortie de cette boucle ; aucun delay(), aucun appel réseau, aucune écriture EEPROM
+  unsigned long t = millis() - 10000UL;
+  for (;;) if (millis() - t >= 10000UL) { t = millis(); Serial.print(F("[CANARY] ARRET FATAL (verrou) apres '")); Serial.print(tag); Serial.println(F("' : plus aucun pull, vote, ACK ni affichage. Debrancher la carte, reflasher le firmware stable.")); }
 }
 #endif
 static void reportMem(const char* tag) { logf("[MEM] %s: tas libre %lu o, pile max ~%lu o", tag, (unsigned long)freeHeapBytes(), (unsigned long)stackDepthBytes()); }
@@ -371,11 +360,17 @@ struct Conn {
   /** Connecte, envoie la requête, lit les en-têtes. Retourne le code HTTP, -2 = connexion TLS impossible, -1 = réponse illisible. */
   int request(const char* method, const String& path, const String* body) {
     if (!client.connect(SERVER_HOST, 443)) return -2;
+#if POD_RENDER_V1 && POD_CANARY
+  podCanaryCheck("  http: apres connect/TLS", false);
+#endif
     String req = String(method) + " " + path + " HTTP/1.1\r\nHost: " SERVER_HOST "\r\nUser-Agent: pod-r4/" FIRMWARE_VERSION "\r\nAccept: */*\r\nConnection: close\r\n";
     if (body) req += "Content-Type: application/json\r\nContent-Length: " + String(body->length()) + "\r\n";
     req += "\r\n";
     if (body) req += *body;
     client.print(req);
+#if POD_RENDER_V1 && POD_CANARY
+  podCanaryCheck("  http: apres envoi de la requete", false);
+#endif
     return rd.readHeaders();
   }
 };
@@ -383,23 +378,19 @@ struct Conn {
 /** Appel JSON : retourne le code HTTP (>0) et le corps dans resp ; <0 = échec réseau/lecture/corps incomplet. */
 static int httpCall(const char* method, const String& path, const String* body, String& resp) {
   resp = "";
-  int code = -4; bool complete = false;              // POD_NET_STACK : résultats dans les variables de l'APPELANT ; TOUTE la transaction TLS (connect, envoi, en-têtes, corps, stop) tourne sur la pile réseau dédiée
-  auto tx = [&]() {
-    Conn c(HTTP_TIMEOUT_MS);
-    code = c.request(method, path, body);
-    if (code < 0) return;
-    size_t len = 0;
-    complete = c.rd.readBodyString(g_body, sizeof(g_body), &len);
-    c.client.stop();
-  };
-  PodNetInfo ni;
-  const bool ran = podNetRun(tx, &ni);
-#if POD_RENDER_V1 && POD_CANARY
-  podCanaryNet("http", ni, ran);
-#endif
-  if (!ran) { logf("[HTTP %s] pile réseau dédiée indisponible (erreur %u, marge %u o) — transaction ÉCHOUÉE", method, (unsigned)ni.err, (unsigned)ni.margin); return -4; }
+  Conn c(HTTP_TIMEOUT_MS);
+  const int code = c.request(method, path, body);
   logf("[HTTP %s] %s -> %d", method, path.length() > 60 ? (path.substring(0, 60) + "...").c_str() : path.c_str(), code);
   if (code < 0) { if (code == -2) logf("[HTTP] connexion TLS impossible (voir l'en-tête du sketch)"); return code; }
+  size_t len = 0;
+  const bool complete = c.rd.readBodyString(g_body, sizeof(g_body), &len);
+#if POD_RENDER_V1 && POD_CANARY
+  podCanaryCheck("  http: apres lecture du corps", false);
+#endif
+  c.client.stop();
+#if POD_RENDER_V1 && POD_CANARY
+  podCanaryCheck("  http: apres stop", false);
+#endif
   if (!complete) { logf("[HTTP] corps incomplet ou > %u octets", (unsigned)sizeof(g_body) - 1); return -3; }
   resp = String(g_body);
   return code;
@@ -641,8 +632,7 @@ static bool ackFrame(const String& frameId) {
 static bool doFetchFrame(const String& frameId, const String& frameSource) {
   const unsigned long t0 = millis();
   bool got = false, noFrame = false;
-  PodNetInfo ni;                                     // POD_NET_STACK : le téléchargement de l'image tourne sur la pile réseau dédiée
-  auto tx = [&]() {
+  {
     Conn c(HTTP_TIMEOUT_MS);
     const int code = c.request("GET", "/api/pull-frame?deviceId=" + deviceId + "&screen=" SCREEN_TYPE "&fmt=bin", nullptr);
     logf("[HTTP GET] /api/pull-frame -> %d (contenu %ld)", code, c.rd.contentLength());
@@ -657,12 +647,7 @@ static bool doFetchFrame(const String& frameId, const String& frameSource) {
       logf("[FRAME] taille annoncée %ld != %d (le serveur sert-il bien eink29bwr ?)", c.rd.contentLength(), FRAME_BYTES);
     }
     c.client.stop();
-  };
-  const bool ran = podNetRun(tx, &ni);
-#if POD_RENDER_V1 && POD_CANARY
-  podCanaryNet("pull-frame", ni, ran);
-#endif
-  if (!ran) { logf("[FRAME] pile réseau dédiée indisponible (erreur %u, marge %u o) — image NON présentée, pas d'ACK", (unsigned)ni.err, (unsigned)ni.margin); return false; }
+  }
   if (noFrame) { logf("[FRAME] pas de frame disponible"); return true; }
   if (!got) { logf("[FRAME] image incomplète — pas d'ACK, nouvel essai au prochain pull"); return false; }
 
@@ -831,25 +816,6 @@ static bool doPull() {
 // Un appareil relit un candidat de N'IMPORTE QUEL écran (le serveur ne l'oblige pas à voter pour son type) : blackBuf (≥ 4 736 o) sert de tampon pour l'OLED et l'e-ink 2,9".
 static uint8_t g_voteChunk[256];
 
-// POD_NET_STACK : lecture du candidat sur la pile réseau dédiée. Fonction à part (noinline) : ses variables ne vivent que pendant la transaction, FERMÉE avant la signature (jamais imbriquée dans PodEd),
-// et ne gonflent pas le cadre de doValidate, qui porte ensuite l'appel de signature. Échec de la pile dédiée : chk remis à zéro (chk.ok = false) → « calcul impossible », pas de vote.
-static void __attribute__((noinline)) netReadCandidate(const String& candidateId, PodScreenKind kind, size_t bytes, PodCheck& chk) {
-  PodNetInfo ni;
-  auto tx = [&]() {
-    Conn c(HTTP_TIMEOUT_MS);
-    const int code = c.request("GET", String("/api/candidate-frame?candidateId=") + candidateId, nullptr);
-    chk.http = code;
-    logf("[HTTP GET] /api/candidate-frame -> %d", code);
-    if (code == 200) podCheckStream(c.rd, kind, bytes, blackBuf, BUF_SIZE, g_voteChunk, sizeof(g_voteChunk), &chk);
-    c.client.stop();
-  };
-  const bool ran = podNetRun(tx, &ni);
-#if POD_RENDER_V1 && POD_CANARY
-  podCanaryNet("candidate-frame", ni, ran);
-#endif
-  if (!ran) { memset(&chk, 0, sizeof(chk)); logf("[VALIDATE2] pile réseau dédiée indisponible (erreur %u, marge %u o) — pas de vote", (unsigned)ni.err, (unsigned)ni.margin); }
-}
-
 static bool doValidateV2(const String& candidateId, const String& screenName, size_t bytes, const String& announcedHash) {
   PodScreenKind kind;
   if (!podKindFromName(screenName.c_str(), &kind)) { logf("[VALIDATE2] écran inconnu: %s", screenName.c_str()); return false; }
@@ -857,7 +823,14 @@ static bool doValidateV2(const String& candidateId, const String& screenName, si
 
   PodCheck chk;
   memset(&chk, 0, sizeof(chk));
-  netReadCandidate(candidateId, kind, bytes, chk);
+  {
+    Conn c(HTTP_TIMEOUT_MS);
+    const int code = c.request("GET", String("/api/candidate-frame?candidateId=") + candidateId, nullptr);
+    chk.http = code;
+    logf("[HTTP GET] /api/candidate-frame -> %d", code);
+    if (code == 200) podCheckStream(c.rd, kind, bytes, blackBuf, BUF_SIZE, g_voteChunk, sizeof(g_voteChunk), &chk);
+    c.client.stop();
+  }
   if (!chk.ok) {
     logf("[VALIDATE2] lecture/calcul impossible (http=%d, %u/%u octets)", chk.http, (unsigned)chk.bytes, (unsigned)bytes);
     return false;

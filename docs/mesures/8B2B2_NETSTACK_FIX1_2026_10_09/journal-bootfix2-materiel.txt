@@ -1,0 +1,28 @@
+# Journal matériel du canari BOOT-FIX2 — UNO R4 WiFi + e-ink 2,9″ BWR, build local POD_RENDER_V1=1 POD_CANARY=1 (09/10/2026)
+# Source : retour du porteur (collé dans la conversation) ; aucune frame, aucun dessin, aucun ACK ; carte débranchée après l'alerte. Reproduit tel que transmis (valeurs et libellés), regroupé par sujet.
+# Version du cœur de la machine de build à ce moment : arduino:renesas_uno 1.6.0 (BSP_CFG_STACK_MAIN_BYTES = 0x400, BSP_CFG_HEAP_BYTES = 0x2000, SPMON désactivé : identiques à 1.5.3).
+
+== Mesure saine avant le réseau ==
+[CANARY] 6a avant doRegister : pile utilisée 864/1024, marge 160, pile max sous limite = 1024.
+
+== PREMIÈRE ALERTE (verrou fatal posé) ==
+[CANARY] http: apres connect/TLS :
+  pile utilisée au-dessus de la limite 1016/1024, marge 8,
+  pile max réelle = 1480.
+=> WiFiSSLClient::connect() descend réellement de 456 octets SOUS __StackLimit (1480 - 1024). SP est revenu dans la pile au point de contrôle, mais le débordement transitoire est enregistré (peinture cumulative).
+
+== Tas exclu ==
+__HeapLimit = 0x20007B00
+sbrk(0)     = 0x200066D8
+distance    = 5160 octets
+mallinfo utilisé = 1544
+Le marqueur contient des valeurs ressemblant à des cadres/pointeurs : écriture de pile confirmée.
+
+== PodEd (inchangé, validé) ==
+[ED25519] pile dédiée : sign 1316/924, verify 1532/708, erreurs 0/0
+
+== Verrou fatal ==
+Aucun pull, vote, ACK ou affichage après l'alerte. Carte débranchée, aucune frame envoyée.
+
+# Lecture (docs/LOT_8B2B2_NETSTACK_FIX1_2026_10_09.md § 1) : au moment de connect(), les cadres au-dessus de la chaîne TLS valent hal_entry 8 + arduino_main 16 + setup 224 + doRegister 264 + httpCall 272 + Conn::request 64 = 848 o ;
+# la chaîne connect → getSocket → ModemClass::begin/write → vsnprintf en ajoute ≈ 632 (mesuré : 1480 - 848) pour ≈ 656 statiques sans la branche flottante de printf. La prédiction de BOOT-FIX2 (hypothèse H1) est CONFIRMÉE.
