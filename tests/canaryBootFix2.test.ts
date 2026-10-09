@@ -237,3 +237,49 @@ test("NETSTACK-WIFI-CALLS-FIX2 : critères fatals du canari = marqueur / longueu
     assert.ok(wf.indexOf("if (ni.err == POD_NET_GUARD) logfSafeStop();") > 0 && wf.indexOf("if (ni.err == POD_NET_GUARD) logfSafeStop();") < wf.indexOf("logf("), `${sk} : logfSafeStop doit précéder logf`);
   }
 });
+
+/** NETSTACK-WIFI-CALLS-FIX3 : violations de la règle « le contrôle B est appelé APRÈS le retour complet de podCanaryNet, jamais depuis son corps » (liste vide = conforme). */
+function podCanaryNetViolations(src: string): string[] {
+  const v: string[] = [];
+  const net = /static void __attribute__\(\(noinline\)\) podCanaryNet\(const char\* tag, const PodNetInfo& ni, bool ran\) \{[\s\S]*?\n\}\n/.exec(src);
+  if (!net) return ["podCanaryNet absente"];
+  if (/podCanaryCheck\s*\(/.test(strip(net[0]))) v.push("podCanaryCheck imbriqué dans le corps de podCanaryNet (cadre encore vivant : +20 o)");
+  const code = strip(src);
+  const sites: Array<[string, string]> = [["http", "B: apres le rapport PodNet (silencieux)"], ["pull-frame", "B (pull-frame): apres le rapport PodNet (silencieux)"], ["candidate-frame", "B (candidate-frame): apres le rapport PodNet (silencieux)"]];
+  for (const [site, tag] of sites) {
+    // « podCanaryNet("site", ni, ran); » puis (blocs gardés fermés) le contrôle B, sans rien d'autre entre les deux
+    const esc = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const re = new RegExp(`podCanaryNet\\("${site}", ni, ran\\);\\s*#endif\\s*#if POD_RENDER_V1 && POD_CANARY\\s*podCanaryCheck\\("  ${esc(tag)}", false\\);\\s*#endif`);
+    if (!re.test(code)) v.push(`le contrôle B de « ${site} » n'est pas appelé immédiatement après le retour de podCanaryNet`);
+    if ((code.match(new RegExp(`podCanaryCheck\\("  ${esc(tag)}"`, "g")) ?? []).length !== 1) v.push(`le contrôle B de « ${site} » doit exister exactement une fois`);
+  }
+  // A avant le rapport, C après le journal HTTP (httpCall)
+  const hc = code.slice(code.indexOf("static int httpCall"), code.indexOf("\n}\n", code.indexOf("static int httpCall")));
+  const iA = hc.indexOf("A: apres la transaction (silencieux)"), iRep = hc.indexOf('podCanaryNet("http"'), iB = hc.indexOf("B: apres le rapport PodNet (silencieux)"), iLog = hc.indexOf('logf("[HTTP %s]'), iC = hc.indexOf("C: apres le journal HTTP (silencieux)");
+  if (!(iA >= 0 && iA < iRep && iRep < iB && iB < iLog && iLog < iC)) v.push("ordre A < rapport < B < journal HTTP < C non respecté dans httpCall");
+  return v;
+}
+
+test("NETSTACK-WIFI-CALLS-FIX3 : le contrôle B sort de podCanaryNet et suit son retour chez chaque appelant (http, pull-frame, candidate-frame) ; A avant le rapport, C après le journal HTTP ; CONTRÔLES NÉGATIFS", () => {
+  const src = read(INO);
+  assert.deepEqual(podCanaryNetViolations(src), []);
+  // mutants : B remis dans le corps de podCanaryNet · B supprimé chez un appelant · B placé AVANT le rapport · C avant le journal HTTP
+  const bHttp = '#if POD_RENDER_V1 && POD_CANARY\n  podCanaryCheck("  B: apres le rapport PodNet (silencieux)", false);\n#endif\n';
+  assert.ok(src.includes(bHttp), "bloc B de httpCall introuvable");
+  const mutants: Array<[string, string]> = [
+    ["B réintroduit dans podCanaryNet", src.replace("  // NETSTACK-WIFI-CALLS-FIX3 : AUCUN podCanaryCheck ici.", '  podCanaryCheck("  B: apres le rapport PodNet (silencieux)", false);\n  // NETSTACK-WIFI-CALLS-FIX3 : AUCUN podCanaryCheck ici.')],
+    ["B supprimé chez l'appelant pull-frame", src.replace('podCanaryCheck("  B (pull-frame): apres le rapport PodNet (silencieux)", false);', "")],
+    ["B supprimé chez l'appelant candidate-frame", src.replace('podCanaryCheck("  B (candidate-frame): apres le rapport PodNet (silencieux)", false);', "")],
+    ["B supprimé de httpCall", src.replace(bHttp, "")],
+    ["B avant le rapport dans httpCall", src.replace(bHttp, "").replace('podCanaryNet("http", ni, ran);', 'podCanaryCheck("  B: apres le rapport PodNet (silencieux)", false);\n  podCanaryNet("http", ni, ran);')],
+  ];
+  for (const [name, s] of mutants) {
+    assert.notStrictEqual(s, src, `mutation « ${name} » sans effet`);
+    assert.notEqual(podCanaryNetViolations(s).length, 0, `mutation « ${name} » NON détectée`);
+  }
+  // le commentaire de l'instrument ne présente plus l'écriture sous __StackLimit comme critère fatal
+  assert.doesNotMatch(src, /Toute ANOMALIE \(marqueur détruit, marge < 128 o, écriture sous __StackLimit/);
+  assert.match(src, /Toute ANOMALIE \(marqueur ou longueur détruits, marge PRINCIPALE < 128 o, SP hors de la pile — PAS la zone 0xA5 peinte sous __StackLimit/);
+  // aucun autre firmware ne porte ces contrôles, et le build de production (canari éteint) est inchangé : les blocs gardés sont retirés avant comparaison par netStack.test.ts
+  for (const sk of ["pod_uno_r4_eink27", "pod_uno_r4_eink27_oled", "pod_uno_r4_tft18", "pod_uno_r4"]) assert.doesNotMatch(read(`arduino_uno_r4/${sk}/${sk}.ino`), /podCanaryCheck/);
+});

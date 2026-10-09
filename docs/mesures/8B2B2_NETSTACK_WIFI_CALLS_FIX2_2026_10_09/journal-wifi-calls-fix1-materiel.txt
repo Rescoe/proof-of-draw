@@ -1,7 +1,6 @@
 # Journal matériel du canari NETSTACK-WIFI-CALLS-FIX1 — UNO R4 WiFi + e-ink 2,9″ BWR, build local POD_RENDER_V1=1 POD_CANARY=1 (09/10/2026), commit 297251d + drapeaux locaux 1/1
-# Source : verdict de l'auditeur transmis par le porteur (collé dans la conversation). Aucune frame, aucun dessin ; carte arrêtée au point « 6b » par le verrou fatal du canari.
-# ⚠ Comme pour le canari FIX3-R1, le message ne contenait que le VERDICT (reproduit ci-dessous mot pour mot), PAS les lignes série brutes. Rien n'a été reconstitué : si le porteur souhaite l'archivage des lignes
-#   brutes, les coller à la suite de ce fichier (même dossier).
+# Source : verdict de l'auditeur et extrait série brut transmis par le porteur dans le fil GPT. Aucune frame, aucun dessin ; carte arrêtée au point « 6b » par le verrou fatal du canari.
+# ⚠ L'extrait brut conservé plus bas commence à `wifi status (module present ?)` : il ne contient pas les toutes premières lignes du boot. Il est archivé exactement dans l'état reçu, sans reconstitution.
 
 == Verdict transmis (texte intégral) ==
 Verdict sur `297251d` : CORRECTIONS MINEURES REQUISES avant push, mais l'architecture Wi-Fi est validée matériellement.
@@ -27,10 +26,39 @@ Le journal matériel valide NETSTACK-WIFI-CALLS-FIX1 : Wi-Fi 448–608 o utilis�
  Wi-Fi : status 608 o / marge 864 · firmwareVersion 448 / 1024 · begin 540 / 932 · localIP+chaîne 568 / 904 · macAddress 520 / 952 (erreur 0) ; RSSI non exercé (clés déjà générées).
  TLS : « [CANARY] net http : pile reseau dediee utilisee 1172 o, marge 812 o, erreur 0 » puis « [HTTP POST] /api/register -> 200 ». Ed25519 : sign 1316/924, verify 1532/708, erreurs 0/0.
  Pile principale (6b) : marqueur=0x434E5259 (OK) · longueur peinte=0x00000250 (OK) · plus bas octet modifié : __StackLimit + 144 · 880 / 1024 o · marge 144 o.
- (extraits repris tels que cités par l'audit ; les lignes brutes complètes ne sont pas dans ce fichier.)
+ (extraits repris tels que cités par l'audit ; le segment série brut reçu est conservé plus bas.)
 
 == Lecture (docs/LOT_8B2B2_NETSTACK_WIFI_CALLS_FIX2_2026_10_09.md § 1) ==
  - Preuve MATÉRIELLE de WIFI-CALLS-FIX1 : pile Wi-Fi dédiée utilisée 448–608 o (marges 864–1024 o ≫ 256 visés ; la taille de 1 536 o est confortable), PodNet 1172 o utilisés / 812 o de marge (inchangé), Ed25519 pire marge 708 o, toutes les erreurs à 0,
    /api/register → 200, marqueur de la pile principale et sa longueur intacts, aucun octet modifié sous __StackLimit.
  - L'arrêt à « 6b » vient d'un critère de l'ANCIEN instrument (« zone 0xA5 sous la limite > 1024 ») rendu faux par les piles dédiées elles-mêmes (les blocs pris au tas par PodEd, PodNet, la pile Wi-Fi et la pile de journal recouvrent la zone peinte du haut du tas, au voisinage de __StackLimit) : faux positif, corrigé par WIFI-CALLS-FIX2.
  - Marge principale à doRegister : 880 / 1024 utilisés, 144 o libres (seuil fatal 128 o, objectif 256 o) : étroite, NON bloquante pour le canari, à améliorer avant la production (pistes au § 5 du lot).
+
+== Extrait série brut fourni au fil GPT ==
+# Début de l'extrait reçu : la partie antérieure du boot n'était pas incluse dans ce message.
+[CANARY] wifi status (module present ?) : pile Wi-Fi dediee utilisee 608 o, marge 864 o (objectif >= 256 : OK), erreur 0 | tas libre 6988
+[CANARY] wifi firmwareVersion : pile Wi-Fi dediee utilisee 448 o, marge 1024 o (objectif >= 256 : OK), erreur 0 | tas libre 6972
+[WIFI] firmware du module: 0.5.2
+[CANARY] wifi begin : pile Wi-Fi dediee utilisee 540 o, marge 932 o (objectif >= 256 : OK), erreur 0 | tas libre 6988
+[CANARY] wifi localIP : pile Wi-Fi dediee utilisee 568 o, marge 904 o (objectif >= 256 : OK), erreur 0 | tas libre 6972
+[WIFI] IP: 0.0.0.0
+[CANARY] 3 wifi connecte : pile utilisee au plus 596 o / 1024 (marge 428 o) | SP=0x20007D88 | ecrit sous la limite ou pile max 1024 | tas libre 6988 | sbrk->limite 5444
+[KEYS] clés chargées: 11e4193c89dc29bf26abe55d6a471d937eca8591fe00ee81b226403828a3b830
+[CANARY] 4 cles chargees : pile utilisee au plus 596 o / 1024 (marge 428 o) | SP=0x20007D88 | ecrit sous la limite ou pile max 1024 | tas libre 6988 | sbrk->limite 5444
+[SELFTEST] Ed25519 signature 179 ms, vérification 276 ms -> OK
+[MEM] après Ed25519: tas libre 8532 o, pile max ~1024 o
+[ED25519] pile dédiée (utilisé/marge, o) : sign 1316/924, verify 1532/708 ; erreurs sign=0 verify=0 (0 = aucune) ; alloué 2304 o (garde 64 o, marge minimale exigée 128 o)
+[CANARY] 5 selfTestEd25519 : pile utilisee au plus 596 o / 1024 (marge 428 o) | SP=0x20007D88 | ecrit sous la limite ou pile max 1024 | tas libre 6988 | sbrk->limite 5444
+[BOOT] œuvre déjà affichée : 8c97adf0-ee5b-4a2b-ab49-48a93548
+[CANARY] 6a avant doRegister : pile utilisee au plus 596 o / 1024 (marge 428 o) | SP=0x20007D88 | ecrit sous la limite ou pile max 1024 | tas libre 6924 | sbrk->limite 5444
+[CANARY] wifi macAddress : pile Wi-Fi dediee utilisee 520 o, marge 952 o (objectif >= 256 : OK), erreur 0 | tas libre 6924
+[CANARY] net http : pile reseau dediee utilisee 1172 o, marge 812 o (objectif >= 256 : OK), erreur 0 | tas libre 6676
+[HTTP POST] /api/register -> 200
+[REGISTER] deviceId=dev_W29I1TW7 paired=oui
+[REGISTER] appairé
+[CANARY] 6b apres doRegister : ALERTE PILE utilisee au plus 880 o / 1024 (marge 144 o) | SP=0x20007D88 | ecrit sous la limite ou pile max 3072 | tas libre 6900 | sbrk->limite 1924
+[CANARY]   marqueur=0x434E5259 (OK) longueur peinte=0x00000250 (OK) | plus bas octet modifie au-dessus du marqueur : 0x20007B90 = marqueur+144
+[CANARY]   __StackLimit=0x20007B00 __StackTop=0x20007F00 __HeapBase=0x20005908 sbrk(0)=0x2000737C SP dans la pile
+[CANARY]   mallinfo : arene=6772 utilise=1796 libre=4976
+[CANARY]   octets [__StackLimit-8, +24[ : A5 A5 A5 A5 A5 A5 A5 A5 | 59 52 4E 43 50 02 00 00 5A 5A 5A 5A 5A 5A 5A 5A 5A 5A 5A 5A 5A 5A 5A 5A
+[CANARY] ARRET FATAL (verrou) apres '6b apres doRegister' : plus aucun pull, vote, ACK ni affichage. Debrancher la carte, reflasher le firmware stable.

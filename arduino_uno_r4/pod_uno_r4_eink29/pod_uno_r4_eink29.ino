@@ -205,7 +205,7 @@ static void podCanaryPaint() {
 }
 // ── LOT 8B-2B-2 BOOT-FIX2 ── points de contrôle CUMULATIFS, NON destructifs (aucun repeint entre deux points : on garde le maximum et on isole le PREMIER passage destructeur) ──────────────────────────
 // Sortie par Serial.print (cadres minces) et JAMAIS par logf/vsnprintf : l'instrument ne doit pas creuser lui-même la pile qu'il mesure. Un point « silencieux » (verbose = false) n'imprime rien tant que tout va bien.
-// Toute ANOMALIE (marqueur détruit, marge < 128 o, écriture sous __StackLimit, SP hors de la pile) imprime un diagnostic complet puis POSE UN VERROU FATAL : boucle sans fin, plus aucun appel réseau,
+// Toute ANOMALIE (marqueur ou longueur détruits, marge PRINCIPALE < 128 o, SP hors de la pile — PAS la zone 0xA5 peinte sous __StackLimit, qui n'est plus qu'un indicateur depuis WIFI-CALLS-FIX2) imprime un diagnostic complet puis POSE UN VERROU FATAL : boucle sans fin, plus aucun appel réseau,
 // pull, vote, ACK ni affichage ne peut s'exécuter (le verrou n'existe que dans ce build POD_CANARY = 1 ; aucune variable globale).
 static void podCanaryHex(uint32_t v) { Serial.print(F("0x")); for (int s = 28; s >= 0; s -= 4) Serial.print((unsigned)((v >> s) & 15), HEX); }
 static void podCanaryNum(const __FlashStringHelper* label, unsigned long v) { Serial.print(label); Serial.print(v); }
@@ -323,7 +323,8 @@ static void __attribute__((noinline)) podCanaryNet(const char* tag, const PodNet
   PodCanaryNetCtx c = { tag, &ni, ran };
   podCanaryEmit(podCanaryPrintNet, &c);
   if (!ran || ni.err != POD_NET_OK) for (;;) { __asm volatile("nop"); }            // l'impression a échoué (mémoire) : verrou SILENCIEUX
-  podCanaryCheck("  B: apres le rapport PodNet (silencieux)", false);
+  // NETSTACK-WIFI-CALLS-FIX3 : AUCUN podCanaryCheck ici. Le contrôle « B » mesurait depuis l'intérieur de cette fonction (cadre encore vivant : +20 o, marge principale 144 -> 124 o) : il est appelé par chaque appelant
+  // (httpCall, lecture de l'image, lecture du candidat) immédiatement APRÈS le retour complet de podCanaryNet.
 }
 // NETSTACK-FIX2 : sonde de la pile de JOURNAL — une ligne de 250 caractères (pire cas du tampon de 256 o, USB saturé) exécutée sur la pile de journal avec mesure ; imprime l'utilisation réelle et la marge.
 struct PodCanaryLogCtx { PodNetInfo li; bool ok; };
@@ -603,6 +604,9 @@ static int httpCall(const char* method, const String& path, const String* body, 
 #if POD_RENDER_V1 && POD_CANARY
   podCanaryNet("http", ni, ran);
 #endif
+#if POD_RENDER_V1 && POD_CANARY
+  podCanaryCheck("  B: apres le rapport PodNet (silencieux)", false);
+#endif
   if (!ran) { logf("[HTTP %s] pile réseau dédiée : %s (erreur %u, marge %u o)%s", method, podNetWhy(ni), (unsigned)ni.err, (unsigned)ni.margin, podNetExecuted(ni) ? " — la requête a PU atteindre le serveur (POST, vote ou ACK possibles)" : ""); return podNetExecuted(ni) ? -5 : -4; }
   logf("[HTTP %s] %s -> %d", method, path.length() > 60 ? (path.substring(0, 60) + "...").c_str() : path.c_str(), code);
 #if POD_RENDER_V1 && POD_CANARY
@@ -871,6 +875,9 @@ static bool doFetchFrame(const String& frameId, const String& frameSource) {
 #if POD_RENDER_V1 && POD_CANARY
   podCanaryNet("pull-frame", ni, ran);
 #endif
+#if POD_RENDER_V1 && POD_CANARY
+  podCanaryCheck("  B (pull-frame): apres le rapport PodNet (silencieux)", false);
+#endif
   if (!ran) { got = false; noFrame = false; logf("[FRAME] pile réseau dédiée : %s (erreur %u, marge %u o) — image NON présentée, pas d'ACK", podNetWhy(ni), (unsigned)ni.err, (unsigned)ni.margin); }
   if (noFrame) { logf("[FRAME] pas de frame disponible"); return true; }
   if (!got) { logf("[FRAME] image incomplète — pas d'ACK, nouvel essai au prochain pull"); return false; }
@@ -1084,6 +1091,9 @@ static void __attribute__((noinline)) netReadCandidate(const String& candidateId
   const bool ran = podNetRun(tx, &ni);
 #if POD_RENDER_V1 && POD_CANARY
   podCanaryNet("candidate-frame", ni, ran);
+#endif
+#if POD_RENDER_V1 && POD_CANARY
+  podCanaryCheck("  B (candidate-frame): apres le rapport PodNet (silencieux)", false);
 #endif
   if (!ran) { memset(&chk, 0, sizeof(chk)); logf("[VALIDATE2] pile réseau dédiée : %s (erreur %u, marge %u o) — pas de vote", podNetWhy(ni), (unsigned)ni.err, (unsigned)ni.margin); }
 }
