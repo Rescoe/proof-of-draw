@@ -1,0 +1,18 @@
+# NETSTACK-WIFI-CALLS-FIX1 — ELF de pod_uno_r4_tft18, cœur 1.6.0, rendu v1 ON (statique ; rien n'a été flashé). Code de sortie du contrôle : 0 (0 = taille suffisante ET aucun appel direct hors pile dédiée)
+# 1. Appels au module Wi-Fi sur la pile dédiée (6 invocateurs trouvés) — taille totale 1536 o, garde 64 o
+  wifiBegin        profondeur  664 o   appels indirects atteignables 30   Z10podWifiRunIZL9wifiB > CWifi5beginEPKcS1_(88) > CWifi6statusEv(56) > ModemClass5beginEii(96 > ModemClass5writeERKNSt >
+  wifiIpString     profondeur  640 o   appels indirects atteignables 30   Z10podWifiRunIZL12wifi > CWifi7localIPEv(72) > ModemClass5beginEii(96 > ModemClass5writeERKNSt > vsniprintf(16) > _vsnip
+  wifiFirmware     profondeur  600 o   appels indirects atteignables 30   Z10podWifiRunIZL12wifi > CWifi15firmwareVersion > ModemClass5beginEii(96 > ModemClass5writeERKNSt > vsniprintf(16) > _vs
+  wifiMac          profondeur  592 o   appels indirects atteignables 30   Z10podWifiRunIZL7wifiM > CWifi10macAddressEPh(7 > ModemClass5beginEii(96 > ModemClass5writeERKNSt > vsniprintf(16) > _vs
+  wifiStatusT      profondeur  584 o   appels indirects atteignables 30   Z10podWifiRunIZL11wifi > CWifi6statusEv(56) > ModemClass5beginEii(96 > ModemClass5writeERKNSt > vsniprintf(16) > _vsnipr
+  wifi             profondeur  488 o   appels indirects atteignables 28   Z10podWifiRunIZL8wifiR > CWifi4RSSIEv(56) > ModemClass5writeERKNSt > vsniprintf(16) > _vsniprintf_r(120) > _svfiprintf_r
+=> pire cas statique 664 o ; exigé = 64 (garde) + 664 + 32 (réserve) + 104 (cadre d'exception) + 256 (objectif de marge) = 1120 o ; taille 1536 o → SUFFISANTE (réserve 416 o)
+
+# 2. Audit : qui appelle directement le module Wi-Fi (méthodes de CWifi) ?
+  OK  Z10podWifiRunIZL11wifi         → statusEv
+  OK  Z10podWifiRunIZL12wifi         → firmwareVersionEv
+  OK  Z10podWifiRunIZL12wifi         → localIPEv
+  OK  Z10podWifiRunIZL7wifiM         → macAddressEPh
+  OK  Z10podWifiRunIZL8wifiR         → RSSIEv
+  OK  Z10podWifiRunIZL9wifiB         → beginEPKcS1_
+=> 6 appelants du module, dont 0 hors invocateur de podWifiRun (AUCUN : tout appel direct passe par la pile dédiée)

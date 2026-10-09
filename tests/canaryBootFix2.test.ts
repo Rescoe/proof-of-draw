@@ -108,7 +108,7 @@ test("EXÉCUTION HÔTE du code extrait du sketch : pile saine → retour + mesur
   const r = runProcess(build(), []);
   assert.equal(r.status, 0, r.stdout + r.stderr);
   const lines = r.stdout.trim().split("\n").filter((l) => /^S\d+ /.test(l));
-  assert.equal(lines.length, 30, r.stdout);
+  assert.equal(lines.length, 33, r.stdout);
   for (const l of lines) assert.match(l, /^S\d+ OK /, l);
 });
 
@@ -116,7 +116,7 @@ test("CONTRÔLES NÉGATIFS : un instrument qui repeint, qui ne pose pas de verro
   const mutants: Array<[string, string, string]> = [
     ["sans verrou", "for (;;) if (millis() - t >= 10000UL)", "if (millis() - t >= 10000UL)"],
     ["marqueur ignoré", "const bool alert = !magicOk || !paintedOk ||", "const bool alert = false ||"],
-    ["sous la limite ignoré", "|| below > 1024 ||", "|| false ||"],
+    ["zone sous la limite redevenue fatale (régression du faux positif « pile max 3072 »)", "margin < 128 || !spOk;", "margin < 128 || !spOk || stackDepthBytes() > 1024;"],
     ["marge ignorée", "margin < 128 ||", "false ||"],
     ["repeint", "  const uint32_t sp = (uint32_t)(uintptr_t)__builtin_frame_address(0);", "  for (volatile uint8_t* q = lo + 8; q < end; q++) *q = CANARY_PAINT;\n  const uint32_t sp = (uint32_t)(uintptr_t)__builtin_frame_address(0);"],
     ["silencieux bavard", "if (!alert && !verbose) return;", "if (!alert && !verbose && false) return;"],
@@ -213,4 +213,27 @@ test("NETSTACK-WIFI-CALLS-FIX1 : le canari relève la pile Wi-Fi dédiée à cha
   assert.doesNotMatch(fn + pr, /logf\(|String\b|WiFi|Conn\b|httpCall|delay\(/);
   // aucun autre firmware ne porte le relevé
   for (const sk of ["pod_uno_r4_eink27", "pod_uno_r4_eink27_oled", "pod_uno_r4_tft18", "pod_uno_r4"]) assert.doesNotMatch(read(`arduino_uno_r4/${sk}/${sk}.ino`), /podCanaryWifi/);
+});
+
+test("NETSTACK-WIFI-CALLS-FIX2 : critères fatals du canari = marqueur / longueur invalides, SP hors pile, marge principale < 128 o ; la zone 0xA5 sous la limite n'est plus fatale et n'est plus présentée comme une mesure valide ; 144 o = « sous l'objectif 256 » sans arrêt", () => {
+  const src = read(INO);
+  const fn = strip(/static void __attribute__\(\(noinline\)\) podCanaryCheck[\s\S]*?\n\}\n/.exec(src)![0]);
+  assert.match(fn, /const bool alert = !magicOk \|\| !paintedOk \|\| margin < 128 \|\| !spOk;/, "exactement les quatre critères fatals");
+  assert.doesNotMatch(fn.slice(0, fn.indexOf("const bool alert")), /stackDepthBytes|below/, "la zone sous la limite n'entre pas dans la décision");
+  assert.ok(fn.indexOf("stackDepthBytes()") > fn.indexOf("if (!alert && !verbose) return;"), "indicateur calculé seulement pour le diagnostic, jamais par un point silencieux sain");
+  const pr = /static void podCanaryPrint\(void\* v\) \{[\s\S]*?\n\}\n/.exec(src)![0];
+  assert.doesNotMatch(strip(pr), /pile max|ecrit sous la limite ou/, "plus de « pile max » ni de « écrit sous la limite » dans la ligne de mesure");
+  assert.match(pr, /c\.margin < 256 && !c\.alert\) \? F\(" o, SOUS L'OBJECTIF 256\) \| SP="\)/, "144 o : sous l'objectif 256, sans alerte");
+  assert.match(pr, /zone 0xA5 sous la limite \(INDICATIF seulement, NON fiable depuis les piles temporaires allouees dans le tas\)/);
+  // reportMem (production, cinq firmwares) ne présente plus stackDepthBytes() comme une « pile max » valide
+  for (const sk of ["pod_uno_r4_eink29", "pod_uno_r4_eink27", "pod_uno_r4_eink27_oled", "pod_uno_r4_tft18", "pod_uno_r4"]) {
+    const rm = /static void reportMem\(const char\* tag\) \{[^\n]*\n/.exec(read(`arduino_uno_r4/${sk}/${sk}.ino`))![0];
+    assert.doesNotMatch(rm, /pile max/, `${sk} : reportMem parle encore de « pile max »`);
+    assert.match(rm, /zone 0xA5 sous la pile %lu o \(INDICATIF : NON fiable des la 1re pile temporaire\)/);
+  }
+  // wifiFailed : sur GUARD, arrêt sûr AVANT tout journal (le tas voisin peut être corrompu, logf alloue)
+  for (const sk of ["pod_uno_r4_eink29", "pod_uno_r4_eink27", "pod_uno_r4_eink27_oled", "pod_uno_r4_tft18", "pod_uno_r4"]) {
+    const wf = strip(/static void __attribute__\(\(noinline\)\) wifiFailed[\s\S]*?\n\}\n/.exec(read(`arduino_uno_r4/${sk}/${sk}.ino`))![0]);
+    assert.ok(wf.indexOf("if (ni.err == POD_NET_GUARD) logfSafeStop();") > 0 && wf.indexOf("if (ni.err == POD_NET_GUARD) logfSafeStop();") < wf.indexOf("logf("), `${sk} : logfSafeStop doit précéder logf`);
+  }
 });

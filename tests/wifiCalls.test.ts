@@ -63,6 +63,10 @@ for (const sk of SKETCHES) {
     assert.match(blk, /#define POD_WIFI_UNKNOWN 0xFEu/);
     // garde écrasée : voisin du tas corrompu → arrêt sûr silencieux
     assert.match(blk, /if \(ni\.err == POD_NET_GUARD\) logfSafeStop\(\);/);
+    // ORDRE (NETSTACK-WIFI-CALLS-FIX2) : sur GUARD, l'arrêt sûr précède TOUT journal — logf alloue au tas, dont le voisin peut être corrompu
+    const wf = /static void __attribute__\(\(noinline\)\) wifiFailed\(const char\* what, const PodNetInfo& ni\) \{[\s\S]*?\n\}\n/.exec(blk + "\n")![0];
+    assert.ok(wf.indexOf("logfSafeStop();") > 0 && wf.indexOf("logfSafeStop();") < wf.indexOf("logf("), `${sk} : logfSafeStop() doit précéder le premier logf`);
+    assert.equal((wf.match(/logf\(/g) ?? []).length, 1, "un seul journal dans wifiFailed, après l'arrêt sûr");
     assert.match(blk, /logf\("\[WIFI\] %s : pile Wi-Fi dédiée : %s \(erreur %u, marge %u o\) — résultat IGNORÉ", what, podNetWhy\(ni\), \(unsigned\)ni\.err, \(unsigned\)ni\.margin\);/);
     // l'état inconnu n'est ni « connecté » ni « module absent » : la boucle de connexion échoue → redémarrage ; le test « module absent » n'est pas déclenché par une panne mémoire
     assert.match(code, /wifiStatusT\("status \(module present \?\)"\) == WL_NO_MODULE/);
@@ -142,6 +146,7 @@ test("CONTRÔLES NÉGATIFS : une enveloppe qui rend un résultat malgré l'éche
     ["firmware rendu malgré l'échec", 'if (!ran) { wifiFailed("firmwareVersion", ni); return String("?"); }', 'if (!ran) { wifiFailed("firmwareVersion", ni); }'],
     ["IP rendue malgré l'échec", 'if (!ran) { wifiFailed("localIP", ni); return String("?"); }', 'if (!ran) { wifiFailed("localIP", ni); } '],
     ["pas d'arrêt sûr sur GUARD", "if (ni.err == POD_NET_GUARD) logfSafeStop();", ""],
+    ["journal AVANT l'arrêt sûr sur GUARD (régression FIX2)", "if (ni.err == POD_NET_GUARD) logfSafeStop();", 'logf("avant l arret"); if (ni.err == POD_NET_GUARD) logfSafeStop();'],
     ["macString non vide en cas d'échec", "if (!wifiMac(m)) return String();", "wifiMac(m);"],
     ["MAC : chiffres majuscules", "'a' + (v - 10)", "'A' + (v - 10)"],
     ["MAC : quartet haut/bas permutés", "macHexDigit(m[i] >> 4); b[3 * i + 1] = macHexDigit(m[i] & 15)", "macHexDigit(m[i] & 15); b[3 * i + 1] = macHexDigit(m[i] >> 4)"],

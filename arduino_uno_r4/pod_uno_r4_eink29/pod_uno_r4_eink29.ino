@@ -226,7 +226,7 @@ static void podCanaryPrint(void* v) {
   volatile uint8_t* lo = (volatile uint8_t*)&__StackLimit;
   const uint32_t brk = (uint32_t)(uintptr_t)sbrk(0), lim = (uint32_t)(uintptr_t)&__HeapLimit;
   Serial.print(F("[CANARY] ")); Serial.print(c.tag); Serial.print(c.alert ? F(" : ALERTE PILE utilisee au plus ") : F(" : pile utilisee au plus "));
-  Serial.print(c.used); podCanaryNum(F(" o / 1024 (marge "), (unsigned long)(c.margin < 0 ? 0 : c.margin)); Serial.print(c.margin < 0 ? F(" o, NEGATIVE) | SP=") : F(" o) | SP=")); podCanaryHex(c.sp); podCanaryNum(F(" | ecrit sous la limite ou pile max "), c.below);
+  Serial.print(c.used); podCanaryNum(F(" o / 1024 (marge "), (unsigned long)(c.margin < 0 ? 0 : c.margin)); Serial.print(c.margin < 0 ? F(" o, NEGATIVE) | SP=") : (c.margin < 256 && !c.alert) ? F(" o, SOUS L'OBJECTIF 256) | SP=") : F(" o) | SP=")); podCanaryHex(c.sp);
   podCanaryNum(F(" | tas libre "), freeHeapBytes()); podCanaryNum(F(" | sbrk->limite "), (lim > brk ? lim - brk : 0)); Serial.println();
   if (!c.alert) return;
   struct mallinfo mi = mallinfo();
@@ -239,6 +239,7 @@ static void podCanaryPrint(void* v) {
   Serial.print(F("[CANARY]   octets [__StackLimit-8, +24[ : "));
   for (int i = -8; i < 24; i++) { const uint8_t b = lo[i]; if (b < 16) Serial.print('0'); Serial.print((unsigned)b, HEX); Serial.print(i == -1 ? F(" | ") : F(" ")); }
   Serial.println();
+  Serial.print(F("[CANARY]   zone 0xA5 sous la limite (INDICATIF seulement, NON fiable depuis les piles temporaires allouees dans le tas) : ")); Serial.print(c.below); Serial.println();
   podCanaryHalt(c.tag);
 }
 static void __attribute__((noinline)) podCanaryCheck(const char* tag, bool verbose) {
@@ -251,9 +252,11 @@ static void __attribute__((noinline)) podCanaryCheck(const char* tag, bool verbo
   const long margin = 1024L - (long)used;
   const uint32_t sp = (uint32_t)(uintptr_t)__builtin_frame_address(0);
   const bool spOk = sp > (uint32_t)(uintptr_t)&__StackLimit && sp <= (uint32_t)(uintptr_t)&__StackTop;
-  const uint32_t below = stackDepthBytes();                                        // pile + écritures SOUS __StackLimit (zone peinte 0xA5 de paintStack) : > 1024 = débordement
-  const bool alert = !magicOk || !paintedOk || margin < 128 || below > 1024 || !spOk;
+  // NETSTACK-WIFI-CALLS-FIX2 : critères FATALS = marqueur ou longueur invalides, SP hors pile, marge principale < 128 o. La zone 0xA5 peinte SOUS __StackLimit n'est PLUS un critère : depuis les piles temporaires allouées dans le tas
+  // (PodEd, PodNet, Wi-Fi, journal) elle est légitimement écrasée (faux positif « pile max 3072 » du canari NETSTACK-WIFI-CALLS-FIX1).
+  const bool alert = !magicOk || !paintedOk || margin < 128 || !spOk;
   if (!alert && !verbose) return;                                                  // point silencieux : aucun appel de bibliothèque tant que tout va bien
+  const uint32_t below = stackDepthBytes();                                        // INDICATIF seulement (diagnostic d'alerte) : NON fiable après la première pile temporaire
   PodCanaryCtx c = { tag, magic, painted, used, sp, below, (uint32_t)(uintptr_t)p, (uint32_t)(p - lo), margin, p == end, alert, magicOk, paintedOk, spOk };
   podCanaryEmit(podCanaryPrint, &c);
   if (alert) for (;;) { __asm volatile("nop"); }                                   // l'impression a échoué (mémoire) : verrou SILENCIEUX
@@ -342,7 +345,7 @@ static void podCanaryLogProbe() {
   podCanaryLogProbeV("%s%s%s%s%s", "[CANARY] sonde journal: 1234567890123456789012345", "1234567890123456789012345678901234567890123456", "1234567890123456789012345678901234567890123456", "1234567890123456789012345678901234567890123456", "12345678901234567890123456789012345678901234567890");
 }
 #endif
-static void reportMem(const char* tag) { logf("[MEM] %s: tas libre %lu o, pile max ~%lu o", tag, (unsigned long)freeHeapBytes(), (unsigned long)stackDepthBytes()); }
+static void reportMem(const char* tag) { logf("[MEM] %s: tas libre %lu o, zone 0xA5 sous la pile %lu o (INDICATIF : NON fiable des la 1re pile temporaire)", tag, (unsigned long)freeHeapBytes(), (unsigned long)stackDepthBytes()); }
 
 // ─── Texte : ASCII seulement (police 5×7, majuscules) — replie les accents UTF-8 ─────────────────
 static String asciiFold(const String& in) {
@@ -457,8 +460,8 @@ static String loadOwnedHashesJson() {
 // partiel (NOMEM, NESTED, GUARD, MARGIN). Les appels faits PAR une transaction PodNet (WiFiSSLClient dans podNetRun) restent sur la pile réseau.
 #define POD_WIFI_UNKNOWN 0xFEu                         // état Wi-Fi inconnu (appel en échec) : ni WL_CONNECTED ni WL_NO_MODULE
 static void __attribute__((noinline)) wifiFailed(const char* what, const PodNetInfo& ni) {   // attribut : le générateur de prototypes de l IDE placerait sinon le prototype AVANT la définition de PodNetInfo
+  if (ni.err == POD_NET_GUARD) logfSafeStop();             // garde écrasée : le voisin au tas est corrompu — arrêt sûr silencieux, AVANT tout journal (logf alloue au tas)
   logf("[WIFI] %s : pile Wi-Fi dédiée : %s (erreur %u, marge %u o) — résultat IGNORÉ", what, podNetWhy(ni), (unsigned)ni.err, (unsigned)ni.margin);
-  if (ni.err == POD_NET_GUARD) logfSafeStop();             // garde écrasée : le voisin au tas est corrompu — arrêt sûr silencieux
 }
 static uint8_t __attribute__((noinline)) wifiStatusT(const char* tag) {
   uint8_t st = POD_WIFI_UNKNOWN; PodNetInfo ni; (void)tag;           // tag : seulement pour le relevé du canari

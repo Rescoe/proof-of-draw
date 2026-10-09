@@ -1,0 +1,36 @@
+# Journal matériel du canari NETSTACK-WIFI-CALLS-FIX1 — UNO R4 WiFi + e-ink 2,9″ BWR, build local POD_RENDER_V1=1 POD_CANARY=1 (09/10/2026), commit 297251d + drapeaux locaux 1/1
+# Source : verdict de l'auditeur transmis par le porteur (collé dans la conversation). Aucune frame, aucun dessin ; carte arrêtée au point « 6b » par le verrou fatal du canari.
+# ⚠ Comme pour le canari FIX3-R1, le message ne contenait que le VERDICT (reproduit ci-dessous mot pour mot), PAS les lignes série brutes. Rien n'a été reconstitué : si le porteur souhaite l'archivage des lignes
+#   brutes, les coller à la suite de ce fichier (même dossier).
+
+== Verdict transmis (texte intégral) ==
+Verdict sur `297251d` : CORRECTIONS MINEURES REQUISES avant push, mais l'architecture Wi-Fi est validée matériellement.
+Ce que le canari prouve :
+* Wi-Fi dédié : marges entre 864 et 952 octets, très confortables.
+* TLS/HTTP dédié : 812 octets de marge.
+* Ed25519 dédié : 708 octets au pire.
+* Toutes les erreurs valent `0`.
+* `POST /api/register` fonctionne.
+* Le marqueur de la pile principale est intact.
+* Aucun octet n'a été écrit sous `__StackLimit`.
+L'alerte à `6b` est un faux positif de l'ancien instrument. `stackDepthBytes()` surveille une zone `0xA5` sous la pile principale ; cette zone est désormais légitimement utilisée par les piles temporaires allouées dans le tas. C'est pourquoi il annonce absurdement `pile max 3072`.
+La mesure moderne est la bonne :
+* pile principale utilisée : 880 / 1024 octets ;
+* marge réelle : 144 octets ;
+* seuil minimal : 128 octets.
+Donc il n'y a pas eu de débordement, mais la marge de `doRegister` reste étroite : seulement 16 octets au-dessus du minimum. Ce n'est pas encore suffisamment confortable pour la production, mais le prochain canari peut poursuivre sous surveillance.
+J'ai également vérifié le lot dans un clone propre : 54/54 tests mémoire ciblés passent et TypeScript est propre. Redis +0, Neon 0.
+À transmettre à Claude :
+Le journal matériel valide NETSTACK-WIFI-CALLS-FIX1 : Wi-Fi 448–608 o utilisés avec 864–1024 o de marge, PodNet 1172/812, erreurs 0, register 200. Le marqueur principal et sa longueur sont intacts. L'arrêt à 6b est un faux positif : `stackDepthBytes()` observe encore la peinture 0xA5 sous `__StackLimit`, désormais légitimement écrasée par les piles temporaires allouées dans le tas. La mesure fiable est le canari principal : 880/1024, marge 144 o, aucun octet sous la limite.
+
+== Extraits du journal (audit GPT, docs/AUDIT_GPT_CANARI_WIFI_STACKS_R4_2026_10_09.md § 2) ==
+ Wi-Fi : status 608 o / marge 864 · firmwareVersion 448 / 1024 · begin 540 / 932 · localIP+chaîne 568 / 904 · macAddress 520 / 952 (erreur 0) ; RSSI non exercé (clés déjà générées).
+ TLS : « [CANARY] net http : pile reseau dediee utilisee 1172 o, marge 812 o, erreur 0 » puis « [HTTP POST] /api/register -> 200 ». Ed25519 : sign 1316/924, verify 1532/708, erreurs 0/0.
+ Pile principale (6b) : marqueur=0x434E5259 (OK) · longueur peinte=0x00000250 (OK) · plus bas octet modifié : __StackLimit + 144 · 880 / 1024 o · marge 144 o.
+ (extraits repris tels que cités par l'audit ; les lignes brutes complètes ne sont pas dans ce fichier.)
+
+== Lecture (docs/LOT_8B2B2_NETSTACK_WIFI_CALLS_FIX2_2026_10_09.md § 1) ==
+ - Preuve MATÉRIELLE de WIFI-CALLS-FIX1 : pile Wi-Fi dédiée utilisée 448–608 o (marges 864–1024 o ≫ 256 visés ; la taille de 1 536 o est confortable), PodNet 1172 o utilisés / 812 o de marge (inchangé), Ed25519 pire marge 708 o, toutes les erreurs à 0,
+   /api/register → 200, marqueur de la pile principale et sa longueur intacts, aucun octet modifié sous __StackLimit.
+ - L'arrêt à « 6b » vient d'un critère de l'ANCIEN instrument (« zone 0xA5 sous la limite > 1024 ») rendu faux par les piles dédiées elles-mêmes (les blocs pris au tas par PodEd, PodNet, la pile Wi-Fi et la pile de journal recouvrent la zone peinte du haut du tas, au voisinage de __StackLimit) : faux positif, corrigé par WIFI-CALLS-FIX2.
+ - Marge principale à doRegister : 880 / 1024 utilisés, 144 o libres (seuil fatal 128 o, objectif 256 o) : étroite, NON bloquante pour le canari, à améliorer avant la production (pistes au § 5 du lot).

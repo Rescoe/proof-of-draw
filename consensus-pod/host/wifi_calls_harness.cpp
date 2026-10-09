@@ -105,11 +105,12 @@ int main() {
 
   // 4) GUARD : arrêt sûr (logfSafeStop), aucun résultat présenté
   podNetTestHook = smashGuard;
-  { int halts = 0;
-    auto t = [&](const std::function<void()>& fn) { resetCalls(); try { fn(); } catch (const Halt&) { halts++; } };
+  { int halts = 0, silent = 0;
+    auto t = [&](const std::function<void()>& fn) { resetCalls(); try { fn(); } catch (const Halt&) { halts++; if (g_log.empty()) silent++; } };   // silent : AUCUNE ligne journalisée avant l arrêt
     t([] { wifiStatus(); }); t([] { wifiFirmware(); }); t([] { wifiBegin(); }); t([] { uint8_t m[6]; wifiMac(m); }); t([] { int32_t r; wifiRssi(r); }); t([] { wifiIpString(); });
     podNetTestHook = nullptr;
-    expect("GUARD : chacune des six enveloppes déclenche l'arrêt sûr (aucun retour)", halts == 6); }
+    expect("GUARD : chacune des six enveloppes déclenche l arrêt sûr (aucun retour)", halts == 6);
+    expect("GUARD : arrêt AVANT tout journal (logf alloue au tas voisin, peut-être corrompu) : aucune ligne écrite dans les six cas", silent == 6); }
 
   // 5) MAC en hexadécimal manuel == « %02x:%02x:… » pour TOUTES les valeurs d'octet, dans chaque position, taille bornée à 17 + NUL
   { bool same = true; bool bounded = true;

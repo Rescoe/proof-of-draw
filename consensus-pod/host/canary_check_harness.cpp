@@ -90,15 +90,26 @@ int main() {
   // S5 : marge insuffisante (900 o → marge 124 < 128) : alerte + diagnostic + VERROU FATAL
   fresh(3072 - 300);
   { g_mem[3072 - 900] = 0x33; const char* r = check("trop profond", true);
-    line("marge 124 o : alerte, diagnostic complet, verrou fatal (ne revient jamais)", !std::strcmp(r, "halt") && has("ALERTE PILE utilisee au plus 900 o") && has("marqueur=0x434E5259 (OK)") && has("mallinfo : arene=4096") && has("octets [__StackLimit-8, +24[") && has("ARRET FATAL (verrou) apres 'trop profond'"), ""); }
+    line("marge 124 o : alerte, diagnostic complet, verrou fatal (ne revient jamais)", !std::strcmp(r, "halt") && has("ALERTE PILE utilisee au plus 900 o") && has("marqueur=0x434E5259 (OK)") && has("mallinfo : arene=4096") && has("octets [__StackLimit-8, +24[") && has("zone 0xA5 sous la limite (INDICATIF seulement") && has("ARRET FATAL (verrou) apres 'trop profond'"), ""); }
   // S6 : marqueur détruit mais peinture intacte au-dessus : alerte, « AUCUN » (écriture isolée, pas une descente de la pile)
   fresh(3072 - 300);
   { g_mem[2048 + 1] = 0x00; const char* r = check("marqueur seul", false);
     line("marqueur détruit seul : alerte + AUCUN octet modifié au-dessus + verrou", !std::strcmp(r, "halt") && has("DETRUIT") && has("AUCUN (la peinture est intacte"), ""); }
-  // S7 : écriture SOUS __StackLimit (zone peinte 0xA5 du haut du tas) : alerte (débordement)
+  // S7 (NETSTACK-WIFI-CALLS-FIX2) : la zone peinte 0xA5 SOUS __StackLimit n'est PLUS un critère fatal : les piles temporaires allouées dans le tas (PodEd, PodNet, Wi-Fi, journal) l'écrasent légitimement.
+  //   Point silencieux : aucune sortie, retour. Point verbeux : la ligne ne parle plus de « pile max ». Le marqueur, lui, reste surveillé (S6).
   fresh(3072 - 300);
   { g_mem[2048 - 10] = 0x77; const char* r = check("sous la limite", false);
-    line("écriture sous __StackLimit : alerte + verrou (pile max 1034)", !std::strcmp(r, "halt") && has("ALERTE PILE") && has("ecrit sous la limite ou pile max 1034"), ""); }
+    line("écriture sous __StackLimit (pile temporaire du tas) : AUCUNE alerte, point silencieux muet, retour", !std::strcmp(r, "ret") && g_out.empty(), g_out.c_str()); }
+  fresh(3072 - 300);
+  { std::memset(g_mem, 0x5A, 2048); const char* r = check("pile temporaire", true);   // toute la zone sous la limite écrasée : rien de fatal, la mesure principale est la bonne
+    line("zone sous la limite entièrement écrasée : ligne de mesure normale, sans « pile max » ni alerte, retour", !std::strcmp(r, "ret") && has("[CANARY] pile temporaire : pile utilisee au plus 492 o / 1024 (marge 532 o)") && !has("pile max") && !has("ecrit sous la limite") && !has("ALERTE"), g_out.c_str()); }
+  // S7b : marge 144 o (880 o utilisés, mesure du canari matériel) : « sous l'objectif 256 » signalé, SANS arrêt artificiel
+  fresh(3072 - 300);
+  { g_mem[3072 - 880] = 0x44; const char* r = check("doRegister", true);
+    line("marge 144 o : « SOUS L'OBJECTIF 256 », aucune alerte, aucun verrou, retour", !std::strcmp(r, "ret") && has("pile utilisee au plus 880 o / 1024 (marge 144 o, SOUS L'OBJECTIF 256)") && !has("ALERTE") && !has("ARRET FATAL"), g_out.c_str()); }
+  fresh(3072 - 300);
+  { g_mem[3072 - 896] = 0x44; const char* r = check("limite", true);   // marge 128 : seuil exact, encore accepté
+    line("marge 128 o (seuil) : acceptée, sous l'objectif, aucun verrou", !std::strcmp(r, "ret") && has("(marge 128 o, SOUS L'OBJECTIF 256)") && !has("ALERTE"), g_out.c_str()); }
   // S8 : SP hors de la pile
   fresh(3072 - 300);
   { g_spoff = 100; const char* r = check("sp", false); line("SP hors de la pile : alerte + verrou", !std::strcmp(r, "halt") && has("HORS de la pile"), ""); }
