@@ -1,0 +1,38 @@
+# DOPULL-PHASE-AUDIT1 — chaînes statiques setup/loop → doPull ; ELF production-on, cœur 1.6.0 (e-ink 2,9″). Rien n'a été flashé.
+# doPull : cadre 280 o ; appelés directs : 61 ; appels indirects dans doPull : 0
+
+# setup → doPull : hal_entry 8 + arduino_main 16 + setup 224 + doPull 280 = 528 o (496 o restants pour les appelés)
+  ArduinoJson8V743PB2215conv   ArduinoJson     sous doPull  584 o · cumul 1112 o · marge  -88 o   ArduinoJson8V743PB2215conv > ArduinoJson8V743PB2213seri > K11ArduinoJson8V743PB226de > ArduinoJson8V743PB226de
+  ArduinoJson8V743PB226detai   ArduinoJson     sous doPull  352 o · cumul  880 o · marge  144 o · indirects 10   ArduinoJson8V743PB226detai > ArduinoJson8V743PB226detai > ArduinoJson8V743PB226detai > ArduinoJson8V743PB226de
+  httpCallPKcRKN7arduino6Str   String          sous doPull  216 o · cumul  744 o · marge  280 o · indirects 23   httpCallPKcRKN7arduino6Str > K7arduino6String9substring > arduino6StringC1EPKc(16) > arduino6String4copyEPKcj(
+  Epd29b13displayStreamEPFmP   autre           sous doPull  216 o · cumul  744 o · marge  280 o · indirects 4   Epd29b13displayStreamEPFmP > Epd29b7refreshEv.isra.130( > Epd29b7commandEh.isra.128( > arduino10ArduinoSPI16be
+  ArduinoJson8V743PB226detai   ArduinoJson     sous doPull  208 o · cumul  736 o · marge  288 o   ArduinoJson8V743PB226detai > K11ArduinoJson8V743PB226de > K11ArduinoJson8V743PB226de > K11ArduinoJson8V743PB22
+  ArduinoJson8V743PB226detai   ArduinoJson     sous doPull  200 o · cumul  728 o · marge  296 o   ArduinoJson8V743PB226detai > K11ArduinoJson8V743PB226de > K11ArduinoJson8V743PB226de > K11ArduinoJson8V743PB22
+  ArduinoJson8V743PB226detai   ArduinoJson     sous doPull  200 o · cumul  728 o · marge  296 o   ArduinoJson8V743PB226detai > K11ArduinoJson8V743PB226de > K11ArduinoJson8V743PB226de > K11ArduinoJson8V743PB22
+  K11ArduinoJson8V743PB226de   ArduinoJson     sous doPull  192 o · cumul  720 o · marge  304 o   K11ArduinoJson8V743PB226de > K11ArduinoJson8V743PB226de > K11ArduinoJson8V743PB226de > K11ArduinoJson8V743PB22
+  ArduinoJson8V743PB226detai   ArduinoJson     sous doPull  192 o · cumul  720 o · marge  304 o   ArduinoJson8V743PB226detai > K11ArduinoJson8V743PB226de > K11ArduinoJson8V743PB226de > K11ArduinoJson8V743PB22
+  K11ArduinoJson8V743PB226de   ArduinoJson     sous doPull  184 o · cumul  712 o · marge  312 o   K11ArduinoJson8V743PB226de > K11ArduinoJson8V743PB226de > K11ArduinoJson8V743PB226de > K11ArduinoJson8V743PB22
+  persistFrameIdRKN7arduino6   EEPROM          sous doPull  184 o · cumul  712 o · marge  312 o · indirects 9   persistFrameIdRKN7arduino6 > frameKeyRKN7arduino6String > K7arduino6String9substring > arduino6StringC1EPKc(16
+  refreshPanelb                autre           sous doPull  184 o · cumul  712 o · marge  312 o · indirects 26   refreshPanelb(24) > Epd29b8writeRamEhPKhhb.isr > Epd29b7commandEh.isra.128( > arduino10ArduinoSPI16begin > ard
+  asciiFoldRKN7arduino6Strin   asciiFold       sous doPull  152 o · cumul  680 o · marge  344 o   asciiFoldRKN7arduino6Strin > arduino6String6concatEc(16 > arduino6String6concatEPKcj > arduino6String7reserveE
+  frameKeyRKN7arduino6String   String          sous doPull  152 o · cumul  680 o · marge  344 o   frameKeyRKN7arduino6String > K7arduino6String9substring > arduino6StringC1EPKc(16) > arduino6String4copyEPKcj(
+  pire chaîne par catégorie (sous doPull) : ArduinoJson 584 o · String 216 o · autre 216 o · EEPROM 184 o · asciiFold 152 o · journal (logf) 136 o
+  => pire cas statique setup : 1112 o sur 1024 (marge -88 o) via ArduinoJson8V743PB2215conv
+
+# loop → doPull : hal_entry 8 + arduino_main 16 + loop 56 + doPull 280 = 360 o (664 o restants pour les appelés)
+  ArduinoJson8V743PB2215conv   ArduinoJson     sous doPull  584 o · cumul  944 o · marge   80 o   ArduinoJson8V743PB2215conv > ArduinoJson8V743PB2213seri > K11ArduinoJson8V743PB226de > ArduinoJson8V743PB226de
+  ArduinoJson8V743PB226detai   ArduinoJson     sous doPull  352 o · cumul  712 o · marge  312 o · indirects 10   ArduinoJson8V743PB226detai > ArduinoJson8V743PB226detai > ArduinoJson8V743PB226detai > ArduinoJson8V743PB226de
+  httpCallPKcRKN7arduino6Str   String          sous doPull  216 o · cumul  576 o · marge  448 o · indirects 23   httpCallPKcRKN7arduino6Str > K7arduino6String9substring > arduino6StringC1EPKc(16) > arduino6String4copyEPKcj(
+  Epd29b13displayStreamEPFmP   autre           sous doPull  216 o · cumul  576 o · marge  448 o · indirects 4   Epd29b13displayStreamEPFmP > Epd29b7refreshEv.isra.130( > Epd29b7commandEh.isra.128( > arduino10ArduinoSPI16be
+  ArduinoJson8V743PB226detai   ArduinoJson     sous doPull  208 o · cumul  568 o · marge  456 o   ArduinoJson8V743PB226detai > K11ArduinoJson8V743PB226de > K11ArduinoJson8V743PB226de > K11ArduinoJson8V743PB22
+  ArduinoJson8V743PB226detai   ArduinoJson     sous doPull  200 o · cumul  560 o · marge  464 o   ArduinoJson8V743PB226detai > K11ArduinoJson8V743PB226de > K11ArduinoJson8V743PB226de > K11ArduinoJson8V743PB22
+  ArduinoJson8V743PB226detai   ArduinoJson     sous doPull  200 o · cumul  560 o · marge  464 o   ArduinoJson8V743PB226detai > K11ArduinoJson8V743PB226de > K11ArduinoJson8V743PB226de > K11ArduinoJson8V743PB22
+  K11ArduinoJson8V743PB226de   ArduinoJson     sous doPull  192 o · cumul  552 o · marge  472 o   K11ArduinoJson8V743PB226de > K11ArduinoJson8V743PB226de > K11ArduinoJson8V743PB226de > K11ArduinoJson8V743PB22
+  ArduinoJson8V743PB226detai   ArduinoJson     sous doPull  192 o · cumul  552 o · marge  472 o   ArduinoJson8V743PB226detai > K11ArduinoJson8V743PB226de > K11ArduinoJson8V743PB226de > K11ArduinoJson8V743PB22
+  K11ArduinoJson8V743PB226de   ArduinoJson     sous doPull  184 o · cumul  544 o · marge  480 o   K11ArduinoJson8V743PB226de > K11ArduinoJson8V743PB226de > K11ArduinoJson8V743PB226de > K11ArduinoJson8V743PB22
+  persistFrameIdRKN7arduino6   EEPROM          sous doPull  184 o · cumul  544 o · marge  480 o · indirects 9   persistFrameIdRKN7arduino6 > frameKeyRKN7arduino6String > K7arduino6String9substring > arduino6StringC1EPKc(16
+  refreshPanelb                autre           sous doPull  184 o · cumul  544 o · marge  480 o · indirects 26   refreshPanelb(24) > Epd29b8writeRamEhPKhhb.isr > Epd29b7commandEh.isra.128( > arduino10ArduinoSPI16begin > ard
+  asciiFoldRKN7arduino6Strin   asciiFold       sous doPull  152 o · cumul  512 o · marge  512 o   asciiFoldRKN7arduino6Strin > arduino6String6concatEc(16 > arduino6String6concatEPKcj > arduino6String7reserveE
+  frameKeyRKN7arduino6String   String          sous doPull  152 o · cumul  512 o · marge  512 o   frameKeyRKN7arduino6String > K7arduino6String9substring > arduino6StringC1EPKc(16) > arduino6String4copyEPKcj(
+  pire chaîne par catégorie (sous doPull) : ArduinoJson 584 o · String 216 o · autre 216 o · EEPROM 184 o · asciiFold 152 o · journal (logf) 136 o
+  => pire cas statique loop : 944 o sur 1024 (marge 80 o) via ArduinoJson8V743PB2215conv

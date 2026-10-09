@@ -58,7 +58,9 @@ test("build de canari : POD_CANARY = 0 par défaut, jamais actif sans POD_RENDER
   assert.ok((src.match(/#if POD_RENDER_V1 && POD_CANARY/g) ?? []).length >= 15, "les points de contrôle de BOOT-FIX2 sont chacun dans un bloc gardé (tests/canaryBootFix2.test.ts)");
   const code = blocks.replace(/\/\/.*$/gm, "");
   assert.doesNotMatch(code, /ackFrame\(|httpCall\(|Conn\b|WiFi|\.request\(|persistFrameId|EEPROM|NVIC_SystemReset|delay\(/, "le canari ne touche ni réseau, ni EEPROM, ni redémarrage");
-  assert.doesNotMatch(code, /^static (?!void|const|inline void)/m, "aucune variable globale dans l'instrumentation (marge statique du 2,9″ : 528 o)");
+  // DOPULL-PHASE-AUDIT1 : deux SEULES exceptions, canari seulement et documentées (+16 o de RAM statique mesurés, marge 528 o → 512 o) : la longueur peinte initiale et la première phase fautive de doPull
+  assert.doesNotMatch(code, /^static (?!void|const|inline void|volatile uint32_t g_podPaintLen = 0;|volatile uint8_t g_podDpPhase = 0;)/m, "aucune autre variable globale dans l'instrumentation (marge statique du 2,9″ : 528 o)");
+  assert.equal((code.match(/^static volatile (?:uint32_t|uint8_t) g_pod\w+ = 0;/gm) ?? []).length, 2, "exactement deux statiques de canari");
   assert.match(code, /extern char __StackLimit, __StackTop, __HeapBase;/);
   // le firmware annoncé au serveur ne change pas (le canari se reconnaît au moniteur série, pas côté serveur)
   assert.equal((src.match(/#define FIRMWARE_VERSION\s+"r4eink29-1\.1"/g) ?? []).length, 1);

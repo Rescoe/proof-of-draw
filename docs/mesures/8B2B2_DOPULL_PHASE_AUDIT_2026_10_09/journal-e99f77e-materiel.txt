@@ -1,0 +1,48 @@
+# Journal matériel `e99f77e` — UNO R4 WiFi + e-ink 2,9 pouces BWR
+# Date : 09/10/2026. Build local POD_RENDER_V1=1 POD_CANARY=1. Aucune frame envoyée.
+# Transcription normalisée du texte fourni dans le fil GPT : les antislashs de continuation ajoutés lors du collage ont été retirés ; aucune valeur n'a été inventée.
+
+[BOOT] Proof-of-Draw UNO R4 WiFi + e-ink 2.9" BWR — r4eink29-1.1
+[MEM] boot: tas libre 8532 o, zone 0xA5 sous la pile 1024 o (INDICATIF : NON fiable des la 1re pile temporaire)
+[CANARY] ===== BUILD LOCAL TEMPORAIRE DE CANARI — rendu v1 ACTIF (POD_RENDER_V1=1, mode=1) — NE PAS DÉPLOYER, NE PAS COMMITER LE BINAIRE =====
+[CANARY] firmware annoncé au serveur : r4eink29-1.1 (inchangé) ; pile principale [0x20007b00, 0x20007f00] ; SP=0x20007e10
+[CANARY] 1 boot (apres peinture) : pile utilisee au plus 500 o / 1024 (marge 524 o) | SP=0x20007D98 | tas libre 6988 | sbrk->limite 6988
+[CANARY] 1b calibration : meme profondeur, juste apres un rapport (cout de l'instrument) : pile utilisee au plus 576 o / 1024 (marge 448 o) | SP=0x20007D98 | tas libre 6988 | sbrk->limite 6988
+[CANARY] sonde journal: 123456789012345678901234512345678901234567890123456789012345678901234561234567890123456789012345678901234567890123456123456789012345678901234567890123456789012345612345678901234567890123456789012345678901234567890
+[CANARY] pile de journal (ligne de 250 caracteres) : utilisee 416 o, marge 1056 o, erreur 0 (OK)
+[CANARY] 2 e-ink (begin + clearBothPlanes) : pile utilisee au plus 576 o / 1024 (marge 448 o) | SP=0x20007D98 | tas libre 6988 | sbrk->limite 6988
+[CANARY] wifi status (module present ?) : pile Wi-Fi dediee utilisee 608 o, marge 864 o (objectif >= 256 : OK), erreur 0 | tas libre 6988
+[CANARY] wifi firmwareVersion : pile Wi-Fi dediee utilisee 448 o, marge 1024 o (objectif >= 256 : OK), erreur 0 | tas libre 6972
+[WIFI] firmware du module: 0.5.2
+[CANARY] wifi begin : pile Wi-Fi dediee utilisee 556 o, marge 916 o (objectif >= 256 : OK), erreur 0 | tas libre 6988
+[CANARY] wifi localIP : pile Wi-Fi dediee utilisee 568 o, marge 904 o (objectif >= 256 : OK), erreur 0 | tas libre 6964
+[WIFI] IP: 192.168.1.21
+[CANARY] 3 wifi connecte : pile utilisee au plus 580 o / 1024 (marge 444 o) | SP=0x20007D98 | tas libre 6988 | sbrk->limite 5444
+[KEYS] clés chargées: 11e4193c89dc29bf26abe55d6a471d937eca8591fe00ee81b226403828a3b830
+[CANARY] 4 cles chargees : pile utilisee au plus 580 o / 1024 (marge 444 o) | SP=0x20007D98 | tas libre 6988 | sbrk->limite 5444
+[SELFTEST] Ed25519 signature 177 ms, vérification 275 ms -> OK
+[MEM] après Ed25519: tas libre 8532 o, zone 0xA5 sous la pile 1024 o (INDICATIF : NON fiable des la 1re pile temporaire)
+[ED25519] pile dédiée (utilisé/marge, o) : sign 1316/924, verify 1532/708 ; erreurs sign=0 verify=0 (0 = aucune) ; alloué 2304 o (garde 64 o, marge minimale exigée 128 o)
+[CANARY] 5 selfTestEd25519 : pile utilisee au plus 580 o / 1024 (marge 444 o) | SP=0x20007D98 | tas libre 6988 | sbrk->limite 5444
+[BOOT] œuvre déjà affichée : 8c97adf0-ee5b-4a2b-ab49-48a93548
+[CANARY] 6a avant doRegister : pile utilisee au plus 580 o / 1024 (marge 444 o) | SP=0x20007D98 | tas libre 6924 | sbrk->limite 5444
+[CANARY] wifi macAddress : pile Wi-Fi dediee utilisee 520 o, marge 952 o (objectif >= 256 : OK), erreur 0 | tas libre 6924
+[CANARY] net http : pile reseau dediee utilisee 1136 o, marge 848 o (objectif >= 256 : OK), erreur 0 | tas libre 6676
+[HTTP POST] /api/register -> 200
+[REGISTER] deviceId=dev_W29I1TW7 paired=oui
+[REGISTER] appairé
+[CANARY] 6b apres doRegister : pile utilisee au plus 880 o / 1024 (marge 144 o, SOUS L'OBJECTIF 256) | SP=0x20007D98 | tas libre 6900 | sbrk->limite 1924
+[BOOT] premier pull immédiat
+[CANARY] 7a avant doPull : pile utilisee au plus 880 o / 1024 (marge 144 o, SOUS L'OBJECTIF 256) | SP=0x20007D98 | tas libre 6900 | sbrk->limite 1924
+[CANARY] net http : pile reseau dediee utilisee 1136 o, marge 848 o (objectif >= 256 : OK), erreur 0 | tas libre 6796
+[HTTP GET] /api/pull?deviceId=dev_W29I1TW7 -> 200
+[PULL] cartel: Chat - pain / Roubzi (bloc 95)
+[PULL] nouveau bloc #95
+[PULL] aucune frame
+[CANARY] 7b apres doPull : ALERTE PILE utilisee au plus 1016 o / 1024 (marge 8 o) | SP=0x20007D98 | tas libre 6828 | sbrk->limite 1924
+[CANARY]   marqueur=0x16FF8788 (DETRUIT, attendu 0x434E5259) longueur peinte=0x000001A1 (OK) | plus bas octet modifie au-dessus du marqueur : 0x20007B08 = marqueur+8
+[CANARY]   __StackLimit=0x20007B00 __StackTop=0x20007F00 __HeapBase=0x20005908 sbrk(0)=0x2000737C SP dans la pile
+[CANARY]   mallinfo : arene=6772 utilise=1868 libre=4904
+[CANARY]   octets [__StackLimit-8, +24[ : 58 7C 00 20 00 00 00 00 | 88 87 FF 16 A1 01 00 00 1F 00 00 00 CB 5F 00 00 00 5F 00 20 20 00 00 20
+[CANARY]   zone 0xA5 sous la limite (INDICATIF seulement, NON fiable depuis les piles temporaires allouees dans le tas) : 3072
+[CANARY] ARRET FATAL (verrou) apres '7b apres doPull' : plus aucun pull, vote, ACK ni affichage. Debrancher la carte, reflasher le firmware stable.

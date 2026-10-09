@@ -171,6 +171,34 @@ int main() {
     const String pre = macString(); bool halted = false; try { podCanaryMacPhase(pre); } catch (const Halted&) { halted = true; }
     line("marqueur deja detruit a l'entree de macString : sous-phase 1", halted && pre.charAt(1) == '1' && has("PREMIERE sous-phase fautive = 1"), pre.s.c_str());
   }
+  // S31-S36 (DOPULL-PHASE-AUDIT1) : sondes de phase de doPull — la macro POD_DP_PROBE et le rapport podCanaryDoPull sont le CODE RÉEL du sketch ; une « fausse doPull » les enchaîne de la phase 1 à 10 en détruisant, avant la
+  //   sonde k, le marqueur ou la longueur peinte. La PREMIÈRE phase est conservée ; la longueur est comparée EXACTEMENT (pas de plage) ; le rapport est silencieux si tout va bien, sinon diagnostic + verrou.
+  {
+    auto fakeDoPull = [&](int markerAt, int lenAt) {
+      g_podDpPhase = 0; POD_DP_PROBE(1);
+      for (int k = 2; k <= 10; k++) {
+        if (k == markerAt) g_mem[2048] ^= 0x01;                          // marqueur détruit (un seul bit)
+        if (k == lenAt) g_mem[2048 + 4] ^= 0x01;                         // longueur peinte : L -> L xor 1, TOUJOURS dans la plage plausible
+        POD_DP_PROBE(k);
+      }
+    };
+    auto report = [&]() -> const char* { try { podCanaryDoPull(); } catch (const Halted&) { return "halt"; } return "ret"; };
+    fresh(3072 - 300); fakeDoPull(0, 0);
+    line("doPull saine : aucune phase fautive, rapport muet, retour", g_podDpPhase == 0 && !std::strcmp(report(), "ret") && g_out.empty(), g_out.c_str());
+    fresh(3072 - 300); fakeDoPull(6, 0);
+    { const char* r = report(); line("marqueur détruit avant la sonde 6 : phase 6 rapportée, verrou fatal", g_podDpPhase == 6 && !std::strcmp(r, "halt") && has("[CANARY] doPull : PREMIERE phase fautive = 6") && has("ARRET FATAL (verrou) apres 'doPull phase'"), ""); }
+    fresh(3072 - 300); fakeDoPull(0, 4);
+    { const uint32_t plausible = *(volatile uint32_t*)(g_mem + 2048 + 4); const char* r = report();
+      line("longueur peinte modifiée de 1 bit (L -> L xor 1, dans la plage) : détectée EXACTEMENT à la phase 4", plausible == (g_podPaintLen ^ 1u) && g_podDpPhase == 4 && !std::strcmp(r, "halt") && has("PREMIERE phase fautive = 4"), ""); }
+    fresh(3072 - 300); fakeDoPull(3, 0); g_mem[2048 + 4] ^= 0x01;           // phase 3 puis, plus tard, une 2e altération : seule la PREMIÈRE phase est conservée
+    { POD_DP_PROBE(9); line("première phase conservée (3) malgré une altération postérieure", g_podDpPhase == 3, ""); }
+    fresh(3072 - 300); g_podDpPhase = 7; POD_DP_PROBE(1);                    // sans entrée : une phase précédente reste ; l'entrée de doPull la remet à zéro (g_podDpPhase = 0)
+    { g_podDpPhase = 0; POD_DP_PROBE(1); line("l'entrée de doPull remet la phase à zéro et ne marque rien si la pile est saine", g_podDpPhase == 0, ""); }
+    fresh(3072 - 300); fakeDoPull(0, 0); g_mem[2048 + 4] = 0; g_mem[2048 + 5] = 0; g_mem[2048 + 6] = 0; g_mem[2048 + 7] = 0;
+    { const char* r = check("longueur", false); line("longueur peinte différente de l'initiale : alerte « INCOHERENTE : initiale 0x… » + verrou", !std::strcmp(r, "halt") && has("INCOHERENTE : initiale 0x"), ""); }
+    fresh(3072 - 300); g_mem[2048 + 4] ^= 0x01;                              // L -> L xor 1 : l ancien test de plage disait « OK »
+    { const char* r = check("longueur plausible mais modifiee", false); line("longueur L xor 1 (plausible) : le contrôle exact la refuse (ancien test de plage : « OK »)", !std::strcmp(r, "halt") && has("INCOHERENTE"), ""); }
+  }
   // S26-S30 : relevé de la pile Wi-Fi dédiée (NETSTACK-WIFI-CALLS-FIX1) — ligne utilisé/marge/erreur ; silencieux si sain et non verbeux ; échec (NOMEM/NESTED/GUARD/MARGIN) ou phase fautive → verrou ; pile PRINCIPALE contrôlée après l'appel
   {
     PodNetInfo ok; std::memset(&ok, 0, sizeof(ok)); ok.used = 612; ok.margin = 860; ok.err = POD_NET_OK; ok.low = 0;

@@ -34,12 +34,6 @@
 #include <qrcode.h>
 #include <Ed25519.h>
 #include "podEdStack.h"   // POD_ED_STACK : Ed25519 sur PILE DÉDIÉE (la pile principale de la R4 n'a que 1 024 o) — docs/LOT_8B2B2_PILE_ED25519_R4_2026_10_08.md
-#if POD_RENDER_V1 && POD_CANARY
-extern char __StackLimit;   // NETSTACK-FIX3 : sonde de phase de PodNet — lit UN mot (le marqueur du canari) et mémorise la PREMIÈRE phase où il est détruit ; aucune E/S, aucune profondeur ajoutée
-static inline void podNetProbe(uint8_t* slot, uint8_t phase) { if (*slot == 0 && *(volatile uint32_t*)&__StackLimit != 0x434E5259UL) *slot = phase; }
-#define POD_NET_PROBE(I, n) podNetProbe((I)->pad, (n))
-#endif
-#include "podNetStack.h"   // POD_NET_STACK : transactions réseau/TLS ET journal sur PILE DÉDIÉE (connect() déborde de 456 o sous __StackLimit) — docs/LOT_8B2B2_NETSTACK_FIX1_2026_10_09.md, docs/LOT_8B2B2_NETSTACK_FIX2_2026_10_09.md
 #include <SHA256.h>
 #include "pod_http.h"
 #include "epd29b.h"
@@ -66,6 +60,17 @@ static inline void podNetProbe(uint8_t* slot, uint8_t phase) { if (*slot == 0 &&
 #include <new>
 #endif
 // POD_RENDER_V1_END
+#if POD_RENDER_V1 && POD_CANARY
+extern char __StackLimit;   // NETSTACK-FIX3 : sonde de phase de PodNet — lit UN mot (le marqueur du canari) et mémorise la PREMIÈRE phase où il est détruit ; aucune E/S, aucune profondeur ajoutée
+static inline void podNetProbe(uint8_t* slot, uint8_t phase) { if (*slot == 0 && *(volatile uint32_t*)&__StackLimit != 0x434E5259UL) *slot = phase; }
+#define POD_NET_PROBE(I, n) podNetProbe((I)->pad, (n))
+// DOPULL-PHASE-AUDIT1 (canari seulement, +16 o de RAM statique mesurés (22 768 -> 22 784 : marge 528 -> 512 o)) : longueur peinte INITIALE (écrite par podCanaryPaint) pour la comparer EXACTEMENT, sans test de plage ; et la PREMIÈRE phase de doPull
+// où le marqueur ou la longueur diffère exactement (0 = aucune). La sonde ne fait que lire deux mots de la pile et un octet : aucune E/S, allocation, String, appel.
+static volatile uint32_t g_podPaintLen = 0;
+static volatile uint8_t g_podDpPhase = 0;
+#define POD_DP_PROBE(n) do { if (g_podDpPhase == 0 && (*(volatile uint32_t*)&__StackLimit != 0x434E5259UL || *((volatile uint32_t*)&__StackLimit + 1) != g_podPaintLen)) g_podDpPhase = (n); } while (0)
+#endif
+#include "podNetStack.h"   // POD_NET_STACK : transactions réseau/TLS ET journal sur PILE DÉDIÉE (connect() déborde de 456 o sous __StackLimit) — docs/LOT_8B2B2_NETSTACK_FIX1_2026_10_09.md, docs/LOT_8B2B2_NETSTACK_FIX2_2026_10_09.md
 
 // ─── CONFIG ────────────────────────────────────────────────────────────────
 #if __has_include("secrets.h")
@@ -202,6 +207,7 @@ static void podCanaryPaint() {
   for (volatile uint8_t* p = lo + 8; p < hi; p++) *p = CANARY_PAINT;
   *(volatile uint32_t*)lo = CANARY_MAGIC;
   *(volatile uint32_t*)(lo + 4) = (uint32_t)(hi - lo);
+  g_podPaintLen = (uint32_t)(hi - lo);
 }
 // ── LOT 8B-2B-2 BOOT-FIX2 ── points de contrôle CUMULATIFS, NON destructifs (aucun repeint entre deux points : on garde le maximum et on isole le PREMIER passage destructeur) ──────────────────────────
 // Sortie par Serial.print (cadres minces) et JAMAIS par logf/vsnprintf : l'instrument ne doit pas creuser lui-même la pile qu'il mesure. Un point « silencieux » (verbose = false) n'imprime rien tant que tout va bien.
@@ -220,7 +226,7 @@ static void __attribute__((noinline, noreturn)) podCanaryHalt(const char* tag) {
   unsigned long t = millis() - 10000UL;
   for (;;) if (millis() - t >= 10000UL) { t = millis(); Serial.print(F("[CANARY] ARRET FATAL (verrou) apres '")); Serial.print(tag); Serial.println(F("' : plus aucun pull, vote, ACK ni affichage. Debrancher la carte, reflasher le firmware stable.")); }
 }
-struct PodCanaryCtx { const char* tag; uint32_t magic, painted, used, sp, below, pAddr, pOff; long margin; bool noMod, alert, magicOk, paintedOk, spOk; };
+struct PodCanaryCtx { const char* tag; uint32_t magic, painted, used, sp, below, pAddr, pOff; long margin; bool noMod, alert, magicOk, paintedOk, spOk; uint32_t paintInit; };
 static void podCanaryPrint(void* v) {
   const PodCanaryCtx& c = *static_cast<const PodCanaryCtx*>(v);
   volatile uint8_t* lo = (volatile uint8_t*)&__StackLimit;
@@ -230,7 +236,7 @@ static void podCanaryPrint(void* v) {
   podCanaryNum(F(" | tas libre "), freeHeapBytes()); podCanaryNum(F(" | sbrk->limite "), (lim > brk ? lim - brk : 0)); Serial.println();
   if (!c.alert) return;
   struct mallinfo mi = mallinfo();
-  Serial.print(F("[CANARY]   marqueur=")); podCanaryHex(c.magic); Serial.print(c.magicOk ? F(" (OK)") : F(" (DETRUIT, attendu 0x434E5259)")); Serial.print(F(" longueur peinte=")); podCanaryHex(c.painted); Serial.print(c.paintedOk ? F(" (OK)") : F(" (INCOHERENTE)"));
+  Serial.print(F("[CANARY]   marqueur=")); podCanaryHex(c.magic); Serial.print(c.magicOk ? F(" (OK)") : F(" (DETRUIT, attendu 0x434E5259)")); Serial.print(F(" longueur peinte=")); podCanaryHex(c.painted); if (c.paintedOk) Serial.print(F(" (OK : identique a l'initiale)")); else { Serial.print(F(" (INCOHERENTE : initiale ")); podCanaryHex(c.paintInit); Serial.print(F(")")); }
   Serial.print(F(" | plus bas octet modifie au-dessus du marqueur : ")); if (c.noMod) Serial.print(F("AUCUN (la peinture est intacte : ecriture isolee ou venue d'ailleurs que de la pile)")); else { podCanaryHex(c.pAddr); podCanaryNum(F(" = marqueur+"), (unsigned long)c.pOff); }
   Serial.println();
   Serial.print(F("[CANARY]   __StackLimit=")); podCanaryHex((uint32_t)(uintptr_t)&__StackLimit); Serial.print(F(" __StackTop=")); podCanaryHex((uint32_t)(uintptr_t)&__StackTop); Serial.print(F(" __HeapBase=")); podCanaryHex((uint32_t)(uintptr_t)&__HeapBase);
@@ -245,7 +251,7 @@ static void podCanaryPrint(void* v) {
 static void __attribute__((noinline)) podCanaryCheck(const char* tag, bool verbose) {
   volatile uint8_t* lo = (volatile uint8_t*)&__StackLimit;
   const uint32_t magic = *(volatile uint32_t*)lo, painted = *(volatile uint32_t*)(lo + 4);
-  const bool magicOk = (magic == CANARY_MAGIC), paintedOk = (painted >= 16 && painted <= 1024);
+  const bool magicOk = (magic == CANARY_MAGIC), paintedOk = (painted >= 16 && painted <= 1024 && painted == g_podPaintLen);   // DOPULL-PHASE-AUDIT1 : EXACTEMENT la valeur initiale (une plage jugeait 0x1A1 « OK » alors que le boot avait écrit 0x250)
   volatile uint8_t* end = lo + (paintedOk ? painted : 512);                       // zone peinte (repli 512 o si la longueur enregistrée est elle-même détruite)
   volatile uint8_t* p = lo + 8; while (p < end && *p == CANARY_PAINT) p++;       // plus bas octet modifié AU-DESSUS du marqueur
   const uint32_t used = (uint32_t)((uint8_t*)&__StackTop - (uint8_t*)p);
@@ -257,7 +263,7 @@ static void __attribute__((noinline)) podCanaryCheck(const char* tag, bool verbo
   const bool alert = !magicOk || !paintedOk || margin < 128 || !spOk;
   if (!alert && !verbose) return;                                                  // point silencieux : aucun appel de bibliothèque tant que tout va bien
   const uint32_t below = stackDepthBytes();                                        // INDICATIF seulement (diagnostic d'alerte) : NON fiable après la première pile temporaire
-  PodCanaryCtx c = { tag, magic, painted, used, sp, below, (uint32_t)(uintptr_t)p, (uint32_t)(p - lo), margin, p == end, alert, magicOk, paintedOk, spOk };
+  PodCanaryCtx c = { tag, magic, painted, used, sp, below, (uint32_t)(uintptr_t)p, (uint32_t)(p - lo), margin, p == end, alert, magicOk, paintedOk, spOk, g_podPaintLen };
   podCanaryEmit(podCanaryPrint, &c);
   if (alert) for (;;) { __asm volatile("nop"); }                                   // l'impression a échoué (mémoire) : verrou SILENCIEUX
 }
@@ -308,6 +314,22 @@ static void __attribute__((noinline)) podCanaryWifi(const char* tag, const PodNe
     if (!ran || ni.err != POD_NET_OK) for (;;) { __asm volatile("nop"); }            // l'impression a échoué (mémoire) : verrou SILENCIEUX
   }
   podCanaryCheck(tag, false);                                                       // la pile principale doit rester saine après l'appel
+}
+// DOPULL-PHASE-AUDIT1 : première phase de doPull où le marqueur ou la longueur peinte a été trouvé(e) différent(e) EXACTEMENT (g_podDpPhase, 0 = aucune) ; rapport APRÈS le retour de doPull, sur la pile de journal,
+// puis verrou fatal. Phase n = la destruction a eu lieu entre la phase n-1 (saine) et la phase n.
+struct PodCanaryDpCtx { uint8_t phase; };
+static void podCanaryPrintDp(void* v) {
+  const PodCanaryDpCtx& c = *static_cast<const PodCanaryDpCtx*>(v);
+  Serial.print(F("[CANARY] doPull : PREMIERE phase fautive = ")); Serial.print((unsigned)c.phase);
+  Serial.println(F(" (1 entree · 2 apres l'appel HTTP · 3 apres JSON_DOC · 4 apres deserializeJson · 5 apres extraction bloc/candidat/frame · 6 apres cartel+journal · 7 apres observation+ownedBlock · 8 apres destruction de doc et resp · 9 apres mise a jour du bloc et memoire non volatile · 10 apres 'aucune frame', avant le retour) : la destruction est survenue ENTRE la phase precedente (saine) et celle-ci"));
+  podCanaryHalt("doPull phase");
+}
+static void __attribute__((noinline)) podCanaryDoPull() {
+  const uint8_t ph = g_podDpPhase;
+  if (ph == 0) return;
+  PodCanaryDpCtx c = { ph };
+  podCanaryEmit(podCanaryPrintDp, &c);
+  for (;;) { __asm volatile("nop"); }
 }
 // NETSTACK-FIX1/2 : une ligne par transaction réseau (pile dédiée : utilisée / marge / erreur, tas libre) ; un échec de la pile dédiée (malloc, garde, marge < 128 o, imbrication) pose le verrou fatal.
 struct PodCanaryNetCtx { const char* tag; const PodNetInfo* ni; bool ran; };
@@ -994,12 +1016,18 @@ static bool doRegister() {
 
 // ─── PULL ──────────────────────────────────────────────────────────────────
 static bool doPull() {
+#if POD_RENDER_V1 && POD_CANARY
+  g_podDpPhase = 0; POD_DP_PROBE(1);
+#endif
   String newBlockHash = "", newCandId = "", newFrameId = "", newFrameSource = "none";
   int newBlockIndex = -1, pullRetryAfter = 60;
 
   {
     String resp;
     const int code = httpCall("GET", "/api/pull?deviceId=" + deviceId, nullptr, resp);
+#if POD_RENDER_V1 && POD_CANARY
+  POD_DP_PROBE(2);
+#endif
     if (code == 429) {
       int retrySec = 60;
       JSON_DOC(rate, 256);
@@ -1013,8 +1041,14 @@ static bool doPull() {
     if (code != 200) { logf("[PULL] erreur HTTP %d", code); return false; }
 
     JSON_DOC(doc, 2048);
+#if POD_RENDER_V1 && POD_CANARY
+  POD_DP_PROBE(3);
+#endif
     const DeserializationError err = deserializeJson(doc, resp);
     if (err) { logf("[PULL] JSON: %s", err.c_str()); return false; }
+#if POD_RENDER_V1 && POD_CANARY
+  POD_DP_PROBE(4);
+#endif
 
     JsonObject chain = doc["chain"];
     if (!chain.isNull()) { newBlockHash = chain["blockHash"] | ""; newBlockIndex = chain["blockIndex"] | -1; }
@@ -1026,6 +1060,9 @@ static bool doPull() {
     pullRetryAfter = doc["retryAfter"] | 60;
     if (pullRetryAfter <= 0) pullRetryAfter = 60;
     if (newFrameId.length() == 0) { JsonObject fo = doc["frame"]; if (!fo.isNull()) newFrameId = fo["frameId"] | ""; }
+#if POD_RENDER_V1 && POD_CANARY
+  POD_DP_PROBE(5);
+#endif
 
     JsonObject cm = doc["cartelMeta"];
     if (!cm.isNull()) {
@@ -1035,6 +1072,9 @@ static bool doPull() {
       currentBlockIndex = cm["blockIndex"] | currentBlockIndex;
       logf("[PULL] cartel: %s / %s (bloc %d)", asciiFold(pendingWorkTitle).c_str(), asciiFold(pendingArtistName).c_str(), currentBlockIndex);
     }
+#if POD_RENDER_V1 && POD_CANARY
+  POD_DP_PROBE(6);
+#endif
     JsonObject obs = doc["pendingObservation"];
     if (!obs.isNull()) {
       JsonArray hArr = obs["blockHashes"].as<JsonArray>();
@@ -1047,7 +1087,13 @@ static bool doPull() {
     }
     const char* owned = doc["ownedBlock"] | "";
     if (strlen(owned) >= 16) saveOwnedBlockHash(String(owned));
+#if POD_RENDER_V1 && POD_CANARY
+  POD_DP_PROBE(7);
+#endif
   }
+#if POD_RENDER_V1 && POD_CANARY
+  POD_DP_PROBE(8);
+#endif
 
   nextPullIntervalMs = (newFrameSource == "none" && newCandId.length() == 0) ? (unsigned long)pullRetryAfter * 1000UL : PULL_INTERVAL;
   if (newBlockHash.length() > 0 && newBlockHash != currentBlockHash) {
@@ -1056,8 +1102,15 @@ static bool doPull() {
     logf("[PULL] nouveau bloc #%d", currentBlockIndex);
   }
   if (newCandId.length() > 0) pendingCandidateId = newCandId;
+#if POD_RENDER_V1 && POD_CANARY
+  POD_DP_PROBE(9);
+#endif
 
-  if (newFrameSource == "none" || newFrameId.length() == 0) { logf("[PULL] aucune frame"); return true; }
+  if (newFrameSource == "none" || newFrameId.length() == 0) { logf("[PULL] aucune frame");
+#if POD_RENDER_V1 && POD_CANARY
+  POD_DP_PROBE(10);
+#endif
+  return true; }
   if (frameKey(newFrameId) == lastFrameId) { logf("[PULL] frame déjà affichée"); return true; }
   logf("[PULL] nouvelle frame %s (%s)", newFrameId.c_str(), newFrameSource.c_str());
 
@@ -1269,6 +1322,9 @@ void setup() {
 #endif
     doPull();
 #if POD_RENDER_V1 && POD_CANARY
+  podCanaryDoPull();
+#endif
+#if POD_RENDER_V1 && POD_CANARY
   podCanaryCheck("7b apres doPull", true);
   podCanaryLogProbe();
 #endif
@@ -1302,6 +1358,9 @@ void loop() {
   if (now - lastPullMs >= nextPullIntervalMs) {
     const String prevCand = pendingCandidateId;
     doPull();
+#if POD_RENDER_V1 && POD_CANARY
+  podCanaryDoPull();
+#endif
     lastPullMs = millis();
     if (pendingCandidateId.length() > 0 && pendingCandidateId != prevCand) lastValidateMs = millis();
   }

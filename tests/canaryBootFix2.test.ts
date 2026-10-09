@@ -83,7 +83,9 @@ function extract(): string {
   const pre = /extern "C" char\* sbrk\(int incr\);[\s\S]*?(?=#if POD_RENDER_V1 && POD_CANARY\n\/\/ ─── CANARI)/.exec(src)![0].replace('extern "C" char* sbrk(int incr);\n', "").replace("extern char __HeapLimit;\n", "");
   const can = /extern char __StackLimit, __StackTop, __HeapBase;\n[\s\S]*?\n\}\n(?=#endif\nstatic void reportMem)/.exec(src)![0].replace("extern char __StackLimit, __StackTop, __HeapBase;\n", "");
   const log = /struct LogJob \{[^\n]*\n(?:static void logfEmit[\s\S]*?\n\}\n)/.exec(src)![0];   // LogJob + logfEmit (utilisés par la sonde de la pile de journal)
-  return `${pre}\n${log}\n${can}\n`;
+  // DOPULL-PHASE-AUDIT1 : les deux statiques du canari et la macro de sonde, tels que dans le sketch (bloc de sondes en tête de fichier)
+  const dp = /static volatile uint32_t g_podPaintLen = 0;\nstatic volatile uint8_t g_podDpPhase = 0;\n#define POD_DP_PROBE\(n\)[^\n]*\n/.exec(src)![0];
+  return `${pre}\n${dp}${log}\n${can}\n`;
 }
 /** Le CODE RÉEL de macString() tel que compilé quand POD_RENDER_V1 && POD_CANARY (directives des blocs de canari retirées, code conservé). */
 function extractMac(): string {
@@ -108,7 +110,7 @@ test("EXÉCUTION HÔTE du code extrait du sketch : pile saine → retour + mesur
   const r = runProcess(build(), []);
   assert.equal(r.status, 0, r.stdout + r.stderr);
   const lines = r.stdout.trim().split("\n").filter((l) => /^S\d+ /.test(l));
-  assert.equal(lines.length, 33, r.stdout);
+  assert.equal(lines.length, 40, r.stdout);
   for (const l of lines) assert.match(l, /^S\d+ OK /, l);
 });
 

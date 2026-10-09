@@ -1,0 +1,4 @@
+# DOPULL-PHASE-AUDIT1 — production inchangée : désassemblage fonction par fonction, build on (POD_CANARY=0), cœur 1.6.0, avant (e99f77e, dossier n3_) / après (dossier n4_), adresses et compteurs GCC normalisés (scripts/disasm-compare.js)
+{"fonctions":1026,"identiques":1025,"differentes":1,"seulementAvant":0,"seulementApres":0}
+différentes : __FUNCTION__.6535
+code de sortie : 0 (0 = aucune fonction de code différente)
