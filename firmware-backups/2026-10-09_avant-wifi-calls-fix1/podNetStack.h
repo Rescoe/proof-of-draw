@@ -37,15 +37,6 @@
 #define POD_LOG_STACK_TOTAL 1536u
 #endif
 static_assert(POD_LOG_STACK_TOTAL >= POD_NET_GUARD_BYTES + 736u + 104u + POD_NET_MARGIN_GOAL, "pile de journal trop petite");
-// NETSTACK-WIFI-CALLS-FIX1 : pile du MODULE Wi-Fi. Canari FIX3-R1 (matériel, 09/10/2026) : `WiFi.macAddress()` appelé depuis doRegister détruit le marqueur (24 o sous __StackLimit) — chaque appel au module
-// (ModemClass → vsnprintf) pose une feuille de 400 – 600 o sur le cadre de l'appelant. Tout appel DIRECT au module, hors transaction PodNet, s'exécute donc sur cette pile dédiée (podWifiRun) :
-// 1 536 o = garde 64 + appel le plus profond (WiFi.begin : 664 o statiques sur l'ELF des cœurs 1.5.3 et 1.6.0, branche flottante de printf jamais exécutée) + lambda/invocateur 32 + cadre d'exception 104 + objectif de marge 256 = 1 120 ;
-// reste ~416 o de réserve. Taille CONFIRMÉE par l'ELF (docs/LOT_8B2B2_NETSTACK_WIFI_CALLS_FIX1_2026_10_09.md) ; l'utilisation réelle est relevée par le canari (ligne « [CANARY] wifi … »).
-#ifndef POD_WIFI_STACK_TOTAL
-#define POD_WIFI_STACK_TOTAL 1536u
-#endif
-#define POD_WIFI_DEEPEST_CALL 664u
-static_assert(POD_WIFI_STACK_TOTAL >= POD_NET_GUARD_BYTES + POD_WIFI_DEEPEST_CALL + 32u + 104u + POD_NET_MARGIN_GOAL, "pile Wi-Fi dédiée trop petite");
 static_assert(POD_NET_STACK_TOTAL >= POD_NET_GUARD_BYTES + 1024u + POD_NET_MARGIN_MIN, "pile réseau dédiée trop petite");
 
 #if defined(__arm__)
@@ -183,15 +174,6 @@ class PodNet {
 /** Confort : exécute un objet appelable sans argument (typiquement une lambda [&]) sur la pile dédiée. L'objet appelable vit sur la pile de l'APPELANT ; il peut lire et écrire les variables de l'appelant. */
 template <typename F> static bool podNetRun(F& f, PodNetInfo* info = nullptr) {
   const bool ok = PodNet::run([](void* p) { (*static_cast<F*>(p))(); }, &f, info);
-  if (info) { POD_NET_PROBE(info, 8); }
-  return ok;
-}
-
-/** NETSTACK-WIFI-CALLS-FIX1 : même chose pour UN appel au module Wi-Fi (WiFi.begin / status / macAddress / RSSI / localIP / firmwareVersion), sur la pile de POD_WIFI_STACK_TOTAL octets (garde 64 o, filigrane, marge >= 128 o,
- *  objectif 256 o). Mêmes règles que podNetRun : résultats chez l'APPELANT (variables captées par référence), jamais imbriquée (NESTED : un appel déjà sur la pile réseau/Ed25519/journal n'est PAS ré-enveloppé),
- *  échec fermé (false = NOMEM, NESTED, GUARD ou MARGIN : l'appelant ignore tout résultat partiel, aucune inscription, vote, ACK ni affichage qui en dépende). */
-template <typename F> static bool podWifiRun(F& f, PodNetInfo* info = nullptr) {
-  const bool ok = PodNet::runSized([](void* p) { (*static_cast<F*>(p))(); }, &f, POD_WIFI_STACK_TOTAL, info);
   if (info) { POD_NET_PROBE(info, 8); }
   return ok;
 }

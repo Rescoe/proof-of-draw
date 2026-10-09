@@ -87,8 +87,13 @@ function extract(): string {
 }
 /** Le CODE RÉEL de macString() tel que compilé quand POD_RENDER_V1 && POD_CANARY (directives des blocs de canari retirées, code conservé). */
 function extractMac(): string {
-  const fn = /static String macString\(\) \{[\s\S]*?\n\}\n/.exec(read(INO))![0];
-  return fn.replace(/^#if POD_RENDER_V1 && POD_CANARY\n/gm, "").replace(/^#endif\n/gm, "");
+  const src = read(INO);
+  const helper = /static char macHexDigit\(uint8_t v\) \{[^\n]*\n/.exec(src)![0];
+  const fn = /static String macString\(\) \{[\s\S]*?\n\}\n/.exec(src)![0];
+  // MAC_TEST_HOOK() : UNE ligne insérée par le TEST dans la boucle d'encodage de la copie extraite, pour simuler une destruction du marqueur pendant l'encodage (sous-phase 2) ; hors de cette ligne, code du sketch mot pour mot
+  const hooked = fn.replace(/^#if POD_RENDER_V1 && POD_CANARY\n/gm, "").replace(/^#endif\n/gm, "").replace("b[3 * i] = ", "MAC_TEST_HOOK(); b[3 * i] = ");
+  if (!hooked.includes("MAC_TEST_HOOK();")) throw new Error("boucle d'encodage introuvable");
+  return helper + hooked;
 }
 function build(extra: (s: string) => string = (s) => s, extraMac: (s: string) => string = (s) => s): string {
   const dir = fs.mkdtempSync(path.join(tmp, "b-"));
@@ -103,7 +108,7 @@ test("EXÉCUTION HÔTE du code extrait du sketch : pile saine → retour + mesur
   const r = runProcess(build(), []);
   assert.equal(r.status, 0, r.stdout + r.stderr);
   const lines = r.stdout.trim().split("\n").filter((l) => /^S\d+ /.test(l));
-  assert.equal(lines.length, 23, r.stdout);
+  assert.equal(lines.length, 30, r.stdout);
   for (const l of lines) assert.match(l, /^S\d+ OK /, l);
 });
 
@@ -147,11 +152,13 @@ test("NETSTACK-FIX3-R1 : sous-phases de macString() — silencieuses (aucune E/S
   const fnRaw = /static String macString\(\) \{[\s\S]*?\n\}\n/.exec(src)![0];
   // hors blocs de canari : exactement la fonction d'avant
   const outside = fnRaw.replace(/#if POD_RENDER_V1 && POD_CANARY\n[\s\S]*?\n#endif\n/g, "");
-  assert.equal(outside, 'static String macString() {\n  uint8_t m[6] = {0}; WiFi.macAddress(m);\n  char b[18]; snprintf(b, sizeof(b), "%02x:%02x:%02x:%02x:%02x:%02x", m[0], m[1], m[2], m[3], m[4], m[5]);\n  return String(b);\n}\n');
+  // production (NETSTACK-WIFI-CALLS-FIX1) : module Wi-Fi sur pile dédiée (wifiMac), échec fermé (chaîne vide), encodage hexadécimal manuel borné dans char[18] — plus de snprintf
+  assert.equal(outside, "static String macString() {\n  uint8_t m[6] = {0};\n  if (!wifiMac(m)) return String();\n  char b[18];\n  for (uint8_t i = 0; i < 6; i++) { b[3 * i] = macHexDigit(m[i] >> 4); b[3 * i + 1] = macHexDigit(m[i] & 15); b[3 * i + 2] = (i < 5) ? ':' : '\\0'; }\n  return String(b);\n}\n");
+  assert.doesNotMatch(fnRaw, /snprintf|WiFi\./, "ni snprintf ni appel direct au module dans macString");
   const blocks = [...fnRaw.matchAll(/#if POD_RENDER_V1 && POD_CANARY\n([\s\S]*?)\n#endif\n/g)].map((x) => strip(x[1]).replace(/\s+/g, " ").trim());
-  assert.equal(blocks.length, 3, "une sonde après l'appel au module, une après snprintf, une après la construction du String");
-  // ordre : sonde 1 juste après WiFi.macAddress ; sonde 2 juste après snprintf ; sonde 3 après la construction du String
-  const iWifi = fnRaw.indexOf("WiFi.macAddress(m);"), iP1 = fnRaw.indexOf("macPh = 1;"), iSn = fnRaw.indexOf("snprintf(b,"), iP2 = fnRaw.indexOf("macPh = 2;"), iS = fnRaw.indexOf("String s(b);"), iP3 = fnRaw.indexOf("macPh = 3;");
+  assert.equal(blocks.length, 3, "une sonde après l'appel au module, une après l'encodage hexadécimal, une après la construction du String");
+  // ordre : sonde 1 juste après wifiMac ; sonde 2 juste après la boucle d'encodage ; sonde 3 après la construction du String
+  const iWifi = fnRaw.indexOf("wifiMac(m)"), iP1 = fnRaw.indexOf("macPh = 1;"), iSn = fnRaw.indexOf("macHexDigit(m[i] >> 4)"), iP2 = fnRaw.indexOf("macPh = 2;"), iS = fnRaw.indexOf("String s(b);"), iP3 = fnRaw.indexOf("macPh = 3;");
   assert.ok(iWifi < iP1 && iP1 < iSn && iSn < iP2 && iP2 < iS && iS < iP3, "ordre des sondes");
   assert.match(blocks[0], /^uint8_t macPh = 0; if \(\*\(volatile uint32_t\*\)&__StackLimit != 0x434E5259UL\) macPh = 1;$/);
   assert.match(blocks[1], /^if \(macPh == 0 && \*\(volatile uint32_t\*\)&__StackLimit != 0x434E5259UL\) macPh = 2;$/);
@@ -189,4 +196,21 @@ test("NETSTACK-FIX3-R1 : CONTRÔLES NÉGATIFS des sous-phases de macString — s
   assert.equal(extract().split(a).length, 2, "motif du rapport");
   const r = runProcess(build((s) => s.split(a).join("podCanaryEmit(podCanaryPrintMac, &c);").split("podCanaryHalt(\"macString sous-phase\");").join("")), [], 20000);
   assert.ok(r.status !== 0 || r.stdout.split("\n").some((l) => /^S\d+ ECART /.test(l)), "un rapport qui ne s'arrête pas n'est pas détecté");
+});
+
+test("NETSTACK-WIFI-CALLS-FIX1 : le canari relève la pile Wi-Fi dédiée à chaque appel au module (utilisé/marge/erreur), verrou fatal sur toute erreur de la pile, aucun relevé hors build de canari", () => {
+  const src = read(INO), code = strip(src);
+  const blk = code.slice(code.indexOf("static uint8_t __attribute__((noinline)) wifiStatusT"), code.indexOf("static char macHexDigit") > 0 ? code.indexOf("// ─── Clés Ed25519") : undefined);
+  for (const tag of ['podCanaryWifi(tag ? tag : "status", ni, ran, tag != nullptr);', 'podCanaryWifi("firmwareVersion", ni, ran, true);', 'podCanaryWifi("begin", ni, ran, true);', 'podCanaryWifi("macAddress", ni, ran, true);', 'podCanaryWifi("RSSI", ni, ran, true);', 'podCanaryWifi("localIP", ni, ran, true);'])
+    assert.ok(src.includes(`#if POD_RENDER_V1 && POD_CANARY\n  ${tag}\n#endif\n`), `relevé absent ou hors bloc de canari : ${tag}`);
+  assert.ok(blk.length > 100);
+  const fn = strip(/static void __attribute__\(\(noinline\)\) podCanaryWifi[\s\S]*?\n\}\n/.exec(src)![0]);
+  assert.match(fn, /podCanaryPhase\(ni\.pad\[0\]\);/, "la phase de PodNet est contrôlée pour les appels Wi-Fi aussi");
+  assert.match(fn, /if \(verbose \|\| !ran \|\| ni\.err != POD_NET_OK\) \{[\s\S]*podCanaryEmit\(podCanaryPrintWifi, &c\);\s*if \(!ran \|\| ni\.err != POD_NET_OK\) for \(;;\) \{ __asm volatile\("nop"\); \}/);
+  assert.match(fn, /podCanaryCheck\(tag, false\);/, "la pile principale est contrôlée juste après l'appel");
+  const pr = strip(/static void podCanaryPrintWifi\(void\* v\) \{[\s\S]*?\n\}\n/.exec(src)![0]);
+  assert.match(pr, /if \(!c\.ran \|\| ni\.err != POD_NET_OK\) \{[^}]*podCanaryHalt\(c\.tag\);/, "l'échec de la pile Wi-Fi pose le verrou");
+  assert.doesNotMatch(fn + pr, /logf\(|String\b|WiFi|Conn\b|httpCall|delay\(/);
+  // aucun autre firmware ne porte le relevé
+  for (const sk of ["pod_uno_r4_eink27", "pod_uno_r4_eink27_oled", "pod_uno_r4_tft18", "pod_uno_r4"]) assert.doesNotMatch(read(`arduino_uno_r4/${sk}/${sk}.ino`), /podCanaryWifi/);
 });

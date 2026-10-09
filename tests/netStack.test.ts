@@ -91,6 +91,7 @@ test("échec fermé aux sites : un échec de pile dédiée ne laisse aucun résu
     for (const m of code.matchAll(/if \(!ran\) \{([^\n]*)\}\n/g)) {
       const s = m[1];
       if (/\[HTTP %s\]/.test(s)) continue;   // httpCall : vérifié ci-dessus
+      if (/wifiFailed\(/.test(s)) continue;  // appels au module Wi-Fi (NETSTACK-WIFI-CALLS-FIX1) : vérifiés par tests/wifiCalls.test.ts
       // échec fermé : les indicateurs de succès sont remis à zéro AVANT le traitement d'échec existant (ou : chk remis à zéro)
       const closed = /(got|shown) = false;/.test(s) || /memset\(&chk, 0, sizeof\(chk\)\)/.test(s);
       assert.ok(closed, `${sk} : échec de pile dédiée non fermé : ${s.slice(0, 80)}`);

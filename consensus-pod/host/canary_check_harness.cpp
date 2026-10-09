@@ -58,12 +58,13 @@ struct String {
   void setCharAt(unsigned i, char c) { if (i < s.size()) s[i] = c; }
 };
 #include "canary_extract.inc"
-// le CODE RÉEL de macString() (extrait du sketch, blocs de canari activés) contre un module et un snprintf simulés qui détruisent le marqueur à la sous-phase demandée
-struct WiFiShim { void macAddress(uint8_t* m) { for (int i = 0; i < 6; i++) m[i] = (uint8_t)(0xA0 + i); if (g_macDestroyAt == 1) destroyMarker(); } } WiFi;
-static int mac_snprintf(char* b, size_t n, const char* f, ...) { va_list ap; va_start(ap, f); const int r = vsnprintf(b, n, f, ap); va_end(ap); if (g_macDestroyAt == 2) destroyMarker(); return r; }
-#define snprintf mac_snprintf
+// le CODE RÉEL de macHexDigit() et macString() (extrait du sketch, blocs de canari activés) ; le module Wi-Fi (wifiMac, sur pile dédiée dans le sketch) est SIMULÉ : il rend des octets choisis, peut échouer, et détruit le marqueur à la
+// sous-phase demandée (1 = juste après l'appel au module). La sous-phase 2 (encodage hexadécimal) est simulée par MAC_TEST_HOOK(), une ligne que le TEST insère dans la boucle d'encodage de la copie extraite.
+static bool g_wifiMacFail = false;
+static uint8_t g_macBytes[6] = { 0xA0, 0xA1, 0xA2, 0xA3, 0xA4, 0xA5 };
+static bool wifiMac(uint8_t* m) { if (g_wifiMacFail) { std::memset(m, 0, 6); return false; } for (int i = 0; i < 6; i++) m[i] = g_macBytes[i]; if (g_macDestroyAt == 1) destroyMarker(); return true; }
+#define MAC_TEST_HOOK() do { if (g_macDestroyAt == 2) destroyMarker(); } while (0)
 #include "mac_extract.inc"
-#undef snprintf
 
 static void fresh(long sp) { std::memset(g_mem, 0, sizeof(g_mem)); g_out.clear(); g_fatalPrints = 0; g_spoff = sp; paintStack(); podCanaryPaint(); }
 // exécute un point de contrôle ; retourne "halt" si le verrou fatal s'est posé (la fonction ne revient pas), "ret" sinon
@@ -148,9 +149,34 @@ int main() {
         line(cs.name, before == 0 && mac.charAt(0) == '!' && mac.charAt(1) == (char)('0' + cs.d) && halted && has(want) && has("ARRET FATAL (verrou) apres 'macString sous-phase'"), mac.s.c_str());
       }
     }
+    // formatage : chiffres hexadécimaux minuscules, bornes des quartets, jamais de dépassement de char[18]
+    fresh(3072 - 300); { const uint8_t sample[6] = { 0x00, 0x0f, 0x10, 0x9a, 0xab, 0xff }; std::memcpy(g_macBytes, sample, 6); }
+    { const String fm = macString(); line("macString : format minuscule aa:bb exact (00:0f:10:9a:ab:ff), 17 caracteres", fm.s == "00:0f:10:9a:ab:ff" && fm.s.size() == 17, fm.s.c_str()); }
+    { const uint8_t back[6] = { 0xA0, 0xA1, 0xA2, 0xA3, 0xA4, 0xA5 }; std::memcpy(g_macBytes, back, 6); }
+    // échec fermé : le module Wi-Fi échoue (NOMEM, NESTED, GUARD ou MARGIN) → chaîne VIDE, aucune sous-phase, aucun rapport
+    fresh(3072 - 300); g_wifiMacFail = true;
+    { const String em = macString(); g_wifiMacFail = false; bool h = false; try { podCanaryMacPhase(em); } catch (const Halted&) { h = true; } line("module Wi-Fi en echec : macString vide (echec ferme), aucun rapport", em.s.empty() && !h && g_out.empty(), em.s.c_str()); }
     fresh(3072 - 300); destroyMarker();                         // marqueur DÉJÀ détruit à l'entrée : la sous-phase 1 le désigne (« à cette sous-phase OU AVANT »)
     const String pre = macString(); bool halted = false; try { podCanaryMacPhase(pre); } catch (const Halted&) { halted = true; }
     line("marqueur deja detruit a l'entree de macString : sous-phase 1", halted && pre.charAt(1) == '1' && has("PREMIERE sous-phase fautive = 1"), pre.s.c_str());
+  }
+  // S26-S30 : relevé de la pile Wi-Fi dédiée (NETSTACK-WIFI-CALLS-FIX1) — ligne utilisé/marge/erreur ; silencieux si sain et non verbeux ; échec (NOMEM/NESTED/GUARD/MARGIN) ou phase fautive → verrou ; pile PRINCIPALE contrôlée après l'appel
+  {
+    PodNetInfo ok; std::memset(&ok, 0, sizeof(ok)); ok.used = 612; ok.margin = 860; ok.err = POD_NET_OK; ok.low = 0;
+    fresh(3072 - 300);
+    { podCanaryWifi("macAddress", ok, true, true);
+      line("pile Wi-Fi saine, verbeux : ligne utilisé/marge/erreur imprimée, retour", has("[CANARY] wifi macAddress : pile Wi-Fi dediee utilisee 612 o, marge 860 o (objectif >= 256 : OK), erreur 0") && !has("ALERTE") && !has("ARRET FATAL"), ""); }
+    fresh(3072 - 300);
+    { podCanaryWifi("status", ok, true, false); line("pile Wi-Fi saine, non verbeux (statut en boucle) : AUCUNE sortie", g_out.empty(), g_out.c_str()); }
+    fresh(3072 - 300);
+    { PodNetInfo bad = ok; bad.err = POD_NET_MARGIN; bad.margin = 100; bool h = false; try { podCanaryWifi("RSSI", bad, true, false); } catch (const Halted&) { h = true; }
+      line("pile Wi-Fi MARGIN : ligne + ECHEC + verrou fatal (même non verbeux)", h && has("erreur 4") && has("ECHEC de la pile Wi-Fi dediee (ALERTE)") && has("ARRET FATAL (verrou) apres 'RSSI'"), ""); }
+    fresh(3072 - 300);
+    { PodNetInfo ph = ok; ph.pad[0] = 6; bool h = false; try { podCanaryWifi("begin", ph, true, true); } catch (const Halted&) { h = true; }
+      line("phase fautive de PodNet pendant un appel Wi-Fi : diagnostic de phase + verrou", h && has("PREMIERE phase fautive = 6") && has("ARRET FATAL (verrou) apres 'phase PodNet'"), ""); }
+    fresh(3072 - 300); destroyMarker();                         // la pile PRINCIPALE doit être saine après l'appel : marqueur détruit → alerte
+    { bool h = false; try { podCanaryWifi("localIP", ok, true, false); } catch (const Halted&) { h = true; }
+      line("pile principale contrôlée après l'appel Wi-Fi : marqueur détruit → ALERTE + verrou", h && has("[CANARY] localIP : ALERTE PILE") && has("ARRET FATAL (verrou) apres 'localIP'"), ""); }
   }
   return 0;
 }

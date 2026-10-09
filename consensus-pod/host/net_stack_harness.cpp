@@ -96,6 +96,29 @@ int main() {
     expect("runSized(journal) : zone de 1536 o effacée", g_wipeChecked == 1 && g_wipeAllZero);
     Ctx d = {0, 0, ""}; expect("runSized trop petite (< 512 o utilisables) : refusée, fn non appelée", !PodNet::runSized(fnSimple, &d, POD_NET_GUARD_BYTES + 511u, &ni) && d.calls == 0 && ni.err == POD_NET_NOMEM);
     podNetTestNested = 1; Ctx e = {0, 0, ""}; expect("runSized imbriquée : NESTED", !PodNet::runSized(fnSimple, &e, POD_LOG_STACK_TOTAL, &ni) && e.calls == 0 && ni.err == POD_NET_NESTED); podNetTestNested = 0; }
+  // 14) NETSTACK-WIFI-CALLS-FIX1 : pile du module Wi-Fi (podWifiRun) — taille propre, résultats chez l'appelant, effacée, jamais imbriquée, échec fermé
+  podNetTestHook = nullptr;
+  { int mac0 = -1; PodNetInfo ni; g_wipeChecked = 0; g_wipeAllZero = true; auto tx = [&]() { mac0 = 0xA0; };
+    expect("podWifiRun réussit, résultat chez l'appelant", podWifiRun(tx, &ni) && mac0 == 0xA0 && ni.err == POD_NET_OK);
+    expect("podWifiRun : pile de POD_WIFI_STACK_TOTAL (1536) octets, marge pleine", POD_WIFI_STACK_TOTAL == 1536u && ni.margin == POD_WIFI_STACK_TOTAL - POD_NET_GUARD_BYTES && ni.used == 0);
+    expect("podWifiRun : zone de 1536 o effacée avant free", g_wipeChecked == 1 && g_wipeAllZero); }
+  { int calls = 0; PodNetInfo ni; auto tx = [&]() { calls++; };
+    podNetTestFailAlloc = 1; const bool ok = podWifiRun(tx, &ni); podNetTestFailAlloc = 0;
+    expect("podWifiRun NOMEM : appel au module NON exécuté, NON exécutée", !ok && calls == 0 && ni.err == POD_NET_NOMEM && !podNetExecuted(ni));
+    podNetTestNested = 1; const bool ok2 = podWifiRun(tx, &ni); podNetTestNested = 0;
+    expect("podWifiRun NESTED (déjà sur une pile dédiée) : jamais ré-enveloppé, appel NON exécuté", !ok2 && calls == 0 && ni.err == POD_NET_NESTED && !podNetExecuted(ni));
+    podNetTestHook = smashGuard; const bool ok3 = podWifiRun(tx, &ni); podNetTestHook = nullptr;
+    expect("podWifiRun GUARD : appel EXÉCUTÉ mais résultat rejeté (échec fermé)", !ok3 && calls == 1 && ni.err == POD_NET_GUARD && podNetExecuted(ni));
+    podNetTestHook = touch; g_touchAt = 100; const bool ok4 = podWifiRun(tx, &ni); podNetTestHook = nullptr;
+    expect("podWifiRun MARGIN (100 < 128) : EXÉCUTÉ mais rejeté", !ok4 && calls == 2 && ni.err == POD_NET_MARGIN && podNetExecuted(ni));
+    podNetTestHook = touch; g_touchAt = 128; const bool ok5 = podWifiRun(tx, &ni); podNetTestHook = nullptr;
+    expect("podWifiRun marge 128 (seuil) : acceptée, sous l'objectif signalé", ok5 && ni.err == POD_NET_OK && ni.low == 1);
+    podNetTestHook = touch; g_touchAt = 256; const bool ok6 = podWifiRun(tx, &ni); podNetTestHook = nullptr;
+    expect("podWifiRun marge 256 (objectif) : acceptée, low = 0", ok6 && ni.err == POD_NET_OK && ni.low == 0); }
+  { void* before = std::malloc(POD_WIFI_STACK_TOTAL); std::free(before); int n = 0; auto tx = [&]() { n++; }; bool ok = true;
+    for (int i = 0; i < 4; i++) ok = ok && podWifiRun(tx);
+    void* after = std::malloc(POD_WIFI_STACK_TOTAL); std::free(after);
+    expect("podWifiRun ×4 : aucune dérive du tas", ok && n == 4 && before == after); }
   // 11) l'information est facultative
   { Ctx c = {0, 0, ""}; expect("PodNetInfo facultatif", PodNet::run(fnSimple, &c) && c.calls == 1); }
 

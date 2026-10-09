@@ -1,0 +1,14 @@
+# Journal matériel du canari NETSTACK-FIX3-R1 — UNO R4 WiFi + e-ink 2,9″ BWR, build local POD_RENDER_V1=1 POD_CANARY=1 (09/10/2026), commit 4abafc3 + drapeaux locaux 1/1
+# Source : retour du porteur / verdict de l'auditeur (collé dans la conversation). Aucune frame, aucun dessin ; carte arrêtée par le verrou fatal du canari.
+# ⚠ Le message qui a ouvert le lot NETSTACK-WIFI-CALLS-FIX1 ne contenait que le VERDICT (reproduit ci-dessous mot pour mot), PAS les lignes série brutes du canari. Si le porteur souhaite l'archivage des lignes brutes,
+#   les coller à la suite de ce fichier (même dossier) : aucun contenu n'a été reconstitué ni inventé ici.
+
+== Verdict transmis (texte intégral) ==
+Le canari matériel FIX3-R1 confirme `macString : PREMIERE sous-phase fautive = 1`, avec R0 sain. `WiFi.macAddress()` est donc matériellement prouvé comme cause du dépassement de 24 octets sous `__StackLimit`.
+`snprintf`, le constructeur `String` et PodNet n'avaient pas encore été exécutés.
+
+== Lecture (docs/LOT_8B2B2_NETSTACK_WIFI_CALLS_FIX1_2026_10_09.md § 1) ==
+ - R0 (entrée de doRegister) sain ; sous-phase 1 de macString() = première où le marqueur est trouvé détruit : la destruction a lieu pendant (ou juste après) l'appel au module pour l'adresse MAC, avant snprintf,
+   avant la construction du String, avant toute transaction PodNet.
+ - Cela PROUVE la cause de la signature déjà vue aux canaris FIX1, FIX2 et FIX3 (pile max 1048 = 1024 + 24, marqueur remplacé par un pointeur de code de la chaîne printf de newlib, __ssputs_r).
+ - Cela ne prouve rien sur snprintf, le constructeur String ni PodNet (non exécutés avant l'arrêt) : leurs sondes de phase restent à exercer.

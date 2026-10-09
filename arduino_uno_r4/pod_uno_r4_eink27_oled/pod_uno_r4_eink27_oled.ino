@@ -324,13 +324,69 @@ static String loadOwnedHashesJson() {
   return json + "]";
 }
 
+// ─── MODULE Wi-Fi sur PILE DÉDIÉE (NETSTACK-WIFI-CALLS-FIX1, 09/10/2026) ──────────────────────────────────
+// Canari FIX3-R1 (matériel) : WiFi.macAddress() appelé depuis doRegister détruit le marqueur de pile (24 o sous __StackLimit) : chaque appel au module (ModemClass → vsnprintf) pose une feuille de 400 – 600 o sur le cadre
+// de l'appelant. TOUT appel direct au module hors transaction PodNet passe donc par ces fonctions : il s'exécute sur POD_WIFI_STACK_TOTAL o pris un instant au tas (garde 64 o, filigrane, marge >= 128 o, objectif 256 o).
+// Résultats chez l'APPELANT (variables captées par référence) ; jamais imbriqué (NESTED : un appel déjà sur une pile dédiée n'est pas ré-enveloppé) ; ÉCHEC FERMÉ : valeur « inconnue », chaîne vide ou false — jamais un résultat
+// partiel (NOMEM, NESTED, GUARD, MARGIN). Les appels faits PAR une transaction PodNet (WiFiSSLClient dans podNetRun) restent sur la pile réseau.
+#define POD_WIFI_UNKNOWN 0xFEu                         // état Wi-Fi inconnu (appel en échec) : ni WL_CONNECTED ni WL_NO_MODULE
+static void __attribute__((noinline)) wifiFailed(const char* what, const PodNetInfo& ni) {   // attribut : le générateur de prototypes de l IDE placerait sinon le prototype AVANT la définition de PodNetInfo
+  logf("[WIFI] %s : pile Wi-Fi dédiée : %s (erreur %u, marge %u o) — résultat IGNORÉ", what, podNetWhy(ni), (unsigned)ni.err, (unsigned)ni.margin);
+  if (ni.err == POD_NET_GUARD) logfSafeStop();             // garde écrasée : le voisin au tas est corrompu — arrêt sûr silencieux
+}
+static uint8_t __attribute__((noinline)) wifiStatusT(const char* tag) {
+  uint8_t st = POD_WIFI_UNKNOWN; PodNetInfo ni; (void)tag;           // tag : seulement pour le relevé du canari
+  auto wx = [&]() { st = (uint8_t)WiFi.status(); };
+  const bool ran = podWifiRun(wx, &ni);
+  if (!ran) { wifiFailed("status", ni); return POD_WIFI_UNKNOWN; }
+  return st;
+}
+static uint8_t wifiStatus() { return wifiStatusT(nullptr); }
+static String __attribute__((noinline)) wifiFirmware() {
+  String fw; PodNetInfo ni;
+  auto wx = [&]() { fw = String(WiFi.firmwareVersion()); };
+  const bool ran = podWifiRun(wx, &ni);
+  if (!ran) { wifiFailed("firmwareVersion", ni); return String("?"); }
+  return fw;
+}
+static void __attribute__((noinline)) wifiBegin() {
+  PodNetInfo ni;
+  auto wx = [&]() { WiFi.begin(WIFI_SSID, WIFI_PASSWORD); };
+  const bool ran = podWifiRun(wx, &ni);
+  if (!ran) wifiFailed("begin", ni);
+}
+static bool __attribute__((noinline)) wifiMac(uint8_t m[6]) {
+  PodNetInfo ni;
+  auto wx = [&]() { WiFi.macAddress(m); };
+  const bool ran = podWifiRun(wx, &ni);
+  if (!ran) { memset(m, 0, 6); wifiFailed("macAddress", ni); return false; }
+  return true;
+}
+static bool __attribute__((noinline)) wifiRssi(int32_t& rssi) {
+  PodNetInfo ni; int32_t r = 0;
+  auto wx = [&]() { r = (int32_t)WiFi.RSSI(); };
+  const bool ran = podWifiRun(wx, &ni);
+  if (!ran) { rssi = 0; wifiFailed("RSSI", ni); return false; }
+  rssi = r;
+  return true;
+}
+static String __attribute__((noinline)) wifiIpString() {
+  String ip; PodNetInfo ni;                  // la chaîne « a.b.c.d » est formée SUR la pile dédiée (IPAddress::toString → sniprintf : jamais sur la pile principale)
+  auto wx = [&]() { ip = WiFi.localIP().toString(); };
+  const bool ran = podWifiRun(wx, &ni);
+  if (!ran) { wifiFailed("localIP", ni); return String("?"); }
+  return ip;
+}
+
 // ─── Clés Ed25519 ──────────────────────────────────────────────────────────
 // Entropie : bruit des entrées analogiques flottantes + gigue d'horloge + MAC + RSSI, condensés par SHA-256.
 // (Même niveau que les firmwares ESP : suffisant pour identifier un écran, PAS un générateur certifié.)
-static void gatherEntropy(uint8_t out[32]) {
+static bool gatherEntropy(uint8_t out[32]) {
   SHA256 h; h.reset();
-  uint8_t mac[6] = {0}; WiFi.macAddress(mac); h.update(mac, 6);
-  const int32_t rssi = WiFi.RSSI(); h.update(&rssi, sizeof(rssi));
+  uint8_t mac[6] = {0}; int32_t rssi = 0;
+  if (!wifiMac(mac) || !wifiRssi(rssi)) { memset(out, 0, 32); return false; }   // NETSTACK-WIFI-CALLS-FIX1 : échec fermé — aucune entropie partielle
+  h.update(mac, 6);
+  h.update(&rssi, sizeof(rssi));
   for (int i = 0; i < 384; i++) {
     const uint16_t v = (uint16_t)analogRead(A0 + (i % 6));
     const uint32_t m = micros();
@@ -338,10 +394,11 @@ static void gatherEntropy(uint8_t out[32]) {
     delayMicroseconds(29 + (v & 15));
   }
   h.finalize(out, 32);
+  return true;
 }
 static void generateKeys() {
   logf("[KEYS] Génération de la paire Ed25519...");
-  gatherEntropy(privateKey);
+  if (!gatherEntropy(privateKey)) { logf("[KEYS] génération ANNULÉE : module Wi-Fi indisponible (pile dédiée) — aucune clé enregistrée"); memset(privateKey, 0, 32); return; }
   if (!PodEd::derivePublicKey(publicKey, privateKey)) { logf("[KEYS] génération ANNULÉE : calcul Ed25519 impossible (pile dédiée) — aucune clé enregistrée"); memset(privateKey, 0, 32); return; }   // POD_ED_STACK
   keysLoaded = true;
   saveKeysToEEPROM();
@@ -750,14 +807,20 @@ static bool doObsConfirm() {
 }
 
 // ─── REGISTER ──────────────────────────────────────────────────────────────
+// NETSTACK-WIFI-CALLS-FIX1 : chiffre hexadécimal minuscule (MAC « aa:bb:cc:dd:ee:ff » dans un char[18], sans snprintf)
+static char macHexDigit(uint8_t v) { return (char)(v < 10 ? '0' + v : 'a' + (v - 10)); }
+// L'adresse MAC vient du module Wi-Fi (pile dédiée, wifiMac) ; échec → chaîne VIDE : doRegister n'inscrit pas.
 static String macString() {
-  uint8_t m[6] = {0}; WiFi.macAddress(m);
-  char b[18]; snprintf(b, sizeof(b), "%02x:%02x:%02x:%02x:%02x:%02x", m[0], m[1], m[2], m[3], m[4], m[5]);
+  uint8_t m[6] = {0};
+  if (!wifiMac(m)) return String();
+  char b[18];
+  for (uint8_t i = 0; i < 6; i++) { b[3 * i] = macHexDigit(m[i] >> 4); b[3 * i + 1] = macHexDigit(m[i] & 15); b[3 * i + 2] = (i < 5) ? ':' : '\0'; }
   return String(b);
 }
 
 static bool doRegister() {
   const String mac = macString();
+  if (mac.length() == 0) { logf("[REGISTER] adresse MAC indisponible (module Wi-Fi, pile dédiée) : inscription ANNULÉE"); return false; }
   const String body = "{\"mac\":\"" + mac + "\",\"screens\":[\"" SCREEN_E27 "\",\"" SCREEN_OLED "\"],"
                       "\"firmware\":\"" FIRMWARE_VERSION "\","
                       "\"publicKey\":\"" + (keysLoaded ? bytesToHex(publicKey, 32) : String("")) + "\","
@@ -989,16 +1052,16 @@ void setup() {
   logf("[OLED] SSD1306 %s", oledReady ? "détecté" : "NON détecté");
   if (oledReady) oledStatus("Connexion Wi-Fi...");
 
-  if (WiFi.status() == WL_NO_MODULE) { logf("[WIFI] module absent"); while (true) delay(1000); }
-  logf("[WIFI] firmware du module: %s", WiFi.firmwareVersion());
+  if (wifiStatusT("status (module present ?)") == WL_NO_MODULE) { logf("[WIFI] module absent"); while (true) delay(1000); }
+  logf("[WIFI] firmware du module: %s", wifiFirmware().c_str());
   if (strlen(WIFI_SSID) == 0) logf("[WIFI] SSID vide : créer secrets.h (voir secrets.h.example)");
   int tries = 0;
-  while (WiFi.status() != WL_CONNECTED && tries++ < 4) {
-    WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
-    for (int i = 0; i < 20 && WiFi.status() != WL_CONNECTED; i++) delay(500);
+  while (wifiStatus() != WL_CONNECTED && tries++ < 4) {
+    wifiBegin();
+    for (int i = 0; i < 20 && wifiStatus() != WL_CONNECTED; i++) delay(500);
   }
-  if (WiFi.status() != WL_CONNECTED) { logf("[WIFI] échec — redémarrage"); delay(3000); NVIC_SystemReset(); }
-  logf("[WIFI] IP: %s", WiFi.localIP().toString().c_str());
+  if (wifiStatus() != WL_CONNECTED) { logf("[WIFI] échec — redémarrage"); delay(3000); NVIC_SystemReset(); }
+  logf("[WIFI] IP: %s", wifiIpString().c_str());
 
   if (!keysAlreadyGenerated()) generateKeys();
   else { loadKeysFromEEPROM(); logf("[KEYS] clés chargées: %s", bytesToHex(publicKey, 32).c_str()); }

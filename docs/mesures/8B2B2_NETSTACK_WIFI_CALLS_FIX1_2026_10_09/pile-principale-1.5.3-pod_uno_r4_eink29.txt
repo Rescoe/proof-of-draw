@@ -1,0 +1,8 @@
+# Profondeur de pile STATIQUE (octets) — pile principale du cœur UNO R4 = 1024 o (BSP_CFG_STACK_MAIN_BYTES = 0x400)
+Ed25519::derive               (bibliothèque seule, depuis son entrée)  1004 o   Ed2551915derivePublicKeyEPhPKh(400) > Ed255193mulERNS_5PointEPKmb(144) > Ed255193mulERNS_5PointEPKmS1_b(312) > Curve255195mul_PEPmPKmS2_(112) > Curve255196reduceEPmS0_h(36)
+Ed25519::sign                 (bibliothèque seule, depuis son entrée)  1148 o   Ed255194signEPhPKhS2_PKvj(544) > Ed255193mulERNS_5PointEPKmb(144) > Ed255193mulERNS_5PointEPKmS1_b(312) > Curve255195mul_PEPmPKmS2_(112) > Curve255196reduceEPmS0_h(36)
+Ed25519::verify               (bibliothèque seule, depuis son entrée)  1364 o   Ed255196verifyEPKhS1_PKvj(760) > Ed255193mulERNS_5PointEPKmb(144) > Ed255193mulERNS_5PointEPKmS1_b(312) > Curve255195mul_PEPmPKmS2_(112) > Curve255196reduceEPmS0_h(36)
+PILE DÉDIÉE : podedimpl::run (appelée par le trampoline)         1388 o   podedimplL3runEPv(24) > Ed255196verifyEPKhS1_PKvj(760) > Ed255193mulERNS_5PointEPKmb(144) > Ed255193mulERNS_5PointEPKmS1_b(312) > Curve255195mul_PEPmPKmS2_(112) > Curve255196reduceEPmS0_h(36)
+hal_entry > arduino_mainv > setup > _ZN5PodEd15derivePublicKeyEPhPKhP9PodEdInfo > PodEd (execute+malloc+trampoline)   380 o  marge 644 o
+hal_entry > arduino_mainv > loop > doValidatev > _ZN5PodEd4signEPhPKhS2_PKvjP9PodEdInfo > PodEd (execute+malloc+trampoline)   740 o  marge 284 o
+hal_entry > arduino_mainv > setup > PodEd (execute+malloc+trampoline)   332 o  marge 692 o
