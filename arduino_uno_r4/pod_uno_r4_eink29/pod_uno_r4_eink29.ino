@@ -173,17 +173,43 @@ static void podCanaryPaint() {
   *(volatile uint32_t*)lo = CANARY_MAGIC;
   *(volatile uint32_t*)(lo + 4) = (uint32_t)(hi - lo);
 }
-static void podCanaryReport(const char* tag) {
+// ── LOT 8B-2B-2 BOOT-FIX2 ── points de contrôle CUMULATIFS, NON destructifs (aucun repeint entre deux points : on garde le maximum et on isole le PREMIER passage destructeur) ──────────────────────────
+// Sortie par Serial.print (cadres minces) et JAMAIS par logf/vsnprintf : l'instrument ne doit pas creuser lui-même la pile qu'il mesure. Un point « silencieux » (verbose = false) n'imprime rien tant que tout va bien.
+// Toute ANOMALIE (marqueur détruit, marge < 128 o, écriture sous __StackLimit, SP hors de la pile) imprime un diagnostic complet puis POSE UN VERROU FATAL : boucle sans fin, plus aucun appel réseau,
+// pull, vote, ACK ni affichage ne peut s'exécuter (le verrou n'existe que dans ce build POD_CANARY = 1 ; aucune variable globale).
+static void podCanaryHex(uint32_t v) { Serial.print(F("0x")); for (int s = 28; s >= 0; s -= 4) Serial.print((unsigned)((v >> s) & 15), HEX); }
+static void podCanaryNum(const __FlashStringHelper* label, unsigned long v) { Serial.print(label); Serial.print(v); }
+static void __attribute__((noinline)) podCanaryCheck(const char* tag, bool verbose) {
   volatile uint8_t* lo = (volatile uint8_t*)&__StackLimit;
   const uint32_t magic = *(volatile uint32_t*)lo, painted = *(volatile uint32_t*)(lo + 4);
-  if (magic != CANARY_MAGIC || painted < 16 || painted > 1024) { logf("[CANARY] %s: ALERTE PILE — marqueur de fond écrasé ou absent : la pile principale a touché son extrémité basse → ARRÊT", tag); return; }
-  volatile uint8_t* p = lo + 8; volatile uint8_t* end = lo + painted;
-  while (p < end && *p == CANARY_PAINT) p++;
+  const bool magicOk = (magic == CANARY_MAGIC), paintedOk = (painted >= 16 && painted <= 1024);
+  volatile uint8_t* end = lo + (paintedOk ? painted : 512);                       // zone peinte (repli 512 o si la longueur enregistrée est elle-même détruite)
+  volatile uint8_t* p = lo + 8; while (p < end && *p == CANARY_PAINT) p++;       // plus bas octet modifié AU-DESSUS du marqueur
   const uint32_t used = (uint32_t)((uint8_t*)&__StackTop - (uint8_t*)p);
   const long margin = 1024L - (long)used;
-  logf("[CANARY] %s: pile utilisée au plus %lu o / 1024 (marge %ld o)%s | tas libre %lu o | RAM statique %lu o", tag, (unsigned long)used, margin, (p == end ? " [aucune écriture sous le point de peinture]" : ""),
-       (unsigned long)freeHeapBytes(), (unsigned long)((uint8_t*)&__HeapBase - (uint8_t*)0x20000000));
-  if (margin < 128) logf("[CANARY] %s: ALERTE PILE — marge < 128 o → ARRÊT", tag);
+  const uint32_t sp = (uint32_t)(uintptr_t)__builtin_frame_address(0);
+  const bool spOk = sp > (uint32_t)(uintptr_t)&__StackLimit && sp <= (uint32_t)(uintptr_t)&__StackTop;
+  const uint32_t below = stackDepthBytes();                                        // pile + écritures SOUS __StackLimit (zone peinte 0xA5 de paintStack) : > 1024 = débordement
+  const bool alert = !magicOk || !paintedOk || margin < 128 || below > 1024 || !spOk;
+  if (!alert && !verbose) return;                                                  // point silencieux : aucun appel de bibliothèque tant que tout va bien
+  const uint32_t brk = (uint32_t)(uintptr_t)sbrk(0), lim = (uint32_t)(uintptr_t)&__HeapLimit;
+  Serial.print(F("[CANARY] ")); Serial.print(tag); Serial.print(alert ? F(" : ALERTE PILE utilisee au plus ") : F(" : pile utilisee au plus "));
+  Serial.print(used); podCanaryNum(F(" o / 1024 (marge "), (unsigned long)(margin < 0 ? 0 : margin)); Serial.print(margin < 0 ? F(" o, NEGATIVE) | SP=") : F(" o) | SP=")); podCanaryHex(sp); podCanaryNum(F(" | ecrit sous la limite ou pile max "), below);
+  podCanaryNum(F(" | tas libre "), freeHeapBytes()); podCanaryNum(F(" | sbrk->limite "), (lim > brk ? lim - brk : 0)); Serial.println();
+  if (!alert) return;
+  struct mallinfo mi = mallinfo();
+  Serial.print(F("[CANARY]   marqueur=")); podCanaryHex(magic); Serial.print(magicOk ? F(" (OK)") : F(" (DETRUIT, attendu 0x434E5259)")); Serial.print(F(" longueur peinte=")); podCanaryHex(painted); Serial.print(paintedOk ? F(" (OK)") : F(" (INCOHERENTE)"));
+  Serial.print(F(" | plus bas octet modifie au-dessus du marqueur : ")); if (p == end) Serial.print(F("AUCUN (la peinture est intacte : ecriture isolee ou venue d'ailleurs que de la pile)")); else { podCanaryHex((uint32_t)(uintptr_t)p); podCanaryNum(F(" = marqueur+"), (unsigned long)(p - lo)); }
+  Serial.println();
+  Serial.print(F("[CANARY]   __StackLimit=")); podCanaryHex((uint32_t)(uintptr_t)&__StackLimit); Serial.print(F(" __StackTop=")); podCanaryHex((uint32_t)(uintptr_t)&__StackTop); Serial.print(F(" __HeapBase=")); podCanaryHex((uint32_t)(uintptr_t)&__HeapBase);
+  Serial.print(F(" sbrk(0)=")); podCanaryHex(brk); Serial.print(F(" SP")); Serial.println(spOk ? F(" dans la pile") : F(" HORS de la pile"));
+  podCanaryNum(F("[CANARY]   mallinfo : arene="), (unsigned long)mi.arena); podCanaryNum(F(" utilise="), (unsigned long)mi.uordblks); podCanaryNum(F(" libre="), (unsigned long)mi.fordblks); Serial.println();
+  Serial.print(F("[CANARY]   octets [__StackLimit-8, +24[ : "));
+  for (int i = -8; i < 24; i++) { const uint8_t b = lo[i]; if (b < 16) Serial.print('0'); Serial.print((unsigned)b, HEX); Serial.print(i == -1 ? F(" | ") : F(" ")); }
+  Serial.println();
+  // VERROU FATAL : aucune sortie de cette boucle ; aucun delay(), aucun appel réseau, aucune écriture EEPROM
+  unsigned long t = millis() - 10000UL;
+  for (;;) if (millis() - t >= 10000UL) { t = millis(); Serial.print(F("[CANARY] ARRET FATAL (verrou) apres '")); Serial.print(tag); Serial.println(F("' : plus aucun pull, vote, ACK ni affichage. Debrancher la carte, reflasher le firmware stable.")); }
 }
 #endif
 static void reportMem(const char* tag) { logf("[MEM] %s: tas libre %lu o, pile max ~%lu o", tag, (unsigned long)freeHeapBytes(), (unsigned long)stackDepthBytes()); }
@@ -334,11 +360,17 @@ struct Conn {
   /** Connecte, envoie la requête, lit les en-têtes. Retourne le code HTTP, -2 = connexion TLS impossible, -1 = réponse illisible. */
   int request(const char* method, const String& path, const String* body) {
     if (!client.connect(SERVER_HOST, 443)) return -2;
+#if POD_RENDER_V1 && POD_CANARY
+  podCanaryCheck("  http: apres connect/TLS", false);
+#endif
     String req = String(method) + " " + path + " HTTP/1.1\r\nHost: " SERVER_HOST "\r\nUser-Agent: pod-r4/" FIRMWARE_VERSION "\r\nAccept: */*\r\nConnection: close\r\n";
     if (body) req += "Content-Type: application/json\r\nContent-Length: " + String(body->length()) + "\r\n";
     req += "\r\n";
     if (body) req += *body;
     client.print(req);
+#if POD_RENDER_V1 && POD_CANARY
+  podCanaryCheck("  http: apres envoi de la requete", false);
+#endif
     return rd.readHeaders();
   }
 };
@@ -352,7 +384,13 @@ static int httpCall(const char* method, const String& path, const String* body, 
   if (code < 0) { if (code == -2) logf("[HTTP] connexion TLS impossible (voir l'en-tête du sketch)"); return code; }
   size_t len = 0;
   const bool complete = c.rd.readBodyString(g_body, sizeof(g_body), &len);
+#if POD_RENDER_V1 && POD_CANARY
+  podCanaryCheck("  http: apres lecture du corps", false);
+#endif
   c.client.stop();
+#if POD_RENDER_V1 && POD_CANARY
+  podCanaryCheck("  http: apres stop", false);
+#endif
   if (!complete) { logf("[HTTP] corps incomplet ou > %u octets", (unsigned)sizeof(g_body) - 1); return -3; }
   resp = String(g_body);
   return code;
@@ -633,11 +671,11 @@ static bool doFetchFrame(const String& frameId, const String& frameSource) {
   pendingCandidateId = "";
   logf("[FRAME] OK en %lu ms (frameId=%s source=%s)", millis() - t0, frameId.c_str(), frameSource.c_str());
 #if POD_RENDER_V1 && POD_CANARY
-  podCanaryReport("après affichage");
+  podCanaryCheck("apres affichage", true);
 #endif
   ackFrame(frameId);
 #if POD_RENDER_V1 && POD_CANARY
-  podCanaryReport("après ACK");
+  podCanaryCheck("apres ACK", true);
 #endif
   return true;
 }
@@ -766,7 +804,7 @@ static bool doPull() {
   doFetchFrame(newFrameId, newFrameSource);          // échec : on retourne quand même true (pas de boucle pull→échec→pull)
   reportMem("après pull");
 #if POD_RENDER_V1 && POD_CANARY
-  podCanaryReport("après pull");
+  podCanaryCheck("apres pull (fin de doPull)", true);
 #endif
   return true;
 }
@@ -898,11 +936,15 @@ void setup() {
   logf("[CANARY] ===== BUILD LOCAL TEMPORAIRE DE CANARI — rendu v1 ACTIF (POD_RENDER_V1=1, mode=%u) — NE PAS DÉPLOYER, NE PAS COMMITER LE BINAIRE =====", (unsigned)POD_RENDER_MODE_DEFAULT);
   logf("[CANARY] firmware annoncé au serveur : %s (inchangé) ; pile principale [0x%08lx, 0x%08lx] ; SP=0x%08lx", FIRMWARE_VERSION, (unsigned long)&__StackLimit, (unsigned long)&__StackTop, (unsigned long)__builtin_frame_address(0));
   podCanaryPaint();
-  podCanaryReport("boot");
+  podCanaryCheck("1 boot (apres peinture)", true);
+  podCanaryCheck("1b calibration : meme profondeur, juste apres un rapport (cout de l'instrument)", true);
 #endif
 
   epd.begin();
   clearBothPlanes();
+#if POD_RENDER_V1 && POD_CANARY
+  podCanaryCheck("2 e-ink (begin + clearBothPlanes)", true);
+#endif
 
   if (WiFi.status() == WL_NO_MODULE) { logf("[WIFI] module absent"); while (true) delay(1000); }
   logf("[WIFI] firmware du module: %s", WiFi.firmwareVersion());
@@ -914,10 +956,19 @@ void setup() {
   }
   if (WiFi.status() != WL_CONNECTED) { logf("[WIFI] échec — redémarrage"); delay(3000); NVIC_SystemReset(); }
   logf("[WIFI] IP: %s", WiFi.localIP().toString().c_str());
+#if POD_RENDER_V1 && POD_CANARY
+  podCanaryCheck("3 wifi connecte", true);
+#endif
 
   if (!keysAlreadyGenerated()) generateKeys();
   else { loadKeysFromEEPROM(); logf("[KEYS] clés chargées: %s", bytesToHex(publicKey, 32).c_str()); }
+#if POD_RENDER_V1 && POD_CANARY
+  podCanaryCheck("4 cles chargees", true);
+#endif
   selfTestEd25519();
+#if POD_RENDER_V1 && POD_CANARY
+  podCanaryCheck("5 selfTestEd25519", true);
+#endif
 
   currentBlockHash = loadBlockHashFromEEPROM();
   {
@@ -928,19 +979,34 @@ void setup() {
   lastFrameId = loadFrameId();                       // œuvre déjà à l'écran avant le redémarrage (l'e-ink la conserve)
   if (lastFrameId.length() > 0) logf("[BOOT] œuvre déjà affichée : %s", lastFrameId.c_str());
 
+#if POD_RENDER_V1 && POD_CANARY
+  podCanaryCheck("6a avant doRegister", true);
+#endif
   while (!registered) { if (doRegister()) break; delay(5000); }
+#if POD_RENDER_V1 && POD_CANARY
+  podCanaryCheck("6b apres doRegister", true);
+#endif
   if (paired) {
     logf("[BOOT] premier pull immédiat");
+#if POD_RENDER_V1 && POD_CANARY
+  podCanaryCheck("7a avant doPull", true);
+#endif
     doPull();
+#if POD_RENDER_V1 && POD_CANARY
+  podCanaryCheck("7b apres doPull", true);
+#endif
   }
   lastPullMs = millis(); lastValidateMs = millis();
   logf("[BOOT] prêt — pull toutes les %lu s", PULL_INTERVAL / 1000UL);
 #if POD_RENDER_V1 && POD_CANARY
-  podCanaryReport("prêt");
+  podCanaryCheck("8 pret", true);
 #endif
 }
 
 void loop() {
+#if POD_RENDER_V1 && POD_CANARY
+  podCanaryCheck("loop", false);
+#endif
   const unsigned long now = millis();
 
   if (!registered) { if (!doRegister()) { delay(5000); return; } }

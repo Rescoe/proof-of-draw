@@ -1,0 +1,94 @@
+// host/canary_check_harness.cpp — LOT8B2B2-CANARY-BOOT-FIX2 : exécute, sur l'hôte, le CODE RÉEL de l'instrument de canari (podCanaryPaint / podCanaryCheck / paintStack / stackDepthBytes / freeHeapBytes)
+// extrait mot pour mot du sketch arduino_uno_r4/pod_uno_r4_eink29/pod_uno_r4_eink29.ino par tests/canaryBootFix2.test.ts (fichier « canary_extract.inc »), contre une mémoire simulée :
+//   g_mem[0, 2048[ = haut du tas réservé (zone peinte 0xA5 par paintStack, SOUS __StackLimit) ; g_mem[2048, 3072[ = pile principale de 1 024 o ; __StackLimit = g_mem+2048, __StackTop = g_mem+3072.
+// Sortie : une ligne « Sn <statut> » par scénario, lue par le test. Ce que l'hôte PROUVE : la logique de détection (marqueur, marge, écriture sous la limite, SP hors pile), le caractère NON destructif des
+// points de contrôle, le silence des points silencieux et le VERROU FATAL (la fonction ne revient jamais). Ce qu'il NE PROUVE PAS : l'état réel de la pile sur la carte.
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <cstdint>
+#include <string>
+
+struct Halted { int prints; };
+struct __FlashStringHelper;
+#define F(x) (reinterpret_cast<const __FlashStringHelper*>(x))
+static const int HEX = 16;
+static std::string g_out;
+static int g_fatalPrints = 0;
+struct SerialShim {
+  void print(const char* s) { g_out += s; if (std::strstr(s, "ARRET FATAL") && ++g_fatalPrints >= 3) throw Halted{g_fatalPrints}; }
+  void print(const __FlashStringHelper* s) { print(reinterpret_cast<const char*>(s)); }
+  void print(unsigned long v) { g_out += std::to_string(v); }
+  void print(unsigned v) { g_out += std::to_string(v); }
+  void print(int v) { g_out += std::to_string(v); }
+  void print(long v) { g_out += std::to_string(v); }
+  void print(char c) { g_out += c; }
+  void print(unsigned v, int base) { char b[16]; std::snprintf(b, sizeof(b), base == 16 ? "%X" : "%u", v); g_out += b; }
+  void println() { g_out += "\n"; }
+  void println(const char* s) { print(s); g_out += "\n"; }
+  void println(const __FlashStringHelper* s) { print(s); g_out += "\n"; }
+} Serial;
+
+static uint8_t g_mem[3072 + 64];
+static long g_spoff = 3072 - 300;                       // SP simulé (profondeur courante : 300 o)
+static unsigned long g_ms = 0;
+static unsigned long millis() { g_ms += 5000; return g_ms; }
+struct mallinfo { int arena; int uordblks; int fordblks; };
+static struct mallinfo mallinfo() { struct mallinfo m = { 4096, 164, 8532 }; return m; }
+static char* sbrk(int) { return reinterpret_cast<char*>(g_mem + 200); }
+
+#define __StackLimit (reinterpret_cast<char*>(g_mem)[2048])
+#define __StackTop (reinterpret_cast<char*>(g_mem)[3072])
+#define __HeapBase (reinterpret_cast<char*>(g_mem)[100])
+#define __HeapLimit (reinterpret_cast<char*>(g_mem)[2048])
+#define __builtin_frame_address(x) (static_cast<void*>(g_mem + g_spoff))
+
+#include "canary_extract.inc"
+
+static void fresh(long sp) { std::memset(g_mem, 0, sizeof(g_mem)); g_out.clear(); g_fatalPrints = 0; g_spoff = sp; paintStack(); podCanaryPaint(); }
+// exécute un point de contrôle ; retourne "halt" si le verrou fatal s'est posé (la fonction ne revient pas), "ret" sinon
+static const char* check(const char* tag, bool verbose) { try { podCanaryCheck(tag, verbose); } catch (const Halted&) { return "halt"; } return "ret"; }
+static bool has(const char* s) { return g_out.find(s) != std::string::npos; }
+
+int main() {
+  int n = 0;
+  auto line = [&](const char* name, bool ok, const char* extra) { std::printf("S%d %s %s%s%s\n", ++n, ok ? "OK" : "ECART", name, *extra ? " | " : "", extra); };
+  // S1 : pile saine, point verbeux : une ligne « pile », pas d'alerte, retour normal, marge = zone peinte
+  fresh(3072 - 300);
+  { const char* r = check("boot", true); line("pile saine : retour normal + ligne de mesure + marge 532", !std::strcmp(r, "ret") && has("[CANARY] boot : pile utilisee au plus 492 o / 1024 (marge 532 o)") && !has("ALERTE") && !has("ARRET FATAL"), g_out.c_str()); }
+  // S2 : point silencieux, tout va bien : aucune sortie
+  fresh(3072 - 300);
+  { const char* r = check("silencieux", false); line("point silencieux sain : aucune sortie", !std::strcmp(r, "ret") && g_out.empty(), g_out.c_str()); }
+  // S3 : non destructif : la mémoire est identique avant/après N points de contrôle (jamais de repeint)
+  fresh(3072 - 300);
+  { uint8_t snap[sizeof(g_mem)]; std::memcpy(snap, g_mem, sizeof(g_mem)); check("a", true); check("b", false); check("c", true); line("aucun repeint : mémoire identique après 3 points", !std::memcmp(snap, g_mem, sizeof(g_mem)), ""); }
+  // S4 : usage cumulatif : 700 o écrits puis un 2e point après un usage MOINS profond : le maximum est conservé (700), pas remis à zéro
+  fresh(3072 - 300);
+  { g_mem[3072 - 700] = 0x11; check("profond", true); const std::string first = g_out; g_out.clear(); g_mem[3072 - 200] = 0x22; check("moins profond", true);
+    line("maximum cumulatif conservé (700 o puis toujours 700 o)", first.find("utilisee au plus 700 o") != std::string::npos && g_out.find("utilisee au plus 700 o") != std::string::npos && g_out.find("ALERTE") == std::string::npos, ""); }
+  // S5 : marge insuffisante (900 o → marge 124 < 128) : alerte + diagnostic + VERROU FATAL
+  fresh(3072 - 300);
+  { g_mem[3072 - 900] = 0x33; const char* r = check("trop profond", true);
+    line("marge 124 o : alerte, diagnostic complet, verrou fatal (ne revient jamais)", !std::strcmp(r, "halt") && has("ALERTE PILE utilisee au plus 900 o") && has("marqueur=0x434E5259 (OK)") && has("mallinfo : arene=4096") && has("octets [__StackLimit-8, +24[") && has("ARRET FATAL (verrou) apres 'trop profond'"), ""); }
+  // S6 : marqueur détruit mais peinture intacte au-dessus : alerte, « AUCUN » (écriture isolée, pas une descente de la pile)
+  fresh(3072 - 300);
+  { g_mem[2048 + 1] = 0x00; const char* r = check("marqueur seul", false);
+    line("marqueur détruit seul : alerte + AUCUN octet modifié au-dessus + verrou", !std::strcmp(r, "halt") && has("DETRUIT") && has("AUCUN (la peinture est intacte"), ""); }
+  // S7 : écriture SOUS __StackLimit (zone peinte 0xA5 du haut du tas) : alerte (débordement)
+  fresh(3072 - 300);
+  { g_mem[2048 - 10] = 0x77; const char* r = check("sous la limite", false);
+    line("écriture sous __StackLimit : alerte + verrou (pile max 1034)", !std::strcmp(r, "halt") && has("ALERTE PILE") && has("ecrit sous la limite ou pile max 1034"), ""); }
+  // S8 : SP hors de la pile
+  fresh(3072 - 300);
+  { g_spoff = 100; const char* r = check("sp", false); line("SP hors de la pile : alerte + verrou", !std::strcmp(r, "halt") && has("HORS de la pile"), ""); }
+  // S9 : longueur peinte détruite
+  fresh(3072 - 300);
+  { g_mem[2048 + 4] = 0; g_mem[2048 + 5] = 0; g_mem[2048 + 6] = 0; g_mem[2048 + 7] = 0; const char* r = check("longueur", false); line("longueur peinte détruite : alerte INCOHERENTE + verrou", !std::strcmp(r, "halt") && has("INCOHERENTE"), ""); }
+  // S10 : le verrou se répète (boucle sans fin) : au moins 3 messages avant l'arrêt du harnais
+  fresh(3072 - 300);
+  { g_mem[3072 - 1000] = 0x44; const char* r = check("boucle", false); line("verrou persistant : message répété dans une boucle sans fin", !std::strcmp(r, "halt") && g_fatalPrints >= 3, ""); }
+  // S11 : un point silencieux n'imprime RIEN et ne compte pas comme appel de bibliothèque tant que tout va bien, même profond mais sain (800 o, marge 224)
+  fresh(3072 - 300);
+  { g_mem[3072 - 800] = 0x55; const char* r = check("profond sain silencieux", false); line("profond mais sain (marge 224) : silencieux", !std::strcmp(r, "ret") && g_out.empty(), ""); }
+  return 0;
+}

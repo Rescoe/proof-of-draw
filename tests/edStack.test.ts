@@ -22,7 +22,9 @@ const stripComments = (s: string) => s.replace(/\/\*[\s\S]*?\*\//g, "").replace(
 for (const sk of ED_SKETCHES) {
   test(`${sk} : en annulant les modifications EXACTES de la table (tests/helpers/edStackEdits.ts), on retrouve le sketch d'avant le correctif au texte près`, () => {
     const now = read(`arduino_uno_r4/${sk}/${sk}.ino`), before = read(`${BACKUP}/${sk}/${sk}.ino`);
-    assert.equal(undoEdStack(now, sk), before);
+    // l'instrument de canari (blocs « POD_RENDER_V1 && POD_CANARY », absents du chemin désactivé) a évolué depuis (BOOT-FIX2) : il est exclu de la comparaison, comme dans la vue « POD_RENDER_V1 = 0 »
+    const noCanary = (s: string) => s.replace(/#if POD_RENDER_V1 && POD_CANARY\n[\s\S]*?\n#endif\n/g, "");
+    assert.equal(noCanary(undoEdStack(now, sk)), noCanary(before));
     for (const e of editsFor(sk)) assert.equal(now.split(e.neu).length - 1, 1, `${sk} : « ${e.id} » doit apparaître une seule fois`);
   });
 

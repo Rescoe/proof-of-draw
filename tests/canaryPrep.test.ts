@@ -55,7 +55,7 @@ test("build de canari : POD_CANARY = 0 par défaut, jamais actif sans POD_RENDER
   const stripped = src.replace(/#if POD_RENDER_V1 && POD_CANARY\n[\s\S]*?\n#endif\n/g, "").replace(/\/\/.*$/gm, "");   // hors blocs gardés et hors commentaires
   assert.doesNotMatch(stripped, /podCanary|\[CANARY\]|CANARY_PAINT|CANARY_MAGIC/, "du code de canari existe hors des blocs gardés");
   const blocks = [...src.matchAll(/#if POD_RENDER_V1 && POD_CANARY\n([\s\S]*?)\n#endif\n/g)].map((m) => m[1]).join("\n");
-  assert.ok((src.match(/#if POD_RENDER_V1 && POD_CANARY/g) ?? []).length === 7);
+  assert.ok((src.match(/#if POD_RENDER_V1 && POD_CANARY/g) ?? []).length >= 20, "les points de contrôle de BOOT-FIX2 sont chacun dans un bloc gardé (tests/canaryBootFix2.test.ts)");
   const code = blocks.replace(/\/\/.*$/gm, "");
   assert.doesNotMatch(code, /ackFrame\(|httpCall\(|Conn\b|WiFi|\.request\(|persistFrameId|EEPROM|NVIC_SystemReset|delay\(/, "le canari ne touche ni réseau, ni EEPROM, ni redémarrage");
   assert.doesNotMatch(code, /^static (?!void|const)/m, "aucune variable globale dans l'instrumentation (marge statique du 2,9″ : 528 o)");
