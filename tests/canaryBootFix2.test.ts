@@ -85,9 +85,15 @@ function extract(): string {
   const log = /struct LogJob \{[^\n]*\n(?:static void logfEmit[\s\S]*?\n\}\n)/.exec(src)![0];   // LogJob + logfEmit (utilisés par la sonde de la pile de journal)
   return `${pre}\n${log}\n${can}\n`;
 }
-function build(extra: (s: string) => string = (s) => s): string {
+/** Le CODE RÉEL de macString() tel que compilé quand POD_RENDER_V1 && POD_CANARY (directives des blocs de canari retirées, code conservé). */
+function extractMac(): string {
+  const fn = /static String macString\(\) \{[\s\S]*?\n\}\n/.exec(read(INO))![0];
+  return fn.replace(/^#if POD_RENDER_V1 && POD_CANARY\n/gm, "").replace(/^#endif\n/gm, "");
+}
+function build(extra: (s: string) => string = (s) => s, extraMac: (s: string) => string = (s) => s): string {
   const dir = fs.mkdtempSync(path.join(tmp, "b-"));
   fs.writeFileSync(path.join(dir, "canary_extract.inc"), extra(extract()));
+  fs.writeFileSync(path.join(dir, "mac_extract.inc"), extraMac(extractMac()));
   const out = path.join(dir, path.basename(exe));
   compileHarness(choice.path!, path.join(root, "consensus-pod", "host", "canary_check_harness.cpp"), out, [`-I${dir}`]);
   return out;
@@ -97,7 +103,7 @@ test("EXÉCUTION HÔTE du code extrait du sketch : pile saine → retour + mesur
   const r = runProcess(build(), []);
   assert.equal(r.status, 0, r.stdout + r.stderr);
   const lines = r.stdout.trim().split("\n").filter((l) => /^S\d+ /.test(l));
-  assert.equal(lines.length, 18, r.stdout);
+  assert.equal(lines.length, 23, r.stdout);
   for (const l of lines) assert.match(l, /^S\d+ OK /, l);
 });
 
@@ -123,9 +129,9 @@ test("CONTRÔLES NÉGATIFS : un instrument qui repeint, qui ne pose pas de verro
 test("NETSTACK-FIX3 : points R0-R2 de doRegister (avant la transaction), phase PodNet contrôlée AVANT le point A, sonde du journal fatale sur GUARD/MARGIN", () => {
   const src = read(INO), code = strip(src);
   const dr = code.slice(code.indexOf("static bool doRegister()"), code.indexOf("\n}\n", code.indexOf("static bool doRegister()")));
-  const i0 = dr.indexOf("R0: entree de doRegister (silencieux)"), im = dr.indexOf("macString()"), i1 = dr.indexOf("R1: apres macString / macAddress du module (silencieux)"), i2 = dr.indexOf("R2: avant httpCall, corps construit (silencieux)"), ih = dr.indexOf('httpCall("POST", "/api/register"');
-  assert.ok(i0 >= 0 && i0 < im && im < i1 && i1 < i2 && i2 < ih, "R0 < macString < R1 < R2 < httpCall");
-  for (const p of ["R0", "R1", "R2"]) assert.match(dr, new RegExp(`podCanaryCheck\\("  ${p}:[^"]*\\(silencieux\\)", false\\);`));
+  const i0 = dr.indexOf("R0: entree de doRegister (silencieux)"), im = dr.indexOf("macString()"), iMp = dr.indexOf("podCanaryMacPhase(mac);"), i1 = dr.indexOf("R1: apres macString (silencieux ; ne prouve PAS a lui seul le module Wi-Fi"), i2 = dr.indexOf("R2: avant httpCall, corps construit (silencieux)"), ih = dr.indexOf('httpCall("POST", "/api/register"');
+  assert.ok(i0 >= 0 && i0 < im && im < iMp && iMp < i1 && i1 < i2 && i2 < ih, "R0 < macString < rapport des sous-phases < R1 < R2 < httpCall");
+  for (const p of ["R0", "R1", "R2"]) assert.match(dr, new RegExp(`podCanaryCheck\\("  ${p}:[^"]*silencieux[^"]*", false\\);`));
   const hc = code.slice(code.indexOf("static int httpCall"), code.indexOf("\n}\n", code.indexOf("static int httpCall")));
   assert.ok(hc.indexOf("podCanaryPhase(ni.pad[0]);") > hc.indexOf("netHttpRaw(") && hc.indexOf("podCanaryPhase(ni.pad[0]);") < hc.indexOf("A: apres la transaction"), "la phase est contrôlée juste après la transaction, AVANT A");
   assert.match(code, /static void __attribute__\(\(noinline\)\) podCanaryNet\(const char\* tag, const PodNetInfo& ni, bool ran\) \{\s*podCanaryPhase\(ni\.pad\[0\]\);/);
@@ -134,4 +140,53 @@ test("NETSTACK-FIX3 : points R0-R2 de doRegister (avant la transaction), phase P
   const pl = /static void podCanaryPrintLog\(void\* v\) \{[\s\S]*?\n\}\n/.exec(code)![0];
   assert.match(pl, /if \(c\.li\.err == POD_NET_GUARD \|\| c\.li\.err == POD_NET_MARGIN\) podCanaryHalt\("sonde de la pile de journal"\);/);
   assert.match(code, /podCanaryEmit\(podCanaryPrintLog, &c\);\s*if \(c\.li\.err == POD_NET_GUARD \|\| c\.li\.err == POD_NET_MARGIN\) for \(;;\)/);
+});
+
+test("NETSTACK-FIX3-R1 : sous-phases de macString() — silencieuses (aucune E/S, aucun logf, malloc, mallinfo ni String supplémentaire), dans des blocs de canari, texte hors canari INCHANGÉ ; rapport après le retour", () => {
+  const src = read(INO);
+  const fnRaw = /static String macString\(\) \{[\s\S]*?\n\}\n/.exec(src)![0];
+  // hors blocs de canari : exactement la fonction d'avant
+  const outside = fnRaw.replace(/#if POD_RENDER_V1 && POD_CANARY\n[\s\S]*?\n#endif\n/g, "");
+  assert.equal(outside, 'static String macString() {\n  uint8_t m[6] = {0}; WiFi.macAddress(m);\n  char b[18]; snprintf(b, sizeof(b), "%02x:%02x:%02x:%02x:%02x:%02x", m[0], m[1], m[2], m[3], m[4], m[5]);\n  return String(b);\n}\n');
+  const blocks = [...fnRaw.matchAll(/#if POD_RENDER_V1 && POD_CANARY\n([\s\S]*?)\n#endif\n/g)].map((x) => strip(x[1]).replace(/\s+/g, " ").trim());
+  assert.equal(blocks.length, 3, "une sonde après l'appel au module, une après snprintf, une après la construction du String");
+  // ordre : sonde 1 juste après WiFi.macAddress ; sonde 2 juste après snprintf ; sonde 3 après la construction du String
+  const iWifi = fnRaw.indexOf("WiFi.macAddress(m);"), iP1 = fnRaw.indexOf("macPh = 1;"), iSn = fnRaw.indexOf("snprintf(b,"), iP2 = fnRaw.indexOf("macPh = 2;"), iS = fnRaw.indexOf("String s(b);"), iP3 = fnRaw.indexOf("macPh = 3;");
+  assert.ok(iWifi < iP1 && iP1 < iSn && iSn < iP2 && iP2 < iS && iS < iP3, "ordre des sondes");
+  assert.match(blocks[0], /^uint8_t macPh = 0; if \(\*\(volatile uint32_t\*\)&__StackLimit != 0x434E5259UL\) macPh = 1;$/);
+  assert.match(blocks[1], /^if \(macPh == 0 && \*\(volatile uint32_t\*\)&__StackLimit != 0x434E5259UL\) macPh = 2;$/);
+  // sonde 3 : le String retourné est construit UNE fois (celui qui est retourné), puis marqué en place ; rien d'autre
+  assert.match(blocks[2], /^\{ String s\(b\); if \(macPh == 0 && \*\(volatile uint32_t\*\)&__StackLimit != 0x434E5259UL\) macPh = 3; if \(macPh\) \{ s\.setCharAt\(0, '!'\); s\.setCharAt\(1, \(char\)\('0' \+ macPh\)\); \} return s; \}$/);
+  for (const b of blocks) assert.doesNotMatch(b.replace(/String s\(b\);/, ""), /Serial|logf|printf|malloc|calloc|realloc|new\b|mallinfo|String|delay|millis|freeHeapBytes|podCanary/, `sonde non silencieuse : ${b}`);
+  // rapport APRÈS le retour : doRegister lit le String retourné ; la fonction de rapport ne passe que par la pile de journal puis verrou
+  const rep = strip(/static void __attribute__\(\(noinline\)\) podCanaryMacPhase[\s\S]*?\n\}\n/.exec(src)![0]);
+  assert.match(rep, /if \(mac\.length\(\) < 2 \|\| mac\.charAt\(0\) != '!'\) return;[\s\S]*podCanaryEmit\(podCanaryPrintMac, &c\);\s*for \(;;\) \{ __asm volatile\("nop"\); \}/);
+  const pm = strip(/static void podCanaryPrintMac\(void\* v\) \{[\s\S]*?\n\}\n/.exec(src)![0]);
+  assert.match(pm, /podCanaryHalt\("macString sous-phase"\);/);
+  // le texte dit que R1 seul ne prouve pas le module Wi-Fi
+  assert.match(src, /R1: apres macString \(silencieux ; ne prouve PAS a lui seul le module Wi-Fi/);
+  // aucun autre firmware ne porte ces sondes
+  for (const sk of ["pod_uno_r4_eink27", "pod_uno_r4_eink27_oled", "pod_uno_r4_tft18", "pod_uno_r4"]) assert.doesNotMatch(read(`arduino_uno_r4/${sk}/${sk}.ino`), /macPh|podCanaryMacPhase/);
+});
+
+test("NETSTACK-FIX3-R1 : CONTRÔLES NÉGATIFS des sous-phases de macString — sonde supprimée, sonde qui écrase la première, rapport qui ne s'arrête pas : REFUSÉS par le harnais hôte", { skip }, () => {
+  const mutants: Array<[string, string, string]> = [
+    ["sonde 1 supprimée", "macPh = 1;", "macPh = 0;"],
+    ["sonde 2 supprimée", "macPh = 2;", "macPh = 0;"],
+    ["sonde 3 supprimée", "macPh = 3;", "macPh = 0;"],
+    ["la 2e sonde écrase la 1re (pas « première seulement »)", "if (macPh == 0 && *(volatile uint32_t*)&__StackLimit != 0x434E5259UL) macPh = 2;", "if (*(volatile uint32_t*)&__StackLimit != 0x434E5259UL) macPh = 2;"],
+    ["le String retourné n'est pas marqué", "s.setCharAt(0, '!');", ""],
+  ];
+  for (const [name, a, b] of mutants) {
+    const base = extractMac();
+    assert.equal(base.split(a).length >= 2, true, `mutation « ${name} » : motif introuvable`);
+    const r = runProcess(build((s) => s, (s) => s.split(a).join(b)), [], 20000);
+    const bad = r.status !== 0 || r.stdout.split("\n").some((l) => /^S\d+ ECART /.test(l));
+    assert.ok(bad, `mutation « ${name} » NON détectée`);
+  }
+  // rapport qui ne verrouille pas : retire le verrou final de podCanaryMacPhase (dans le code d'instrument)
+  const a = 'podCanaryEmit(podCanaryPrintMac, &c);\n  for (;;) { __asm volatile("nop"); }';
+  assert.equal(extract().split(a).length, 2, "motif du rapport");
+  const r = runProcess(build((s) => s.split(a).join("podCanaryEmit(podCanaryPrintMac, &c);").split("podCanaryHalt(\"macString sous-phase\");").join("")), [], 20000);
+  assert.ok(r.status !== 0 || r.stdout.split("\n").some((l) => /^S\d+ ECART /.test(l)), "un rapport qui ne s'arrête pas n'est pas détecté");
 });

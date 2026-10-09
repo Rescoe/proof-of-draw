@@ -144,11 +144,10 @@ static char g_body[3072];                          // corps JSON des réponses
 // POD_LOG_STACK (NETSTACK-FIX2) : le formatage (vsnprintf) et l'écriture USB (Serial) descendent d'environ 450 o sous leur appelant ; appelés depuis setup → doRegister → httpCall (608 o de cadres) ils dépassent
 // les 1 024 o de la pile principale (canari du 09/10/2026 : 24 o sous __StackLimit). Sur la pile PRINCIPALE, logf s'exécute donc sur une petite pile dédiée (POD_LOG_STACK_TOTAL) ; sur une pile dédiée (dans une
 // transaction réseau), directement. Échec (malloc, garde, marge) : la ligne est ABANDONNÉE — un journal ne doit jamais arrêter le firmware.
-// NETSTACK-FIX3 : GUARD = la garde de la pile de journal a été écrasée → le voisin au tas est corrompu : faute persistante, ARRÊT SÛR (aucun pull, vote, ACK ni affichage), jamais « une ligne perdue ».
+// NETSTACK-FIX3 : GUARD = la garde de la pile de journal a été écrasée → le voisin au tas est corrompu : faute persistante, ARRÊT SÛR SILENCIEUX (aucun pull, vote, ACK ni affichage ; la carte se tait), jamais « une ligne perdue ».
 // MARGIN (garde intacte, marge < 128 o) : fatal dans le build de canari seulement ; en production la ligne a été écrite et on continue (NOMEM : ligne abandonnée).
 static void __attribute__((noinline, noreturn)) logfSafeStop() {
-  Serial.println(F("[LOG] faute memoire persistante de la pile de journal (garde ecrasee) : ARRET SUR - aucun pull, vote, ACK ni affichage. Debrancher la carte, reflasher le firmware stable."));
-  for (;;) { __asm volatile("nop"); }
+  for (;;) { __asm volatile("nop"); }              // NETSTACK-FIX3-R1 : AUCUNE E/S, AUCUNE allocation, AUCUN retour (appelée depuis un cadre quelconque de la pile principale : un Serial.println ici peut lui-même la déborder)
 }
 struct LogJob { const char* fmt; va_list* ap; };
 static void logfEmit(void* p) {
@@ -272,6 +271,20 @@ static void __attribute__((noinline)) podCanaryPhase(uint8_t phase) {
   if (phase == 0) return;
   PodCanaryPhaseCtx c = { phase };
   podCanaryEmit(podCanaryPrintPhase, &c);
+  for (;;) { __asm volatile("nop"); }
+}
+// NETSTACK-FIX3-R1 : première sous-phase de macString() où le marqueur a été trouvé détruit (inscrite « !n » dans le String retourné, voir macString) ; rapport APRÈS le retour, sur la pile de journal, puis verrou.
+struct PodCanaryMacCtx { uint8_t phase; };
+static void podCanaryPrintMac(void* v) {
+  const PodCanaryMacCtx& c = *static_cast<const PodCanaryMacCtx*>(v);
+  Serial.print(F("[CANARY] macString : PREMIERE sous-phase fautive = ")); Serial.print((unsigned)c.phase);
+  Serial.println(F(" (1 juste apres l'appel au module pour l'adresse MAC, 2 apres snprintf, 3 apres la construction du String retourne) : le marqueur est detruit a CETTE sous-phase ou avant"));
+  podCanaryHalt("macString sous-phase");
+}
+static void __attribute__((noinline)) podCanaryMacPhase(const String& mac) {
+  if (mac.length() < 2 || mac.charAt(0) != '!') return;
+  PodCanaryMacCtx c = { (uint8_t)(mac.charAt(1) - '0') };
+  podCanaryEmit(podCanaryPrintMac, &c);
   for (;;) { __asm volatile("nop"); }
 }
 // NETSTACK-FIX1/2 : une ligne par transaction réseau (pile dédiée : utilisée / marge / erreur, tas libre) ; un échec de la pile dédiée (malloc, garde, marge < 128 o, imbrication) pose le verrou fatal.
@@ -810,7 +823,18 @@ static bool doObsConfirm() {
 // ─── REGISTER ──────────────────────────────────────────────────────────────
 static String macString() {
   uint8_t m[6] = {0}; WiFi.macAddress(m);
+#if POD_RENDER_V1 && POD_CANARY
+  // NETSTACK-FIX3-R1 (canari seulement) : trois sous-phases SILENCIEUSES — lecture d'un mot (le marqueur) et d'un octet local, aucune E/S, aucune allocation de plus ; la PREMIÈRE sous-phase où le marqueur est
+  // détruit est inscrite dans le String retourné (« !n »), lue et rapportée par doRegister APRÈS le retour, sur la pile de journal : 1 juste après l'appel au module · 2 après snprintf · 3 après la construction du String.
+  uint8_t macPh = 0; if (*(volatile uint32_t*)&__StackLimit != 0x434E5259UL) macPh = 1;
+#endif
   char b[18]; snprintf(b, sizeof(b), "%02x:%02x:%02x:%02x:%02x:%02x", m[0], m[1], m[2], m[3], m[4], m[5]);
+#if POD_RENDER_V1 && POD_CANARY
+  if (macPh == 0 && *(volatile uint32_t*)&__StackLimit != 0x434E5259UL) macPh = 2;
+#endif
+#if POD_RENDER_V1 && POD_CANARY
+  { String s(b); if (macPh == 0 && *(volatile uint32_t*)&__StackLimit != 0x434E5259UL) macPh = 3; if (macPh) { s.setCharAt(0, '!'); s.setCharAt(1, (char)('0' + macPh)); } return s; }
+#endif
   return String(b);
 }
 
@@ -820,7 +844,10 @@ static bool doRegister() {
 #endif
   const String mac = macString();
 #if POD_RENDER_V1 && POD_CANARY
-  podCanaryCheck("  R1: apres macString / macAddress du module (silencieux)", false);
+  podCanaryMacPhase(mac);
+#endif
+#if POD_RENDER_V1 && POD_CANARY
+  podCanaryCheck("  R1: apres macString (silencieux ; ne prouve PAS a lui seul le module Wi-Fi : voir les sous-phases)", false);
 #endif
   const String body = "{\"mac\":\"" + mac + "\",\"screens\":[\"" SCREEN_TYPE "\"],"
                       "\"firmware\":\"" FIRMWARE_VERSION "\","

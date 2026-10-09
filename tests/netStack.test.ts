@@ -112,6 +112,34 @@ test("échec fermé aux sites : un échec de pile dédiée ne laisse aucun résu
   for (const sk of ["pod_uno_r4_tft18", "pod_uno_r4"]) assert.doesNotMatch(read(`arduino_uno_r4/${sk}/${sk}.ino`), /image NON présentée/);
 });
 
+/** NETSTACK-FIX3-R1 : le corps de logfSafeStop() doit être EXACTEMENT une boucle sans fin silencieuse. Retourne les violations (liste vide = conforme). */
+function silentStopViolations(src: string): string[] {
+  const code = stripLine(src);
+  const m = /static void __attribute__\(\(noinline, noreturn\)\) logfSafeStop\(\) \{([\s\S]*?)\n\}\n/.exec(code);
+  if (!m) return ["fonction absente ou sans noinline/noreturn"];
+  const body = m[1].replace(/\s+/g, " ").trim();
+  const v: string[] = [];
+  if (body !== 'for (;;) { __asm volatile("nop"); }') v.push(`corps inattendu : ${body}`);
+  if (/\b(Serial|logf|printf|print|println|write|flush|malloc|calloc|realloc|free|new|delete|String|mallinfo|delay|millis|return|break|goto|PodNet|WiFi|Conn)\b/.test(body)) v.push("E/S, allocation, retour ou appel interdit dans le corps");
+  return v;
+}
+
+test("logfSafeStop (NETSTACK-FIX3-R1) : arrêt fatal SILENCIEUX immédiat dans les cinq firmwares — aucune E/S, allocation ni retour ; un correctif qui imprime, alloue ou retourne est REFUSÉ", () => {
+  for (const sk of SKETCHES) assert.deepEqual(silentStopViolations(read(`arduino_uno_r4/${sk}/${sk}.ino`)), [], sk);
+  const base = read("arduino_uno_r4/pod_uno_r4_eink29/pod_uno_r4_eink29.ino");
+  const stop = /static void __attribute__\(\(noinline, noreturn\)\) logfSafeStop\(\) \{[\s\S]*?\n\}\n/.exec(base)![0];
+  const mutants: Array<[string, string]> = [
+    ["Serial.println avant la boucle", 'static void __attribute__((noinline, noreturn)) logfSafeStop() {\n  Serial.println(F("x"));\n  for (;;) { __asm volatile("nop"); }\n}\n'],
+    ["logf", 'static void __attribute__((noinline, noreturn)) logfSafeStop() {\n  logf("x");\n  for (;;) { __asm volatile("nop"); }\n}\n'],
+    ["allocation", 'static void __attribute__((noinline, noreturn)) logfSafeStop() {\n  void* p = malloc(4); (void)p;\n  for (;;) { __asm volatile("nop"); }\n}\n'],
+    ["String", 'static void __attribute__((noinline, noreturn)) logfSafeStop() {\n  String s("x");\n  for (;;) { __asm volatile("nop"); }\n}\n'],
+    ["retour", 'static void __attribute__((noinline, noreturn)) logfSafeStop() {\n  if (millis() > 1) return;\n  for (;;) { __asm volatile("nop"); }\n}\n'],
+    ["boucle remplacée par un delay", 'static void __attribute__((noinline, noreturn)) logfSafeStop() {\n  delay(1000);\n}\n'],
+    ["sans noreturn", 'static void __attribute__((noinline)) logfSafeStop() {\n  for (;;) { __asm volatile("nop"); }\n}\n'],
+  ];
+  for (const [name, fn] of mutants) assert.notEqual(silentStopViolations(base.replace(stop, fn)).length, 0, `mutant « ${name} » NON refusé`);
+});
+
 test("journal sur pile dédiée (NETSTACK-FIX2) : logf s'exécute sur la pile de journal quand l'appelant est sur la pile principale, directement sur une pile dédiée ; tampon statique unique ; abandon silencieux de la ligne en cas d'échec", () => {
   for (const sk of SKETCHES) {
     const src = read(`arduino_uno_r4/${sk}/${sk}.ino`), code = stripLine(src);

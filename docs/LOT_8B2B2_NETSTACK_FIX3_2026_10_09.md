@@ -1,9 +1,11 @@
-# Lot 8B-2B-2 · NETSTACK-FIX3 — localiser les 24 octets : l'épilogue de PodNet est innocent, `WiFi.macAddress()` est le suspect
+# Lot 8B-2B-2 · NETSTACK-FIX3 — localiser les 24 octets : l'épilogue de PodNet paraît innocent PAR L'ANALYSE STATIQUE (non exonéré par le matériel), `WiFi.macAddress()` est le suspect
+
+> **Correction du 09/10/2026 (NETSTACK-FIX3-R1, `docs/LOT_8B2B2_NETSTACK_FIX3_R1_2026_10_09.md`)** : le canari FIX3 a donné `R1` en alerte (R0 sain). Cela prouve que le marqueur est détruit **dans `macString()`** (entre R0 et R1) ; cela ne prouve **pas encore** que c'est `WiFi.macAddress()` (il y a aussi `snprintf` et la construction du `String`), et cela **n'exonère pas PodNet par le matériel** : aucune transaction PodNet n'avait encore eu lieu quand l'alerte est tombée, les sondes de phase de PodNet n'ont donc **pas été exercées**. Les formulations « innocent » / « exonéré » ci-dessous désignent l'**analyse statique** uniquement.
 
 | | |
 |---|---|
 | **Date** | 09/10/2026 |
-| **Statut** | **Instrumentation + analyse de l'ELF livrées, COMPILÉES (cœurs 1.5.3 et 1.6.0), testées sur l'hôte. JAMAIS flashées.** Aucune frame, aucun dessin. **Aucune correction d'architecture n'est choisie** : elle attend la preuve matérielle (§ 5). |
+| **Statut** | **Instrumentation + analyse de l'ELF livrées, COMPILÉES (cœurs 1.5.3 et 1.6.0), testées sur l'hôte. JAMAIS flashées.** Aucune frame, aucun dessin. **Aucune correction d'architecture n'est choisie** : elle attend la preuve matérielle (§ 5). **Retour matériel (R1)** : voir `docs/LOT_8B2B2_NETSTACK_FIX3_R1_2026_10_09.md`. |
 | **Origine** | `docs/CORRECTIF_CANARI_R4_EPILOGUE_PODNET_FIX3_2026_10_09.md` ; journal matériel du canari NETSTACK-FIX2 : `docs/mesures/8B2B2_NETSTACK_FIX3_2026_10_09/journal-netstack-fix2-materiel.txt` |
 | **Portée** | `podNetStack.h` (sondes de phase sans E/S), points silencieux de `doRegister`, arrêt sûr du journal, tests. **Aucun** serveur, Redis, Neon, ACK, protocole de vote, rendu, OTA, polling. Redis +0, Neon 0. |
 | **Défauts du dépôt** | `POD_RENDER_V1 = 0`, `POD_CANARY = 0` (commit). `1`/`1` seulement dans le fichier local du canari. |
@@ -16,7 +18,7 @@
 
 ## 2. Où est le code fautif ? Deux preuves indépendantes, l'une statique, l'autre dans les octets détruits
 
-### 2.1 L'épilogue de PodNet ne peut pas atteindre 1 048 o
+### 2.1 L'épilogue de PodNet ne peut pas atteindre 1 048 o — PAR L'ANALYSE STATIQUE (non confirmé par le matériel)
 
 `scripts/podnet-epilogue-report.js` sur l'ELF (cœurs 1.5.3 et 1.6.0, `docs/mesures/8B2B2_NETSTACK_FIX3_2026_10_09/elf-*.txt`) :
 
@@ -30,7 +32,7 @@
 | `netHttpRaw` | 48 | 640 |
 | `PodNet::runSized` | 48 | **688** |
 
-Sous `runSized`, l'épilogue (après le retour du trampoline) n'appelle que `memset` (0 o), le contrôle `podEdOnMainStack` (8 o), `free` (→ `_free_r`, 16 o) et, avant le trampoline, `malloc` (→ `_malloc_r` → `_sbrk_r` → `_sbrk`, 40 o). **Pire cas statique : 688 + 40 = 728 o**, soit 296 o de marge. La boucle de scan de la garde/filigrane et `wipe` sont des boucles sans appel (en ligne). Les 24 o sous la limite ne peuvent pas venir de là.
+Sous `runSized`, l'épilogue (après le retour du trampoline) n'appelle que `memset` (0 o), le contrôle `podEdOnMainStack` (8 o), `free` (→ `_free_r`, 16 o) et, avant le trampoline, `malloc` (→ `_malloc_r` → `_sbrk_r` → `_sbrk`, 40 o). **Pire cas statique : 688 + 40 = 728 o**, soit 296 o de marge. La boucle de scan de la garde/filigrane et `wipe` sont des boucles sans appel (en ligne). Les 24 o sous la limite ne peuvent pas venir de là **si l'analyse statique est exacte** (appels directs, cadres fixes, appels indirects non suivis) ; **le matériel n'a pas encore exercé les sondes de phase de PodNet** : l'exonération n'est pas acquise.
 
 ### 2.2 Les octets détruits sont des cadres de `printf`, pas de `PodNet`
 
@@ -90,14 +92,14 @@ La phase est contrôlée (`podCanaryPhase`) **avant** le point A et au début de
 | Point | Où |
 |---|---|
 | **R0** | entrée de `doRegister` |
-| **R1** | juste après `macString()` (donc `WiFi.macAddress()`) |
+| **R1** | juste après `macString()` (appel au module, `snprintf`, construction du `String` : **sans distinction** ; FIX3-R1 ajoute 3 sous-phases) |
 | **R2** | corps construit, juste avant `httpCall` |
 
 ### 3.3 Lecture du prochain canari (premier signal)
 
 | Premier signal | Conclusion | Suite |
 |---|---|---|
-| **R1** en alerte (R0 sain) | `WiFi.macAddress()` (ou `macString`) : hypothèse **prouvée** ; PodNet exonéré | correction du § 5 |
+| **R1** en alerte (R0 sain) | le marqueur est détruit **dans `macString()`** (appel au module, `snprintf` ou construction du `String`) : **ne prouve pas à lui seul `WiFi.macAddress()`** → sous-phases de FIX3-R1 ; **PodNet n'est pas exonéré par le matériel** (aucune transaction PodNet n'avait eu lieu) | sous-phases `macString` (FIX3-R1), puis correction du § 5 |
 | R2 en alerte, R1 sain | la construction du corps (`loadOwnedHashesJson`, `bytesToHex`, EEPROM, `String`) | à localiser plus finement |
 | R0 en alerte | dégât entre `6a` et `doRegister` (aucun appel théorique) | rapporter |
 | `PodNet : PREMIERE phase fautive = 1` | marqueur déjà détruit à l'entrée de PodNet : cause antérieure (R0–R2 auraient dû le dire) | rapporter |
@@ -108,7 +110,7 @@ La phase est contrôlée (`podCanaryPhase`) **avant** le point A et au début de
 ## 4. Réserve du journal (demande 4 du correctif)
 
 * **Canari** : la sonde `[CANARY] pile de journal …` (aux points `1c`/`7b`) pose le **verrou fatal** si la pile de journal retourne `GUARD` ou `MARGIN` ; `logf` lui-même s'arrête (`logfSafeStop`) sur `GUARD` **et** `MARGIN` dans le build de canari.
-* **Production** : `NOMEM` → ligne abandonnée (inchangé) ; **`GUARD` → ARRÊT SÛR définitif** (`logfSafeStop`, boucle sans fin, message `[LOG] faute memoire persistante …` — la garde du journal écrasée signifie que le voisin au tas est corrompu : on ne continue pas) ; `MARGIN` (garde intacte, marge < 128 o) → la ligne est déjà écrite, on continue (non fatal en production, fatal au canari).
+* **Production** : `NOMEM` → ligne abandonnée (inchangé) ; **`GUARD` → ARRÊT SÛR définitif et SILENCIEUX** (`logfSafeStop`, boucle sans fin, **aucune E/S** : depuis FIX3-R1 la fonction n'imprime plus, car un `Serial.println` posé sur un cadre profond de la pile principale peut lui-même la déborder — la garde du journal écrasée signifie que le voisin au tas est corrompu : on ne continue pas) ; `MARGIN` (garde intacte, marge < 128 o) → la ligne est déjà écrite, on continue (non fatal en production, fatal au canari).
 
 ## 5. Choix d'architecture — comparés, NON retenus avant la preuve
 

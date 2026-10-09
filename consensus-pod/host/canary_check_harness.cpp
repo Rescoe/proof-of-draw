@@ -45,7 +45,25 @@ static char* sbrk(int) { return reinterpret_cast<char*>(g_mem + 200); }
 #define __builtin_frame_address(x) (static_cast<void*>(g_mem + g_spoff))
 
 #include "../src/adapters/podNetStack.h"   // PodNetInfo / POD_NET_OK, utilisés par podCanaryNet (NETSTACK-FIX1)
+
+// NETSTACK-FIX3-R1 : String minimal (podCanaryMacPhase et macString l'utilisent) ; g_macDestroyAt = sous-phase de macString où le « code fautif » détruit le marqueur (1 appel au module, 2 snprintf, 3 construction du String).
+static int g_macDestroyAt = 0;
+static void destroyMarker() { std::memset(g_mem + 2048, 0, 4); }
+struct String {
+  std::string s;
+  String() {}
+  String(const char* c) : s(c) { if (g_macDestroyAt == 3) destroyMarker(); }
+  unsigned length() const { return (unsigned)s.size(); }
+  char charAt(unsigned i) const { return i < s.size() ? s[i] : 0; }
+  void setCharAt(unsigned i, char c) { if (i < s.size()) s[i] = c; }
+};
 #include "canary_extract.inc"
+// le CODE RÉEL de macString() (extrait du sketch, blocs de canari activés) contre un module et un snprintf simulés qui détruisent le marqueur à la sous-phase demandée
+struct WiFiShim { void macAddress(uint8_t* m) { for (int i = 0; i < 6; i++) m[i] = (uint8_t)(0xA0 + i); if (g_macDestroyAt == 1) destroyMarker(); } } WiFi;
+static int mac_snprintf(char* b, size_t n, const char* f, ...) { va_list ap; va_start(ap, f); const int r = vsnprintf(b, n, f, ap); va_end(ap); if (g_macDestroyAt == 2) destroyMarker(); return r; }
+#define snprintf mac_snprintf
+#include "mac_extract.inc"
+#undef snprintf
 
 static void fresh(long sp) { std::memset(g_mem, 0, sizeof(g_mem)); g_out.clear(); g_fatalPrints = 0; g_spoff = sp; paintStack(); podCanaryPaint(); }
 // exécute un point de contrôle ; retourne "halt" si le verrou fatal s'est posé (la fonction ne revient pas), "ret" sinon
@@ -115,5 +133,24 @@ int main() {
   fresh(3072 - 300);
   { try { podCanaryPhase(3); g_out += "RETURNED"; } catch (const Halted&) { g_out += "HALT"; }
     line("phase fautive 3 : diagnostic + verrou fatal", has("PREMIERE phase fautive = 3") && has("HALT") && !has("RETURNED") && has("ARRET FATAL (verrou) apres 'phase PodNet'"), ""); }
+  // S19-S23 : sous-phases de macString (NETSTACK-FIX3-R1) — code RÉEL de macString(), marqueur détruit à la sous-phase d ; la PREMIÈRE est inscrite « !d », rapportée par podCanaryMacPhase APRÈS le retour
+  {
+    const struct { int d; const char* name; } cases[] = { { 0, "aucune destruction" }, { 1, "destruction juste apres l'appel au module" }, { 2, "destruction pendant snprintf" }, { 3, "destruction pendant la construction du String" } };
+    for (const auto& cs : cases) {
+      fresh(3072 - 300); g_macDestroyAt = cs.d;
+      const String mac = macString();
+      g_macDestroyAt = 0;
+      const size_t before = g_out.size();                      // les sondes de macString n'écrivent RIEN sur la sortie
+      bool halted = false; try { podCanaryMacPhase(mac); } catch (const Halted&) { halted = true; }
+      if (cs.d == 0) line("macString sans destruction : adresse intacte, rapport muet, retour", mac.s == "a0:a1:a2:a3:a4:a5" && g_out.empty() && !halted && before == 0, mac.s.c_str());
+      else {
+        char want[64]; std::snprintf(want, sizeof(want), "PREMIERE sous-phase fautive = %d", cs.d);
+        line(cs.name, before == 0 && mac.charAt(0) == '!' && mac.charAt(1) == (char)('0' + cs.d) && halted && has(want) && has("ARRET FATAL (verrou) apres 'macString sous-phase'"), mac.s.c_str());
+      }
+    }
+    fresh(3072 - 300); destroyMarker();                         // marqueur DÉJÀ détruit à l'entrée : la sous-phase 1 le désigne (« à cette sous-phase OU AVANT »)
+    const String pre = macString(); bool halted = false; try { podCanaryMacPhase(pre); } catch (const Halted&) { halted = true; }
+    line("marqueur deja detruit a l'entree de macString : sous-phase 1", halted && pre.charAt(1) == '1' && has("PREMIERE sous-phase fautive = 1"), pre.s.c_str());
+  }
   return 0;
 }

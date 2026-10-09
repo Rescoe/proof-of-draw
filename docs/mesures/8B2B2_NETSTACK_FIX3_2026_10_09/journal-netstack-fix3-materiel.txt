@@ -1,0 +1,30 @@
+# Journal matériel du canari NETSTACK-FIX3 — UNO R4 WiFi + e-ink 2,9″ BWR, build local POD_RENDER_V1=1 POD_CANARY=1 (09/10/2026), commit cf82fcc + drapeaux locaux 1/1
+# Source : retour du porteur (collé dans la conversation) ; aucune frame, aucun dessin ; carte arrêtée par le verrou fatal.
+# Cœur du porteur : renesas 1.5.3 (module Wi-Fi 0.5.2). Lignes reproduites telles que transmises (début de log tronqué).
+
+[WIFI] firmware du module: 0.5.2
+[WIFI] IP: 0.0.0.0
+[CANARY] 3 wifi connecte : pile utilisee au plus 864 o / 1024 (marge 160 o) | SP=0x20007D88 | ecrit sous la limite ou pile max 1024 | tas libre 6988 | sbrk->limite 5444
+[KEYS] clés chargées: 11e4193c89dc29bf26abe55d6a471d937eca8591fe00ee81b226403828a3b830
+[CANARY] 4 cles chargees : pile utilisee au plus 864 o / 1024 (marge 160 o) | SP=0x20007D88 | ecrit sous la limite ou pile max 1024 | tas libre 6988 | sbrk->limite 5444
+[SELFTEST] Ed25519 signature 178 ms, vérification 275 ms -> OK
+[MEM] après Ed25519: tas libre 8532 o, pile max ~1024 o
+[ED25519] pile dédiée (utilisé/marge, o) : sign 1316/924, verify 1532/708 ; erreurs sign=0 verify=0 (0 = aucune) ; alloué 2304 o (garde 64 o, marge minimale exigée 128 o)
+[CANARY] 5 selfTestEd25519 : pile utilisee au plus 864 o / 1024 (marge 160 o) | SP=0x20007D88 | ecrit sous la limite ou pile max 1024 | tas libre 6988 | sbrk->limite 5444
+[BOOT] œuvre déjà affichée : 8c97adf0-ee5b-4a2b-ab49-48a93548
+[CANARY] 6a avant doRegister : pile utilisee au plus 864 o / 1024 (marge 160 o) | SP=0x20007D88 | ecrit sous la limite ou pile max 1024 | tas libre 6924 | sbrk->limite 5444
+
+== ALERTE au point R1 (silencieux, après macString(), AVANT toute transaction PodNet) — R0 (entrée de doRegister) n'a PAS alerté ==
+[CANARY]   R1: apres macString / macAddress du module (silencieux) : ALERTE PILE utilisee au plus 1016 o / 1024 (marge 8 o) | SP=0x20007C80 | ecrit sous la limite ou pile max 1048 | tas libre 6896 | sbrk->limite 5444
+[CANARY]   marqueur=0x0001D8B5 (DETRUIT, attendu 0x434E5259) longueur peinte=0x20007B3C (INCOHERENTE) | plus bas octet modifie au-dessus du marqueur : 0x20007B08 = marqueur+8
+[CANARY]   __StackLimit=0x20007B00 __StackTop=0x20007F00 __HeapBase=0x20005908 sbrk(0)=0x200065BC SP dans la pile
+[CANARY]   mallinfo : arene=3252 utilise=1800 libre=1452
+[CANARY]   octets [__StackLimit-8, +24[ : 68 01 00 20 F8 7B 00 20 | B5 D8 01 00 3C 7B 00 20 F8 7B 00 20 43 D9 01 00 70 7B 00 20 CB 14 02 00
+[CANARY] ARRET FATAL (verrou) apres '  R1: apres macString / macAddress du module (silencieux)' : plus aucun pull, vote, ACK ni affichage. Debrancher la carte, reflasher le firmware stable.
+
+# Lecture (docs/LOT_8B2B2_NETSTACK_FIX3_R1_2026_10_09.md) :
+#  - R0 sain, R1 en alerte : le marqueur est détruit ENTRE R0 et R1, c'est-à-dire dans macString() (appel au module pour l'adresse MAC, snprintf, construction du String). Pas de transaction PodNet à ce stade.
+#  - même signature que FIX1/FIX2 : pile max 1048 = 1024 + 24 ; marqueur = pointeur de fonction thumb (0x1D8B5 = __ssputs_r | 1 dans le build flashé), 0x1D943 = adresse de retour dans __ssputs_r (+0x8e), 0x214CB = autre valeur ressemblant à une adresse de code (non résolue de façon fiable).
+#    (résolution contre l'ELF compilé avec le MÊME source : cœur 1.6.0 ; les adresses sont identiques sur les deux cœurs pour un même source.)
+#  - ce journal ne distingue pas encore WiFi.macAddress() de snprintf ni de la construction du String : sous-phases ajoutées par FIX3-R1.
+#  - les sondes de phase de PodNet n'ont PAS été exercées (aucune transaction avant l'alerte).
