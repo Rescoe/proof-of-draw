@@ -1,0 +1,3 @@
+# PULLFRAME-PHASE-AUDIT2 — comparaison de désassemblage normalisée, production OFF : 3628b3d -> après (--pool) ; ELF cœur 1.6.0 (e-ink 2,9″). Rien n'a été flashé.
+{"fonctions":1036,"identiques":1028,"differentes":8,"seulementAvant":0,"seulementApres":0}
+différentes : _ZN6SHA51212processChunkEv, _Z12arduino_mainv, _ZZL15selfTestEd25519vE3msg, _ZTV6SHA512, g_pin_cfg, __FUNCTION__.6535, _ZZ24tud_descriptor_string_cbE13usbd_desc_str, __sf_fake_stdout

@@ -1,0 +1,33 @@
+# Journal série du canari 3628b3d (instrumentation PULLFRAME-PHASE-AUDIT1), après UN Reset, sans renvoyer d'image — transmis par le porteur le 10/10/2026
+# La frame personnelle 6429e8f5… (« La chute de WallStreet / Neo », bloc 87) était déjà en attente (aucun ACK). Le journal s'arrête à la dernière ligne : aucune ligne « [CANARY] FF n » (pas même FF 1) n'apparaît.
+# Le porteur note que ce journal ne dit pas si c'est bien le binaire 3628b3d qui tourne (aucune empreinte de build au démarrage) — d'où l'empreinte ajoutée par AUDIT2.
+[CANARY] wifi status (module present ?) : pile Wi-Fi dediee utilisee 608 o, marge 864 o (objectif >= 256 : OK), erreur 0 | tas libre 6972
+[CANARY] wifi firmwareVersion : pile Wi-Fi dediee utilisee 448 o, marge 1024 o (objectif >= 256 : OK), erreur 0 | tas libre 6956
+[WIFI] firmware du module: 0.5.2
+[CANARY] wifi begin : pile Wi-Fi dediee utilisee 540 o, marge 932 o (objectif >= 256 : OK), erreur 0 | tas libre 6972
+[CANARY] wifi localIP : pile Wi-Fi dediee utilisee 568 o, marge 904 o (objectif >= 256 : OK), erreur 0 | tas libre 6956
+[WIFI] IP: 0.0.0.0
+[CANARY] 3 wifi connecte : pile utilisee au plus 584 o / 1024 (marge 440 o) | SP=0x20007D98 | tas libre 6972 | sbrk->limite 5428
+[KEYS] clés chargées: 11e4193c89dc29bf26abe55d6a471d937eca8591fe00ee81b226403828a3b830
+[CANARY] 4 cles chargees : pile utilisee au plus 584 o / 1024 (marge 440 o) | SP=0x20007D98 | tas libre 6972 | sbrk->limite 5428
+[SELFTEST] Ed25519 signature 178 ms, vérification 277 ms -> OK
+[MEM] après Ed25519: tas libre 8516 o, zone 0xA5 sous la pile 1024 o (INDICATIF : NON fiable des la 1re pile temporaire)
+[ED25519] pile dédiée (utilisé/marge, o) : sign 1316/924, verify 1532/708 ; erreurs sign=0 verify=0 (0 = aucune) ; alloué 2304 o (garde 64 o, marge minimale exigée 128 o)
+[CANARY] 5 selfTestEd25519 : pile utilisee au plus 584 o / 1024 (marge 440 o) | SP=0x20007D98 | tas libre 6972 | sbrk->limite 5428
+[BOOT] œuvre déjà affichée : 8c97adf0-ee5b-4a2b-ab49-48a93548
+[CANARY] 6a avant doRegister : pile utilisee au plus 584 o / 1024 (marge 440 o) | SP=0x20007D98 | tas libre 6908 | sbrk->limite 5428
+[CANARY] wifi macAddress : pile Wi-Fi dediee utilisee 520 o, marge 952 o (objectif >= 256 : OK), erreur 0 | tas libre 6908
+[CANARY] net http : pile reseau dediee utilisee 1140 o, marge 844 o (objectif >= 256 : OK), erreur 0 | tas libre 6660
+[HTTP POST] /api/register -> 200
+[CANARY] register JSON : pile de travail dediee utilisee 496 o, marge 1488 o (objectif >= 256 : OK), erreur 0, statut 1 | tas libre avant 6476 apres 6476
+[REGISTER] deviceId=dev_W29I1TW7 paired=oui
+[REGISTER] appairé
+[CANARY] 6b apres doRegister : pile utilisee au plus 784 o / 1024 (marge 240 o, SOUS L'OBJECTIF 256) | SP=0x20007D98 | tas libre 6888 | sbrk->limite 1908
+[BOOT] premier pull immédiat
+[CANARY] 7a avant doPull : pile utilisee au plus 784 o / 1024 (marge 240 o, SOUS L'OBJECTIF 256) | SP=0x20007D98 | tas libre 6888 | sbrk->limite 1908
+[CANARY] net http : pile reseau dediee utilisee 1136 o, marge 848 o (objectif >= 256 : OK), erreur 0 | tas libre 6808
+[HTTP GET] /api/pull?deviceId=dev_W29I1TW7 -> 200
+[CANARY] pull JSON : pile de travail dediee utilisee 708 o, marge 1276 o (objectif >= 256 : OK), erreur 0, statut 1 | tas libre avant 5892 apres 5732
+[PULL] cartel: La chute de WallStreet / Neo (bloc 87)
+[PULL] nouveau bloc #95
+[PULL] nouvelle frame 6429e8f5-9ed8-427c-9c3e-018b4e820c05 (personal)

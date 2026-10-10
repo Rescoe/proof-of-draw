@@ -20,7 +20,7 @@ test("points de contrôle : tous les passages demandés sont instrumentés, dans
   const tags = [...code.matchAll(/podCanaryCheck\("([^"]+)", (true|false)\)/g)].map((m) => m[1]);
   const setup = code.slice(code.indexOf("void setup()"), code.indexOf("void loop()"));
   const setupTags = [...setup.matchAll(/podCanaryCheck\("([^"]+)"/g)].map((m) => m[1]);
-  assert.deepEqual(setupTags.map((t) => t.split(" ")[0]), ["1", "1b", "2", "3", "4", "5", "6a", "6b", "7a", "7b", "8"], "ordre des points de contrôle de setup()");
+  assert.deepEqual(setupTags.map((t) => t.split(" ")[0]), ["1", "1b", "1c", "2", "3", "4", "5", "6a", "6b", "7a", "7b", "8"], "ordre des points de contrôle de setup()");
   for (const needle of ["boot", "e-ink", "wifi", "cles", "selfTestEd25519", "avant doRegister", "apres doRegister", "avant doPull", "apres doPull", "pret", "calibration"]) assert.ok(tags.some((t) => t.includes(needle)), `point « ${needle} » absent`);
   // NETSTACK-FIX1/2 : la chaîne réseau tourne sur une pile dédiée, donc AUCUN point de contrôle de la pile principale n'est placé à l'intérieur d'une transaction (SP y serait « hors pile principale »).
   // Points SILENCIEUX A (juste après la transaction, avant tout rapport), B (après le rapport PodNet), C (après le journal HTTP normal) : ils isolent le premier passage destructeur sans repeindre.

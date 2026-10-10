@@ -585,20 +585,50 @@ static String signED25519(const String& candidateId, float score) {
 
 // ─── HTTP (WiFiSSLClient + pod_http.h) ─────────────────────────────────────
 #if POD_RENDER_V1 && POD_CANARY
-// PULLFRAME-PHASE-AUDIT1 (canari seulement, +2 o de RAM statique) : le canari de 7df39b6 s'est TU juste après « [PULL] nouvelle frame … (personal) » (aucun « [HTTP GET] … pull-frame », aucun « [FRAME] », aucune requête chez le serveur).
-// Pendant doFetchFrame (de FF 1 à FF 15) chaque POINT DE PHASE imprime UNE ligne « [CANARY] FF n : … » (n° de phase, état EXACT du marqueur de la pile principale, lignes perdues, temps) : la DERNIÈRE ligne imprimée est le dernier point atteint.
-// g_podFfPhase = 0 : traçage inactif (toute autre transaction reste muette). Aucune allocation. ⚠ Le cœur R4 (SerialUSB::write) BOUCLE SANS LIMITE quand le tampon USB est plein et que l'hôte ne le vide pas : une impression pourrait donc
-// elle-même bloquer le firmware et faire croire que le blocage est ailleurs. podFfSay n'imprime donc que s'il reste de la place (attente bornée à 200 ms) sinon la ligne est PERDUE et comptée (g_podFfDrop, rappelée par « perdues=n »).
+// PULLFRAME-PHASE-AUDIT2 (canari seulement) : le canari d'AUDIT1 n'a imprimé AUCUNE ligne FF (pas même FF 1) alors que « [PULL] nouvelle frame … (personal) » venait d'être imprimée : un traçage par logf (formatage, allocation de la pile de journal) n'a rien localisé.
+// (1) Chaque phase est d'abord INSCRITE dans un enregistrement de 20 o en RAM « .noinit » (survit à un reset, ni EEPROM ni flash), scellé par une somme ; il est relu et rapporté au démarrage SUIVANT (podFfBoot).
+// (2) Ensuite, SEULEMENT pour les phases 4 à 14 (exécutées sur la pile réseau dédiée), un jeton fixe de 7 o est écrit par UN SEUL Serial.write, et seulement si le tampon USB a la place EXACTE : sinon le jeton est perdu et compté. Ni logf, ni formatage, ni String, ni allocation, ni attente.
+// (3) Les phases 1, 2, 3 et 15 s'exécutent sur la PILE PRINCIPALE (marge 132 o au retour de doPull) : aucune E/S série n'y est posée (l'écriture USB coûte 270 à 430 o de pile), enregistrement seul.
+// g_podFfPhase = 0 : traçage inactif (toute autre transaction reste muette). ⚠ Le cœur R4 (SerialUSB::write) BOUCLE SANS LIMITE quand le tampon USB est plein : écrire plus que la place disponible est interdit ici.
 static volatile uint8_t g_podFfPhase = 0;
-static volatile uint8_t g_podFfDrop = 0;
-static void __attribute__((noinline)) podFfSay(uint8_t n, const char* txt) {
-  g_podFfPhase = n;
-  const unsigned long t0 = millis();
-  for (uint32_t i = 0; i < 400000UL && Serial.availableForWrite() < 120 && millis() - t0 < 200UL; i++) { }
-  if (Serial.availableForWrite() < 120) { if (g_podFfDrop < 255) g_podFfDrop++; return; }
-  logf("[CANARY] FF %u : %s | marqueur %s | perdues=%u | t=%lu ms", (unsigned)n, txt, (*(volatile uint32_t*)&__StackLimit == 0x434E5259UL && *((volatile uint32_t*)&__StackLimit + 1) == g_podPaintLen) ? "OK" : "DETRUIT", (unsigned)g_podFfDrop, (unsigned long)millis());
+struct PodFfRec { uint32_t magic; uint32_t seq; uint32_t ms; uint8_t last; uint8_t drops; uint8_t badAt; uint8_t ctl; uint32_t chk; };
+static PodFfRec g_podFfRec __attribute__((section(".noinit")));
+#define POD_FF_MAGIC 0x46464132UL
+static const char kFfTok[] = "[FF00]\n[FF01]\n[FF02]\n[FF03]\n[FF04]\n[FF05]\n[FF06]\n[FF07]\n[FF08]\n[FF09]\n[FF10]\n[FF11]\n[FF12]\n[FF13]\n[FF14]\n[FF15]\n";
+static uint32_t __attribute__((noinline)) podFfSum() {
+  return g_podFfRec.magic ^ (g_podFfRec.seq * 2654435761UL) ^ g_podFfRec.ms ^ ((uint32_t)g_podFfRec.last | ((uint32_t)g_podFfRec.drops << 8) | ((uint32_t)g_podFfRec.badAt << 16) | ((uint32_t)g_podFfRec.ctl << 24)) ^ 0xA5C3A5C3UL;
 }
-#define POD_FF_MARK(n, txt) do { if (g_podFfPhase != 0) podFfSay((n), txt); } while (0)
+static void __attribute__((noinline)) podFfSeal() { g_podFfRec.chk = podFfSum(); }
+static bool __attribute__((noinline)) podFfToken(uint8_t n) {
+  if (n > 15 || Serial.availableForWrite() < 7) return false;
+  return Serial.write((const uint8_t*)(kFfTok + 7u * n), 7) == 7;
+}
+static void __attribute__((noinline)) podFfNote(uint8_t n) {
+  g_podFfPhase = n;
+  g_podFfRec.last = n; g_podFfRec.ms = millis();
+  if (g_podFfRec.badAt == 0 && !(*(volatile uint32_t*)&__StackLimit == 0x434E5259UL && *((volatile uint32_t*)&__StackLimit + 1) == g_podPaintLen)) g_podFfRec.badAt = n;
+  podFfSeal();
+  if (n >= 4 && n <= 14) { if (!podFfToken(n)) { if (g_podFfRec.drops < 255) g_podFfRec.drops++; podFfSeal(); } }
+}
+static const char* podFfName(uint8_t n) {
+  static const char* const t[] = { "aucune (avant la premiere marque)", "avant doFetchFrame (doPull)", "entree de doFetchFrame", "avant podNetRun", "entree de la transaction (pile reseau)", "client TLS construit", "avant client.connect", "apres client.connect",
+    "requete construite (avant print)", "apres client.print", "apres les en-tetes", "plan noir lu", "plan rouge lu", "avant stop", "apres stop", "retour de podNetRun" };
+  return n < 16 ? t[n] : "?";
+}
+static void podFfBoot() {
+  logf("[CANARY] BUILD PULLFRAME-PHASE-AUDIT2 | base 3628b3d | 15 phases + controle | enregistrement RAM .noinit 20 o | compile %s %s", __DATE__, __TIME__);
+  const bool ok = g_podFfRec.magic == POD_FF_MAGIC && g_podFfRec.chk == podFfSum();
+  if (ok) logf("[CANARY] FFREC demarrage precedent n=%lu : derniere phase %u (%s) a t=%lu ms ; jetons perdus=%u ; marqueur de pile detruit des la phase %u (0 = jamais) ; jeton de controle %u (1 = ecrit, 2 = perdu)",
+    (unsigned long)g_podFfRec.seq, (unsigned)g_podFfRec.last, podFfName(g_podFfRec.last), (unsigned long)g_podFfRec.ms, (unsigned)g_podFfRec.drops, (unsigned)g_podFfRec.badAt, (unsigned)g_podFfRec.ctl);
+  else logf("[CANARY] FFREC demarrage precedent : AUCUN enregistrement valide (mise sous tension, premier lancement ou RAM effacee par le chargeur d'amorcage)");
+  const uint32_t seq = ok ? g_podFfRec.seq + 1UL : 1UL;
+  g_podFfRec.magic = POD_FF_MAGIC; g_podFfRec.seq = seq; g_podFfRec.ms = millis();
+  g_podFfRec.last = 0; g_podFfRec.drops = 0; g_podFfRec.badAt = 0; g_podFfRec.ctl = 0; podFfSeal();
+  const bool w = podFfToken(0);
+  g_podFfRec.ctl = w ? 1 : 2; podFfSeal();
+  logf("[CANARY] FF controle : jeton [FF00] %s juste avant cette ligne ; demarrage n=%lu ; l'enregistrement est arme", w ? "ECRIT" : "PERDU (tampon USB trop plein)", (unsigned long)seq);
+}
+#define POD_FF_MARK(n, txt) do { if (g_podFfPhase != 0) podFfNote((n)); } while (0)
 #define POD_FF_START(txt) do { g_podFfPhase = 1; POD_FF_MARK(1, txt); } while (0)
 #define POD_FF_STOP() do { g_podFfPhase = 0; } while (0)
 #endif
@@ -1653,6 +1683,8 @@ void setup() {
   podCanaryCheck("1 boot (apres peinture)", true);
   podCanaryCheck("1b calibration : meme profondeur, juste apres un rapport (cout de l'instrument)", true);
   podCanaryLogProbe();
+  podFfBoot();
+  podCanaryCheck("1c apres FFBOOT (cout du jeton de controle, pile principale)", true);
 #endif
 
   epd.begin();

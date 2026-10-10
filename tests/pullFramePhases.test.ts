@@ -1,5 +1,6 @@
-// PULLFRAME-PHASE-AUDIT1 (10/10/2026) — marques de phase du canari autour de doFetchFrame (e-ink 2,9″ seulement), production inchangée.
-// Contexte matériel (canari 7df39b6) : « [PULL] nouvelle frame 6429e8f5… (personal) » puis plus rien : aucun « [HTTP GET] /api/pull-frame », aucun « [FRAME] », aucun ACK. Les 15 points ci-dessous permettent de LOCALISER le dernier point atteint.
+// PULLFRAME-PHASE-AUDIT1 (10/10/2026) puis AUDIT2 — marques de phase du canari autour de doFetchFrame (e-ink 2,9″ seulement), production inchangée.
+// Contexte matériel (canaris 7df39b6 puis 3628b3d) : « [PULL] nouvelle frame 6429e8f5… (personal) » puis plus rien : aucun « [HTTP GET] /api/pull-frame », aucun « [FRAME] », aucun ACK. AUDIT1 (marques imprimées par logf) n'a produit AUCUNE ligne FF, pas même FF 1.
+// AUDIT2 : chaque phase est INSCRITE dans un enregistrement RAM « .noinit » (relu au démarrage suivant) puis, pour les phases 4 à 14 seulement (pile réseau dédiée), un jeton de 7 o est écrit par UN Serial.write si la place exacte existe. Jamais de logf, d'allocation ni d'attente dans une marque.
 import test from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
@@ -11,8 +12,10 @@ const INO = "arduino_uno_r4/pod_uno_r4_eink29/pod_uno_r4_eink29.ino";
 const OTHERS = ["pod_uno_r4_eink27", "pod_uno_r4_eink27_oled", "pod_uno_r4_tft18", "pod_uno_r4"];
 const noCanary = (s: string) => s.replace(/#if POD_RENDER_V1 && POD_CANARY\n[\s\S]*?\n#endif\n/g, "");
 
-const MACRO = '#define POD_FF_MARK(n, txt) do { if (g_podFfPhase != 0) podFfSay((n), txt); } while (0)';
-const SAY = 'static void __attribute__((noinline)) podFfSay(uint8_t n, const char* txt) {\n  g_podFfPhase = n;\n  const unsigned long t0 = millis();\n  for (uint32_t i = 0; i < 400000UL && Serial.availableForWrite() < 120 && millis() - t0 < 200UL; i++) { }\n  if (Serial.availableForWrite() < 120) { if (g_podFfDrop < 255) g_podFfDrop++; return; }\n  logf("[CANARY] FF %u : %s | marqueur %s | perdues=%u | t=%lu ms", (unsigned)n, txt, (*(volatile uint32_t*)&__StackLimit == 0x434E5259UL && *((volatile uint32_t*)&__StackLimit + 1) == g_podPaintLen) ? "OK" : "DETRUIT", (unsigned)g_podFfDrop, (unsigned long)millis());\n}';
+const MACRO = '#define POD_FF_MARK(n, txt) do { if (g_podFfPhase != 0) podFfNote((n)); } while (0)';
+const NOTE_HEAD = "static void __attribute__((noinline)) podFfNote(uint8_t n)";
+const TOKEN_HEAD = "static bool __attribute__((noinline)) podFfToken(uint8_t n)";
+const BOOT_HEAD = "static void podFfBoot()";
 
 /** Corps (accolades équilibrées, hors littéraux) de la fonction/structure dont la tête contient `head`. */
 function body(src: string, head: string): string {
@@ -35,18 +38,53 @@ const at = (s: string, n: number): number => (n === 1 ? s.indexOf("POD_FF_START(
 /** Violations des règles de traçage (liste vide = conforme). */
 export function pullFrameViolations(src: string): string[] {
   const v: string[] = [];
-  // 1. le bloc : statique unique, macros exactes, avant Conn, sous garde
+  // 1. le bloc : statiques uniques, macros exactes, avant Conn, sous garde
   const iStatic = src.indexOf("static volatile uint8_t g_podFfPhase = 0;");
   const iConn = src.indexOf("struct Conn {");
   if (iStatic < 0 || iConn < 0 || iStatic > iConn) v.push("g_podFfPhase doit être défini avant struct Conn");
-  if ((src.match(/g_podFfPhase = 0;\n/g) ?? []).length < 1 || (src.match(/^static volatile uint8_t g_podFfPhase = 0;$/gm) ?? []).length !== 1) v.push("exactement un statique g_podFfPhase");
-  if (!src.includes(MACRO + "\n")) v.push("macro POD_FF_MARK : texte exact attendu (garde g_podFfPhase != 0, appel de podFfSay seulement)");
-  if (!src.includes(SAY + "\n")) v.push("podFfSay : texte exact attendu (attente BORNÉE du tampon USB, ligne perdue et comptée sinon, marqueur + longueur exacts, logf seulement)");
-  if ((src.match(/^static volatile uint8_t g_podFfDrop = 0;$/gm) ?? []).length !== 1) v.push("exactement un statique g_podFfDrop");
+  if ((src.match(/^static volatile uint8_t g_podFfPhase = 0;$/gm) ?? []).length !== 1) v.push("exactement un statique g_podFfPhase");
+  if ((src.match(/^static PodFfRec g_podFfRec __attribute__\(\(section\("\.noinit"\)\)\);$/gm) ?? []).length !== 1) v.push("exactement un enregistrement g_podFfRec en .noinit (survit au reset, ni EEPROM ni flash)");
+  if (!src.includes("struct PodFfRec { uint32_t magic; uint32_t seq; uint32_t ms; uint8_t last; uint8_t drops; uint8_t badAt; uint8_t ctl; uint32_t chk; };\n")) v.push("PodFfRec : 20 o attendus (magic, seq, ms, last, drops, badAt, ctl, chk)");
+  if (!src.includes(MACRO + "\n")) v.push("macro POD_FF_MARK : texte exact attendu (garde g_podFfPhase != 0, appel de podFfNote seulement)");
   if (!src.includes("#define POD_FF_START(txt) do { g_podFfPhase = 1; POD_FF_MARK(1, txt); } while (0)\n#define POD_FF_STOP() do { g_podFfPhase = 0; } while (0)\n")) v.push("POD_FF_START / POD_FF_STOP : texte exact attendu");
-  const blk = /#if POD_RENDER_V1 && POD_CANARY\n\/\/ PULLFRAME-PHASE-AUDIT1[\s\S]*?\n#endif\n/.exec(src);
-  if (!blk) v.push("bloc PULLFRAME-PHASE-AUDIT1 introuvable");
-  else if (/Serial\.(print|println|write)|malloc|new |String|mallinfo|delay|httpCall|WiFi/.test(blk[0].replace(/\/\/.*$/gm, ""))) v.push("le bloc des marques ne doit contenir ni E/S directe, ni allocation, ni String, ni réseau");
+  const tok = /^static const char kFfTok\[\] = "((?:\[FF\d\d\]\\n)+)";$/m.exec(src);
+  if (!tok) v.push("table de jetons kFfTok introuvable");
+  else {
+    const parts = [...tok[1].matchAll(/\[FF(\d\d)\]\\n/g)].map((m) => Number(m[1]));
+    if (parts.length !== 16 || parts.some((p, i) => p !== i)) v.push("kFfTok : seize jetons « [FF00]\\n » à « [FF15]\\n » de 7 o chacun, dans l'ordre");
+  }
+  const blk = /#if POD_RENDER_V1 && POD_CANARY\n\/\/ PULLFRAME-PHASE-AUDIT2[\s\S]*?\n#endif\n/.exec(src);
+  if (!blk) v.push("bloc PULLFRAME-PHASE-AUDIT2 introuvable");
+  else if (/Serial\.(print|println)|malloc|new |String\b|mallinfo|delay|httpCall|WiFi|EEPROM/.test(blk[0].replace(/\/\/.*$/gm, ""))) v.push("le bloc des marques ne doit contenir ni Serial.print, ni allocation, ni String, ni réseau, ni EEPROM");
+  // 1b. podFfNote : enregistrer d'abord, jeton ensuite et seulement sur pile dédiée, aucune E/S d'une autre nature
+  const note = body(src, NOTE_HEAD);
+  if (!note) v.push("podFfNote introuvable");
+  else {
+    if (/logf|String|malloc|new |delay|httpCall|WiFi|Serial\.|while|for \(/.test(note)) v.push("podFfNote : ni logf, ni String, ni allocation, ni attente, ni E/S directe (le jeton passe par podFfToken)");
+    const iSeal = note.indexOf("podFfSeal();"), iTok = note.indexOf("podFfToken(n)");
+    if (iSeal < 0 || iTok < 0 || iSeal > iTok) v.push("podFfNote : l'enregistrement est scellé AVANT le jeton série");
+    if (!note.includes("if (n >= 4 && n <= 14) { if (!podFfToken(n))")) v.push("podFfNote : jeton série seulement pour les phases 4 à 14 (pile réseau dédiée) ; 1, 2, 3 et 15 = enregistrement seul (pile principale)");
+    if (!note.includes("if (g_podFfRec.drops < 255) g_podFfRec.drops++;")) v.push("podFfNote : jetons perdus comptés");
+    if (!note.includes("*(volatile uint32_t*)&__StackLimit == 0x434E5259UL && *((volatile uint32_t*)&__StackLimit + 1) == g_podPaintLen")) v.push("podFfNote : marqueur ET longueur exacts");
+  }
+  const token = body(src, TOKEN_HEAD);
+  if (!token) v.push("podFfToken introuvable");
+  else {
+    if ((token.match(/Serial\.write\(/g) ?? []).length !== 1) v.push("podFfToken : exactement UN Serial.write");
+    if (!token.includes("Serial.availableForWrite() < 7")) v.push("podFfToken : n'écrit que si la place EXACTE (7 o) existe");
+    if (!token.includes("(kFfTok + 7u * n), 7)")) v.push("podFfToken : écrit exactement 7 o");
+    if (/\b(for|while|delay|logf|print|println|millis|malloc)\b/.test(token)) v.push("podFfToken : ni boucle, ni attente, ni logf");
+  }
+  // 1c. démarrage : empreinte du build, rapport de l'enregistrement précédent, jeton de contrôle
+  const boot = body(src, BOOT_HEAD);
+  if (!boot) v.push("podFfBoot introuvable");
+  else {
+    if (!boot.includes("BUILD PULLFRAME-PHASE-AUDIT2") || !boot.includes("__DATE__, __TIME__") || !boot.includes("base 3628b3d")) v.push("podFfBoot : empreinte du build (lot, commit de base, date et heure de compilation)");
+    if (!boot.includes("g_podFfRec.chk == podFfSum()")) v.push("podFfBoot : l'enregistrement précédent est validé par sa somme");
+    if (!boot.includes("const bool w = podFfToken(0);")) v.push("podFfBoot : jeton de contrôle [FF00]");
+    if (!/g_podFfRec\.last = 0; g_podFfRec\.drops = 0; g_podFfRec\.badAt = 0; g_podFfRec\.ctl = 0; podFfSeal\(\);/.test(boot)) v.push("podFfBoot : l'enregistrement est ré-armé");
+  }
+  if ((src.match(/^  podFfBoot\(\);\n  podCanaryCheck\("1c apres FFBOOT/gm) ?? []).length !== 1) v.push("podFfBoot appelé une fois dans setup, suivi du contrôle de pile 1c");
   // 2. chaque marque est dans un bloc de canari ne contenant QUE la marque (10 : la lecture des en-têtes ; 15 : l'arrêt)
   for (let n = 1; n <= 15; n++) {
     const count = n === 1 ? (src.match(/POD_FF_START\("/g) ?? []).length : (src.match(new RegExp(`POD_FF_MARK\\(${n}, "`, "g")) ?? []).length;
@@ -76,11 +114,11 @@ export function pullFrameViolations(src: string): string[] {
   order("doPull", pull, [1, "doFetchFrame(newFrameId, newFrameSource);"]);
   // 4. production : rien
   const prod = noCanary(src);
-  if (/POD_FF|g_podFf/.test(prod)) v.push("des marques existent HORS des blocs de canari");
+  if (/POD_FF|g_podFf|podFf/.test(prod)) v.push("des marques existent HORS des blocs de canari");
   return v;
 }
 
-test("PULLFRAME-PHASE-AUDIT1 : quinze marques de phase du canari, chacune seule dans son bloc gardé, dans l'ordre de chaque fonction, sans E/S directe ni allocation ; rien en production ; CONTRÔLES NÉGATIFS", () => {
+test("PULLFRAME-PHASE-AUDIT2 : quinze marques de phase du canari (enregistrement RAM .noinit + jeton de 7 o sans logf pour les phases 4 à 14), chacune seule dans son bloc gardé, dans l'ordre de chaque fonction ; rien en production ; CONTRÔLES NÉGATIFS", () => {
   const src = read(INO);
   assert.deepEqual(pullFrameViolations(src), []);
   const rm = (n: number): [string, RegExp] => [`marque ${n} supprimée`, n === 1 ? /#if POD_RENDER_V1 && POD_CANARY\n  POD_FF_START\("[^"\n]*"\);\n#endif\n/ : n === 10 ? /#if POD_RENDER_V1 && POD_CANARY\n    \{ const int rcHdr[^\n]*\n#endif\n/ : new RegExp(`#if POD_RENDER_V1 && POD_CANARY\\n\\s+POD_FF_MARK\\(${n}, "[^"\\n]*"\\);( POD_FF_STOP\\(\\);)?\\n#endif\\n`)];
@@ -90,16 +128,25 @@ test("PULLFRAME-PHASE-AUDIT1 : quinze marques de phase du canari, chacune seule 
     assert.notEqual(pullFrameViolations(src.replace(re, "")).length, 0, `mutant « ${name} » NON détecté`);
   }
   const mutants: Array<[string, string, string]> = [
-    ["garde g_podFfPhase retirée", "do { if (g_podFfPhase != 0) podFfSay((n), txt); } while (0)", "do { podFfSay((n), txt); } while (0)"],
-    ["attente USB NON bornée", "i < 400000UL && Serial.availableForWrite() < 120 && millis() - t0 < 200UL", "Serial.availableForWrite() < 120"],
-    ["ligne imprimée même sans place dans le tampon USB", "if (Serial.availableForWrite() < 120) { if (g_podFfDrop < 255) g_podFfDrop++; return; }\n", ""],
-    ["compteur de lignes perdues supprimé", "if (g_podFfDrop < 255) g_podFfDrop++;", ""],
-    ["impression directe par Serial", 'logf("[CANARY] FF %u : %s | marqueur %s | perdues=%u | t=%lu ms"', 'Serial.println("[CANARY] FF"); logf("[CANARY] FF %u : %s | marqueur %s | perdues=%u | t=%lu ms"'],
-    ["contrôle du marqueur affaibli (longueur ignorée)", " && *((volatile uint32_t*)&__StackLimit + 1) == g_podPaintLen) ? \"OK\"", ") ? \"OK\""],
+    ["garde g_podFfPhase retirée", "do { if (g_podFfPhase != 0) podFfNote((n)); } while (0)", "do { podFfNote((n)); } while (0)"],
+    ["jeton écrit sans vérifier la place", "if (n > 15 || Serial.availableForWrite() < 7) return false;", "if (n > 15) return false;"],
+    ["jeton plus long que la place vérifiée", "(kFfTok + 7u * n), 7) == 7", "(kFfTok + 7u * n), 70) == 70"],
+    ["attente dans le jeton", "if (n > 15 || Serial.availableForWrite() < 7) return false;", "while (Serial.availableForWrite() < 7) { } if (n > 15) return false;"],
+    ["enregistrement non scellé avant le jeton", "  podFfSeal();\n  if (n >= 4 && n <= 14)", "  if (n >= 4 && n <= 14)"],
+    ["jeton série aussi sur la pile principale (phases 1 à 3 et 15)", "if (n >= 4 && n <= 14) {", "if (n >= 1) {"],
+    ["logf dans une marque", "  g_podFfPhase = n;\n  g_podFfRec.last = n;", "  g_podFfPhase = n; logf(\"FF %u\", (unsigned)n);\n  g_podFfRec.last = n;"],
+    ["enregistrement hors .noinit (effacé au reset)", ' __attribute__((section(".noinit")));', ";"],
+    ["compteur de jetons perdus supprimé", "if (g_podFfRec.drops < 255) g_podFfRec.drops++;", ""],
+    ["contrôle du marqueur affaibli (longueur ignorée)", " && *((volatile uint32_t*)&__StackLimit + 1) == g_podPaintLen", ""],
     ["arrêt du traçage supprimé", " POD_FF_STOP();\n#endif", "\n#endif"],
     ["marque 3 déplacée après podNetRun", '  POD_FF_MARK(3, "avant podNetRun (pile reseau dediee)");\n#endif\n  const bool ran = podNetRun(tx, &ni);', '#endif\n  const bool ran = podNetRun(tx, &ni);\n#if POD_RENDER_V1 && POD_CANARY\n  POD_FF_MARK(3, "avant podNetRun (pile reseau dediee)");'],
     ["marques 6 et 7 permutées", 'POD_FF_MARK(6, "avant client.connect");', 'POD_FF_MARK(7, "avant client.connect");'],
     ["marque dans la production", "  const bool ran = podNetRun(tx, &ni);\n", "  const bool ran = podNetRun(tx, &ni); POD_FF_MARK(3, \"x\");\n"],
+    ["démarrage : rapport de l'enregistrement précédent non validé", "g_podFfRec.chk == podFfSum()", "true"],
+    ["démarrage : jeton de contrôle supprimé", "const bool w = podFfToken(0);", "const bool w = true;"],
+    ["démarrage : empreinte du build supprimée", "BUILD PULLFRAME-PHASE-AUDIT2", "BUILD"],
+    ["démarrage : podFfBoot jamais appelé", "  podFfBoot();\n", ""],
+    ["jeton [FF07] absent de la table", "[FF07]\\n", "[FF08]\\n"],
   ];
   for (const [name, a, b] of mutants) {
     assert.ok(src.split(a).length >= 2, `mutation « ${name} » : motif introuvable`);
@@ -107,10 +154,10 @@ test("PULLFRAME-PHASE-AUDIT1 : quinze marques de phase du canari, chacune seule 
   }
 });
 
-test("PULLFRAME-PHASE-AUDIT1 : les quatre autres firmwares R4 et la production ne portent aucune marque ; les statiques de canari ajoutés sont DEUX octets", () => {
-  for (const sk of OTHERS) assert.doesNotMatch(read(`arduino_uno_r4/${sk}/${sk}.ino`), /POD_FF|g_podFf/, sk);
+test("PULLFRAME-PHASE-AUDIT2 : les quatre autres firmwares R4 et la production ne portent aucune marque ; statiques de canari : un octet de phase et UN enregistrement .noinit de 20 o", () => {
+  for (const sk of OTHERS) assert.doesNotMatch(read(`arduino_uno_r4/${sk}/${sk}.ino`), /POD_FF|g_podFf|podFf/, sk);
   const src = read(INO);
   assert.equal((src.match(/^static volatile uint8_t g_podFfPhase = 0;$/gm) ?? []).length, 1);
-  assert.equal((src.match(/^static volatile uint8_t g_podFfDrop = 0;$/gm) ?? []).length, 1);
-  assert.doesNotMatch(noCanary(src), /POD_FF|g_podFf/);
+  assert.equal((src.match(/g_podFfDrop/g) ?? []).length, 0, "g_podFfDrop n'existe plus (le compteur vit dans l'enregistrement .noinit)");
+  assert.doesNotMatch(noCanary(src), /POD_FF|g_podFf|podFf/);
 });
