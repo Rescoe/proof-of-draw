@@ -1,0 +1,7 @@
+# PULLFRAME-PHASE-AUDIT1 — tailles (octets de flash, RAM statique) ; ELF cœur 1.5.3 (e-ink 2,9″). Rien n'a été flashé.
+base_0 : Le croquis utilise 124580 octets (47%) ; Les variables globales utilisent 22768 octets (69%) ; avertissements du sketch : 0
+fix_0 : Le croquis utilise 124612 octets (47%) ; Les variables globales utilisent 22768 octets (69%) ; avertissements du sketch : 0
+fix_1 : Le croquis utilise 127652 octets (48%) ; Les variables globales utilisent 22768 octets (69%) ; avertissements du sketch : 0
+base_canary : Le croquis utilise 136188 octets (51%) ; Les variables globales utilisent 22784 octets (69%) ; avertissements du sketch : 0
+fix_canary : Le croquis utilise 136460 octets (52%) ; Les variables globales utilisent 22784 octets (69%) ; avertissements du sketch : 0
+fix_ide : Le croquis utilise 136452 octets (52%) ; Les variables globales utilisent 22784 octets (69%) ; avertissements du sketch : 0

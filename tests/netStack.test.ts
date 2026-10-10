@@ -54,7 +54,7 @@ for (const sk of SKETCHES) {
     const conns = (code.match(/Conn c\(HTTP_TIMEOUT_MS\);/g) ?? []).length, lambdas = lambdaBodies(code);
     assert.ok(conns >= 3, `${sk} : au moins 3 sites réseau`);
     assert.equal(lambdas.length, conns, "autant de lambdas que de Conn");
-    for (const b of lambdas) {
+    for (const b of lambdas.map(noCanary)) {   // PULLFRAME-PHASE-AUDIT1 : les marques de phase du canari (blocs gardés) peuvent suivre stop() ; le texte de PRODUCTION se termine toujours par stop()
       assert.equal((b.match(/Conn c\(HTTP_TIMEOUT_MS\);/g) ?? []).length, 1, "un seul Conn par lambda");
       assert.match(b, /c\.client\.stop\(\);\s*$/, "la connexion est fermée explicitement en DERNIER, avant de quitter la pile dédiée");
       assert.doesNotMatch(b, /\breturn\b/, "aucune sortie anticipée de la lambda : client.stop() est toujours appelé (même si request() retourne un code négatif)");

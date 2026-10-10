@@ -1,0 +1,38 @@
+# PULLFRAME-PHASE-AUDIT1 — chaînes statiques setup/loop -> doPull, APRÈS, production ; ELF cœur 1.6.0 (e-ink 2,9″). Rien n'a été flashé.
+# doPull : cadre 136 o ; appelés directs : 27 ; appels indirects dans doPull : 0
+
+# setup → doPull : hal_entry 8 + arduino_main 16 + setup 224 + doPull 136 = 384 o (640 o restants pour les appelés)
+  doPullStageRKN7arduino6Str   String          sous doPull  320 o · cumul  704 o · marge  320 o · indirects 33   doPullStageRKN7arduino6Str > doPullApplyR10PullParsedRK > asciiFoldRKN7arduino6Strin > arduino6String6concatEc
+  httpCallPKcRKN7arduino6Str   String          sous doPull  216 o · cumul  600 o · marge  424 o · indirects 23   httpCallPKcRKN7arduino6Str > K7arduino6String9substring > arduino6StringC1EPKc(16) > arduino6String4copyEPKcj(
+  persistFrameIdRKN7arduino6   EEPROM          sous doPull  184 o · cumul  568 o · marge  456 o · indirects 9   persistFrameIdRKN7arduino6 > frameKeyRKN7arduino6String > K7arduino6String9substring > arduino6StringC1EPKc(16
+  refreshPanelb                autre           sous doPull  184 o · cumul  568 o · marge  456 o · indirects 26   refreshPanelb(24) > Epd29b8writeRamEhPKhhb.isr > Epd29b7commandEh.isra.125( > arduino10ArduinoSPI16begin > ard
+  frameKeyRKN7arduino6String   String          sous doPull  152 o · cumul  536 o · marge  488 o   frameKeyRKN7arduino6String > K7arduino6String9substring > arduino6StringC1EPKc(16) > arduino6String4copyEPKcj(
+  asciiFoldRKN7arduino6Strin   asciiFold       sous doPull  152 o · cumul  536 o · marge  488 o   asciiFoldRKN7arduino6Strin > arduino6String6concatEc(16 > arduino6String6concatEPKcj > arduino6String7reserveE
+  arduino6StringC1Eih          String          sous doPull  152 o · cumul  536 o · marge  488 o   arduino6StringC1Eih(48) > arduino6StringaSEPKc.part. > arduino6String4copyEPKcj(1 > arduino6String7reserveEj(8
+  logfPKcz                     journal (logf)  sous doPull  136 o · cumul  520 o · marge  504 o · indirects 23   logfPKcz(48) > PodNet8runSizedEPFvPvES0_j > malloc(tail) > _malloc_r(16) > _sbrk_r(16) > _sbrk(8)
+  reportMemPKc                 autre           sous doPull  136 o · cumul  520 o · marge  504 o · indirects 23   reportMemPKc(tail) > logfPKcz(48) > PodNet8runSizedEPFvPvES0_j > malloc(tail) > _malloc_r(16) > _sbrk_r(16) > 
+  arduino6StringC1EPKc         String          sous doPull  120 o · cumul  504 o · marge  520 o   arduino6StringC1EPKc(16) > arduino6String4copyEPKcj(1 > arduino6String7reserveEj(8 > arduino6String12changeBuf
+  arduinoplERKNS_15StringSum   String          sous doPull  120 o · cumul  504 o · marge  520 o   arduinoplERKNS_15StringSum > arduino6String6concatEPKcj > arduino6String7reserveEj(8 > arduino6String12changeB
+  arduino6StringC1ERKS0_       String          sous doPull  120 o · cumul  504 o · marge  520 o   arduino6StringC1ERKS0_(8) > arduino6StringaSERKS0_(8) > arduino6String4copyEPKcj(1 > arduino6String7reserveEj(
+  arduinoplERKNS_15StringSum   String          sous doPull  120 o · cumul  504 o · marge  520 o   arduinoplERKNS_15StringSum > arduino6String6concatEPKc( > arduino6String6concatEPKc. > arduino6String6concatEP
+  arduino6String6concatERKS0   String          sous doPull  112 o · cumul  496 o · marge  528 o   arduino6String6concatERKS0 > arduino6String6concatEPKcj > arduino6String7reserveEj(8 > arduino6String12changeB
+  pire chaîne par catégorie (sous doPull) : String 320 o · EEPROM 184 o · autre 184 o · asciiFold 152 o · journal (logf) 136 o
+  => pire cas statique setup : 704 o sur 1024 (marge 320 o) via doPullStageRKN7arduino6Str
+
+# loop → doPull : hal_entry 8 + arduino_main 16 + loop 56 + doPull 136 = 216 o (808 o restants pour les appelés)
+  doPullStageRKN7arduino6Str   String          sous doPull  320 o · cumul  536 o · marge  488 o · indirects 33   doPullStageRKN7arduino6Str > doPullApplyR10PullParsedRK > asciiFoldRKN7arduino6Strin > arduino6String6concatEc
+  httpCallPKcRKN7arduino6Str   String          sous doPull  216 o · cumul  432 o · marge  592 o · indirects 23   httpCallPKcRKN7arduino6Str > K7arduino6String9substring > arduino6StringC1EPKc(16) > arduino6String4copyEPKcj(
+  persistFrameIdRKN7arduino6   EEPROM          sous doPull  184 o · cumul  400 o · marge  624 o · indirects 9   persistFrameIdRKN7arduino6 > frameKeyRKN7arduino6String > K7arduino6String9substring > arduino6StringC1EPKc(16
+  refreshPanelb                autre           sous doPull  184 o · cumul  400 o · marge  624 o · indirects 26   refreshPanelb(24) > Epd29b8writeRamEhPKhhb.isr > Epd29b7commandEh.isra.125( > arduino10ArduinoSPI16begin > ard
+  frameKeyRKN7arduino6String   String          sous doPull  152 o · cumul  368 o · marge  656 o   frameKeyRKN7arduino6String > K7arduino6String9substring > arduino6StringC1EPKc(16) > arduino6String4copyEPKcj(
+  asciiFoldRKN7arduino6Strin   asciiFold       sous doPull  152 o · cumul  368 o · marge  656 o   asciiFoldRKN7arduino6Strin > arduino6String6concatEc(16 > arduino6String6concatEPKcj > arduino6String7reserveE
+  arduino6StringC1Eih          String          sous doPull  152 o · cumul  368 o · marge  656 o   arduino6StringC1Eih(48) > arduino6StringaSEPKc.part. > arduino6String4copyEPKcj(1 > arduino6String7reserveEj(8
+  logfPKcz                     journal (logf)  sous doPull  136 o · cumul  352 o · marge  672 o · indirects 23   logfPKcz(48) > PodNet8runSizedEPFvPvES0_j > malloc(tail) > _malloc_r(16) > _sbrk_r(16) > _sbrk(8)
+  reportMemPKc                 autre           sous doPull  136 o · cumul  352 o · marge  672 o · indirects 23   reportMemPKc(tail) > logfPKcz(48) > PodNet8runSizedEPFvPvES0_j > malloc(tail) > _malloc_r(16) > _sbrk_r(16) > 
+  arduino6StringC1EPKc         String          sous doPull  120 o · cumul  336 o · marge  688 o   arduino6StringC1EPKc(16) > arduino6String4copyEPKcj(1 > arduino6String7reserveEj(8 > arduino6String12changeBuf
+  arduinoplERKNS_15StringSum   String          sous doPull  120 o · cumul  336 o · marge  688 o   arduinoplERKNS_15StringSum > arduino6String6concatEPKcj > arduino6String7reserveEj(8 > arduino6String12changeB
+  arduino6StringC1ERKS0_       String          sous doPull  120 o · cumul  336 o · marge  688 o   arduino6StringC1ERKS0_(8) > arduino6StringaSERKS0_(8) > arduino6String4copyEPKcj(1 > arduino6String7reserveEj(
+  arduinoplERKNS_15StringSum   String          sous doPull  120 o · cumul  336 o · marge  688 o   arduinoplERKNS_15StringSum > arduino6String6concatEPKc( > arduino6String6concatEPKc. > arduino6String6concatEP
+  arduino6String6concatERKS0   String          sous doPull  112 o · cumul  328 o · marge  696 o   arduino6String6concatERKS0 > arduino6String6concatEPKcj > arduino6String7reserveEj(8 > arduino6String12changeB
+  pire chaîne par catégorie (sous doPull) : String 320 o · EEPROM 184 o · autre 184 o · asciiFold 152 o · journal (logf) 136 o
+  => pire cas statique loop : 536 o sur 1024 (marge 488 o) via doPullStageRKN7arduino6Str

@@ -584,51 +584,18 @@ static String signED25519(const String& candidateId, float score) {
 }
 
 // ─── HTTP (WiFiSSLClient + pod_http.h) ─────────────────────────────────────
-#if POD_RENDER_V1 && POD_CANARY
-// PULLFRAME-PHASE-AUDIT1 (canari seulement, +2 o de RAM statique) : le canari de 7df39b6 s'est TU juste après « [PULL] nouvelle frame … (personal) » (aucun « [HTTP GET] … pull-frame », aucun « [FRAME] », aucune requête chez le serveur).
-// Pendant doFetchFrame (de FF 1 à FF 15) chaque POINT DE PHASE imprime UNE ligne « [CANARY] FF n : … » (n° de phase, état EXACT du marqueur de la pile principale, lignes perdues, temps) : la DERNIÈRE ligne imprimée est le dernier point atteint.
-// g_podFfPhase = 0 : traçage inactif (toute autre transaction reste muette). Aucune allocation. ⚠ Le cœur R4 (SerialUSB::write) BOUCLE SANS LIMITE quand le tampon USB est plein et que l'hôte ne le vide pas : une impression pourrait donc
-// elle-même bloquer le firmware et faire croire que le blocage est ailleurs. podFfSay n'imprime donc que s'il reste de la place (attente bornée à 200 ms) sinon la ligne est PERDUE et comptée (g_podFfDrop, rappelée par « perdues=n »).
-static volatile uint8_t g_podFfPhase = 0;
-static volatile uint8_t g_podFfDrop = 0;
-static void __attribute__((noinline)) podFfSay(uint8_t n, const char* txt) {
-  g_podFfPhase = n;
-  const unsigned long t0 = millis();
-  for (uint32_t i = 0; i < 400000UL && Serial.availableForWrite() < 120 && millis() - t0 < 200UL; i++) { }
-  if (Serial.availableForWrite() < 120) { if (g_podFfDrop < 255) g_podFfDrop++; return; }
-  logf("[CANARY] FF %u : %s | marqueur %s | perdues=%u | t=%lu ms", (unsigned)n, txt, (*(volatile uint32_t*)&__StackLimit == 0x434E5259UL && *((volatile uint32_t*)&__StackLimit + 1) == g_podPaintLen) ? "OK" : "DETRUIT", (unsigned)g_podFfDrop, (unsigned long)millis());
-}
-#define POD_FF_MARK(n, txt) do { if (g_podFfPhase != 0) podFfSay((n), txt); } while (0)
-#define POD_FF_START(txt) do { g_podFfPhase = 1; POD_FF_MARK(1, txt); } while (0)
-#define POD_FF_STOP() do { g_podFfPhase = 0; } while (0)
-#endif
 struct Conn {
   WiFiSSLClient client;
   podhttp::Reader<WiFiSSLClient> rd;
   explicit Conn(uint32_t timeoutMs) : rd(client, timeoutMs) {}
   /** Connecte, envoie la requête, lit les en-têtes. Retourne le code HTTP, -2 = connexion TLS impossible, -1 = réponse illisible. */
   int request(const char* method, const String& path, const String* body) {
-#if POD_RENDER_V1 && POD_CANARY
-    POD_FF_MARK(6, "avant client.connect");
-#endif
     if (!client.connect(SERVER_HOST, 443)) return -2;
-#if POD_RENDER_V1 && POD_CANARY
-    POD_FF_MARK(7, "apres client.connect : connecte");
-#endif
     String req = String(method) + " " + path + " HTTP/1.1\r\nHost: " SERVER_HOST "\r\nUser-Agent: pod-r4/" FIRMWARE_VERSION "\r\nAccept: */*\r\nConnection: close\r\n";
     if (body) req += "Content-Type: application/json\r\nContent-Length: " + String(body->length()) + "\r\n";
     req += "\r\n";
     if (body) req += *body;
-#if POD_RENDER_V1 && POD_CANARY
-    POD_FF_MARK(8, "requete construite, avant client.print");
-#endif
     client.print(req);
-#if POD_RENDER_V1 && POD_CANARY
-    POD_FF_MARK(9, "apres client.print, avant la lecture des en-tetes");
-#endif
-#if POD_RENDER_V1 && POD_CANARY
-    { const int rcHdr = rd.readHeaders(); POD_FF_MARK(10, "apres la lecture des en-tetes"); return rcHdr; }
-#endif
     return rd.readHeaders();
   }
 };
@@ -909,51 +876,24 @@ static bool ackFrame(const String& frameId) {
 static bool doFetchFrame(const String& frameId, const String& frameSource) {
   const unsigned long t0 = millis();
   bool got = false, noFrame = false;
-#if POD_RENDER_V1 && POD_CANARY
-  POD_FF_MARK(2, "entree de doFetchFrame");
-#endif
   PodNetInfo ni;                                     // POD_NET_STACK : la transaction tourne sur la pile réseau dédiée
   auto tx = [&]() {
-#if POD_RENDER_V1 && POD_CANARY
-    POD_FF_MARK(4, "transaction : entree sur la pile reseau dediee");
-#endif
     Conn c(HTTP_TIMEOUT_MS);
-#if POD_RENDER_V1 && POD_CANARY
-    POD_FF_MARK(5, "connexion TLS construite (client cree), avant la requete");
-#endif
     const int code = c.request("GET", "/api/pull-frame?deviceId=" + deviceId + "&screen=" SCREEN_TYPE "&fmt=bin", nullptr);
     logf("[HTTP GET] /api/pull-frame -> %d (contenu %ld)", code, c.rd.contentLength());
     if (code == 404) noFrame = true;
     else if (code == 200 && (c.rd.contentLength() < 0 || c.rd.contentLength() == FRAME_BYTES)) {
       // Lecture complète garantie par pod_http.h (boucle jusqu'au compte exact ou au timeout) : jamais d'image hachée
       const size_t b = c.rd.readBody(blackBuf, BUF_SIZE);
-#if POD_RENDER_V1 && POD_CANARY
-      POD_FF_MARK(11, "plan noir lu");
-#endif
       const size_t r = (b == BUF_SIZE) ? c.rd.readBody(redBuf, BUF_SIZE) : 0;
-#if POD_RENDER_V1 && POD_CANARY
-      POD_FF_MARK(12, "plan rouge lu");
-#endif
       logf("[FRAME] lu noir=%u rouge=%u attendu=%u", (unsigned)b, (unsigned)r, (unsigned)BUF_SIZE);
       got = (b == BUF_SIZE && r == BUF_SIZE);
     } else if (code == 200) {
       logf("[FRAME] taille annoncée %ld != %d (le serveur sert-il bien eink29bwr ?)", c.rd.contentLength(), FRAME_BYTES);
     }
-#if POD_RENDER_V1 && POD_CANARY
-    POD_FF_MARK(13, "avant stop");
-#endif
     c.client.stop();
-#if POD_RENDER_V1 && POD_CANARY
-    POD_FF_MARK(14, "apres stop");
-#endif
   };
-#if POD_RENDER_V1 && POD_CANARY
-  POD_FF_MARK(3, "avant podNetRun (pile reseau dediee)");
-#endif
   const bool ran = podNetRun(tx, &ni);
-#if POD_RENDER_V1 && POD_CANARY
-  POD_FF_MARK(15, "retour de podNetRun"); POD_FF_STOP();
-#endif
 #if POD_RENDER_V1 && POD_CANARY
   podCanaryNet("pull-frame", ni, ran);
 #endif
@@ -1392,9 +1332,6 @@ static bool doPull() {
   if (frameKey(newFrameId) == lastFrameId) { logf("[PULL] frame déjà affichée"); return true; }
   logf("[PULL] nouvelle frame %s (%s)", newFrameId.c_str(), newFrameSource.c_str());
 
-#if POD_RENDER_V1 && POD_CANARY
-  POD_FF_START("avant l'appel de doFetchFrame (depuis doPull)");
-#endif
   doFetchFrame(newFrameId, newFrameSource);          // échec : on retourne quand même true (pas de boucle pull→échec→pull)
   reportMem("après pull");
 #if POD_RENDER_V1 && POD_CANARY

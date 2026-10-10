@@ -1,0 +1,38 @@
+# PULLFRAME-PHASE-AUDIT1 — chaînes statiques setup/loop -> doPull, AVANT (7df39b6), canari ; ELF cœur 1.5.3 (e-ink 2,9″). Rien n'a été flashé.
+# doPull : cadre 192 o ; appelés directs : 39 ; appels indirects dans doPull : 0
+
+# setup → doPull : hal_entry 8 + arduino_main 16 + setup 224 + doPull 192 = 440 o (584 o restants pour les appelés)
+  doPullStageRKN7arduino6Str   String          sous doPull  360 o · cumul  800 o · marge  224 o · indirects 33   doPullStageRKN7arduino6Str > doPullApplyR10PullParsedRK > podCanaryCheckPKcb(96) > podCanaryEmitPFvPvES_(8) > 
+  httpCallPKcRKN7arduino6Str   String          sous doPull  272 o · cumul  712 o · marge  312 o · indirects 23   httpCallPKcRKN7arduino6Str > podCanaryCheckPKcb(96) > podCanaryEmitPFvPvES_(8) > PodNet8runSizedEPFvPvES0_j > 
+  Epd29b13displayStreamEPFmP   autre           sous doPull  216 o · cumul  656 o · marge  368 o · indirects 4   Epd29b13displayStreamEPFmP > Epd29b7refreshEv.isra.138( > Epd29b7commandEh.isra.136( > arduino10ArduinoSPI16be
+  podCanaryCheckPKcb           autre           sous doPull  192 o · cumul  632 o · marge  392 o · indirects 1   podCanaryCheckPKcb(96) > podCanaryEmitPFvPvES_(8) > PodNet8runSizedEPFvPvES0_j > malloc(tail) > _malloc_r(16) 
+  persistFrameIdRKN7arduino6   EEPROM          sous doPull  184 o · cumul  624 o · marge  400 o · indirects 9   persistFrameIdRKN7arduino6 > frameKeyRKN7arduino6String > K7arduino6String9substring > arduino6StringC1EPKc(16
+  refreshPanelb                autre           sous doPull  184 o · cumul  624 o · marge  400 o · indirects 26   refreshPanelb(24) > Epd29b8writeRamEhPKhhb.isr > Epd29b7commandEh.isra.136( > arduino10ArduinoSPI16begin > ard
+  frameKeyRKN7arduino6String   String          sous doPull  152 o · cumul  592 o · marge  432 o   frameKeyRKN7arduino6String > K7arduino6String9substring > arduino6StringC1EPKc(16) > arduino6String4copyEPKcj(
+  podCanaryNetPKcRK10PodNetI   autre           sous doPull  144 o · cumul  584 o · marge  440 o · indirects 1   podCanaryNetPKcRK10PodNetI > podCanaryPhaseh(16) > podCanaryEmitPFvPvES_(8) > PodNet8runSizedEPFvPvES0_j > mal
+  pod_render_hash_numI11PodS   autre           sous doPull  144 o · cumul  584 o · marge  440 o   pod_render_hash_numI11PodS > SHA2566updateEPKvj(32) > SHA25612processChunkEv(80)
+  waitMinRefreshGapv.part.69   autre           sous doPull  144 o · cumul  584 o · marge  440 o · indirects 23   waitMinRefreshGapv.part.69 > logfPKcz(48) > PodNet8runSizedEPFvPvES0_j > malloc(tail) > _malloc_r(16) > _sbrk_
+  logfPKcz                     journal (logf)  sous doPull  136 o · cumul  576 o · marge  448 o · indirects 23   logfPKcz(48) > PodNet8runSizedEPFvPvES0_j > malloc(tail) > _malloc_r(16) > _sbrk_r(16) > _sbrk(8)
+  reportMemPKc                 autre           sous doPull  136 o · cumul  576 o · marge  448 o · indirects 23   reportMemPKc(tail) > logfPKcz(48) > PodNet8runSizedEPFvPvES0_j > malloc(tail) > _malloc_r(16) > _sbrk_r(16) > 
+  Epd29b4initEv                autre           sous doPull  136 o · cumul  576 o · marge  448 o · indirects 3   Epd29b4initEv(8) > Epd29b7commandEh.isra.136( > arduino10ArduinoSPI16begin > arduino10ArduinoSPI17confi > ardu
+  Epd29b7commandEh.isra.136    autre           sous doPull  128 o · cumul  568 o · marge  456 o · indirects 3   Epd29b7commandEh.isra.136( > arduino10ArduinoSPI16begin > arduino10ArduinoSPI17confi > arduino10ArduinoSPI12co
+  pire chaîne par catégorie (sous doPull) : String 360 o · autre 216 o · EEPROM 184 o · journal (logf) 136 o
+  => pire cas statique setup : 800 o sur 1024 (marge 224 o) via doPullStageRKN7arduino6Str
+
+# loop → doPull : hal_entry 8 + arduino_main 16 + loop 56 + doPull 192 = 272 o (752 o restants pour les appelés)
+  doPullStageRKN7arduino6Str   String          sous doPull  360 o · cumul  632 o · marge  392 o · indirects 33   doPullStageRKN7arduino6Str > doPullApplyR10PullParsedRK > podCanaryCheckPKcb(96) > podCanaryEmitPFvPvES_(8) > 
+  httpCallPKcRKN7arduino6Str   String          sous doPull  272 o · cumul  544 o · marge  480 o · indirects 23   httpCallPKcRKN7arduino6Str > podCanaryCheckPKcb(96) > podCanaryEmitPFvPvES_(8) > PodNet8runSizedEPFvPvES0_j > 
+  Epd29b13displayStreamEPFmP   autre           sous doPull  216 o · cumul  488 o · marge  536 o · indirects 4   Epd29b13displayStreamEPFmP > Epd29b7refreshEv.isra.138( > Epd29b7commandEh.isra.136( > arduino10ArduinoSPI16be
+  podCanaryCheckPKcb           autre           sous doPull  192 o · cumul  464 o · marge  560 o · indirects 1   podCanaryCheckPKcb(96) > podCanaryEmitPFvPvES_(8) > PodNet8runSizedEPFvPvES0_j > malloc(tail) > _malloc_r(16) 
+  persistFrameIdRKN7arduino6   EEPROM          sous doPull  184 o · cumul  456 o · marge  568 o · indirects 9   persistFrameIdRKN7arduino6 > frameKeyRKN7arduino6String > K7arduino6String9substring > arduino6StringC1EPKc(16
+  refreshPanelb                autre           sous doPull  184 o · cumul  456 o · marge  568 o · indirects 26   refreshPanelb(24) > Epd29b8writeRamEhPKhhb.isr > Epd29b7commandEh.isra.136( > arduino10ArduinoSPI16begin > ard
+  frameKeyRKN7arduino6String   String          sous doPull  152 o · cumul  424 o · marge  600 o   frameKeyRKN7arduino6String > K7arduino6String9substring > arduino6StringC1EPKc(16) > arduino6String4copyEPKcj(
+  podCanaryNetPKcRK10PodNetI   autre           sous doPull  144 o · cumul  416 o · marge  608 o · indirects 1   podCanaryNetPKcRK10PodNetI > podCanaryPhaseh(16) > podCanaryEmitPFvPvES_(8) > PodNet8runSizedEPFvPvES0_j > mal
+  pod_render_hash_numI11PodS   autre           sous doPull  144 o · cumul  416 o · marge  608 o   pod_render_hash_numI11PodS > SHA2566updateEPKvj(32) > SHA25612processChunkEv(80)
+  waitMinRefreshGapv.part.69   autre           sous doPull  144 o · cumul  416 o · marge  608 o · indirects 23   waitMinRefreshGapv.part.69 > logfPKcz(48) > PodNet8runSizedEPFvPvES0_j > malloc(tail) > _malloc_r(16) > _sbrk_
+  logfPKcz                     journal (logf)  sous doPull  136 o · cumul  408 o · marge  616 o · indirects 23   logfPKcz(48) > PodNet8runSizedEPFvPvES0_j > malloc(tail) > _malloc_r(16) > _sbrk_r(16) > _sbrk(8)
+  reportMemPKc                 autre           sous doPull  136 o · cumul  408 o · marge  616 o · indirects 23   reportMemPKc(tail) > logfPKcz(48) > PodNet8runSizedEPFvPvES0_j > malloc(tail) > _malloc_r(16) > _sbrk_r(16) > 
+  Epd29b4initEv                autre           sous doPull  136 o · cumul  408 o · marge  616 o · indirects 3   Epd29b4initEv(8) > Epd29b7commandEh.isra.136( > arduino10ArduinoSPI16begin > arduino10ArduinoSPI17confi > ardu
+  Epd29b7commandEh.isra.136    autre           sous doPull  128 o · cumul  400 o · marge  624 o · indirects 3   Epd29b7commandEh.isra.136( > arduino10ArduinoSPI16begin > arduino10ArduinoSPI17confi > arduino10ArduinoSPI12co
+  pire chaîne par catégorie (sous doPull) : String 360 o · autre 216 o · EEPROM 184 o · journal (logf) 136 o
+  => pire cas statique loop : 632 o sur 1024 (marge 392 o) via doPullStageRKN7arduino6Str

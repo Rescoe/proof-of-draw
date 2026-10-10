@@ -1,0 +1,32 @@
+# Journal série du canari 7df39b6 (UNO R4 WiFi + e-ink 2,9″, build local POD_RENDER_V1=1 POD_CANARY=1), 10/10/2026 — transmis par le porteur (fences Markdown retirés, aucune autre modification).
+# Le porteur a envoyé deux images : (1) une ancienne, renvoyée sur cet écran seulement (« Afficher sur mon écran », frame PERSONNELLE) ; (2) un dessin neuf soumis au réseau (candidat).
+# Le journal s'arrête à la ligne « [PULL] nouvelle frame … (personal) » : aucun « [HTTP GET] /api/pull-frame », « [FRAME] », « [RENDER] », « [EINK] », ACK, ni ligne « [CANARY] net pull-frame » pendant ≈ 30 minutes.
+[CANARY] net http : pile reseau dediee utilisee 1140 o, marge 844 o (objectif >= 256 : OK), erreur 0 | tas libre 6660
+[HTTP POST] /api/register -> 200
+[CANARY] register JSON : pile de travail dediee utilisee 496 o, marge 1488 o (objectif >= 256 : OK), erreur 0, statut 1 | tas libre avant 6476 apres 6476
+[REGISTER] deviceId=dev_W29I1TW7 paired=oui
+[REGISTER] appairé
+[CANARY] 6b apres doRegister : pile utilisee au plus 784 o / 1024 (marge 240 o, SOUS L'OBJECTIF 256) | SP=0x20007D98 | tas libre 6888 | sbrk->limite 1908
+[BOOT] premier pull immédiat
+[CANARY] 7a avant doPull : pile utilisee au plus 784 o / 1024 (marge 240 o, SOUS L'OBJECTIF 256) | SP=0x20007D98 | tas libre 6888 | sbrk->limite 1908
+[CANARY] net http : pile reseau dediee utilisee 1136 o, marge 848 o (objectif >= 256 : OK), erreur 0 | tas libre 6808
+[HTTP GET] /api/pull?deviceId=dev_W29I1TW7 -> 200
+[CANARY] pull JSON : pile de travail dediee utilisee 700 o, marge 1284 o (objectif >= 256 : OK), erreur 0, statut 1 | tas libre avant 6112 apres 6008
+[PULL] cartel: Chat - pain / Roubzi (bloc 95)
+[PULL] nouveau bloc #95
+[PULL] aucune frame
+[CANARY] 7b apres doPull : pile utilisee au plus 888 o / 1024 (marge 136 o, SOUS L'OBJECTIF 256) | SP=0x20007D98 | tas libre 6820 | sbrk->limite 1908
+[CANARY] sonde journal: 123456789012345678901234512345678901234567890123456789012345678901234561234567890123456789012345678901234567890123456123456789012345678901234567890123456789012345612345678901234567890123456789012345678901234567890
+[CANARY] pile de journal (ligne de 250 caracteres) : utilisee 416 o, marge 1056 o, erreur 0 (OK)
+[BOOT] prêt — pull toutes les 60 s
+[CANARY] 8 pret : pile utilisee au plus 888 o / 1024 (marge 136 o, SOUS L'OBJECTIF 256) | SP=0x20007D98 | tas libre 6820 | sbrk->limite 1908
+[CANARY] net http : pile reseau dediee utilisee 1172 o, marge 812 o (objectif >= 256 : OK), erreur 0 | tas libre 6720
+[HTTP GET] /api/pull?deviceId=dev_W29I1TW7 -> 200
+[CANARY] pull JSON : pile de travail dediee utilisee 748 o, marge 1236 o (objectif >= 256 : OK), erreur 0, statut 1 | tas libre avant 6008 apres 5924
+[PULL] cartel: Chat - pain / Roubzi (bloc 95)
+[PULL] aucune frame
+[CANARY] net http : pile reseau dediee utilisee 1148 o, marge 836 o (objectif >= 256 : OK), erreur 0 | tas libre 6720
+[HTTP GET] /api/pull?deviceId=dev_W29I1TW7 -> 200
+[CANARY] pull JSON : pile de travail dediee utilisee 756 o, marge 1228 o (objectif >= 256 : OK), erreur 0, statut 1 | tas libre avant 5804 apres 5660
+[PULL] cartel: La chute de WallStreet / Neo (bloc 87)
+[PULL] nouvelle frame 6429e8f5-9ed8-427c-9c3e-018b4e820c05 (personal)

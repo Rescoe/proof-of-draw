@@ -1,0 +1,6 @@
+# PULLFRAME-PHASE-AUDIT1 — transactions de la pile réseau dédiée, APRÈS, production (inchangé) ; ELF cœur 1.5.3 (e-ink 2,9″). Rien n'a été flashé.
+# Profondeur statique des transactions réseau (octets) — pile dédiée de 1984 o utilisables, cadre matériel d'exception 104 o
+# site (lambda)              cadre pire cas (avec %f) sans %f reste (pire cas) reste (sans %f)
+netReadCandidate               272               1344    1024              536             856
+netHttpRaw                     240               1312     992              568             888
+doFetchFrame                   240               1312     992              568             888
