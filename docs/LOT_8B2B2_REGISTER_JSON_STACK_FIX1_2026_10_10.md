@@ -8,6 +8,8 @@
 | **Portée** | le seul sketch **UNO R4 e-ink 2,9″** (correctif de production inconditionnel, comme le lot précédent) + tests, scripts, documentation. `podNetStack.h` **n'est pas modifié** : les copies des cinq dossiers et les quatre autres firmwares sont identiques à `c19efb8`. **Aucun** serveur, Redis (+0), Neon (0), protocole, vote, ACK, rendu, OTA, polling, taille de pile. |
 | **Défauts du dépôt** | `POD_RENDER_V1 = 0`, `POD_CANARY = 0` (commit). `1`/`1` seulement dans le fichier local du canari. |
 
+> **Résultat du canari de ce lot (partiel)** : `register JSON` 448 o / marge 1 536, `pull JSON` 724 o / marge 1 260, `6b` 784 o (marge 240), `7b` 892 o (marge 132, marqueur intact), aucune alerte — voir `docs/RESULTAT_CANARI_231393D_PARTIEL_2026_10_10.md`.
+
 ## 1. Ce que le canari de `c19efb8` établit sur la carte
 
 * Tous les contrôles précédents passent : `6a` 440 o de marge, R0/R1/R2 muets, Wi-Fi 448–608 o utilisés (marges ≥ 864 o), Ed25519 ≥ 708 o, PodNet 1 148 / **836** o, `POST /api/register` 200, journal 416 o. Le `podWorkRun` du pull n'est **pas** atteint : le premier pull n'a jamais démarré.
@@ -95,7 +97,7 @@ Même fichier local `1`/`1`. À lire, dans cet ordre :
 
 1. `[CANARY] register JSON : … erreur 0, statut 1` (marge ≥ 128, 256 visés) ; `6b apres doRegister` **sans alerte**, marge principale ≥ 128 o ;
 2. `[CANARY] pull JSON : … erreur 0, statut 1` (ou 2) à chaque pull ; `7b` sans alerte ;
-3. au moins trois pulls sans verrou, A/B/C stables, tas libre stable ; aucune ligne « PREMIERE phase fautive » ;
+3. au moins trois pulls sans verrou, A/B/C stables, tas libre stable ; aucune ligne « PREMIERE phase fautive ». **Cadence réelle : au repos le pull suivant arrive après 5 min (réseau chaud) ou 15 min (sinon), pas 60 s** (`lib/pullBudget.ts`) ; un reset donne un pull immédiat ;
 4. s'arrêter au premier verrou et copier TOUT le journal.
 
 **Réserve** : `doValidate` reste sur la pile principale (§ 6) ; si la réponse d'un pull annonce un `pendingValidation`, la boucle principale lancera une validation (et un vote réel) sans instrument. Si le journal montre `pendingValidation`/un candidat avant les trois pulls, débrancher plutôt que de laisser voter. Ensuite seulement, et dans cet ordre : migration de `doValidate`, une frame personnelle unique, propagation aux autres firmwares.
