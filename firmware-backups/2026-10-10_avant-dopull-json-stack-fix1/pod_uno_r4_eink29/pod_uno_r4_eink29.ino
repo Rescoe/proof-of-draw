@@ -321,7 +321,7 @@ struct PodCanaryDpCtx { uint8_t phase; };
 static void podCanaryPrintDp(void* v) {
   const PodCanaryDpCtx& c = *static_cast<const PodCanaryDpCtx*>(v);
   Serial.print(F("[CANARY] doPull : PREMIERE phase fautive = ")); Serial.print((unsigned)c.phase);
-  Serial.println(F(" (1 entree · 2 apres l'appel HTTP · 3 apres le retour de l'analyse sur la pile de travail · 4 apres l'etat du cartel et son journal · 5 apres l'observation · 6 apres ownedBlock (memoire non volatile) · 7 apres la mise a jour du bloc (memoire non volatile) et du candidat · 8 retour de l'etage reseau+analyse dans doPull · 9 apres 'aucune frame', avant le retour) : la destruction est survenue ENTRE la phase precedente (saine) et celle-ci"));
+  Serial.println(F(" (1 entree · 2 apres l'appel HTTP · 3 apres JSON_DOC · 4 apres deserializeJson · 5 apres extraction bloc/candidat/frame · 6 apres cartel+journal · 7 apres observation+ownedBlock · 8 apres destruction de doc et resp · 9 apres mise a jour du bloc et memoire non volatile · 10 apres 'aucune frame', avant le retour) : la destruction est survenue ENTRE la phase precedente (saine) et celle-ci"));
   podCanaryHalt("doPull phase");
 }
 static void __attribute__((noinline)) podCanaryDoPull() {
@@ -1015,228 +1015,100 @@ static bool doRegister() {
 }
 
 // ─── PULL ──────────────────────────────────────────────────────────────────
-// DOPULL-JSON-STACK-FIX1 : TOUT le décodage de la réponse /api/pull s'exécute sur une pile de TRAVAIL dédiée (podWorkRun : POD_WORK_STACK_TOTAL o pris au tas, garde 64 o, marge >= 128 o, objectif 256 o, échec fermé),
-// APRÈS la fermeture de la transaction TLS (httpCall est revenu : la connexion est stop()ée). Cause MESURÉE sur la carte (canari b03c0b4, 10/10/2026) : phases 1 à 3 de doPull saines, marqueur de la pile principale détruit
-// PENDANT deserializeJson(doc, resp) (récursion d'ArduinoJson posée sur les 536 o de cadres setup -> doPull). Vivent ensemble sur la pile de travail : le document JSON, deserializeJson, toutes les lectures et conversions
-// JsonVariant -> String, la branche pendingObservation (sérialisation en String) et ownedBlock ; le document est DÉTRUIT avant le retour sur la pile principale. Le JSON n'est JAMAIS traité pendant que TLS est vivant.
-// Sortie : PullParsed, structure BORNÉE appartenant à l'appelant ; AUCUN effet de bord (état global, EEPROM, affichage, vote, ACK) avant un retour VALIDE (PULL_P_OK ou PULL_P_RATE, pile saine).
-// BORNES (contrat écrit) : identifiants et empreintes <= 64 car., source de frame <= 16 car., observation <= 8 empreintes : trop long ou trop nombreux => REFUSÉ (pull rejeté, RIEN n'est appliqué, aucune frame, aucun vote ni ACK).
-// Les trois textes du cartel (titre <= 255 o, artiste <= 127 o, horodatage <= 63 o ; le serveur n'en envoie jamais plus : 80 / 40 car.) sont TRONQUÉS à une frontière de caractère UTF-8 ; aucune autre troncature.
-// Échec fermé : NOMEM, NESTED, GUARD, MARGIN (pile), JSON invalide, champ hors bornes, mémoire insuffisante pour une chaîne => doPull retourne false sans rien appliquer.
-#define PULL_ID_MAX     64
-#define PULL_SRC_MAX    16
-#define PULL_TITLE_MAX  255
-#define PULL_ARTIST_MAX 127
-#define PULL_TS_MAX     63
-#define PULL_OBS_MAX    8
-#include <new>
-enum PullStatus : uint8_t { PULL_P_NONE = 0, PULL_P_OK = 1, PULL_P_RATE = 2, PULL_P_JSON = 3, PULL_P_BOUNDS = 4, PULL_P_HEAP = 5 };
-struct PullParsed {
-  uint8_t status;                  // PullStatus : le résultat n'est exploitable que pour PULL_P_OK et PULL_P_RATE
-  bool hasCartel, hasObs;
-  int blockIndex, retryAfter, cartelBlockIndex, rateRetrySec;
-  const char* jsonErr;             // texte statique de DeserializationError (PULL_P_JSON)
-  String blockHash, candId, frameSource, frameId, workTitle, artistName, displayTs, obsHashes, obsTarget, owned;
-  PullParsed() : status(PULL_P_NONE), hasCartel(false), hasObs(false), blockIndex(-1), retryAfter(60), cartelBlockIndex(-1), rateRetrySec(60), jsonErr(nullptr) {}
-};
-// copie bornée d'un identifiant : au-delà de max => PULL_P_BOUNDS ; copie incomplète (tas) => PULL_P_HEAP
-static bool __attribute__((noinline)) pullSetId(String& dst, const char* src, size_t max, PullParsed& r) {
-  const size_t n = strlen(src);
-  if (n > max) { r.status = PULL_P_BOUNDS; return false; }
-  dst = "";
-  if (n > 0 && !dst.concat(src, (unsigned int)n)) { r.status = PULL_P_HEAP; return false; }
-  if (dst.length() != n) { r.status = PULL_P_HEAP; return false; }
-  return true;
-}
-// copie d'un texte de cartel, TRONQUÉE à une frontière de caractère UTF-8 au-delà de max
-static bool __attribute__((noinline)) pullSetText(String& dst, const char* src, size_t max, PullParsed& r) {
-  size_t n = strlen(src);
-  if (n > max) { n = max; while (n > 0 && (((uint8_t)src[n]) & 0xC0) == 0x80) n--; }
-  dst = "";
-  if (n > 0 && !dst.concat(src, (unsigned int)n)) { r.status = PULL_P_HEAP; return false; }
-  if (dst.length() != n) { r.status = PULL_P_HEAP; return false; }
-  return true;
-}
-// Exécutée SUR LA PILE DE TRAVAIL (voir pullParseOnWorkStack). Ne touche à AUCUN état global : tout va dans r.
-static void __attribute__((noinline)) pullParseWork(const String& resp, int code, PullParsed& r) {
-  if (code == 429) {
-    JSON_DOC(rate, 256);
-    r.rateRetrySec = 60;
-    if (deserializeJson(rate, resp) == DeserializationError::Ok) r.rateRetrySec = max(1, (int)(rate["retryAfter"] | 60));
-    r.status = PULL_P_RATE;
-    return;
-  }
-  JSON_DOC(doc, 2048);
-  const DeserializationError err = deserializeJson(doc, resp);
-  if (err) { r.jsonErr = err.c_str(); r.status = PULL_P_JSON; return; }
-
-  JsonObject chain = doc["chain"];
-  if (!chain.isNull()) { if (!pullSetId(r.blockHash, chain["blockHash"] | "", PULL_ID_MAX, r)) return; r.blockIndex = chain["blockIndex"] | -1; }
-  JsonObject pend = doc["pendingValidation"];
-  if (!pend.isNull() && !pullSetId(r.candId, pend["candidateId"] | "", PULL_ID_MAX, r)) return;
-
-  if (!pullSetId(r.frameSource, doc["frameSource"] | "none", PULL_SRC_MAX, r)) return;
-  if (!pullSetId(r.frameId, doc["frameId"] | "", PULL_ID_MAX, r)) return;
-  r.retryAfter = doc["retryAfter"] | 60;
-  if (r.retryAfter <= 0) r.retryAfter = 60;
-  if (r.frameId.length() == 0) { JsonObject fo = doc["frame"]; if (!fo.isNull() && !pullSetId(r.frameId, fo["frameId"] | "", PULL_ID_MAX, r)) return; }
-
-  JsonObject cm = doc["cartelMeta"];
-  if (!cm.isNull()) {
-    r.hasCartel = true;
-    if (!pullSetText(r.workTitle, cm["workTitle"] | "", PULL_TITLE_MAX, r)) return;
-    if (!pullSetText(r.artistName, cm["drawArtistName"] | "", PULL_ARTIST_MAX, r)) return;
-    if (!pullSetText(r.displayTs, cm["displayTs"] | "", PULL_TS_MAX, r)) return;
-    r.cartelBlockIndex = cm["blockIndex"] | r.cartelBlockIndex;
-  }
-  JsonObject obs = doc["pendingObservation"];
-  if (!obs.isNull()) {
-    JsonArray hArr = obs["blockHashes"].as<JsonArray>();
-    if (hArr.size() > 0) {
-      if (hArr.size() > PULL_OBS_MAX) { r.status = PULL_P_BOUNDS; return; }
-      String arr = "[";
-      size_t want = 1;
-      for (size_t i = 0; i < hArr.size(); i++) {
-        const String h = hArr[i].as<String>();                 // conversion JsonVariant -> String : la chaîne la plus profonde (584 o), sur la pile de travail
-        if (h.length() > PULL_ID_MAX) { r.status = PULL_P_BOUNDS; return; }
-        if (i) { arr += ","; want += 1; }
-        arr += "\""; arr += h; arr += "\"";
-        want += h.length() + 2;
-      }
-      arr += "]"; want += 1;
-      if (arr.length() != want) { r.status = PULL_P_HEAP; return; }
-      r.obsHashes = arr;
-      if (r.obsHashes.length() != want) { r.status = PULL_P_HEAP; return; }
-      if (!pullSetId(r.obsTarget, obs["targetBlockHash"] | "", PULL_ID_MAX, r)) return;
-      r.hasObs = true;
-    }
-  }
-  if (!pullSetId(r.owned, doc["ownedBlock"] | "", PULL_ID_MAX, r)) return;
-  r.status = PULL_P_OK;
-}
-// Lanceur : la fermeture et son PodNetInfo ne vivent que le temps de l'appel (noinline : cadre rendu avant la suite de doPull)
-static bool __attribute__((noinline)) pullParseOnWorkStack(const String& resp, int code, PullParsed& r, PodNetInfo& ni) {
-  auto wk = [&]() { pullParseWork(resp, code, r); };
-  return podWorkRun(wk, &ni);
-}
-// Échec de la pile de travail (NOMEM, NESTED, GUARD, MARGIN) : rien n'est appliqué. GUARD = garde écrasée => le tas voisin peut être corrompu (logf alloue) : arrêt sûr silencieux AVANT tout journal.
-static void __attribute__((noinline)) pullWorkFailed(const PodNetInfo& ni) {
-  if (ni.err == POD_NET_GUARD) logfSafeStop();
-  logf("[PULL] analyse JSON sur la pile de travail ECHOUEE (err %u) : %s ; pull rejeté, rien n'est appliqué", (unsigned)ni.err, podNetWhy(ni));
-}
-#if POD_RENDER_V1 && POD_CANARY
-// DOPULL-JSON-STACK-FIX1 (canari seulement) : une ligne par analyse du pull — pile de travail utilisée / marge / erreur / statut, tas libre AVANT et APRÈS ; la phase de PodNet (pad[0]) est contrôlée ; toute erreur de la pile
-// ou tout statut autre que OK / 429 pose le verrou fatal. Aucun podCanaryCheck dans cette fonction : le contrôle de la pile principale suit son retour, chez l'appelant (règle A/B/C).
-struct PodCanaryPullCtx { const PodNetInfo* ni; bool ran; uint8_t status; uint32_t heapB; };
-static bool __attribute__((noinline)) podCanaryPullBad(const PodNetInfo& ni, bool ran, uint8_t status) { return !ran || ni.err != POD_NET_OK || (status != PULL_P_OK && status != PULL_P_RATE); }
-static void podCanaryHeapRun(void* p) { *static_cast<uint32_t*>(p) = freeHeapBytes(); }
-static uint32_t __attribute__((noinline)) podCanaryHeapMark() { uint32_t v = 0; podCanaryEmit(podCanaryHeapRun, &v); return v; }
-static void podCanaryPrintPull(void* v) {
-  const PodCanaryPullCtx& c = *static_cast<const PodCanaryPullCtx*>(v);
-  const PodNetInfo& ni = *c.ni;
-  Serial.print(F("[CANARY] pull JSON : pile de travail dediee utilisee ")); Serial.print((unsigned)ni.used); podCanaryNum(F(" o, marge "), ni.margin);
-  Serial.print(ni.low ? F(" o (objectif >= 256 : SOUS L'OBJECTIF)") : F(" o (objectif >= 256 : OK)")); podCanaryNum(F(", erreur "), ni.err); podCanaryNum(F(", statut "), c.status);
-  podCanaryNum(F(" | tas libre avant "), c.heapB); podCanaryNum(F(" apres "), freeHeapBytes()); Serial.println();
-  if (podCanaryPullBad(ni, c.ran, c.status)) { Serial.println(F("[CANARY] pull JSON : ECHEC de l'analyse sur la pile de travail (ALERTE)")); podCanaryHalt("pull JSON"); }
-}
-static void __attribute__((noinline)) podCanaryPull(const PodNetInfo& ni, bool ran, uint8_t status, uint32_t heapB) {
-  podCanaryPhase(ni.pad[0]);
-  PodCanaryPullCtx c = { &ni, ran, status, heapB };
-  podCanaryEmit(podCanaryPrintPull, &c);
-  if (podCanaryPullBad(ni, ran, status)) for (;;) { __asm volatile("nop"); }       // l'impression a échoué (mémoire) : verrou SILENCIEUX
-}
-#endif
-
-// Analyse + application, dans cet ordre (la réponse est DÉJÀ reçue, TLS fermé). Retour : 0 = pull ÉCHOUÉ (rien d'appliqué) ; 1 = pull appliqué, décision de frame à prendre ; 2 = terminé (429, rien d'autre à faire).
-static int __attribute__((noinline)) doPullApply(PullParsed& r, const String& resp, int code, String& frameId, String& frameSource) {
-  r.cartelBlockIndex = currentBlockIndex;
-  PodNetInfo ni;
-#if POD_RENDER_V1 && POD_CANARY
-  const uint32_t heapB = podCanaryHeapMark();
-#endif
-  const bool ran = pullParseOnWorkStack(resp, code, r, ni);
-#if POD_RENDER_V1 && POD_CANARY
-  POD_DP_PROBE(3);
-#endif
-#if POD_RENDER_V1 && POD_CANARY
-  podCanaryPull(ni, ran, r.status, heapB);
-#endif
-#if POD_RENDER_V1 && POD_CANARY
-  podCanaryCheck("  P: apres l'analyse du pull (silencieux)", false);
-#endif
-  if (!ran) { pullWorkFailed(ni); return 0; }
-  if (r.status == PULL_P_RATE) {
-    unsigned long retryMs = (unsigned long)r.rateRetrySec * 1000UL;
-    if (retryMs > PULL_INTERVAL) retryMs = PULL_INTERVAL;
-    lastPullMs = millis() - (PULL_INTERVAL - retryMs);
-    logf("[PULL] 429 retryAfter=%ds", r.rateRetrySec);
-    return 2;
-  }
-  if (r.status == PULL_P_JSON) { logf("[PULL] JSON: %s", r.jsonErr); return 0; }
-  if (r.status != PULL_P_OK) { logf("[PULL] réponse rejetée : %s", r.status == PULL_P_BOUNDS ? "champ hors bornes" : "mémoire insuffisante"); return 0; }
-
-  if (r.hasCartel) {
-    pendingWorkTitle = r.workTitle; pendingArtistName = r.artistName; pendingDisplayTs = r.displayTs; currentBlockIndex = r.cartelBlockIndex;
-    logf("[PULL] cartel: %s / %s (bloc %d)", asciiFold(pendingWorkTitle).c_str(), asciiFold(pendingArtistName).c_str(), currentBlockIndex);
-  }
-#if POD_RENDER_V1 && POD_CANARY
-  POD_DP_PROBE(4);
-#endif
-  if (r.hasObs) { pendingObsHashes = r.obsHashes; pendingObsTarget = r.obsTarget; }
-#if POD_RENDER_V1 && POD_CANARY
-  POD_DP_PROBE(5);
-#endif
-  if (r.owned.length() >= 16) saveOwnedBlockHash(r.owned);
-#if POD_RENDER_V1 && POD_CANARY
-  POD_DP_PROBE(6);
-#endif
-
-  nextPullIntervalMs = (r.frameSource == "none" && r.candId.length() == 0) ? (unsigned long)r.retryAfter * 1000UL : PULL_INTERVAL;
-  if (r.blockHash.length() > 0 && r.blockHash != currentBlockHash) {
-    currentBlockHash = r.blockHash; currentBlockIndex = r.blockIndex;
-    saveBlockHashToEEPROM(currentBlockHash);
-    logf("[PULL] nouveau bloc #%d", currentBlockIndex);
-  }
-  if (r.candId.length() > 0) pendingCandidateId = r.candId;
-#if POD_RENDER_V1 && POD_CANARY
-  POD_DP_PROBE(7);
-#endif
-  frameId = r.frameId; frameSource = r.frameSource;
-  return 1;
-}
-// La grosse structure PullParsed vit au TAS (pile principale : 1 024 o), le temps d'un pull ; échec de l'allocation => pull rejeté. Aucune structure volumineuse dans les cadres de doPull ni de doFetchFrame.
-static int __attribute__((noinline)) doPullStage(const String& resp, int code, String& frameId, String& frameSource) {
-  PullParsed* const r = new (std::nothrow) PullParsed();
-  if (!r) { logf("[PULL] réponse rejetée : mémoire insuffisante"); return 0; }
-  const int rc = doPullApply(*r, resp, code, frameId, frameSource);
-  delete r;
-  return rc;
-}
-
 static bool doPull() {
 #if POD_RENDER_V1 && POD_CANARY
   g_podDpPhase = 0; POD_DP_PROBE(1);
 #endif
-  String newFrameId = "", newFrameSource = "none";
-  int st = 0;
+  String newBlockHash = "", newCandId = "", newFrameId = "", newFrameSource = "none";
+  int newBlockIndex = -1, pullRetryAfter = 60;
+
   {
     String resp;
     const int code = httpCall("GET", "/api/pull?deviceId=" + deviceId, nullptr, resp);
 #if POD_RENDER_V1 && POD_CANARY
   POD_DP_PROBE(2);
 #endif
-    if (code != 429 && code != 200) { logf("[PULL] erreur HTTP %d", code); return false; }
-    st = doPullStage(resp, code, newFrameId, newFrameSource);
-  }                                                  // resp libérée ici, avant toute image
+    if (code == 429) {
+      int retrySec = 60;
+      JSON_DOC(rate, 256);
+      if (deserializeJson(rate, resp) == DeserializationError::Ok) retrySec = max(1, (int)(rate["retryAfter"] | 60));
+      unsigned long retryMs = (unsigned long)retrySec * 1000UL;
+      if (retryMs > PULL_INTERVAL) retryMs = PULL_INTERVAL;
+      lastPullMs = millis() - (PULL_INTERVAL - retryMs);
+      logf("[PULL] 429 retryAfter=%ds", retrySec);
+      return true;
+    }
+    if (code != 200) { logf("[PULL] erreur HTTP %d", code); return false; }
+
+    JSON_DOC(doc, 2048);
+#if POD_RENDER_V1 && POD_CANARY
+  POD_DP_PROBE(3);
+#endif
+    const DeserializationError err = deserializeJson(doc, resp);
+    if (err) { logf("[PULL] JSON: %s", err.c_str()); return false; }
+#if POD_RENDER_V1 && POD_CANARY
+  POD_DP_PROBE(4);
+#endif
+
+    JsonObject chain = doc["chain"];
+    if (!chain.isNull()) { newBlockHash = chain["blockHash"] | ""; newBlockIndex = chain["blockIndex"] | -1; }
+    JsonObject pend = doc["pendingValidation"];
+    if (!pend.isNull()) newCandId = pend["candidateId"] | "";
+
+    newFrameSource = doc["frameSource"] | "none";
+    newFrameId     = doc["frameId"] | "";
+    pullRetryAfter = doc["retryAfter"] | 60;
+    if (pullRetryAfter <= 0) pullRetryAfter = 60;
+    if (newFrameId.length() == 0) { JsonObject fo = doc["frame"]; if (!fo.isNull()) newFrameId = fo["frameId"] | ""; }
+#if POD_RENDER_V1 && POD_CANARY
+  POD_DP_PROBE(5);
+#endif
+
+    JsonObject cm = doc["cartelMeta"];
+    if (!cm.isNull()) {
+      pendingWorkTitle  = cm["workTitle"] | "";
+      pendingArtistName = cm["drawArtistName"] | "";
+      pendingDisplayTs  = cm["displayTs"] | "";
+      currentBlockIndex = cm["blockIndex"] | currentBlockIndex;
+      logf("[PULL] cartel: %s / %s (bloc %d)", asciiFold(pendingWorkTitle).c_str(), asciiFold(pendingArtistName).c_str(), currentBlockIndex);
+    }
+#if POD_RENDER_V1 && POD_CANARY
+  POD_DP_PROBE(6);
+#endif
+    JsonObject obs = doc["pendingObservation"];
+    if (!obs.isNull()) {
+      JsonArray hArr = obs["blockHashes"].as<JsonArray>();
+      if (hArr.size() > 0) {
+        String arr = "[";
+        for (size_t i = 0; i < hArr.size(); i++) { if (i) arr += ","; arr += "\""; arr += hArr[i].as<String>(); arr += "\""; }
+        pendingObsHashes = arr + "]";
+        pendingObsTarget = obs["targetBlockHash"] | "";
+      }
+    }
+    const char* owned = doc["ownedBlock"] | "";
+    if (strlen(owned) >= 16) saveOwnedBlockHash(String(owned));
+#if POD_RENDER_V1 && POD_CANARY
+  POD_DP_PROBE(7);
+#endif
+  }
 #if POD_RENDER_V1 && POD_CANARY
   POD_DP_PROBE(8);
 #endif
-  if (st == 0) return false;
-  if (st == 2) return true;
+
+  nextPullIntervalMs = (newFrameSource == "none" && newCandId.length() == 0) ? (unsigned long)pullRetryAfter * 1000UL : PULL_INTERVAL;
+  if (newBlockHash.length() > 0 && newBlockHash != currentBlockHash) {
+    currentBlockHash = newBlockHash; currentBlockIndex = newBlockIndex;
+    saveBlockHashToEEPROM(currentBlockHash);
+    logf("[PULL] nouveau bloc #%d", currentBlockIndex);
+  }
+  if (newCandId.length() > 0) pendingCandidateId = newCandId;
+#if POD_RENDER_V1 && POD_CANARY
+  POD_DP_PROBE(9);
+#endif
 
   if (newFrameSource == "none" || newFrameId.length() == 0) { logf("[PULL] aucune frame");
 #if POD_RENDER_V1 && POD_CANARY
-  POD_DP_PROBE(9);
+  POD_DP_PROBE(10);
 #endif
   return true; }
   if (frameKey(newFrameId) == lastFrameId) { logf("[PULL] frame déjà affichée"); return true; }

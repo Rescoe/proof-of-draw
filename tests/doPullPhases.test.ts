@@ -1,5 +1,6 @@
-// DOPULL-PHASE-AUDIT1 (09/10/2026) — sondes de phase silencieuses dans doPull (canari e-ink 2,9″ seulement), rapport APRÈS le retour, production inchangée.
-// Contexte matériel (canari e99f77e) : après un pull HTTP 200 sans frame, le marqueur de pile principale est détruit (1016 / 1024 o) quelque part dans le traitement LOCAL de doPull.
+// DOPULL-PHASE-AUDIT1 (09/10/2026) puis DOPULL-JSON-STACK-FIX1 (10/10/2026) — sondes de phase silencieuses autour de doPull (canari e-ink 2,9″ seulement), rapport APRÈS le retour, production inchangée.
+// Contexte matériel (canari b03c0b4) : phases 1 à 3 saines, première phase fautive = 4 (deserializeJson). Depuis DOPULL-JSON-STACK-FIX1 le décodage vit sur une pile de travail dédiée : les neuf sondes restantes surveillent
+// la pile PRINCIPALE autour de l'étage réseau (doPull), de l'analyse (doPullApply) et de l'application de l'état ; elles doivent rester muettes (aucune E/S, allocation ni appel).
 import test from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
@@ -10,29 +11,35 @@ const read = (p: string) => fs.readFileSync(path.join(root, p), "utf8").replace(
 const INO = "arduino_uno_r4/pod_uno_r4_eink29/pod_uno_r4_eink29.ino";
 const SKETCHES = ["pod_uno_r4_eink29", "pod_uno_r4_eink27", "pod_uno_r4_eink27_oled", "pod_uno_r4_tft18", "pod_uno_r4"];
 const BLOCK = /#if POD_RENDER_V1 && POD_CANARY\n([\s\S]*?)\n#endif\n/g;
+const FIRST = "static int __attribute__((noinline)) doPullApply(";
 
+/** Ordre des sondes DANS LE FICHIER : doPullApply (3 à 7) précède doPull (1, 2, 8, 9). */
+const SOURCE_ORDER = [3, 4, 5, 6, 7, 1, 2, 8, 9];
 /** Ce que la sonde k doit suivre immédiatement (texte de production qui la précède, blocs de canari précédents retirés). */
 const ANCHORS: Array<[number, string]> = [
   [1, "static bool doPull() {"],
   [2, 'const int code = httpCall("GET", "/api/pull?deviceId=" + deviceId, nullptr, resp);'],
-  [3, "JSON_DOC(doc, 2048);"],
-  [4, 'if (err) { logf("[PULL] JSON: %s", err.c_str()); return false; }'],
-  [5, 'newFrameId = fo["frameId"] | ""; }'],
-  [6, "currentBlockIndex);\n    }"],
-  [7, "if (strlen(owned) >= 16) saveOwnedBlockHash(String(owned));"],
-  [8, "if (strlen(owned) >= 16) saveOwnedBlockHash(String(owned));\n  }"],
-  [9, "if (newCandId.length() > 0) pendingCandidateId = newCandId;"],
-  [10, '{ logf("[PULL] aucune frame");'],
+  [3, "const bool ran = pullParseOnWorkStack(resp, code, r, ni);"],
+  [4, 'asciiFold(pendingArtistName).c_str(), currentBlockIndex);\n  }'],
+  [5, "if (r.hasObs) { pendingObsHashes = r.obsHashes; pendingObsTarget = r.obsTarget; }"],
+  [6, "if (r.owned.length() >= 16) saveOwnedBlockHash(r.owned);"],
+  [7, "if (r.candId.length() > 0) pendingCandidateId = r.candId;"],
+  [8, "}                                                  // resp libérée ici, avant toute image"],
+  [9, '{ logf("[PULL] aucune frame");'],
 ];
 
-/** Violations de la règle des sondes de doPull (liste vide = conforme). */
+function pullRegion(src: string): string {
+  const start = src.indexOf(FIRST);
+  const d = src.indexOf("static bool doPull() {");
+  if (start < 0 || d < 0 || d < start) return "";
+  return src.slice(start, src.indexOf("\n}\n", d) + 3);
+}
+
+/** Violations de la règle des sondes (liste vide = conforme). */
 export function doPullProbeViolations(src: string): string[] {
   const v: string[] = [];
-  const start = src.indexOf("static bool doPull() {");
-  if (start < 0) return ["doPull absente"];
-  const end = src.indexOf("\n}\n", start);
-  const fn = src.slice(start, end + 3);
-  // parcours des blocs de canari : texte de production précédent = fn sans les blocs déjà passés
+  const fn = pullRegion(src);
+  if (!fn) return ["doPullApply / doPull absentes"];
   const seen: Array<{ k: number; before: string; body: string }> = [];
   let prod = "", last = 0, m: RegExpExecArray | null;
   BLOCK.lastIndex = 0;
@@ -43,7 +50,7 @@ export function doPullProbeViolations(src: string): string[] {
     if (probe) seen.push({ k: Number(probe[1]), before: prod.replace(/\s+$/, ""), body: m[1].trim() });
   }
   const order = seen.map((s) => s.k);
-  if (JSON.stringify(order) !== JSON.stringify([1, 2, 3, 4, 5, 6, 7, 8, 9, 10])) v.push(`sondes présentes dans l'ordre ${order.join(",")} au lieu de 1 à 10`);
+  if (JSON.stringify(order) !== JSON.stringify(SOURCE_ORDER)) v.push(`sondes présentes dans l'ordre ${order.join(",")} au lieu de ${SOURCE_ORDER.join(",")}`);
   for (const [k, anchor] of ANCHORS) {
     const s = seen.find((x) => x.k === k);
     if (!s) { v.push(`sonde ${k} absente`); continue; }
@@ -51,8 +58,8 @@ export function doPullProbeViolations(src: string): string[] {
     const expected = k === 1 ? "g_podDpPhase = 0; POD_DP_PROBE(1);" : `POD_DP_PROBE(${k});`;
     if (s.body !== expected) v.push(`sonde ${k} : contenu inattendu « ${s.body} »`);
   }
-  // la sonde 10 est suivie du retour (aucun autre code entre le journal « aucune frame » et return)
-  if (!/POD_DP_PROBE\(10\);\n#endif\n  return true; \}/.test(fn)) v.push("la sonde 10 doit précéder immédiatement « return true; } »");
+  // la sonde 9 est suivie du retour (aucun autre code entre le journal « aucune frame » et return)
+  if (!/POD_DP_PROBE\(9\);\n#endif\n  return true; \}/.test(fn)) v.push("la sonde 9 doit précéder immédiatement « return true; } »");
   // rapports APRÈS le retour de doPull chez les appelants (setup : avant 7b ; boucle principale)
   const setupSite = /    doPull\(\);\n#if POD_RENDER_V1 && POD_CANARY\n  podCanaryDoPull\(\);\n#endif\n#if POD_RENDER_V1 && POD_CANARY\n  podCanaryCheck\("7b apres doPull", true\);/;
   if (!setupSite.test(src)) v.push("setup : podCanaryDoPull() doit suivre doPull() et précéder le contrôle 7b");
@@ -61,35 +68,35 @@ export function doPullProbeViolations(src: string): string[] {
   return v;
 }
 
-test("DOPULL-PHASE-AUDIT1 : dix sondes silencieuses dans doPull, à leur place, sans rien d'autre que la macro ; rapport après le retour chez les appelants ; CONTRÔLES NÉGATIFS (sonde supprimée, déplacée ou permutée, rapport supprimé)", () => {
+test("neuf sondes silencieuses autour de doPull / doPullApply, à leur place, sans rien d'autre que la macro ; rapport après le retour chez les appelants ; CONTRÔLES NÉGATIFS (sonde supprimée, déplacée ou permutée, rapport supprimé)", () => {
   const src = read(INO);
   assert.deepEqual(doPullProbeViolations(src), []);
-  // mutants : chaque sonde supprimée, chaque paire adjacente permutée, la sonde 10 avant le journal, le rapport supprimé de chaque appelant
+  // mutants : chaque sonde supprimée, chaque paire adjacente (dans l'ordre du fichier) permutée, la sonde 9 avant le journal, le rapport supprimé de chaque appelant
   const block = (k: number) => `#if POD_RENDER_V1 && POD_CANARY\n  ${k === 1 ? "g_podDpPhase = 0; " : ""}POD_DP_PROBE(${k});\n#endif\n`;
-  for (let k = 1; k <= 10; k++) {
+  for (let k = 1; k <= 9; k++) {
     assert.ok(src.includes(block(k)), `bloc de la sonde ${k} introuvable`);
     assert.notEqual(doPullProbeViolations(src.replace(block(k), "")).length, 0, `mutant « sonde ${k} supprimée » NON détecté`);
   }
-  for (let k = 2; k <= 9; k++) {
-    const sw = src.replace(block(k), "@@A@@").replace(block(k + 1), block(k)).replace("@@A@@", block(k + 1));
+  for (let i = 0; i + 1 < SOURCE_ORDER.length; i++) {
+    const a = SOURCE_ORDER[i], b = SOURCE_ORDER[i + 1];
+    const sw = src.replace(block(a), "@@A@@").replace(block(b), block(a)).replace("@@A@@", block(b));
     assert.notEqual(sw, src);
-    assert.notEqual(doPullProbeViolations(sw).length, 0, `mutant « sondes ${k} et ${k + 1} permutées » NON détecté`);
+    assert.notEqual(doPullProbeViolations(sw).length, 0, `mutant « sondes ${a} et ${b} permutées » NON détecté`);
   }
-  assert.notEqual(doPullProbeViolations(src.replace(block(10), "").replace('{ logf("[PULL] aucune frame");', block(10) + '{ logf("[PULL] aucune frame");')).length, 0, "mutant « sonde 10 avant le journal » NON détecté");
+  assert.notEqual(doPullProbeViolations(src.replace(block(9), "").replace('{ logf("[PULL] aucune frame");', block(9) + '{ logf("[PULL] aucune frame");')).length, 0, "mutant « sonde 9 avant le journal » NON détecté");
   const rep = "#if POD_RENDER_V1 && POD_CANARY\n  podCanaryDoPull();\n#endif\n";
   assert.equal(src.split(rep).length, 3, "deux rapports (setup et boucle)");
   assert.notEqual(doPullProbeViolations(src.replace(rep, "")).length, 0, "mutant « rapport du setup supprimé » NON détecté");
   assert.notEqual(doPullProbeViolations(src.replace(rep, "@@R@@").replace(rep, "").replace("@@R@@", rep)).length, 0, "mutant « rapport de la boucle supprimé » NON détecté");
 });
 
-test("DOPULL-PHASE-AUDIT1 : sondes SILENCIEUSES — la macro ne lit que deux mots de la pile et un octet, comparaison EXACTE (pas de plage), aucune E/S, allocation, String, logf, mallinfo ni appel ; rapport sur la pile de journal puis verrou ; longueur initiale mémorisée par podCanaryPaint", () => {
+test("sondes SILENCIEUSES — la macro ne lit que deux mots de la pile et un octet, comparaison EXACTE (pas de plage), aucune E/S, allocation, String, logf, mallinfo ni appel ; rapport sur la pile de journal puis verrou ; longueur initiale mémorisée par podCanaryPaint ; légende des neuf phases", () => {
   const src = read(INO);
   const macro = /#define POD_DP_PROBE\(n\)[^\n]*/.exec(src)![0];
   assert.equal(macro, "#define POD_DP_PROBE(n) do { if (g_podDpPhase == 0 && (*(volatile uint32_t*)&__StackLimit != 0x434E5259UL || *((volatile uint32_t*)&__StackLimit + 1) != g_podPaintLen)) g_podDpPhase = (n); } while (0)");
   assert.doesNotMatch(macro, /Serial|logf|printf|malloc|String|mallinfo|delay|millis|podCanary|[<>]=?\s*\d/, "pas de test de plage ni d'appel");
   // les sondes ne contiennent rien d'autre que la macro (et la remise à zéro de l'entrée)
-  const fn = src.slice(src.indexOf("static bool doPull() {"), src.indexOf("\n}\n", src.indexOf("static bool doPull() {")));
-  for (const b of fn.matchAll(BLOCK)) if (/POD_DP_PROBE/.test(b[1])) assert.match(b[1].trim(), /^(g_podDpPhase = 0; )?POD_DP_PROBE\(\d+\);$/);
+  for (const b of pullRegion(src).matchAll(BLOCK)) if (/POD_DP_PROBE/.test(b[1])) assert.match(b[1].trim(), /^(g_podDpPhase = 0; )?POD_DP_PROBE\(\d+\);$/);
   // statiques : exactement deux, canari seulement ; podCanaryPaint mémorise la longueur initiale
   assert.equal((src.match(/^static volatile (?:uint32_t g_podPaintLen|uint8_t g_podDpPhase) = 0;$/gm) ?? []).length, 2);
   assert.match(src, /\*\(volatile uint32_t\*\)\(lo \+ 4\) = \(uint32_t\)\(hi - lo\);\n  g_podPaintLen = \(uint32_t\)\(hi - lo\);\n\}/);
@@ -98,6 +105,11 @@ test("DOPULL-PHASE-AUDIT1 : sondes SILENCIEUSES — la macro ne lit que deux mot
   const rep = /static void __attribute__\(\(noinline\)\) podCanaryDoPull\(\) \{[\s\S]*?\n\}\n/.exec(src)![0];
   assert.match(rep, /const uint8_t ph = g_podDpPhase;\n  if \(ph == 0\) return;\n  PodCanaryDpCtx c = \{ ph \};\n  podCanaryEmit\(podCanaryPrintDp, &c\);\n  for \(;;\) \{ __asm volatile\("nop"\); \}/);
   assert.match(src, /podCanaryHalt\("doPull phase"\);/);
+  // la légende décrit les neuf phases ACTUELLES (plus « JSON_DOC » ni « deserializeJson », qui n'existent plus dans doPull)
+  const legend = /\(1 entree[^\n]*?avant le retour\)/.exec(src)![0];
+  for (let k = 1; k <= 9; k++) assert.match(legend, new RegExp(`${k} `), `phase ${k} absente de la légende`);
+  assert.doesNotMatch(legend, /10 apres|JSON_DOC|apres deserializeJson/);
+  assert.match(legend, /3 apres le retour de l'analyse sur la pile de travail/);
 });
 
 for (const sk of SKETCHES.filter((s) => s !== "pod_uno_r4_eink29")) {
@@ -119,7 +131,7 @@ function flagOrderViolations(src: string): string[] {
   return v;
 }
 
-test("DOPULL-PHASE-AUDIT1 : les sondes du canari (PodNet, doPull) sont définies APRÈS les drapeaux — un build à drapeaux réglés dans le fichier (IDE) les inclut ; CONTRÔLE NÉGATIF", () => {
+test("les sondes du canari (PodNet, doPull) sont définies APRÈS les drapeaux — un build à drapeaux réglés dans le fichier (IDE) les inclut ; CONTRÔLE NÉGATIF", () => {
   const src = read(INO);
   assert.deepEqual(flagOrderViolations(src), []);
   // mutant : le bloc de sondes remis avant les drapeaux (position d'avant ce lot)

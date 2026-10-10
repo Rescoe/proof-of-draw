@@ -1,0 +1,30 @@
+[CANARY] wifi status (module present ?) : pile Wi-Fi dediee utilisee 608 o, marge 864 o (objectif >= 256 : OK), erreur 0 | tas libre 6972
+[CANARY] wifi firmwareVersion : pile Wi-Fi dediee utilisee 448 o, marge 1024 o (objectif >= 256 : OK), erreur 0 | tas libre 6956
+[WIFI] firmware du module: 0.5.2
+[CANARY] wifi begin : pile Wi-Fi dediee utilisee 556 o, marge 916 o (objectif >= 256 : OK), erreur 0 | tas libre 6972
+[CANARY] wifi localIP : pile Wi-Fi dediee utilisee 568 o, marge 904 o (objectif >= 256 : OK), erreur 0 | tas libre 6948
+[WIFI] IP: 192.168.1.21
+[CANARY] 3 wifi connecte : pile utilisee au plus 584 o / 1024 (marge 440 o) | SP=0x20007D98 | tas libre 6972 | sbrk->limite 5428
+[KEYS] clés chargées: 11e4193c89dc29bf26abe55d6a471d937eca8591fe00ee81b226403828a3b830
+[CANARY] 4 cles chargees : pile utilisee au plus 584 o / 1024 (marge 440 o) | SP=0x20007D98 | tas libre 6972 | sbrk->limite 5428
+[SELFTEST] Ed25519 signature 178 ms, vérification 276 ms -> OK
+[MEM] après Ed25519: tas libre 8516 o, zone 0xA5 sous la pile 1024 o (INDICATIF : NON fiable des la 1re pile temporaire)
+[ED25519] pile dédiée (utilisé/marge, o) : sign 1316/924, verify 1532/708 ; erreurs sign=0 verify=0 (0 = aucune) ; alloué 2304 o (garde 64 o, marge minimale exigée 128 o)
+[CANARY] 5 selfTestEd25519 : pile utilisee au plus 584 o / 1024 (marge 440 o) | SP=0x20007D98 | tas libre 6972 | sbrk->limite 5428
+[BOOT] œuvre déjà affichée : 8c97adf0-ee5b-4a2b-ab49-48a93548
+[CANARY] 6a avant doRegister : pile utilisee au plus 584 o / 1024 (marge 440 o) | SP=0x20007D98 | tas libre 6908 | sbrk->limite 5428
+[CANARY] wifi macAddress : pile Wi-Fi dediee utilisee 520 o, marge 952 o (objectif >= 256 : OK), erreur 0 | tas libre 6908
+[CANARY] net http : pile reseau dediee utilisee 1136 o, marge 848 o (objectif >= 256 : OK), erreur 0 | tas libre 6660
+[HTTP POST] /api/register -> 200
+[REGISTER] deviceId=dev_W29I1TW7 paired=oui
+[REGISTER] appairé
+[CANARY] 6b apres doRegister : pile utilisee au plus 880 o / 1024 (marge 144 o, SOUS L'OBJECTIF 256) | SP=0x20007D98 | tas libre 6884 | sbrk->limite 1908
+[BOOT] premier pull immédiat
+[CANARY] 7a avant doPull : pile utilisee au plus 880 o / 1024 (marge 144 o, SOUS L'OBJECTIF 256) | SP=0x20007D98 | tas libre 6884 | sbrk->limite 1908
+[CANARY] net http : pile reseau dediee utilisee 1136 o, marge 848 o (objectif >= 256 : OK), erreur 0 | tas libre 6780
+[HTTP GET] /api/pull?deviceId=dev_W29I1TW7 -> 200
+[PULL] cartel: Chat - pain / Roubzi (bloc 95)
+[PULL] nouveau bloc #95
+[PULL] aucune frame
+[CANARY] doPull : PREMIERE phase fautive = 4 (1 entree · 2 apres l'appel HTTP · 3 apres JSON_DOC · 4 apres deserializeJson · 5 apres extraction bloc/candidat/frame · 6 apres cartel+journal · 7 apres observation+ownedBlock · 8 apres destruction de doc et resp · 9 apres mise a jour du bloc et memoire non volatile · 10 apres 'aucune frame', avant le retour) : la destruction est survenue ENTRE la phase precedente (saine) et celle-ci
+[CANARY] ARRET FATAL (verrou) apres 'doPull phase' : plus aucun pull, vote, ACK ni affichage. Debrancher la carte, reflasher le firmware stable.

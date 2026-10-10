@@ -1,0 +1,9 @@
+# DOPULL-JSON-STACK-FIX1 — dimensionnement statique de la pile de travail (pullParseWork), production ; ELF cœur 1.6.0 (e-ink 2,9″). Rien n'a été flashé.
+# racine pullParseWorkRKN7arduino6StringEiR : cadre 200 o ; pire chaîne ACYCLIQUE (cycles coupés) : 784 o ; appels indirects atteignables : 10
+  chemin : pullParseWorkRKN7arduino6StringEiR > AJPB2215convertFromJsonENS0_16Json > AJPB2213serializeJsonIN7arduino6St > K11AJPB226detail11VariantData6acce > AJPB226detail13TextFormatterINS1_6 > AJPB226detail13TextFormatterINS1_6 > AJPB226detail17CountingDecoratorIN > AJPB226detail6WriterIN7arduino6Str > AJPB226detail6WriterIN7arduino6Str > arduino6String6concatEPKc(tail) > arduino6String6concatEPKc.part.6(
+  composante récursive (1 fonctions) : cycle simple le plus lourd 32 o · somme des cadres 32 o · ex. AJPB226detail11VariantData5clearEP
+  composante récursive (2 fonctions) : cycle simple le plus lourd 72 o · somme des cadres 72 o · ex. AJPB226detail16JsonDeserializerINS, AJPB226detail16JsonDeserializerINS
+  composante récursive (1 fonctions) : cycle simple le plus lourd 40 o · somme des cadres 40 o · ex. K11AJPB226detail11VariantData6acce
+  limite d'imbrication 10 : pire cas statique 1432 o (borne basse) à 1432 o (borne haute) sous l'appelant de pullParseWork
+  budget (2048 − garde 64 − exception 104 − invocateur 32) : 1848 o => marge au pire cas : 416 o (borne haute) / 416 o (borne basse) ; exigée >= 128, objectif >= 256
+exit=0

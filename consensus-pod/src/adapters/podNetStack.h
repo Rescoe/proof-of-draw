@@ -47,6 +47,16 @@ static_assert(POD_LOG_STACK_TOTAL >= POD_NET_GUARD_BYTES + 736u + 104u + POD_NET
 #define POD_WIFI_DEEPEST_CALL 664u
 static_assert(POD_WIFI_STACK_TOTAL >= POD_NET_GUARD_BYTES + POD_WIFI_DEEPEST_CALL + 32u + 104u + POD_NET_MARGIN_GOAL, "pile Wi-Fi dédiée trop petite");
 static_assert(POD_NET_STACK_TOTAL >= POD_NET_GUARD_BYTES + 1024u + POD_NET_MARGIN_MIN, "pile réseau dédiée trop petite");
+// DOPULL-JSON-STACK-FIX1 : pile de TRAVAIL. Canari b03c0b4 (matériel, 10/10/2026) : le marqueur de la pile principale est détruit PENDANT deserializeJson de la réponse /api/pull (phases 1 à 3 de doPull saines, 4 fautive).
+// Tout traitement LOCAL profond (ArduinoJson : récursion du décodeur, conversions JsonVariant -> String de 584 o) s'exécute donc sur cette pile dédiée (podWorkRun), APRÈS la fermeture de la transaction TLS — jamais pendant
+// qu'elle est vivante. 2 048 o = garde 64 + chaîne la plus profonde mesurée sur l'ELF (POD_WORK_DEEPEST_CALL) + invocateur 32 + cadre d'exception 104 + objectif de marge 256 ; la taille définitive est confirmée par le canari (ligne « [CANARY] pull JSON »).
+#ifndef POD_WORK_STACK_TOTAL
+#define POD_WORK_STACK_TOTAL 2048u
+#endif
+// Pire cas STATIQUE sous pullParseWork (scripts/pull-work-stack-report.js, ELF des cœurs 1.5.3 et 1.6.0) : chaîne acyclique 784 o (conversion JsonVariant -> String) + 9 niveaux de récursion du décodeur à 72 o (limite d'imbrication 10
+// par défaut) = 1 432 o. 2 048 = 64 + 1 432 + 32 (invocateur) + 104 (exception) + 416 de marge au pire cas statique (objectif 256).
+#define POD_WORK_DEEPEST_CALL 1432u
+static_assert(POD_WORK_STACK_TOTAL >= POD_NET_GUARD_BYTES + POD_WORK_DEEPEST_CALL + 32u + 104u + POD_NET_MARGIN_GOAL, "pile de travail dédiée trop petite");
 
 #if defined(__arm__)
   #if !defined(__ARM_ARCH_7EM__)
@@ -192,6 +202,15 @@ template <typename F> static bool podNetRun(F& f, PodNetInfo* info = nullptr) {
  *  échec fermé (false = NOMEM, NESTED, GUARD ou MARGIN : l'appelant ignore tout résultat partiel, aucune inscription, vote, ACK ni affichage qui en dépende). */
 template <typename F> static bool podWifiRun(F& f, PodNetInfo* info = nullptr) {
   const bool ok = PodNet::runSized([](void* p) { (*static_cast<F*>(p))(); }, &f, POD_WIFI_STACK_TOTAL, info);
+  if (info) { POD_NET_PROBE(info, 8); }
+  return ok;
+}
+
+/** DOPULL-JSON-STACK-FIX1 : même chose pour un TRAITEMENT LOCAL profond (décodage JSON de la réponse /api/pull), sur la pile de POD_WORK_STACK_TOTAL octets (garde 64 o, filigrane, marge >= 128 o, objectif 256 o).
+ *  Mêmes règles que podNetRun / podWifiRun : résultats chez l'APPELANT, jamais imbriquée (NESTED), échec fermé (false = NOMEM, NESTED, GUARD ou MARGIN : l'appelant n'applique AUCUN résultat partiel). À n'appeler
+ *  qu'APRÈS la fermeture de toute connexion (jamais depuis une lambda podNetRun) ; la fonction ne doit toucher à aucun état global, à aucune mémoire non volatile ni à aucun périphérique : elle remplit une structure de l'appelant. */
+template <typename F> static bool podWorkRun(F& f, PodNetInfo* info = nullptr) {
+  const bool ok = PodNet::runSized([](void* p) { (*static_cast<F*>(p))(); }, &f, POD_WORK_STACK_TOTAL, info);
   if (info) { POD_NET_PROBE(info, 8); }
   return ok;
 }

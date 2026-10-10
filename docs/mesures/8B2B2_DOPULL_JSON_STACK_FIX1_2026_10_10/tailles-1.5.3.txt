@@ -1,0 +1,8 @@
+# DOPULL-JSON-STACK-FIX1 — tailles (octets de flash, RAM statique) ; ELF cœur 1.5.3 (e-ink 2,9″). Rien n'a été flashé.
+base_0 : Le croquis utilise 121804 octets (46%) ; Les variables globales utilisent 22768 octets (69%)
+fix_0 : Le croquis utilise 124396 octets (47%) ; Les variables globales utilisent 22768 octets (69%)
+base_1 : Le croquis utilise 124844 octets (47%) ; Les variables globales utilisent 22768 octets (69%)
+fix_1 : Le croquis utilise 127436 octets (48%) ; Les variables globales utilisent 22768 octets (69%)
+base_canary : Le croquis utilise 131852 octets (50%) ; Les variables globales utilisent 22784 octets (69%)
+fix_canary : Le croquis utilise 135020 octets (51%) ; Les variables globales utilisent 22784 octets (69%)
+fix_ide : Le croquis utilise 124396 octets (47%) ; Les variables globales utilisent 22768 octets (69%)

@@ -92,6 +92,7 @@ test("échec fermé aux sites : un échec de pile dédiée ne laisse aucun résu
       const s = m[1];
       if (/\[HTTP %s\]/.test(s)) continue;   // httpCall : vérifié ci-dessus
       if (/wifiFailed\(/.test(s)) continue;  // appels au module Wi-Fi (NETSTACK-WIFI-CALLS-FIX1) : vérifiés par tests/wifiCalls.test.ts
+      if (/pullWorkFailed\(/.test(s)) continue;  // analyse du pull sur la pile de travail (DOPULL-JSON-STACK-FIX1) : vérifiée par tests/dopullJsonStack.test.ts
       // échec fermé : les indicateurs de succès sont remis à zéro AVANT le traitement d'échec existant (ou : chk remis à zéro)
       const closed = /(got|shown) = false;/.test(s) || /memset\(&chk, 0, sizeof\(chk\)\)/.test(s);
       assert.ok(closed, `${sk} : échec de pile dédiée non fermé : ${s.slice(0, 80)}`);
