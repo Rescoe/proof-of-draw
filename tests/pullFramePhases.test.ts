@@ -1,21 +1,27 @@
-// PULLFRAME-PHASE-AUDIT1 (10/10/2026) puis AUDIT2 — marques de phase du canari autour de doFetchFrame (e-ink 2,9″ seulement), production inchangée.
-// Contexte matériel (canaris 7df39b6 puis 3628b3d) : « [PULL] nouvelle frame 6429e8f5… (personal) » puis plus rien : aucun « [HTTP GET] /api/pull-frame », aucun « [FRAME] », aucun ACK. AUDIT1 (marques imprimées par logf) n'a produit AUCUNE ligne FF, pas même FF 1.
-// AUDIT2 : chaque phase est INSCRITE dans un enregistrement RAM « .noinit » (relu au démarrage suivant) puis, pour les phases 4 à 14 seulement (pile réseau dédiée), un jeton de 7 o est écrit par UN Serial.write si la place exacte existe. Jamais de logf, d'allocation ni d'attente dans une marque.
+// PULLFRAME-PHASE-AUDIT1 (10/10/2026), AUDIT2 puis AUDIT3 — marques de phase du canari autour de doFetchFrame (e-ink 2,9″ seulement), production inchangée.
+// Contexte matériel (canaris 7df39b6, 3628b3d, AUDIT2) : « [PULL] nouvelle frame … (personal) » puis plus rien. AUDIT1 (logf) : aucune ligne FF ; AUDIT2 (RAM .noinit + jeton de 7 o) : enregistrement effacé au Reset, jeton de contrôle perdu (tampon USB plein).
+// AUDIT3 : chaque phase s'inscrit en FLASH DE DONNÉES (bloc 7 de l'EEPROM émulée), en AJOUT SEUL, un octet par marque (n° + complément) ; un jeton série d'un octet pour les phases 4 à 14 si la place existe. Relu et rapporté au démarrage suivant.
+// (1) règles statiques + contrôles négatifs ; (2) exécution HÔTE du code réel contre une flash simulée (programmation = ET binaire, effacement par bloc, pannes, étanchéité du bloc 7).
 import test from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
+import { compileHarness, describeChoice, findCompiler, runProcess } from "./helpers/cppHarness";
 
 const root = path.resolve(__dirname, "..");
 const read = (p: string) => fs.readFileSync(path.join(root, p), "utf8").replace(/\r\n/g, "\n");
 const INO = "arduino_uno_r4/pod_uno_r4_eink29/pod_uno_r4_eink29.ino";
 const OTHERS = ["pod_uno_r4_eink27", "pod_uno_r4_eink27_oled", "pod_uno_r4_tft18", "pod_uno_r4"];
 const noCanary = (s: string) => s.replace(/#if POD_RENDER_V1 && POD_CANARY\n[\s\S]*?\n#endif\n/g, "");
+const stripLine = (s: string) => s.replace(/("(?:[^"\\\n]|\\.)*")|\/\/.*$/gm, (_m, str?: string) => str ?? "");
 
 const MACRO = '#define POD_FF_MARK(n, txt) do { if (g_podFfPhase != 0) podFfNote((n)); } while (0)';
 const NOTE_HEAD = "static void __attribute__((noinline)) podFfNote(uint8_t n)";
-const TOKEN_HEAD = "static bool __attribute__((noinline)) podFfToken(uint8_t n)";
-const BOOT_HEAD = "static void podFfBoot()";
+const APPEND_HEAD = "static void __attribute__((noinline)) podFfAppend(uint8_t e)";
+const BOOT_HEAD = "static void __attribute__((noinline)) podFfBoot()";
+const BLOCK_START = "#if POD_RENDER_V1 && POD_CANARY\n// PULLFRAME-PHASE-AUDIT3";
+const BLOCK_END = "#define POD_FF_STOP() do { g_podFfPhase = 0; } while (0)\n#endif\n";
 
 /** Corps (accolades équilibrées, hors littéraux) de la fonction/structure dont la tête contient `head`. */
 function body(src: string, head: string): string {
@@ -38,53 +44,60 @@ const at = (s: string, n: number): number => (n === 1 ? s.indexOf("POD_FF_START(
 /** Violations des règles de traçage (liste vide = conforme). */
 export function pullFrameViolations(src: string): string[] {
   const v: string[] = [];
-  // 1. le bloc : statiques uniques, macros exactes, avant Conn, sous garde
+  // 1. le bloc : statiques uniques, constantes de la zone de flash, macros exactes, avant Conn, sous garde
   const iStatic = src.indexOf("static volatile uint8_t g_podFfPhase = 0;");
   const iConn = src.indexOf("struct Conn {");
   if (iStatic < 0 || iConn < 0 || iStatic > iConn) v.push("g_podFfPhase doit être défini avant struct Conn");
   if ((src.match(/^static volatile uint8_t g_podFfPhase = 0;$/gm) ?? []).length !== 1) v.push("exactement un statique g_podFfPhase");
-  if ((src.match(/^static PodFfRec g_podFfRec __attribute__\(\(section\("\.noinit"\)\)\);$/gm) ?? []).length !== 1) v.push("exactement un enregistrement g_podFfRec en .noinit (survit au reset, ni EEPROM ni flash)");
-  if (!src.includes("struct PodFfRec { uint32_t magic; uint32_t seq; uint32_t ms; uint8_t last; uint8_t drops; uint8_t badAt; uint8_t ctl; uint32_t chk; };\n")) v.push("PodFfRec : 20 o attendus (magic, seq, ms, last, drops, badAt, ctl, chk)");
+  if ((src.match(/^static volatile uint16_t g_podFfPos = 0;$/gm) ?? []).length !== 1) v.push("exactement un statique g_podFfPos (0 = journal non armé)");
+  if (/g_podFfRec|g_podFfDrop|\.noinit|kFfTok|PodFfRec/.test(stripLine(src))) v.push("l'enregistrement RAM .noinit d'AUDIT2 n'existe plus (effacé au Reset sur cette chaîne de démarrage)");
+  for (const d of ["#define POD_FFL_BASE 0x1C00u\n", "#define POD_FFL_SIZE 0x400u\n", "#define POD_FFL_HDR 8u\n"]) if (!src.includes(d)) v.push(`constante attendue : ${d.trim()} (bloc 7 = dernier bloc de 1 Ko de la flash de données de 8 Ko ; les clés sont dans le bloc 0)`);
   if (!src.includes(MACRO + "\n")) v.push("macro POD_FF_MARK : texte exact attendu (garde g_podFfPhase != 0, appel de podFfNote seulement)");
   if (!src.includes("#define POD_FF_START(txt) do { g_podFfPhase = 1; POD_FF_MARK(1, txt); } while (0)\n#define POD_FF_STOP() do { g_podFfPhase = 0; } while (0)\n")) v.push("POD_FF_START / POD_FF_STOP : texte exact attendu");
-  const tok = /^static const char kFfTok\[\] = "((?:\[FF\d\d\]\\n)+)";$/m.exec(src);
-  if (!tok) v.push("table de jetons kFfTok introuvable");
+  if (!src.includes("static uint8_t podFfEntry(uint8_t n) { return (uint8_t)((n << 4) | ((~n) & 0x0F)); }\n")) v.push("podFfEntry : numéro de phase (4 bits) + son COMPLÉMENT (4 bits)");
+  if (!src.includes("static bool podFfEntryOk(uint8_t b) { return (uint8_t)(b >> 4) == (uint8_t)((~b) & 0x0F); }\n")) v.push("podFfEntryOk : validation par le complément");
+  const i0 = src.indexOf(BLOCK_START);
+  const blk = i0 < 0 ? null : src.slice(i0, src.indexOf(BLOCK_END, i0) + BLOCK_END.length);
+  if (!blk) v.push("bloc PULLFRAME-PHASE-AUDIT3 introuvable");
   else {
-    const parts = [...tok[1].matchAll(/\[FF(\d\d)\]\\n/g)].map((m) => Number(m[1]));
-    if (parts.length !== 16 || parts.some((p, i) => p !== i)) v.push("kFfTok : seize jetons « [FF00]\\n » à « [FF15]\\n » de 7 o chacun, dans l'ordre");
+    const code = stripLine(blk);
+    if (/Serial\.(print|println)|malloc|new |String\b|mallinfo|delay|httpCall|WiFi|EEPROM\.|\bsprintf|snprintf/.test(code)) v.push("le bloc des marques ne doit contenir ni Serial.print, ni allocation, ni String, ni réseau, ni EEPROM.xxx (EEPROM.update alloue une page de 1 Ko au tas et efface le bloc), ni formatage");
   }
-  const blk = /#if POD_RENDER_V1 && POD_CANARY\n\/\/ PULLFRAME-PHASE-AUDIT2[\s\S]*?\n#endif\n/.exec(src);
-  if (!blk) v.push("bloc PULLFRAME-PHASE-AUDIT2 introuvable");
-  else if (/Serial\.(print|println)|malloc|new |String\b|mallinfo|delay|httpCall|WiFi|EEPROM/.test(blk[0].replace(/\/\/.*$/gm, ""))) v.push("le bloc des marques ne doit contenir ni Serial.print, ni allocation, ni String, ni réseau, ni EEPROM");
-  // 1b. podFfNote : enregistrer d'abord, jeton ensuite et seulement sur pile dédiée, aucune E/S d'une autre nature
-  const note = body(src, NOTE_HEAD);
+  // 1b. podFfNote : une inscription en flash par marque (+ l'octet « pile détruite »), jeton d'un octet seulement pour 4 à 14 et seulement si la place existe
+  const code = stripLine(src);
+  const note = body(code, NOTE_HEAD);
   if (!note) v.push("podFfNote introuvable");
   else {
-    if (/logf|String|malloc|new |delay|httpCall|WiFi|Serial\.|while|for \(/.test(note)) v.push("podFfNote : ni logf, ni String, ni allocation, ni attente, ni E/S directe (le jeton passe par podFfToken)");
-    const iSeal = note.indexOf("podFfSeal();"), iTok = note.indexOf("podFfToken(n)");
-    if (iSeal < 0 || iTok < 0 || iSeal > iTok) v.push("podFfNote : l'enregistrement est scellé AVANT le jeton série");
-    if (!note.includes("if (n >= 4 && n <= 14) { if (!podFfToken(n))")) v.push("podFfNote : jeton série seulement pour les phases 4 à 14 (pile réseau dédiée) ; 1, 2, 3 et 15 = enregistrement seul (pile principale)");
-    if (!note.includes("if (g_podFfRec.drops < 255) g_podFfRec.drops++;")) v.push("podFfNote : jetons perdus comptés");
-    if (!note.includes("*(volatile uint32_t*)&__StackLimit == 0x434E5259UL && *((volatile uint32_t*)&__StackLimit + 1) == g_podPaintLen")) v.push("podFfNote : marqueur ET longueur exacts");
+    if (/logf|String|malloc|new |delay|httpCall|WiFi|while|for \(|Serial\.(print|println)/.test(note)) v.push("podFfNote : ni logf, ni String, ni allocation, ni attente, ni boucle");
+    if (!note.includes("podFfAppend(podFfEntry(n));")) v.push("podFfNote : une inscription en flash par marque");
+    if (!note.includes("*(volatile uint32_t*)&__StackLimit != 0x434E5259UL || *((volatile uint32_t*)&__StackLimit + 1) != g_podPaintLen) podFfAppend(0xBD);")) v.push("podFfNote : marqueur ET longueur exacts ; octet 0xBD si la pile principale est détruite");
+    if ((note.match(/Serial\.write\(/g) ?? []).length !== 1 || !note.includes("if (n >= 4 && n <= 14 && Serial.availableForWrite() >= 1) Serial.write((uint8_t)('A' + n - 1));")) v.push("podFfNote : UN Serial.write d'un octet, phases 4 à 14 seulement, seulement si availableForWrite() >= 1");
+    if (note.indexOf("podFfAppend(podFfEntry(n))") > note.indexOf("Serial.write(")) v.push("podFfNote : l'inscription en flash précède le jeton série");
   }
-  const token = body(src, TOKEN_HEAD);
-  if (!token) v.push("podFfToken introuvable");
+  const app = body(code, APPEND_HEAD);
+  if (!app) v.push("podFfAppend introuvable");
   else {
-    if ((token.match(/Serial\.write\(/g) ?? []).length !== 1) v.push("podFfToken : exactement UN Serial.write");
-    if (!token.includes("Serial.availableForWrite() < 7")) v.push("podFfToken : n'écrit que si la place EXACTE (7 o) existe");
-    if (!token.includes("(kFfTok + 7u * n), 7)")) v.push("podFfToken : écrit exactement 7 o");
-    if (/\b(for|while|delay|logf|print|println|millis|malloc)\b/.test(token)) v.push("podFfToken : ni boucle, ni attente, ni logf");
+    if ((app.match(/\.program\(/g) ?? []).length !== 1 || !app.includes("DataFlashBlockDevice::getInstance().program(&e, POD_FFL_BASE + p, 1) == 0")) v.push("podFfAppend : UNE programmation d'UN octet dans le bloc 7 (ajout seul)");
+    if (!app.includes("if (p < POD_FFL_HDR || p >= POD_FFL_SIZE) return;")) v.push("podFfAppend : journal non armé (p < en-tête) ou plein (p >= taille) : aucune écriture");
+    if (!app.includes("g_podFfPos = (uint16_t)(p + 1); else g_podFfPos = POD_FFL_SIZE;")) v.push("podFfAppend : toute erreur de flash DÉSACTIVE le journal");
+    if (/\.erase\(|logf|Serial/.test(app)) v.push("podFfAppend : ni effacement, ni journal, ni série");
   }
-  // 1c. démarrage : empreinte du build, rapport de l'enregistrement précédent, jeton de contrôle
-  const boot = body(src, BOOT_HEAD);
+  // 1c. démarrage : empreinte du build, lecture protégée du journal précédent, effacement unique du bloc 7, armement avec relecture
+  const boot = body(code, BOOT_HEAD);
   if (!boot) v.push("podFfBoot introuvable");
   else {
-    if (!boot.includes("BUILD PULLFRAME-PHASE-AUDIT2") || !boot.includes("__DATE__, __TIME__") || !boot.includes("base 3628b3d")) v.push("podFfBoot : empreinte du build (lot, commit de base, date et heure de compilation)");
-    if (!boot.includes("g_podFfRec.chk == podFfSum()")) v.push("podFfBoot : l'enregistrement précédent est validé par sa somme");
-    if (!boot.includes("const bool w = podFfToken(0);")) v.push("podFfBoot : jeton de contrôle [FF00]");
-    if (!/g_podFfRec\.last = 0; g_podFfRec\.drops = 0; g_podFfRec\.badAt = 0; g_podFfRec\.ctl = 0; podFfSeal\(\);/.test(boot)) v.push("podFfBoot : l'enregistrement est ré-armé");
+    if (!boot.includes("BUILD PULLFRAME-PHASE-AUDIT3") || !boot.includes("__DATE__, __TIME__") || !boot.includes("base 3ace43b")) v.push("podFfBoot : empreinte du build (lot, commit de base, date et heure de compilation)");
+    if (!boot.includes("h[0] == 'F' && h[1] == 'F' && h[2] == 'L' && h[3] == '3' && (uint8_t)(h[4] ^ h[5]) == 0xFF")) v.push("podFfBoot : en-tête validé par sa magie ET le complément de la génération");
+    if ((boot.match(/\.erase\(/g) ?? []).length !== 1 || !boot.includes("rc = df.erase(POD_FFL_BASE, POD_FFL_SIZE);")) v.push("podFfBoot : UN SEUL effacement, du bloc 7 entier");
+    if (!boot.includes("if (hdrOk && (n == 0 || (n == 1 && lastPh == 0))) {")) v.push("podFfBoot : aucun effacement quand le journal précédent est vide (usure)");
+    if (!boot.includes("const bool back = rc == 0 && rb == podFfEntry(0);") || !boot.includes("g_podFfPos = back ? pos : (uint16_t)POD_FFL_SIZE;")) v.push("podFfBoot : armement seulement après écriture ET relecture réussies");
+    if (!boot.includes("if (c[i] == 0xFF) { end = true; break; }")) v.push("podFfBoot : la lecture s'arrête au premier octet vierge");
+    if ((boot.match(/df\.program\(/g) ?? []).length !== 2 + 0 && (boot.match(/df\.program\(/g) ?? []).length !== 2) v.push("podFfBoot : deux programmations (en-tête, marqueur d'armement)");
+    if (!boot.includes("au plus UN effacement par demarrage")) v.push("podFfBoot : l'usure maximale est rapportée");
   }
   if ((src.match(/^  podFfBoot\(\);\n  podCanaryCheck\("1c apres FFBOOT/gm) ?? []).length !== 1) v.push("podFfBoot appelé une fois dans setup, suivi du contrôle de pile 1c");
+  // 1d. DataFlashBlockDevice / flash : seulement dans ce bloc de canari
+  if (/DataFlashBlockDevice|POD_FFL_/.test(noCanary(src))) v.push("la flash de données n'est touchée qu'en canari");
   // 2. chaque marque est dans un bloc de canari ne contenant QUE la marque (10 : la lecture des en-têtes ; 15 : l'arrêt)
   for (let n = 1; n <= 15; n++) {
     const count = n === 1 ? (src.match(/POD_FF_START\("/g) ?? []).length : (src.match(new RegExp(`POD_FF_MARK\\(${n}, "`, "g")) ?? []).length;
@@ -118,7 +131,7 @@ export function pullFrameViolations(src: string): string[] {
   return v;
 }
 
-test("PULLFRAME-PHASE-AUDIT2 : quinze marques de phase du canari (enregistrement RAM .noinit + jeton de 7 o sans logf pour les phases 4 à 14), chacune seule dans son bloc gardé, dans l'ordre de chaque fonction ; rien en production ; CONTRÔLES NÉGATIFS", () => {
+test("PULLFRAME-PHASE-AUDIT3 : quinze marques de phase du canari (journal en flash de données, ajout seul, un octet + complément ; jeton série d'un octet pour 4 à 14), chacune seule dans son bloc gardé, dans l'ordre de chaque fonction ; rien en production ; CONTRÔLES NÉGATIFS", () => {
   const src = read(INO);
   assert.deepEqual(pullFrameViolations(src), []);
   const rm = (n: number): [string, RegExp] => [`marque ${n} supprimée`, n === 1 ? /#if POD_RENDER_V1 && POD_CANARY\n  POD_FF_START\("[^"\n]*"\);\n#endif\n/ : n === 10 ? /#if POD_RENDER_V1 && POD_CANARY\n    \{ const int rcHdr[^\n]*\n#endif\n/ : new RegExp(`#if POD_RENDER_V1 && POD_CANARY\\n\\s+POD_FF_MARK\\(${n}, "[^"\\n]*"\\);( POD_FF_STOP\\(\\);)?\\n#endif\\n`)];
@@ -129,24 +142,27 @@ test("PULLFRAME-PHASE-AUDIT2 : quinze marques de phase du canari (enregistrement
   }
   const mutants: Array<[string, string, string]> = [
     ["garde g_podFfPhase retirée", "do { if (g_podFfPhase != 0) podFfNote((n)); } while (0)", "do { podFfNote((n)); } while (0)"],
-    ["jeton écrit sans vérifier la place", "if (n > 15 || Serial.availableForWrite() < 7) return false;", "if (n > 15) return false;"],
-    ["jeton plus long que la place vérifiée", "(kFfTok + 7u * n), 7) == 7", "(kFfTok + 7u * n), 70) == 70"],
-    ["attente dans le jeton", "if (n > 15 || Serial.availableForWrite() < 7) return false;", "while (Serial.availableForWrite() < 7) { } if (n > 15) return false;"],
-    ["enregistrement non scellé avant le jeton", "  podFfSeal();\n  if (n >= 4 && n <= 14)", "  if (n >= 4 && n <= 14)"],
-    ["jeton série aussi sur la pile principale (phases 1 à 3 et 15)", "if (n >= 4 && n <= 14) {", "if (n >= 1) {"],
-    ["logf dans une marque", "  g_podFfPhase = n;\n  g_podFfRec.last = n;", "  g_podFfPhase = n; logf(\"FF %u\", (unsigned)n);\n  g_podFfRec.last = n;"],
-    ["enregistrement hors .noinit (effacé au reset)", ' __attribute__((section(".noinit")));', ";"],
-    ["compteur de jetons perdus supprimé", "if (g_podFfRec.drops < 255) g_podFfRec.drops++;", ""],
-    ["contrôle du marqueur affaibli (longueur ignorée)", " && *((volatile uint32_t*)&__StackLimit + 1) == g_podPaintLen", ""],
+    ["bloc 0 (les clés) au lieu du bloc 7", "#define POD_FFL_BASE 0x1C00u", "#define POD_FFL_BASE 0x0000u"],
+    ["EEPROM.update au lieu de l'ajout seul", "if (DataFlashBlockDevice::getInstance().program(&e, POD_FFL_BASE + p, 1) == 0) g_podFfPos", "EEPROM.update(POD_FFL_BASE + p, e); if (true) g_podFfPos"],
+    ["complément supprimé de l'octet de phase", "return (uint8_t)((n << 4) | ((~n) & 0x0F));", "return (uint8_t)((n << 4) | 0x0F);"],
+    ["validation par le complément affaiblie", "return (uint8_t)(b >> 4) == (uint8_t)((~b) & 0x0F);", "return b != 0xFF;"],
+    ["journal non armé écrit quand même", "if (p < POD_FFL_HDR || p >= POD_FFL_SIZE) return;", "if (p >= POD_FFL_SIZE) return;"],
+    ["erreur de flash sans désactivation", "else g_podFfPos = POD_FFL_SIZE;", ";"],
+    ["jeton série sur la pile principale (phases 1 à 3 et 15)", "if (n >= 4 && n <= 14 && Serial.availableForWrite() >= 1)", "if (Serial.availableForWrite() >= 1)"],
+    ["jeton série écrit sans vérifier la place", "n <= 14 && Serial.availableForWrite() >= 1)", "n <= 14)"],
+    ["jeton de 7 octets", "Serial.write((uint8_t)('A' + n - 1));", "Serial.print(\"[FF]\\n\");"],
+    ["logf dans une marque", "  g_podFfPhase = n;\n  podFfAppend(podFfEntry(n));", "  g_podFfPhase = n; logf(\"FF %u\", (unsigned)n);\n  podFfAppend(podFfEntry(n));"],
+    ["marqueur de pile non contrôlé", " || *((volatile uint32_t*)&__StackLimit + 1) != g_podPaintLen) podFfAppend(0xBD);", ") podFfAppend(0xBD);"],
+    ["effacement à chaque démarrage (usure)", "if (hdrOk && (n == 0 || (n == 1 && lastPh == 0))) {", "if (false) {"],
+    ["en-tête sans complément", " && (uint8_t)(h[4] ^ h[5]) == 0xFF", ""],
+    ["armement sans relecture", "const bool back = rc == 0 && rb == podFfEntry(0);", "const bool back = true;"],
+    ["lecture qui ne s'arrête pas au premier octet vierge", "if (c[i] == 0xFF) { end = true; break; }", ""],
+    ["empreinte du build supprimée", "BUILD PULLFRAME-PHASE-AUDIT3", "BUILD"],
+    ["podFfBoot jamais appelé", "  podFfBoot();\n", ""],
     ["arrêt du traçage supprimé", " POD_FF_STOP();\n#endif", "\n#endif"],
     ["marque 3 déplacée après podNetRun", '  POD_FF_MARK(3, "avant podNetRun (pile reseau dediee)");\n#endif\n  const bool ran = podNetRun(tx, &ni);', '#endif\n  const bool ran = podNetRun(tx, &ni);\n#if POD_RENDER_V1 && POD_CANARY\n  POD_FF_MARK(3, "avant podNetRun (pile reseau dediee)");'],
     ["marques 6 et 7 permutées", 'POD_FF_MARK(6, "avant client.connect");', 'POD_FF_MARK(7, "avant client.connect");'],
     ["marque dans la production", "  const bool ran = podNetRun(tx, &ni);\n", "  const bool ran = podNetRun(tx, &ni); POD_FF_MARK(3, \"x\");\n"],
-    ["démarrage : rapport de l'enregistrement précédent non validé", "g_podFfRec.chk == podFfSum()", "true"],
-    ["démarrage : jeton de contrôle supprimé", "const bool w = podFfToken(0);", "const bool w = true;"],
-    ["démarrage : empreinte du build supprimée", "BUILD PULLFRAME-PHASE-AUDIT2", "BUILD"],
-    ["démarrage : podFfBoot jamais appelé", "  podFfBoot();\n", ""],
-    ["jeton [FF07] absent de la table", "[FF07]\\n", "[FF08]\\n"],
   ];
   for (const [name, a, b] of mutants) {
     assert.ok(src.split(a).length >= 2, `mutation « ${name} » : motif introuvable`);
@@ -154,10 +170,89 @@ test("PULLFRAME-PHASE-AUDIT2 : quinze marques de phase du canari (enregistrement
   }
 });
 
-test("PULLFRAME-PHASE-AUDIT2 : les quatre autres firmwares R4 et la production ne portent aucune marque ; statiques de canari : un octet de phase et UN enregistrement .noinit de 20 o", () => {
-  for (const sk of OTHERS) assert.doesNotMatch(read(`arduino_uno_r4/${sk}/${sk}.ino`), /POD_FF|g_podFf|podFf/, sk);
+test("PULLFRAME-PHASE-AUDIT3 : carte de l'EEPROM — les clés, le dernier bloc et l'état du firmware tiennent dans le bloc 0 (452 premiers octets) ; la zone du journal (bloc 7) ne chevauche aucune donnée de AUCUN firmware R4", () => {
+  const num = (src: string, name: string): number => {
+    const m = new RegExp(`^#define ${name}\\s+(\\d+)`, "m").exec(src);
+    assert.ok(m, `${name} introuvable`);
+    return Number(m![1]);
+  };
+  for (const sk of ["pod_uno_r4_eink29", ...OTHERS]) {
+    const s = read(`arduino_uno_r4/${sk}/${sk}.ino`);
+    const ends: number[] = [];
+    // chaque zone [offset, longueur] déclarée ; fin exclusive la plus haute
+    ends.push(num(s, "EEPROM_PRIVKEY_OFF") + 32, num(s, "EEPROM_BLOCKHASH_OFF") + 32, num(s, "EEPROM_FLAG_OFF") + 1, num(s, "EEPROM_PUBKEY_OFF") + 32, num(s, "EEPROM_ONBOARDING_OFF") + 1);
+    if (/#define EEPROM_OWNED_SLOTS_OFF/.test(s)) ends.push(num(s, "EEPROM_OWNED_HEAD_OFF") + 1, num(s, "EEPROM_OWNED_COUNT_OFF") + 1, num(s, "EEPROM_OWNED_SLOTS_OFF") + num(s, "OWNED_SLOTS_MAX") * num(s, "OWNED_HASH_LEN"));
+    if (/#define EEPROM_FRAMEID_OFF/.test(s)) ends.push(num(s, "EEPROM_FRAMEID_OFF") + num(s, "FRAMEID_LEN"));
+    assert.ok(Math.max(...ends) <= 1024, `${sk} : une donnée EEPROM dépasse le bloc 0 (fin ${Math.max(...ends)})`);
+  }
+  const s29 = read(INO);
+  assert.equal(num(s29, "EEPROM_FRAMEID_OFF") + num(s29, "FRAMEID_LEN"), 452, "fin de la dernière donnée du e-ink 2,9″");
+  // aucune autre écriture EEPROM à un décalage constant au-delà du bloc 0 : tous les accès passent par les EEPROM_*_OFF
+  const eeprom = s29.replace(/\/\/.*$/gm, "").match(/EEPROM\.(?:read|update|write)\(([^)]*)\)/g) ?? [];
+  assert.ok(eeprom.length > 10);
+  for (const a of eeprom) assert.ok(/EEPROM_[A-Z_]*OFF|\boff\b|slotOff|\+ i\b/.test(a), `accès EEPROM hors table : ${a}`);
+  assert.equal(0x1C00 % 0x400, 0, "le journal commence sur une frontière de bloc");
+  assert.equal(0x1C00 + 0x400, 0x2000, "le journal est le DERNIER bloc de la flash de données de 8 Ko");
+});
+
+// ── Exécution hôte du code RÉEL contre une flash simulée ────────────────────────────────────────────────
+const choice = findCompiler();
+console.log(`[pullFramePhases] ${describeChoice(choice)}`);
+const skipHost = !choice.path ? `${describeChoice(choice)} — exécution hôte IGNORÉE` : false;
+const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "ffl-"));
+const exeName = process.platform === "win32" ? "ffl_harness.exe" : "ffl_harness";
+
+/** Le bloc du journal (sans les lignes #if / #endif), mot pour mot. */
+function extractBlock(): string {
+  const src = read(INO);
+  const a = src.indexOf(BLOCK_START), b = src.indexOf(BLOCK_END, a);
+  assert.ok(a > 0 && b > a, "bloc AUDIT3 introuvable");
+  return src.slice(a + "#if POD_RENDER_V1 && POD_CANARY\n".length, b + BLOCK_END.length - "#endif\n".length);
+}
+function build(mutate: (s: string) => string = (s) => s, lenient = false): string {
+  const dir = fs.mkdtempSync(path.join(tmp, "b-"));
+  fs.writeFileSync(path.join(dir, "ffl_extract.inc"), mutate(extractBlock()));
+  const out = path.join(dir, exeName);
+  compileHarness(choice.path!, path.join(root, "consensus-pod", "host", "ffl_harness.cpp"), out, [`-I${dir}`, ...(lenient ? ["-Wno-unused-variable", "-Wno-unused-parameter", "-Wno-unused-function", "-Wno-maybe-uninitialized"] : [])]);
+  return out;
+}
+
+test("PULLFRAME-PHASE-AUDIT3 (HÔTE) : le code RÉEL du journal contre une flash simulée — armement, 15 phases, rapport au démarrage suivant, valeurs aléatoires, écritures interrompues, pannes, journal plein, jetons série, usure, étanchéité du bloc 7", { skip: skipHost }, () => {
+  const r = runProcess(build(), [], 60000);
+  assert.equal(r.status, 0, r.stdout + r.stderr);
+  assert.match(r.stdout.trim(), /^PASS \d+$/);
+});
+
+test("PULLFRAME-PHASE-AUDIT3 (HÔTE) : CONTRÔLES NÉGATIFS — bloc 0, complément absent, effacement à chaque démarrage, armement sans relecture, journal qui déborde, jeton sans place : le harnais les REFUSE", { skip: skipHost }, () => {
+  const mutants: Array<[string, string, string]> = [
+    ["effacement du bloc 0 (les clés)", "rc = df.erase(POD_FFL_BASE, POD_FFL_SIZE);", "rc = df.erase(0, POD_FFL_SIZE);"],
+    ["programmation hors du bloc 7", "program(&e, POD_FFL_BASE + p, 1)", "program(&e, p, 1)"],
+    ["complément supprimé de l'octet de phase", "return (uint8_t)((n << 4) | ((~n) & 0x0F));", "return (uint8_t)((n << 4) | 0x0F);"],
+    ["validation d'octet affaiblie", "return (uint8_t)(b >> 4) == (uint8_t)((~b) & 0x0F);", "return b != 0xFF;"],
+    ["en-tête sans complément", " && (uint8_t)(h[4] ^ h[5]) == 0xFF", ""],
+    ["effacement à chaque démarrage", "if (hdrOk && (n == 0 || (n == 1 && lastPh == 0))) {", "if (false) {"],
+    ["armement sans relecture", "const bool back = rc == 0 && rb == podFfEntry(0);", "const bool back = true;"],
+    ["journal qui déborde du bloc", "if (p < POD_FFL_HDR || p >= POD_FFL_SIZE) return;", "if (p < POD_FFL_HDR) return;"],
+    ["journal non armé écrit quand même", "if (p < POD_FFL_HDR || p >= POD_FFL_SIZE) return;", "if (p >= POD_FFL_SIZE) return;"],
+    ["erreur de programmation sans désactivation", "else g_podFfPos = POD_FFL_SIZE;", ";"],
+    ["jeton série sans vérifier la place", "n <= 14 && Serial.availableForWrite() >= 1)", "n <= 14)"],
+    ["jeton série pour toutes les phases", "if (n >= 4 && n <= 14 && Serial.availableForWrite() >= 1)", "if (Serial.availableForWrite() >= 1)"],
+    ["octet « pile détruite » supprimé", "podFfAppend(0xBD);", "(void)0;"],
+    ["lecture sans arrêt au premier octet vierge", "if (c[i] == 0xFF) { end = true; break; }", ""],
+    ["effacement jamais vérifié", "rc = df.erase(POD_FFL_BASE, POD_FFL_SIZE);", "df.erase(POD_FFL_BASE, POD_FFL_SIZE); rc = 0;"],
+  ];
+  for (const [name, a, b] of mutants) {
+    const base = extractBlock();
+    assert.ok(base.split(a).length >= 2, `mutation « ${name} » : motif introuvable`);
+    const r = runProcess(build((s) => s.split(a).join(b), true), [], 60000);
+    assert.notEqual(r.status, 0, `mutation « ${name} » NON détectée`);
+  }
+});
+
+test("PULLFRAME-PHASE-AUDIT3 : les quatre autres firmwares R4 et la production ne portent aucune marque ; statiques de canari : un octet de phase et deux octets de position", () => {
+  for (const sk of OTHERS) assert.doesNotMatch(read(`arduino_uno_r4/${sk}/${sk}.ino`), /POD_FF|g_podFf|podFf|DataFlashBlockDevice/, sk);
   const src = read(INO);
   assert.equal((src.match(/^static volatile uint8_t g_podFfPhase = 0;$/gm) ?? []).length, 1);
-  assert.equal((src.match(/g_podFfDrop/g) ?? []).length, 0, "g_podFfDrop n'existe plus (le compteur vit dans l'enregistrement .noinit)");
-  assert.doesNotMatch(noCanary(src), /POD_FF|g_podFf|podFf/);
+  assert.equal((src.match(/^static volatile uint16_t g_podFfPos = 0;$/gm) ?? []).length, 1);
+  assert.doesNotMatch(noCanary(src), /POD_FF|g_podFf|podFf|DataFlashBlockDevice/);
 });

@@ -585,48 +585,89 @@ static String signED25519(const String& candidateId, float score) {
 
 // ─── HTTP (WiFiSSLClient + pod_http.h) ─────────────────────────────────────
 #if POD_RENDER_V1 && POD_CANARY
-// PULLFRAME-PHASE-AUDIT2 (canari seulement) : le canari d'AUDIT1 n'a imprimé AUCUNE ligne FF (pas même FF 1) alors que « [PULL] nouvelle frame … (personal) » venait d'être imprimée : un traçage par logf (formatage, allocation de la pile de journal) n'a rien localisé.
-// (1) Chaque phase est d'abord INSCRITE dans un enregistrement de 20 o en RAM « .noinit » (survit à un reset, ni EEPROM ni flash), scellé par une somme ; il est relu et rapporté au démarrage SUIVANT (podFfBoot).
-// (2) Ensuite, SEULEMENT pour les phases 4 à 14 (exécutées sur la pile réseau dédiée), un jeton fixe de 7 o est écrit par UN SEUL Serial.write, et seulement si le tampon USB a la place EXACTE : sinon le jeton est perdu et compté. Ni logf, ni formatage, ni String, ni allocation, ni attente.
-// (3) Les phases 1, 2, 3 et 15 s'exécutent sur la PILE PRINCIPALE (marge 132 o au retour de doPull) : aucune E/S série n'y est posée (l'écriture USB coûte 270 à 430 o de pile), enregistrement seul.
-// g_podFfPhase = 0 : traçage inactif (toute autre transaction reste muette). ⚠ Le cœur R4 (SerialUSB::write) BOUCLE SANS LIMITE quand le tampon USB est plein : écrire plus que la place disponible est interdit ici.
+// PULLFRAME-PHASE-AUDIT3 (canari seulement) : AUDIT1 (logf) puis AUDIT2 (RAM .noinit effacée au Reset sur cette chaîne de démarrage + jeton de 7 o perdu : tampon USB plein dès le démarrage) n'ont rien localisé.
+// Ici : chaque phase s'inscrit en FLASH DE DONNÉES (survit au Reset et à la mise hors tension), en AJOUT SEUL : le dernier bloc (n° 7) de la flash qui émule l'EEPROM (8 Ko = 8 blocs de 1 Ko ; les clés, le dernier bloc et l'état du firmware n'occupent que les 452 premiers octets du bloc 0)
+// est EFFACÉ UNE FOIS au démarrage (aucun effacement si le journal précédent est vide), puis chaque marque programme UN octet vierge (pas d'EEPROM.update : il alloue une page de 1 Ko au tas et efface le bloc à chaque écriture). Octet = n° de phase (4 bits) + son complément (4 bits) : une écriture interrompue ne ressemble à aucune phase.
+// Au démarrage suivant, podFfBoot RAPPORTE le journal précédent avant de le réarmer. Les phases 4 à 14 (pile réseau dédiée) écrivent en plus UN octet « lettre » sur la série si le tampon USB a au moins un octet de libre (perdu sinon). Jamais de logf, de formatage, de String, d'allocation ni d'attente dans une marque.
+// g_podFfPhase = 0 : traçage inactif ; g_podFfPos = 0 : journal non armé (aucune écriture). ⚠ Le cœur R4 (SerialUSB::write) BOUCLE SANS LIMITE quand le tampon USB est plein : n'écrire que si la place existe.
 static volatile uint8_t g_podFfPhase = 0;
-struct PodFfRec { uint32_t magic; uint32_t seq; uint32_t ms; uint8_t last; uint8_t drops; uint8_t badAt; uint8_t ctl; uint32_t chk; };
-static PodFfRec g_podFfRec __attribute__((section(".noinit")));
-#define POD_FF_MAGIC 0x46464132UL
-static const char kFfTok[] = "[FF00]\n[FF01]\n[FF02]\n[FF03]\n[FF04]\n[FF05]\n[FF06]\n[FF07]\n[FF08]\n[FF09]\n[FF10]\n[FF11]\n[FF12]\n[FF13]\n[FF14]\n[FF15]\n";
-static uint32_t __attribute__((noinline)) podFfSum() {
-  return g_podFfRec.magic ^ (g_podFfRec.seq * 2654435761UL) ^ g_podFfRec.ms ^ ((uint32_t)g_podFfRec.last | ((uint32_t)g_podFfRec.drops << 8) | ((uint32_t)g_podFfRec.badAt << 16) | ((uint32_t)g_podFfRec.ctl << 24)) ^ 0xA5C3A5C3UL;
+static volatile uint16_t g_podFfPos = 0;
+#define POD_FFL_BASE 0x1C00u
+#define POD_FFL_SIZE 0x400u
+#define POD_FFL_HDR 8u
+static uint8_t podFfEntry(uint8_t n) { return (uint8_t)((n << 4) | ((~n) & 0x0F)); }
+static bool podFfEntryOk(uint8_t b) { return (uint8_t)(b >> 4) == (uint8_t)((~b) & 0x0F); }
+static char podFfGlyph(uint8_t b) {
+  if (b == 0xBD) return '!';
+  if (!podFfEntryOk(b)) return '?';
+  const uint8_t n = (uint8_t)(b >> 4);
+  return (char)(n < 10 ? '0' + n : 'a' + (n - 10));
 }
-static void __attribute__((noinline)) podFfSeal() { g_podFfRec.chk = podFfSum(); }
-static bool __attribute__((noinline)) podFfToken(uint8_t n) {
-  if (n > 15 || Serial.availableForWrite() < 7) return false;
-  return Serial.write((const uint8_t*)(kFfTok + 7u * n), 7) == 7;
+static void __attribute__((noinline)) podFfAppend(uint8_t e) {
+  const uint16_t p = g_podFfPos;
+  if (p < POD_FFL_HDR || p >= POD_FFL_SIZE) return;
+  if (DataFlashBlockDevice::getInstance().program(&e, POD_FFL_BASE + p, 1) == 0) g_podFfPos = (uint16_t)(p + 1); else g_podFfPos = POD_FFL_SIZE;
 }
 static void __attribute__((noinline)) podFfNote(uint8_t n) {
   g_podFfPhase = n;
-  g_podFfRec.last = n; g_podFfRec.ms = millis();
-  if (g_podFfRec.badAt == 0 && !(*(volatile uint32_t*)&__StackLimit == 0x434E5259UL && *((volatile uint32_t*)&__StackLimit + 1) == g_podPaintLen)) g_podFfRec.badAt = n;
-  podFfSeal();
-  if (n >= 4 && n <= 14) { if (!podFfToken(n)) { if (g_podFfRec.drops < 255) g_podFfRec.drops++; podFfSeal(); } }
+  podFfAppend(podFfEntry(n));
+  if (*(volatile uint32_t*)&__StackLimit != 0x434E5259UL || *((volatile uint32_t*)&__StackLimit + 1) != g_podPaintLen) podFfAppend(0xBD);
+  if (n >= 4 && n <= 14 && Serial.availableForWrite() >= 1) Serial.write((uint8_t)('A' + n - 1));
 }
 static const char* podFfName(uint8_t n) {
   static const char* const t[] = { "aucune (avant la premiere marque)", "avant doFetchFrame (doPull)", "entree de doFetchFrame", "avant podNetRun", "entree de la transaction (pile reseau)", "client TLS construit", "avant client.connect", "apres client.connect",
     "requete construite (avant print)", "apres client.print", "apres les en-tetes", "plan noir lu", "plan rouge lu", "avant stop", "apres stop", "retour de podNetRun" };
   return n < 16 ? t[n] : "?";
 }
-static void podFfBoot() {
-  logf("[CANARY] BUILD PULLFRAME-PHASE-AUDIT2 | base 3628b3d | 15 phases + controle | enregistrement RAM .noinit 20 o | compile %s %s", __DATE__, __TIME__);
-  const bool ok = g_podFfRec.magic == POD_FF_MAGIC && g_podFfRec.chk == podFfSum();
-  if (ok) logf("[CANARY] FFREC demarrage precedent n=%lu : derniere phase %u (%s) a t=%lu ms ; jetons perdus=%u ; marqueur de pile detruit des la phase %u (0 = jamais) ; jeton de controle %u (1 = ecrit, 2 = perdu)",
-    (unsigned long)g_podFfRec.seq, (unsigned)g_podFfRec.last, podFfName(g_podFfRec.last), (unsigned long)g_podFfRec.ms, (unsigned)g_podFfRec.drops, (unsigned)g_podFfRec.badAt, (unsigned)g_podFfRec.ctl);
-  else logf("[CANARY] FFREC demarrage precedent : AUCUN enregistrement valide (mise sous tension, premier lancement ou RAM effacee par le chargeur d'amorcage)");
-  const uint32_t seq = ok ? g_podFfRec.seq + 1UL : 1UL;
-  g_podFfRec.magic = POD_FF_MAGIC; g_podFfRec.seq = seq; g_podFfRec.ms = millis();
-  g_podFfRec.last = 0; g_podFfRec.drops = 0; g_podFfRec.badAt = 0; g_podFfRec.ctl = 0; podFfSeal();
-  const bool w = podFfToken(0);
-  g_podFfRec.ctl = w ? 1 : 2; podFfSeal();
-  logf("[CANARY] FF controle : jeton [FF00] %s juste avant cette ligne ; demarrage n=%lu ; l'enregistrement est arme", w ? "ECRIT" : "PERDU (tampon USB trop plein)", (unsigned long)seq);
+static void __attribute__((noinline)) podFfBoot() {
+  logf("[CANARY] BUILD PULLFRAME-PHASE-AUDIT3 | base 3ace43b | 15 phases | journal en flash de donnees : bloc 7 (adresse logique 0x%04x), UN octet par phase | compile %s %s", (unsigned)POD_FFL_BASE, __DATE__, __TIME__);
+  DataFlashBlockDevice& df = DataFlashBlockDevice::getInstance();
+  uint8_t h[POD_FFL_HDR] = { 0 };
+  df.read(h, POD_FFL_BASE, POD_FFL_HDR);
+  const bool hdrOk = h[0] == 'F' && h[1] == 'F' && h[2] == 'L' && h[3] == '3' && (uint8_t)(h[4] ^ h[5]) == 0xFF;
+  uint16_t n = 0;
+  uint8_t lastPh = 0xFF;
+  char ring[24] = { 0 };
+  if (hdrOk) {
+    uint8_t c[32];
+    bool end = false;
+    for (uint16_t off = POD_FFL_HDR; off < POD_FFL_SIZE && !end; off = (uint16_t)(off + 32)) {
+      const uint16_t len = (uint16_t)(POD_FFL_SIZE - off < 32 ? POD_FFL_SIZE - off : 32);
+      df.read(c, POD_FFL_BASE + off, len);
+      for (uint16_t i = 0; i < len; i++) {
+        if (c[i] == 0xFF) { end = true; break; }
+        ring[n % 24] = podFfGlyph(c[i]);
+        if (podFfEntryOk(c[i])) lastPh = (uint8_t)(c[i] >> 4);
+        n++;
+      }
+    }
+  }
+  char seq[25];
+  uint8_t k = 0;
+  const uint16_t m = n < 24 ? n : 24;
+  for (uint16_t i = 0; i < m; i++) seq[k++] = ring[(uint16_t)(n - m + i) % 24];
+  seq[k] = 0;
+  if (!hdrOk) logf("[CANARY] FFLOG demarrage precedent : AUCUN journal valide (premier lancement de ce canari, bloc 7 vierge ou illisible)");
+  else if (lastPh == 0xFF || lastPh == 0) logf("[CANARY] FFLOG demarrage precedent : gen=%u, AUCUNE phase atteinte (jamais la marque 1) ; entrees=%u", (unsigned)h[4], (unsigned)n);
+  else logf("[CANARY] FFLOG demarrage precedent : gen=%u ; %u entrees ; DERNIERE PHASE %u (%s) ; sequence (0 armement, 1-9 puis a-f = 10-15, ! pile principale detruite, ? octet invalide) : %s", (unsigned)h[4], (unsigned)n, (unsigned)lastPh, podFfName(lastPh), seq);
+  uint16_t pos = POD_FFL_HDR;
+  uint8_t gen = 1;
+  int rc = 0;
+  if (hdrOk && (n == 0 || (n == 1 && lastPh == 0))) { pos = (uint16_t)(POD_FFL_HDR + n); gen = h[4]; }
+  else {
+    gen = hdrOk ? (uint8_t)(h[4] + 1) : (uint8_t)1;
+    rc = df.erase(POD_FFL_BASE, POD_FFL_SIZE);
+    if (rc == 0) { const uint8_t nh[6] = { 'F', 'F', 'L', '3', gen, (uint8_t)~gen }; rc = df.program(nh, POD_FFL_BASE, 6); }
+  }
+  if (rc == 0 && pos == POD_FFL_HDR) { const uint8_t e0 = podFfEntry(0); rc = df.program(&e0, POD_FFL_BASE + pos, 1); if (rc == 0) pos++; }
+  uint8_t rb = 0xFF;
+  df.read(&rb, POD_FFL_BASE + pos - 1, 1);
+  const bool back = rc == 0 && rb == podFfEntry(0);
+  g_podFfPos = back ? pos : (uint16_t)POD_FFL_SIZE;
+  const bool tok = Serial.availableForWrite() >= 1;
+  if (tok) Serial.write((uint8_t)'Z');
+  logf("[CANARY] FFLOG %s : gen=%u ; ecriture + relecture %s (code flash %d) ; prochaine ecriture a l'octet %u ; jeton serie de controle Z %s ; usure : au plus UN effacement par demarrage (aucun si le journal precedent est vide), au plus %u programmations d'un octet par demarrage",
+    back ? "arme" : "DESACTIVE", (unsigned)gen, back ? "OK" : "ECHEC", rc, (unsigned)g_podFfPos, tok ? "ecrit" : "perdu (tampon USB plein)", (unsigned)(POD_FFL_SIZE - POD_FFL_HDR));
 }
 #define POD_FF_MARK(n, txt) do { if (g_podFfPhase != 0) podFfNote((n)); } while (0)
 #define POD_FF_START(txt) do { g_podFfPhase = 1; POD_FF_MARK(1, txt); } while (0)
@@ -1684,7 +1725,7 @@ void setup() {
   podCanaryCheck("1b calibration : meme profondeur, juste apres un rapport (cout de l'instrument)", true);
   podCanaryLogProbe();
   podFfBoot();
-  podCanaryCheck("1c apres FFBOOT (cout du jeton de controle, pile principale)", true);
+  podCanaryCheck("1c apres FFBOOT (cout du journal en flash et du jeton de controle, pile principale)", true);
 #endif
 
   epd.begin();

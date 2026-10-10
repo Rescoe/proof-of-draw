@@ -1,0 +1,45 @@
+# Journal série du canari PULLFRAME-PHASE-AUDIT2 (commit 3ace43b, compilé le 10/10/2026 à 20:35:21), après un Reset, sans renvoyer d'image — transmis par le porteur le 10/10/2026
+# Le porteur écrit « j'ai appuyé sur reset » ; le journal ne montre qu'UN démarrage (le précédent n'est pas fourni) : on ne sait pas s'il s'agit du premier démarrage après le téléversement ou d'un démarrage après un premier blocage.
+# Il se termine par la dernière ligne ci-dessous : silence après « nouvelle frame ». Aucun jeton « [FF04] » ou suivant n'apparaît.
+[BOOT] Proof-of-Draw UNO R4 WiFi + e-ink 2.9" BWR — r4eink29-1.1
+[MEM] boot: tas libre 8492 o, zone 0xA5 sous la pile 1024 o (INDICATIF : NON fiable des la 1re pile temporaire)
+[CANARY] ===== BUILD LOCAL TEMPORAIRE DE CANARI — rendu v1 ACTIF (POD_RENDER_V1=1, mode=1) — NE PAS DÉPLOYER, NE PAS COMMITER LE BINAIRE =====
+[CANARY] firmware annoncé au serveur : r4eink29-1.1 (inchangé) ; pile principale [0x20007b00, 0x20007f00] ; SP=0x20007e10
+[CANARY] 1 boot (apres peinture) : pile utilisee au plus 500 o / 1024 (marge 524 o) | SP=0x20007D98 | tas libre 6948 | sbrk->limite 6948
+[CANARY] 1b calibration : meme profondeur, juste apres un rapport (cout de l'instrument) : pile utilisee au plus 584 o / 1024 (marge 440 o) | SP=0x20007D98 | tas libre 6948 | sbrk->limite 6948
+[CANARY] sonde journal: 123456789012345678901234512345678901234567890123456789012345678901234561234567890123456789012345678901234567890123456123456789012345678901234567890123456789012345612345678901234567890123456789012345678901234567890
+[CANARY] pile de journal (ligne de 250 caracteres) : utilisee 416 o, marge 1056 o, erreur 0 (OK)
+[CANARY] BUILD PULLFRAME-PHASE-AUDIT2 | base 3628b3d | 15 phases + controle | enregistrement RAM .noinit 20 o | compile Oct 10 2026 20:35:21
+[CANARY] FFREC demarrage precedent : AUCUN enregistrement valide (mise sous tension, premier lancement ou RAM effacee par le chargeur d'amorcage)
+[CANARY] FF controle : jeton [FF00] PERDU (tampon USB trop plein) juste avant cette ligne ; demarrage n=1 ; l'enregistrement est arme
+[CANARY] 1c apres FFBOOT (cout du jeton de controle, pile principale) : pile utilisee au plus 584 o / 1024 (marge 440 o) | SP=0x20007D98 | tas libre 6948 | sbrk->limite 6948
+[CANARY] 2 e-ink (begin + clearBothPlanes) : pile utilisee au plus 584 o / 1024 (marge 440 o) | SP=0x20007D98 | tas libre 6948 | sbrk->limite 6948
+[CANARY] wifi status (module present ?) : pile Wi-Fi dediee utilisee 608 o, marge 864 o (objectif >= 256 : OK), erreur 0 | tas libre 6948
+[CANARY] wifi firmwareVersion : pile Wi-Fi dediee utilisee 448 o, marge 1024 o (objectif >= 256 : OK), erreur 0 | tas libre 6932
+[WIFI] firmware du module: 0.5.2
+[CANARY] wifi begin : pile Wi-Fi dediee utilisee 536 o, marge 936 o (objectif >= 256 : OK), erreur 0 | tas libre 6948
+[CANARY] wifi localIP : pile Wi-Fi dediee utilisee 568 o, marge 904 o (objectif >= 256 : OK), erreur 0 | tas libre 6932
+[WIFI] IP: 0.0.0.0
+[CANARY] 3 wifi connecte : pile utilisee au plus 584 o / 1024 (marge 440 o) | SP=0x20007D98 | tas libre 6948 | sbrk->limite 5404
+[KEYS] clés chargées: 11e4193c89dc29bf26abe55d6a471d937eca8591fe00ee81b226403828a3b830
+[CANARY] 4 cles chargees : pile utilisee au plus 584 o / 1024 (marge 440 o) | SP=0x20007D98 | tas libre 6948 | sbrk->limite 5404
+[SELFTEST] Ed25519 signature 178 ms, vérification 276 ms -> OK
+[MEM] après Ed25519: tas libre 8492 o, zone 0xA5 sous la pile 1024 o (INDICATIF : NON fiable des la 1re pile temporaire)
+[ED25519] pile dédiée (utilisé/marge, o) : sign 1316/924, verify 1532/708 ; erreurs sign=0 verify=0 (0 = aucune) ; alloué 2304 o (garde 64 o, marge minimale exigée 128 o)
+[CANARY] 5 selfTestEd25519 : pile utilisee au plus 584 o / 1024 (marge 440 o) | SP=0x20007D98 | tas libre 6948 | sbrk->limite 5404
+[BOOT] œuvre déjà affichée : 8c97adf0-ee5b-4a2b-ab49-48a93548
+[CANARY] 6a avant doRegister : pile utilisee au plus 584 o / 1024 (marge 440 o) | SP=0x20007D98 | tas libre 6884 | sbrk->limite 5404
+[CANARY] wifi macAddress : pile Wi-Fi dediee utilisee 520 o, marge 952 o (objectif >= 256 : OK), erreur 0 | tas libre 6884
+[CANARY] net http : pile reseau dediee utilisee 1204 o, marge 780 o (objectif >= 256 : OK), erreur 0 | tas libre 6636 [HTTP POST] /api/register -> 200
+[CANARY] register JSON : pile de travail dediee utilisee 496 o, marge 1488 o (objectif >= 256 : OK), erreur 0, statut 1 | tas libre avant 6452 apres 6452
+[REGISTER] deviceId=dev_W29I1TW7 paired=oui
+[REGISTER] appairé
+[CANARY] 6b apres doRegister : pile utilisee au plus 784 o / 1024 (marge 240 o, SOUS L'OBJECTIF 256) | SP=0x20007D98 | tas libre 6864 | sbrk->limite 1884
+[BOOT] premier pull immédiat
+[CANARY] 7a avant doPull : pile utilisee au plus 784 o / 1024 (marge 240 o, SOUS L'OBJECTIF 256) | SP=0x20007D98 | tas libre 6864 | sbrk->limite 1884
+[CANARY] net http : pile reseau dediee utilisee 1156 o, marge 828 o (objectif >= 256 : OK), erreur 0 | tas libre 6784
+[HTTP GET] /api/pull?deviceId=dev_W29I1TW7 -> 200
+[CANARY] pull JSON : pile de travail dediee utilisee 700 o, marge 1284 o (objectif >= 256 : OK), erreur 0, statut 1 | tas libre avant 5880 apres 5736
+[PULL] cartel: Mouche a fleur / Roubzi (bloc 81)
+[PULL] nouveau bloc #95
+[PULL] nouvelle frame ce693868-b895-4b7c-8dae-48c14e884e83 (personal)
