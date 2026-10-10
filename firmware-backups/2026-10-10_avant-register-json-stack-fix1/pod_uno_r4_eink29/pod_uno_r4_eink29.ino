@@ -969,103 +969,6 @@ static String macString() {
   return String(b);
 }
 
-// REGISTER-JSON-STACK-FIX1 : la réponse de /api/register est décodée sur la pile de TRAVAIL dédiée (podWorkRun, la même que celle du pull : 2 048 o au tas, garde 64 o, marge >= 128 o, échec fermé), APRÈS le retour
-// complet de httpCall (TLS fermé, jamais imbriquée avec PodNet). Canari c19efb8 (10/10/2026) : JsonDocument + deserializeJson + deviceId.as<String>() + pairCode.as<String>() exécutés sur la pile principale juste après
-// le retour HTTP portaient doRegister à 948 / 1 024 o (marge 76 o < 128 o, marqueur intact : arrêt préventif). Sortie : RegisterParsed, structure BORNÉE (28 o) allouée au TAS ; AUCUN changement de deviceId, pairCode, paired,
-// registered avant un résultat COMPLET et VALIDE. CONTRAT du serveur (lib/deviceStore.ts, lib/podProtocolV3.ts) : deviceId = « dev_ » + 8 caractères [A-Z0-9] ; pairCode = 8 caractères de l'alphabet
-// ABCDEFGHJKLMNPQRSTUVWXYZ23456789 (obligatoire si l'appareil n'est pas appairé, facultatif sinon) ; toute autre valeur (absente, trop courte, trop longue, caractère hors alphabet, type inattendu) est REFUSÉE — jamais tronquée.
-// paired absent ou non booléen => false (comme avant). Échec (NOMEM, NESTED, GUARD, MARGIN, JSON invalide, valeur refusée) : doRegister retourne false, rien n'est inscrit.
-#include <new>
-enum RegisterStatus : uint8_t { REG_P_NONE = 0, REG_P_OK = 1, REG_P_JSON = 2, REG_P_INVALID = 3 };
-struct RegisterParsed {
-  uint8_t status;                  // RegisterStatus : exploitable seulement pour REG_P_OK
-  bool paired;
-  const char* jsonErr;             // texte statique de DeserializationError (REG_P_JSON)
-  char deviceId[13];               // 12 caractères + NUL
-  char pairCode[9];                // 8 caractères + NUL, ou vide (appairé, code absent)
-  RegisterParsed() : status(REG_P_NONE), paired(false), jsonErr(nullptr) { deviceId[0] = 0; pairCode[0] = 0; }
-};
-static bool __attribute__((noinline)) regDeviceIdOk(const char* s) {
-  if (strlen(s) != 12 || s[0] != 'd' || s[1] != 'e' || s[2] != 'v' || s[3] != '_') return false;
-  for (uint8_t i = 4; i < 12; i++) if (!((s[i] >= 'A' && s[i] <= 'Z') || (s[i] >= '0' && s[i] <= '9'))) return false;
-  return true;
-}
-static bool __attribute__((noinline)) regPairCodeOk(const char* s) {
-  static const char* const ALPHA = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
-  if (strlen(s) != 8) return false;
-  for (uint8_t i = 0; i < 8; i++) if (strchr(ALPHA, s[i]) == nullptr) return false;
-  return true;
-}
-// Exécutée SUR LA PILE DE TRAVAIL (voir registerParseOnWorkStack). Ne touche à AUCUN état global : tout va dans r.
-static void __attribute__((noinline)) registerParseWork(const String& resp, RegisterParsed& r) {
-  JSON_DOC(doc, 768);
-  const DeserializationError err = deserializeJson(doc, resp);
-  if (err) { r.jsonErr = err.c_str(); r.status = REG_P_JSON; return; }
-  const char* id = doc["deviceId"] | "";
-  const char* pc = doc["pairCode"] | "";
-  const bool isPaired = doc["paired"] | false;
-  if (!regDeviceIdOk(id)) { r.status = REG_P_INVALID; return; }
-  if (pc[0] != '\0' ? !regPairCodeOk(pc) : !isPaired) { r.status = REG_P_INVALID; return; }
-  memcpy(r.deviceId, id, 12); r.deviceId[12] = '\0';
-  if (pc[0] != '\0') { memcpy(r.pairCode, pc, 8); r.pairCode[8] = '\0'; }
-  r.paired = isPaired;
-  r.status = REG_P_OK;
-}
-static bool __attribute__((noinline)) registerParseOnWorkStack(const String& resp, RegisterParsed& r, PodNetInfo& ni) {
-  auto rk = [&]() { registerParseWork(resp, r); };
-  return podWorkRun(rk, &ni);
-}
-// Échec de la pile de travail : rien n'est inscrit. GUARD => le tas voisin peut être corrompu (logf alloue) : arrêt sûr silencieux AVANT tout journal.
-static void __attribute__((noinline)) registerWorkFailed(const PodNetInfo& ni) {
-  if (ni.err == POD_NET_GUARD) logfSafeStop();
-  logf("[REGISTER] analyse JSON sur la pile de travail ECHOUEE (err %u) : %s ; inscription rejetée, rien n'est inscrit", (unsigned)ni.err, podNetWhy(ni));
-}
-#if POD_RENDER_V1 && POD_CANARY
-// REGISTER-JSON-STACK-FIX1 (canari seulement) : une ligne par décodage du register — pile de travail utilisée / marge / erreur / statut, tas libre AVANT et APRÈS ; la phase de PodNet (pad[0]) est contrôlée ; toute erreur de pile
-// ou tout statut autre que OK pose le verrou fatal. Aucun podCanaryCheck dans cette fonction : le contrôle de la pile principale suit son retour, chez l'appelant (règle A/B/C).
-struct PodCanaryRegCtx { const PodNetInfo* ni; bool ran; uint8_t status; uint32_t heapB; };
-static bool __attribute__((noinline)) podCanaryRegBad(const PodNetInfo& ni, bool ran, uint8_t status) { return !ran || ni.err != POD_NET_OK || status != REG_P_OK; }
-static void podCanaryHeapRun(void* p) { *static_cast<uint32_t*>(p) = freeHeapBytes(); }
-static uint32_t __attribute__((noinline)) podCanaryHeapMark() { uint32_t v = 0; podCanaryEmit(podCanaryHeapRun, &v); return v; }
-static void podCanaryPrintReg(void* v) {
-  const PodCanaryRegCtx& c = *static_cast<const PodCanaryRegCtx*>(v);
-  const PodNetInfo& ni = *c.ni;
-  Serial.print(F("[CANARY] register JSON : pile de travail dediee utilisee ")); Serial.print((unsigned)ni.used); podCanaryNum(F(" o, marge "), ni.margin);
-  Serial.print(ni.low ? F(" o (objectif >= 256 : SOUS L'OBJECTIF)") : F(" o (objectif >= 256 : OK)")); podCanaryNum(F(", erreur "), ni.err); podCanaryNum(F(", statut "), c.status);
-  podCanaryNum(F(" | tas libre avant "), c.heapB); podCanaryNum(F(" apres "), freeHeapBytes()); Serial.println();
-  if (podCanaryRegBad(ni, c.ran, c.status)) { Serial.println(F("[CANARY] register JSON : ECHEC du decodage sur la pile de travail (ALERTE)")); podCanaryHalt("register JSON"); }
-}
-static void __attribute__((noinline)) podCanaryRegister(const PodNetInfo& ni, bool ran, uint8_t status, uint32_t heapB) {
-  podCanaryPhase(ni.pad[0]);
-  PodCanaryRegCtx c = { &ni, ran, status, heapB };
-  podCanaryEmit(podCanaryPrintReg, &c);
-  if (podCanaryRegBad(ni, ran, status)) for (;;) { __asm volatile("nop"); }        // l'impression a échoué (mémoire) : verrou SILENCIEUX
-}
-#endif
-// Décodage + inscription de l'état, dans cet ordre, APRÈS le retour de httpCall. Retour : true = réponse complète et valide, état inscrit ; false = rien n'a changé.
-static bool __attribute__((noinline)) doRegisterDecode(const String& resp) {
-  RegisterParsed* const r = new (std::nothrow) RegisterParsed();
-  if (!r) { logf("[REGISTER] réponse rejetée : mémoire insuffisante"); return false; }
-  PodNetInfo ni;
-#if POD_RENDER_V1 && POD_CANARY
-  const uint32_t heapB = podCanaryHeapMark();
-#endif
-  const bool ran = registerParseOnWorkStack(resp, *r, ni);
-#if POD_RENDER_V1 && POD_CANARY
-  podCanaryRegister(ni, ran, r->status, heapB);
-#endif
-#if POD_RENDER_V1 && POD_CANARY
-  podCanaryCheck("  Q: apres le decodage du register (silencieux)", false);
-#endif
-  bool ok = false;
-  if (!ran) registerWorkFailed(ni);
-  else if (r->status == REG_P_JSON) logf("[REGISTER] JSON illisible: %s", r->jsonErr);
-  else if (r->status != REG_P_OK) logf("[REGISTER] réponse rejetée : deviceId ou code d'appairage absent, trop court, trop long ou invalide");
-  else { deviceId = r->deviceId; pairCode = r->pairCode; paired = r->paired; registered = true; ok = true; }
-  delete r;
-  return ok;
-}
-
 static bool doRegister() {
 #if POD_RENDER_V1 && POD_CANARY
   podCanaryCheck("  R0: entree de doRegister (silencieux)", false);
@@ -1087,7 +990,12 @@ static bool doRegister() {
 #endif
   String resp;
   if (httpCall("POST", "/api/register", &body, resp) != 200) { logf("[REGISTER] échec — nouvel essai dans 5 s"); return false; }
-  if (!doRegisterDecode(resp)) return false;
+  JSON_DOC(doc, 768);
+  if (deserializeJson(doc, resp)) { logf("[REGISTER] JSON illisible"); return false; }
+  deviceId   = doc["deviceId"].as<String>();
+  pairCode   = doc["pairCode"].as<String>();
+  paired     = doc["paired"] | false;
+  registered = true;
   logf("[REGISTER] deviceId=%s paired=%s", deviceId.c_str(), paired ? "oui" : "non");
 
   if (!paired && !onboardingDrawn) {
@@ -1221,6 +1129,8 @@ static void __attribute__((noinline)) pullWorkFailed(const PodNetInfo& ni) {
 // ou tout statut autre que OK / 429 pose le verrou fatal. Aucun podCanaryCheck dans cette fonction : le contrôle de la pile principale suit son retour, chez l'appelant (règle A/B/C).
 struct PodCanaryPullCtx { const PodNetInfo* ni; bool ran; uint8_t status; uint32_t heapB; };
 static bool __attribute__((noinline)) podCanaryPullBad(const PodNetInfo& ni, bool ran, uint8_t status) { return !ran || ni.err != POD_NET_OK || (status != PULL_P_OK && status != PULL_P_RATE); }
+static void podCanaryHeapRun(void* p) { *static_cast<uint32_t*>(p) = freeHeapBytes(); }
+static uint32_t __attribute__((noinline)) podCanaryHeapMark() { uint32_t v = 0; podCanaryEmit(podCanaryHeapRun, &v); return v; }
 static void podCanaryPrintPull(void* v) {
   const PodCanaryPullCtx& c = *static_cast<const PodCanaryPullCtx*>(v);
   const PodNetInfo& ni = *c.ni;

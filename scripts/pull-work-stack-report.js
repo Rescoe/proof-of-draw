@@ -12,8 +12,9 @@ if (!dis) { console.error("usage : pull-work-stack-report.js <fichier.dis> [limi
 const LIMIT = Number(limArg || 10);
 const funcs = parse(fs.readFileSync(dis, "utf8"));
 const names = [...funcs.keys()];
-const root = names.find((k) => /pullParseWork/.test(k) && !/OnWork/.test(k));
-if (!root) { console.error("pullParseWork introuvable"); process.exit(1); }
+const rootName = process.argv[4] || "pullParseWork";   // REGISTER-JSON-STACK-FIX1 : « registerParseWork » pour la réponse de /api/register
+const root = names.find((k) => k.includes(rootName) && !/OnWork/.test(k));
+if (!root) { console.error(rootName + " introuvable"); process.exit(1); }
 const short = (s) => s.replace(/^_Z[NL]?\d*/, "").replace(/ArduinoJson\d+V\d+/g, "AJ").slice(0, 34);
 const skip = new Set(["_printf_float", "__cvt", "_dtoa_r", ...names.filter((k) => /logfEmit/.test(k))]);
 
@@ -59,7 +60,7 @@ for (const c of sccs) {
   worstLevel = Math.max(worstLevel, h.best); sumLevel = Math.max(sumLevel, h.sum);
 }
 const lo = acyc.depth + (LIMIT - 1) * worstLevel, hi = acyc.depth + (LIMIT - 1) * sumLevel;
-out.push(`  limite d'imbrication ${LIMIT} : pire cas statique ${lo} o (borne basse) à ${hi} o (borne haute) sous l'appelant de pullParseWork`);
+out.push(`  limite d'imbrication ${LIMIT} : pire cas statique ${lo} o (borne basse) à ${hi} o (borne haute) sous l'appelant de ${rootName}`);
 const TOTAL = Number(process.env.POD_WORK_STACK_TOTAL || 2048), BUDGET = TOTAL - 64 - 104 - 32;
 out.push(`  budget (${TOTAL} − garde 64 − exception 104 − invocateur 32) : ${BUDGET} o => marge au pire cas : ${BUDGET - hi} o (borne haute) / ${BUDGET - lo} o (borne basse) ; exigée >= 128, objectif >= 256`);
 console.log(out.join("\n"));

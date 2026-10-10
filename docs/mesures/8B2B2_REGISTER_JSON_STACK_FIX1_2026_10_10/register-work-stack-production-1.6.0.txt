@@ -1,0 +1,8 @@
+# REGISTER-JSON-STACK-FIX1 — pile de travail : registerParseWork (pire cas statique) ; ELF cœur 1.6.0 (e-ink 2,9″). Rien n'a été flashé.
+# racine registerParseWorkRKN7arduino6Strin : cadre 120 o ; pire chaîne ACYCLIQUE (cycles coupés) : 424 o ; appels indirects atteignables : 10
+  chemin : registerParseWorkRKN7arduino6Strin > AJPB226detail11deserializeINS1_16J > AJPB226detail16JsonDeserializerINS > AJPB226detail16JsonDeserializerINS > AJPB226detail16JsonDeserializerINS > AJPB226detail16JsonDeserializerINS > AJPB226detail4Utf815encodeCodepoin > AJPB226detail13StringBuilder6appen > AJPB226detail15ResourceManager12re
+  composante récursive (1 fonctions) : cycle simple le plus lourd 32 o · somme des cadres 32 o · ex. AJPB226detail11VariantData5clearEP
+  composante récursive (2 fonctions) : cycle simple le plus lourd 72 o · somme des cadres 72 o · ex. AJPB226detail16JsonDeserializerINS, AJPB226detail16JsonDeserializerINS
+  limite d'imbrication 10 : pire cas statique 1072 o (borne basse) à 1072 o (borne haute) sous l'appelant de registerParseWork
+  budget (2048 − garde 64 − exception 104 − invocateur 32) : 1848 o => marge au pire cas : 776 o (borne haute) / 776 o (borne basse) ; exigée >= 128, objectif >= 256
+exit=0

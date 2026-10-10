@@ -1,0 +1,38 @@
+# REGISTER-JSON-STACK-FIX1 — chaînes statiques setup/loop -> doRegister, AVANT (c19efb8), canari ; ELF cœur 1.6.0 (e-ink 2,9″). Rien n'a été flashé.
+# doPull : cadre 240 o ; appelés directs : 34 ; appels indirects dans doPull : 0
+
+# setup → doRegister : hal_entry 8 + arduino_main 16 + setup 224 + doPull 240 = 488 o (536 o restants pour les appelés)
+  K11ArduinoJson8V743PB226de   ArduinoJson     sous doPull  608 o · cumul 1096 o · marge  -72 o   K11ArduinoJson8V743PB226de > ArduinoJson8V743PB2215conv > ArduinoJson8V743PB2213seri > K11ArduinoJson8V743PB22
+  displayOnboardingQRRKN7ard   String          sous doPull  400 o · cumul  888 o · marge  136 o · indirects 35   displayOnboardingQRRKN7ard > qrcode_initText(32) > qrcode_initBytes(144) > drawFinderPattern(56) > setFunction
+  ArduinoJson8V743PB226detai   ArduinoJson     sous doPull  304 o · cumul  792 o · marge  232 o · indirects 10   ArduinoJson8V743PB226detai > ArduinoJson8V743PB226detai > ArduinoJson8V743PB226detai > ArduinoJson8V743PB226de
+  httpCallPKcRKN7arduino6Str   String          sous doPull  272 o · cumul  760 o · marge  264 o · indirects 23   httpCallPKcRKN7arduino6Str > podCanaryCheckPKcb(96) > podCanaryEmitPFvPvES_(8) > PodNet8runSizedEPFvPvES0_j > 
+  wifiMacPh                    autre           sous doPull  264 o · cumul  752 o · marge  272 o · indirects 23   wifiMacPh(32) > podCanaryWifiPKcRK10PodNet > podCanaryCheckPKcb(96) > podCanaryEmitPFvPvES_(8) > PodNet8runSiz
+  podCanaryCheckPKcb           autre           sous doPull  192 o · cumul  680 o · marge  344 o · indirects 1   podCanaryCheckPKcb(96) > podCanaryEmitPFvPvES_(8) > PodNet8runSizedEPFvPvES0_j > malloc(tail) > _malloc_r(16) 
+  ArduinoJson8V743PB226detai   ArduinoJson     sous doPull  192 o · cumul  680 o · marge  344 o   ArduinoJson8V743PB226detai > K11ArduinoJson8V743PB226de > K11ArduinoJson8V743PB226de > K11ArduinoJson8V743PB22
+  persistFrameIdRKN7arduino6   EEPROM          sous doPull  184 o · cumul  672 o · marge  352 o · indirects 9   persistFrameIdRKN7arduino6 > frameKeyRKN7arduino6String > K7arduino6String9substring > arduino6StringC1EPKc(16
+  refreshPanelb                autre           sous doPull  184 o · cumul  672 o · marge  352 o · indirects 26   refreshPanelb(24) > Epd29b8writeRamEhPKhhb.isr > Epd29b7commandEh.isra.137( > arduino10ArduinoSPI16begin > ard
+  bytesToHexPKhj               autre           sous doPull  168 o · cumul  656 o · marge  368 o   bytesToHexPKhj(40) > arduino6StringC1Ehh(24) > arduino6StringaSEPKc.part. > arduino6String4copyEPKcj(1 > ardui
+  K7arduino6String9substring   String          sous doPull  144 o · cumul  632 o · marge  392 o   K7arduino6String9substring > arduino6StringC1EPKc(16) > arduino6String4copyEPKcj(1 > arduino6String7reserveEj(
+  logfPKcz                     journal (logf)  sous doPull  136 o · cumul  624 o · marge  400 o · indirects 23   logfPKcz(48) > PodNet8runSizedEPFvPvES0_j > malloc(tail) > _malloc_r(16) > _sbrk_r(16) > _sbrk(8)
+  arduino6String6concatEc      String          sous doPull  128 o · cumul  616 o · marge  408 o   arduino6String6concatEc(16 > arduino6String6concatEPKcj > arduino6String7reserveEj(8 > arduino6String12changeB
+  arduino6StringC1EPKc         String          sous doPull  120 o · cumul  608 o · marge  416 o   arduino6StringC1EPKc(16) > arduino6String4copyEPKcj(1 > arduino6String7reserveEj(8 > arduino6String12changeBuf
+  pire chaîne par catégorie (sous doPull) : ArduinoJson 608 o · String 400 o · autre 264 o · EEPROM 184 o · journal (logf) 136 o
+  => pire cas statique setup : 1096 o sur 1024 (marge -72 o) via K11ArduinoJson8V743PB226de
+
+# loop → doRegister : hal_entry 8 + arduino_main 16 + loop 56 + doPull 240 = 320 o (704 o restants pour les appelés)
+  K11ArduinoJson8V743PB226de   ArduinoJson     sous doPull  608 o · cumul  928 o · marge   96 o   K11ArduinoJson8V743PB226de > ArduinoJson8V743PB2215conv > ArduinoJson8V743PB2213seri > K11ArduinoJson8V743PB22
+  displayOnboardingQRRKN7ard   String          sous doPull  400 o · cumul  720 o · marge  304 o · indirects 35   displayOnboardingQRRKN7ard > qrcode_initText(32) > qrcode_initBytes(144) > drawFinderPattern(56) > setFunction
+  ArduinoJson8V743PB226detai   ArduinoJson     sous doPull  304 o · cumul  624 o · marge  400 o · indirects 10   ArduinoJson8V743PB226detai > ArduinoJson8V743PB226detai > ArduinoJson8V743PB226detai > ArduinoJson8V743PB226de
+  httpCallPKcRKN7arduino6Str   String          sous doPull  272 o · cumul  592 o · marge  432 o · indirects 23   httpCallPKcRKN7arduino6Str > podCanaryCheckPKcb(96) > podCanaryEmitPFvPvES_(8) > PodNet8runSizedEPFvPvES0_j > 
+  wifiMacPh                    autre           sous doPull  264 o · cumul  584 o · marge  440 o · indirects 23   wifiMacPh(32) > podCanaryWifiPKcRK10PodNet > podCanaryCheckPKcb(96) > podCanaryEmitPFvPvES_(8) > PodNet8runSiz
+  podCanaryCheckPKcb           autre           sous doPull  192 o · cumul  512 o · marge  512 o · indirects 1   podCanaryCheckPKcb(96) > podCanaryEmitPFvPvES_(8) > PodNet8runSizedEPFvPvES0_j > malloc(tail) > _malloc_r(16) 
+  ArduinoJson8V743PB226detai   ArduinoJson     sous doPull  192 o · cumul  512 o · marge  512 o   ArduinoJson8V743PB226detai > K11ArduinoJson8V743PB226de > K11ArduinoJson8V743PB226de > K11ArduinoJson8V743PB22
+  persistFrameIdRKN7arduino6   EEPROM          sous doPull  184 o · cumul  504 o · marge  520 o · indirects 9   persistFrameIdRKN7arduino6 > frameKeyRKN7arduino6String > K7arduino6String9substring > arduino6StringC1EPKc(16
+  refreshPanelb                autre           sous doPull  184 o · cumul  504 o · marge  520 o · indirects 26   refreshPanelb(24) > Epd29b8writeRamEhPKhhb.isr > Epd29b7commandEh.isra.137( > arduino10ArduinoSPI16begin > ard
+  bytesToHexPKhj               autre           sous doPull  168 o · cumul  488 o · marge  536 o   bytesToHexPKhj(40) > arduino6StringC1Ehh(24) > arduino6StringaSEPKc.part. > arduino6String4copyEPKcj(1 > ardui
+  K7arduino6String9substring   String          sous doPull  144 o · cumul  464 o · marge  560 o   K7arduino6String9substring > arduino6StringC1EPKc(16) > arduino6String4copyEPKcj(1 > arduino6String7reserveEj(
+  logfPKcz                     journal (logf)  sous doPull  136 o · cumul  456 o · marge  568 o · indirects 23   logfPKcz(48) > PodNet8runSizedEPFvPvES0_j > malloc(tail) > _malloc_r(16) > _sbrk_r(16) > _sbrk(8)
+  arduino6String6concatEc      String          sous doPull  128 o · cumul  448 o · marge  576 o   arduino6String6concatEc(16 > arduino6String6concatEPKcj > arduino6String7reserveEj(8 > arduino6String12changeB
+  arduino6StringC1EPKc         String          sous doPull  120 o · cumul  440 o · marge  584 o   arduino6StringC1EPKc(16) > arduino6String4copyEPKcj(1 > arduino6String7reserveEj(8 > arduino6String12changeBuf
+  pire chaîne par catégorie (sous doPull) : ArduinoJson 608 o · String 400 o · autre 264 o · EEPROM 184 o · journal (logf) 136 o
+  => pire cas statique loop : 928 o sur 1024 (marge 96 o) via K11ArduinoJson8V743PB226de

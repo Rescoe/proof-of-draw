@@ -56,7 +56,7 @@ export function pullStackViolations(srcRaw: string): string[] {
   for (const tok of ["logf(", "pending", "currentBlock", "lastPullMs", "nextPull", "save", "EEPROM", "epd", "httpCall", "ackFrame", "Serial", "millis", "delay(", "NVIC_SystemReset", "deviceId"])
     if (pureNoStr.includes(tok)) v.push(`le code exécuté sur la pile de travail contient « ${tok} » (effet de bord ou état global)`);
   // 3. un seul lanceur, appelé une seule fois, jamais depuis une transaction réseau
-  if ((src.match(/podWorkRun\(/g) ?? []).length !== 1) v.push("podWorkRun doit être appelé exactement une fois (pullParseOnWorkStack)");
+  if ((src.match(/podWorkRun\(/g) ?? []).length !== 2) v.push("podWorkRun doit être appelé exactement deux fois (pullParseOnWorkStack et registerParseOnWorkStack)");
   if (!/auto wk = \[&\]\(\) \{ pullParseWork\(resp, code, r\); \};\n  return podWorkRun\(wk, &ni\);/.test(src)) v.push("pullParseOnWorkStack : lanceur attendu introuvable");
   if ((src.match(/pullParseOnWorkStack\(/g) ?? []).length !== 2) v.push("pullParseOnWorkStack : une définition et un seul appel (doPullApply)");
   // 4. ordre dans doPullApply : lancement -> échec de pile fermé -> statuts -> effets
