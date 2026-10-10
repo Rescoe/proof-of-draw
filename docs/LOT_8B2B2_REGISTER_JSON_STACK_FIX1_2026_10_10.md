@@ -72,6 +72,8 @@ doRegister()                       pile principale (cadre 240 o avant -> 176 o e
 
 ## 6. Inventaire formel des `deserializeJson` (cinq firmwares R4)
 
+> **Mis à jour par `DOVALIDATE-JSON-STACK-FIX1`** (`docs/LOT_8B2B2_DOVALIDATE_JSON_STACK_FIX1_2026_10_10.md` § 7) : `doValidate` du e-ink 2,9″ est migré ; il reste 4 sites sur la pile de travail et 17 sur la pile principale (autres firmwares). Le tableau ci-dessous est celui de CE lot (avant la migration).
+
 `scripts/json-inventory.js` → `docs/mesures/8B2B2_REGISTER_JSON_STACK_FIX1_2026_10_10/inventaire-deserializejson.md` ; figé par un test (tout ajout, déplacement ou migration non classé échoue).
 
 | firmware | pile de travail | pile principale (À MIGRER) |

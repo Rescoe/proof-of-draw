@@ -1,0 +1,7 @@
+# DOVALIDATE-JSON-STACK-FIX1 — les quatre autres firmwares UNO R4 : binaire de HEAD (81fb2e2) contre binaire courant ; cœur 1.6.0. Rien n'a été flashé.
+# Les deux builds utilisent des chemins de même longueur (« base_… » / « curr_… ») : les seuls octets qui peuvent différer sont les 4 lettres du nom du dossier de build gravé dans l'image.
+# Seul l en-tête podNetStack.h (copie) a changé pour ces firmwares : deux constantes (POD_WORK_JSON_NESTING, POD_WORK_DEEPEST_CALL), jamais utilisées.
+pod_uno_r4_eink27 : 121012 o / 121012 o ; octets différents : 4 (positions 119132 119133 119134 119135 ); Le croquis utilise 121004 octets (46%) ; Les variables globales utilisent 19128 octets (58%) ; avertissements du sketch : 0
+pod_uno_r4_eink27_oled : 135856 o / 135856 o ; octets différents : 4 (positions 133964 133965 133966 133967 ); Le croquis utilise 135848 octets (51%) ; Les variables globales utilisent 21500 octets (65%) ; avertissements du sketch : 0
+pod_uno_r4_tft18 : 131656 o / 131656 o ; octets différents : 4 (positions 129772 129773 129774 129775 ); Le croquis utilise 131648 octets (50%) ; Les variables globales utilisent 20864 octets (63%) ; avertissements du sketch : 0
+pod_uno_r4 : 150452 o / 150452 o ; octets différents : 4 (positions 148556 148557 148558 148559 ); Le croquis utilise 150444 octets (57%) ; Les variables globales utilisent 21444 octets (65%) ; avertissements du sketch : 0

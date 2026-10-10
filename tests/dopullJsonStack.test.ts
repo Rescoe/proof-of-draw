@@ -49,6 +49,9 @@ export function pullStackViolations(srcRaw: string): string[] {
     for (const tok of ["deserializeJson(", "JSON_DOC(", "JsonObject", "JsonArray", "JsonVariant", ".as<String>()", "DynamicJsonDocument", "JsonDocument"])
       if (b.includes(tok)) v.push(`${n} contient « ${tok} » : le décodage doit rester sur la pile de travail`);
   if ((worker.match(/deserializeJson\(/g) ?? []).length !== 2) v.push("pullParseWork doit contenir les deux décodages (429 et réponse)");
+  // chaque appel réel (la ligne de commentaire du bloc en cite un en texte) porte la limite d'imbrication explicite
+  const callsAll = (src.match(/deserializeJson\(/g) ?? []).length, callsLimited = (src.match(/deserializeJson\([a-z]+, resp, DeserializationOption::NestingLimit\(POD_WORK_JSON_NESTING\)\)/g) ?? []).length;
+  if (callsAll !== callsLimited) v.push("chaque deserializeJson (hors commentaire) doit porter DeserializationOption::NestingLimit(POD_WORK_JSON_NESTING)");
   if (!worker.includes(".as<String>()")) v.push("la conversion JsonVariant -> String de l'observation doit vivre dans pullParseWork");
   // 2. pullParseWork et ses aides ne touchent à AUCUN état global, mémoire non volatile, périphérique ni journal
   const pure = worker + body(src, "static bool __attribute__((noinline)) pullSetId(") + body(src, "static bool __attribute__((noinline)) pullSetText(");
@@ -56,7 +59,7 @@ export function pullStackViolations(srcRaw: string): string[] {
   for (const tok of ["logf(", "pending", "currentBlock", "lastPullMs", "nextPull", "save", "EEPROM", "epd", "httpCall", "ackFrame", "Serial", "millis", "delay(", "NVIC_SystemReset", "deviceId"])
     if (pureNoStr.includes(tok)) v.push(`le code exécuté sur la pile de travail contient « ${tok} » (effet de bord ou état global)`);
   // 3. un seul lanceur, appelé une seule fois, jamais depuis une transaction réseau
-  if ((src.match(/podWorkRun\(/g) ?? []).length !== 2) v.push("podWorkRun doit être appelé exactement deux fois (pullParseOnWorkStack et registerParseOnWorkStack)");
+  if ((src.match(/podWorkRun\(/g) ?? []).length !== 3) v.push("podWorkRun doit être appelé exactement trois fois (pull, register et validate)");
   if (!/auto wk = \[&\]\(\) \{ pullParseWork\(resp, code, r\); \};\n  return podWorkRun\(wk, &ni\);/.test(src)) v.push("pullParseOnWorkStack : lanceur attendu introuvable");
   if ((src.match(/pullParseOnWorkStack\(/g) ?? []).length !== 2) v.push("pullParseOnWorkStack : une définition et un seul appel (doPullApply)");
   // 4. ordre dans doPullApply : lancement -> échec de pile fermé -> statuts -> effets
@@ -130,7 +133,8 @@ test("DOPULL-JSON-STACK-FIX1 : les quatre autres firmwares R4 sont INCHANGÉS (a
   }
   const h = read("consensus-pod/src/adapters/podNetStack.h");
   assert.match(h, /#define POD_WORK_STACK_TOTAL 2048u/);
-  assert.match(h, /#define POD_WORK_DEEPEST_CALL 1432u/);
+  assert.match(h, /#define POD_WORK_DEEPEST_CALL 1536u/);
+  assert.match(h, /#define POD_WORK_JSON_NESTING 8u/);
   assert.match(h, /static_assert\(POD_WORK_STACK_TOTAL >= POD_NET_GUARD_BYTES \+ POD_WORK_DEEPEST_CALL \+ 32u \+ 104u \+ POD_NET_MARGIN_GOAL, /);
   assert.match(h, /template <typename F> static bool podWorkRun\(F& f, PodNetInfo\* info = nullptr\) \{\s*const bool ok = PodNet::runSized\(\[\]\(void\* p\) \{ \(\*static_cast<F\*>\(p\)\)\(\); \}, &f, POD_WORK_STACK_TOTAL, info\);/);
   for (const sk of ["pod_uno_r4_eink29", ...OTHERS]) assert.equal(fs.readFileSync(path.join(root, `arduino_uno_r4/${sk}/podNetStack.h`)).compare(fs.readFileSync(path.join(root, "consensus-pod/src/adapters/podNetStack.h"))), 0, `${sk}/podNetStack.h diverge`);

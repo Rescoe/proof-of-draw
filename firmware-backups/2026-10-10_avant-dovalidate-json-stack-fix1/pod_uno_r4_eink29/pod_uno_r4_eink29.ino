@@ -999,7 +999,7 @@ static bool __attribute__((noinline)) regPairCodeOk(const char* s) {
 // Exécutée SUR LA PILE DE TRAVAIL (voir registerParseOnWorkStack). Ne touche à AUCUN état global : tout va dans r.
 static void __attribute__((noinline)) registerParseWork(const String& resp, RegisterParsed& r) {
   JSON_DOC(doc, 768);
-  const DeserializationError err = deserializeJson(doc, resp, DeserializationOption::NestingLimit(POD_WORK_JSON_NESTING));
+  const DeserializationError err = deserializeJson(doc, resp);
   if (err) { r.jsonErr = err.c_str(); r.status = REG_P_JSON; return; }
   const char* id = doc["deviceId"] | "";
   const char* pc = doc["pairCode"] | "";
@@ -1154,12 +1154,12 @@ static void __attribute__((noinline)) pullParseWork(const String& resp, int code
   if (code == 429) {
     JSON_DOC(rate, 256);
     r.rateRetrySec = 60;
-    if (deserializeJson(rate, resp, DeserializationOption::NestingLimit(POD_WORK_JSON_NESTING)) == DeserializationError::Ok) r.rateRetrySec = max(1, (int)(rate["retryAfter"] | 60));
+    if (deserializeJson(rate, resp) == DeserializationError::Ok) r.rateRetrySec = max(1, (int)(rate["retryAfter"] | 60));
     r.status = PULL_P_RATE;
     return;
   }
   JSON_DOC(doc, 2048);
-  const DeserializationError err = deserializeJson(doc, resp, DeserializationOption::NestingLimit(POD_WORK_JSON_NESTING));
+  const DeserializationError err = deserializeJson(doc, resp);
   if (err) { r.jsonErr = err.c_str(); r.status = PULL_P_JSON; return; }
 
   JsonObject chain = doc["chain"];
@@ -1414,130 +1414,25 @@ static bool doValidateV2(const String& candidateId, const String& screenName, si
 }
 
 // ─── VALIDATION ────────────────────────────────────────────────────────────
-// DOVALIDATE-JSON-STACK-FIX1 : la réponse de /api/validate-candidate est décodée sur la pile de TRAVAIL dédiée (podWorkRun : la même que le pull et le register — 2 048 o au tas, garde 64 o, marge >= 128 o, échec fermé),
-// APRÈS le retour complet de httpCall (TLS fermé, jamais imbriquée avec PodNet ni PodEd), et AVANT la lecture du candidat, la signature et le vote. C'était le DERNIER parseur ArduinoJson de la voie vote sur la pile principale
-// (cadre de doValidate 520 o + chaînes ArduinoJson : analyse statique sous les 128 o de marge). Sortie : ValidateParsed, structure BORNÉE (≈ 170 o) allouée au TAS ; les paramètres de sortie de doValidateDecode (identifiant,
-// écran, hash, taille, score) ne sont écrits qu'avec un résultat COMPLET et VALIDE ; sinon rien n'est voté (doValidate efface le candidat, comme avant). CONTRAT (serveur : app/api/validate-candidate/route.ts) :
-// candidateId = 8 à 64 caractères [0-9A-Za-z-] (UUID) ; écran = 1 à 16 caractères [a-z0-9_] ; hash annoncé = EXACTEMENT 64 caractères hexadécimaux (SHA-256) ; taille = 1 à 262 144 ; score_server absent = 0,5.
-// Toute autre valeur est REFUSÉE — jamais tronquée, et un identifiant n'entre jamais dans une URL ou un corps JSON sans avoir été validé. « Déjà voté » ou « pas de candidat » : rien à faire, silencieux (comme avant).
-enum ValidateStatus : uint8_t { VAL_P_NONE = 0, VAL_P_OK = 1, VAL_P_JSON = 2, VAL_P_INVALID = 3 };
-struct ValidateParsed {
-  uint8_t status;                  // ValidateStatus : exploitable seulement pour VAL_P_OK
-  bool skip, hasV2;                // skip = déjà voté / pas de candidat / identifiant vide (rien à faire)
-  int bytes;
-  float score;
-  const char* jsonErr;             // texte statique de DeserializationError (VAL_P_JSON)
-  char candidateId[65];
-  char screen[17];
-  char hash[65];
-  ValidateParsed() : status(VAL_P_NONE), skip(false), hasV2(false), bytes(0), score(0.5f), jsonErr(nullptr) { candidateId[0] = 0; screen[0] = 0; hash[0] = 0; }
-};
-static bool __attribute__((noinline)) valCharsOk(const char* s, size_t minLen, size_t maxLen, const char* alphabetKind) {
-  const size_t n = strlen(s);
-  if (n < minLen || n > maxLen) return false;
-  for (size_t i = 0; i < n; i++) {
-    const char c = s[i];
-    const bool digit = (c >= '0' && c <= '9'), lower = (c >= 'a' && c <= 'z'), upper = (c >= 'A' && c <= 'Z');
-    switch (alphabetKind[0]) {
-      case 'i': if (!(digit || lower || upper || c == '-')) return false; break;      // identifiant : [0-9A-Za-z-]
-      case 'e': if (!(digit || lower || c == '_')) return false; break;               // écran : [a-z0-9_]
-      default:  if (!(digit || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F'))) return false; break;   // hexadécimal
-    }
-  }
-  return true;
-}
-// Exécutée SUR LA PILE DE TRAVAIL (voir validateParseOnWorkStack). Ne touche à AUCUN état global : tout va dans r.
-static void __attribute__((noinline)) validateParseWork(const String& resp, ValidateParsed& r) {
-  JSON_DOC(doc, 768);   // 512 avant la validation réelle : la réponse porte aussi { v2: écran, taille, hash } (≈ 110 o)
-  const DeserializationError err = deserializeJson(doc, resp, DeserializationOption::NestingLimit(POD_WORK_JSON_NESTING));
-  if (err) { r.jsonErr = err.c_str(); r.status = VAL_P_JSON; return; }
-  if ((doc["alreadyVoted"] | false) || doc["candidate"].isNull()) { r.skip = true; r.status = VAL_P_OK; return; }
-  JsonObject cand = doc["candidate"];
-  const char* cid = cand["candidateId"] | "";
-  if (cid[0] == '\0') { r.skip = true; r.status = VAL_P_OK; return; }
-  if (!valCharsOk(cid, 8, 64, "i")) { r.status = VAL_P_INVALID; return; }
-  if (!cand["v2"].isNull()) {
-    const char* sc = cand["v2"]["screen"] | "";
-    const int b = cand["v2"]["bytes"] | 0;
-    const char* h = cand["v2"]["hash"] | "";
-    if (!valCharsOk(sc, 1, 16, "e") || !valCharsOk(h, 64, 64, "h") || b < 1 || b > 262144) { r.status = VAL_P_INVALID; return; }
-    memcpy(r.screen, sc, strlen(sc) + 1); memcpy(r.hash, h, 65); r.bytes = b; r.hasV2 = true;
-  } else {
-    r.score = cand["score_server"] | 0.5f;
-  }
-  memcpy(r.candidateId, cid, strlen(cid) + 1);
-  r.status = VAL_P_OK;
-}
-static bool __attribute__((noinline)) validateParseOnWorkStack(const String& resp, ValidateParsed& r, PodNetInfo& ni) {
-  auto vk = [&]() { validateParseWork(resp, r); };
-  return podWorkRun(vk, &ni);
-}
-// Échec de la pile de travail : aucun vote. GUARD => le tas voisin peut être corrompu (logf alloue) : arrêt sûr silencieux AVANT tout journal.
-static void __attribute__((noinline)) validateWorkFailed(const PodNetInfo& ni) {
-  if (ni.err == POD_NET_GUARD) logfSafeStop();
-  logf("[VALIDATE] analyse JSON sur la pile de travail ECHOUEE (err %u) : %s ; aucun vote", (unsigned)ni.err, podNetWhy(ni));
-}
-#if POD_RENDER_V1 && POD_CANARY
-// DOVALIDATE-JSON-STACK-FIX1 (canari seulement) : une ligne par décodage — pile de travail utilisée / marge / erreur / statut, tas libre AVANT et APRÈS ; phase de PodNet (pad[0]) contrôlée ; toute erreur de pile ou tout
-// statut autre que OK pose le verrou fatal (un candidat refusé pour une valeur invalide est donc une ALERTE du canari). Aucun podCanaryCheck dans cette fonction : le contrôle suit son retour (règle A/B/C).
-struct PodCanaryValCtx { const PodNetInfo* ni; bool ran; uint8_t status; uint32_t heapB; };
-static bool __attribute__((noinline)) podCanaryValBad(const PodNetInfo& ni, bool ran, uint8_t status) { return !ran || ni.err != POD_NET_OK || status != VAL_P_OK; }
-static void podCanaryPrintVal(void* v) {
-  const PodCanaryValCtx& c = *static_cast<const PodCanaryValCtx*>(v);
-  const PodNetInfo& ni = *c.ni;
-  Serial.print(F("[CANARY] validate JSON : pile de travail dediee utilisee ")); Serial.print((unsigned)ni.used); podCanaryNum(F(" o, marge "), ni.margin);
-  Serial.print(ni.low ? F(" o (objectif >= 256 : SOUS L'OBJECTIF)") : F(" o (objectif >= 256 : OK)")); podCanaryNum(F(", erreur "), ni.err); podCanaryNum(F(", statut "), c.status);
-  podCanaryNum(F(" | tas libre avant "), c.heapB); podCanaryNum(F(" apres "), freeHeapBytes()); Serial.println();
-  if (podCanaryValBad(ni, c.ran, c.status)) { Serial.println(F("[CANARY] validate JSON : ECHEC du decodage sur la pile de travail (ALERTE)")); podCanaryHalt("validate JSON"); }
-}
-static void __attribute__((noinline)) podCanaryValidate(const PodNetInfo& ni, bool ran, uint8_t status, uint32_t heapB) {
-  podCanaryPhase(ni.pad[0]);
-  PodCanaryValCtx c = { &ni, ran, status, heapB };
-  podCanaryEmit(podCanaryPrintVal, &c);
-  if (podCanaryValBad(ni, ran, status)) for (;;) { __asm volatile("nop"); }        // l'impression a échoué (mémoire) : verrou SILENCIEUX
-}
-#endif
-// Décodage de la réponse, APRÈS le retour de httpCall. Retour : 0 = rien à voter (déjà voté, pas de candidat, réponse refusée, échec de pile) ; 1 = validation RÉELLE (v2) ; 2 = ancien chemin (v1, score du serveur).
-// Les paramètres de sortie ne sont écrits QUE dans les deux branches valides.
-static int __attribute__((noinline)) doValidateDecode(const String& resp, String& candidateId, String& v2screen, size_t& v2bytes, String& v2hash, float& score) {
-  ValidateParsed* const r = new (std::nothrow) ValidateParsed();
-  if (!r) { logf("[VALIDATE] réponse rejetée : mémoire insuffisante"); return 0; }
-  PodNetInfo ni;
-#if POD_RENDER_V1 && POD_CANARY
-  const uint32_t heapB = podCanaryHeapMark();
-#endif
-  const bool ran = validateParseOnWorkStack(resp, *r, ni);
-#if POD_RENDER_V1 && POD_CANARY
-  podCanaryValidate(ni, ran, r->status, heapB);
-#endif
-#if POD_RENDER_V1 && POD_CANARY
-  podCanaryCheck("  V: apres le decodage du validate (silencieux)", false);
-#endif
-  int mode = 0;
-  if (!ran) validateWorkFailed(ni);
-  else if (r->status == VAL_P_JSON) logf("[VALIDATE] JSON illisible: %s", r->jsonErr);
-  else if (r->status != VAL_P_OK) logf("[VALIDATE] réponse rejetée : identifiant, écran, hash ou taille absent, hors bornes ou invalide");
-  else if (r->skip) mode = 0;
-  else if (r->hasV2) { candidateId = r->candidateId; v2screen = r->screen; v2hash = r->hash; v2bytes = (size_t)r->bytes; mode = 1; }
-  else { candidateId = r->candidateId; score = r->score; mode = 2; }
-  delete r;
-  return mode;
-}
-
 static bool doValidate() {
   if (pendingCandidateId.length() == 0) return false;
-  String candidateId, v2screen, v2hash;
-  size_t v2bytes = 0;
-  float score = 0.5f;
-  int mode = 0;
-  {
-    String resp;
-    if (httpCall("GET", "/api/validate-candidate?deviceId=" + deviceId, nullptr, resp) != 200 || resp.length() == 0) { pendingCandidateId = ""; return false; }
-    mode = doValidateDecode(resp, candidateId, v2screen, v2bytes, v2hash, score);
-  }                                                  // resp libérée ici, avant la lecture du candidat, la signature et le vote
-  if (mode == 0) { pendingCandidateId = ""; return false; }
+  String resp;
+  if (httpCall("GET", "/api/validate-candidate?deviceId=" + deviceId, nullptr, resp) != 200 || resp.length() == 0) { pendingCandidateId = ""; return false; }
+  JSON_DOC(doc, 768);   // 512 avant la validation réelle : la réponse porte aussi { v2: écran, taille, hash } (≈ 110 o)
+  if (deserializeJson(doc, resp)) { pendingCandidateId = ""; return false; }
+  if ((doc["alreadyVoted"] | false) || doc["candidate"].isNull()) { pendingCandidateId = ""; return false; }
+  JsonObject cand = doc["candidate"];
+  const String candidateId = cand["candidateId"] | "";
+  if (candidateId.length() == 0) { pendingCandidateId = ""; return false; }
   // Validation RÉELLE : si le serveur annonce { v2 }, on revérifie le contenu au lieu de recopier son score (anciens serveurs / animations : chemin v1 ci-dessous).
-  if (mode == 1) { pendingCandidateId = ""; return doValidateV2(candidateId, v2screen, v2bytes, v2hash); }
+  if (!cand["v2"].isNull()) {
+    const String v2screen = cand["v2"]["screen"] | "";
+    const size_t v2bytes  = cand["v2"]["bytes"] | 0;
+    const String v2hash   = cand["v2"]["hash"] | "";
+    pendingCandidateId = "";
+    return doValidateV2(candidateId, v2screen, v2bytes, v2hash);
+  }
+  const float score = cand["score_server"] | 0.5f;
 
   const String signature = signED25519(candidateId, score);
   if (signature.length() == 0) { pendingCandidateId = ""; return false; }   // POD_ED_STACK : signature impossible → pas de vote

@@ -108,6 +108,14 @@ int main() {
   // ── D. JSON tronqué / trop imbriqué : échec fermé sans AUCUN effet
   resetState();
   { Out o = run("{\"chain\":{\"blockHash\":\"abc", 200); CHECK(o.rc == 0 && untouched(), "D : tronqué => rejeté sans effet"); CHECK(g_log.find("[PULL] JSON: IncompleteInput") != std::string::npos, "D : cause journalisée"); }
+  // limite d'imbrication EXPLICITE (POD_WORK_JSON_NESTING = 8) : n objets imbriqués acceptés jusqu'à la limite, refusés au-delà, sans effet
+  for (int n = 1; n <= 10; n++) {
+    resetState();
+    std::string d; for (int i = 0; i < n; i++) d += "{\"a\":"; d += "1"; for (int i = 0; i < n; i++) d += "}";
+    Out o = run(d, 200);
+    if (n <= (int)POD_WORK_JSON_NESTING) CHECK(o.rc == 1, "imbrication " + std::to_string(n) + " <= limite : acceptée");
+    else { CHECK(o.rc == 0 && untouched(), "imbrication " + std::to_string(n) + " > limite : refusée sans effet"); CHECK(g_log.find("TooDeep") != std::string::npos, "imbrication " + std::to_string(n) + " : TooDeep"); }
+  }
   resetState();
   { std::string deep; for (int i = 0; i < 12; i++) deep += "{\"a\":"; deep += "1"; for (int i = 0; i < 12; i++) deep += "}";
     Out o = run(deep, 200); CHECK(o.rc == 0 && untouched(), "D : imbrication 12 => rejeté sans effet"); CHECK(g_log.find("TooDeep") != std::string::npos, "D : TooDeep journalisé"); }

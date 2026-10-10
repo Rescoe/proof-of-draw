@@ -53,9 +53,11 @@ static_assert(POD_NET_STACK_TOTAL >= POD_NET_GUARD_BYTES + 1024u + POD_NET_MARGI
 #ifndef POD_WORK_STACK_TOTAL
 #define POD_WORK_STACK_TOTAL 2048u
 #endif
-// Pire cas STATIQUE sous pullParseWork (scripts/pull-work-stack-report.js, ELF des cœurs 1.5.3 et 1.6.0) : chaîne acyclique 784 o (conversion JsonVariant -> String) + 9 niveaux de récursion du décodeur à 72 o (limite d'imbrication 10
-// par défaut) = 1 432 o. 2 048 = 64 + 1 432 + 32 (invocateur) + 104 (exception) + 416 de marge au pire cas statique (objectif 256).
-#define POD_WORK_DEEPEST_CALL 1432u
+// Pire cas STATIQUE sous les trois décodeurs (scripts/pull-work-stack-report.js, ELF des cœurs 1.5.3 et 1.6.0) : chaîne acyclique la plus profonde (pull : 752 o) + (limite d'imbrication − 1) niveaux de récursion du décodeur à 112 o
+// (cycle parseVariant / parseObject / parseArray). La limite d'imbrication est EXPLICITE (POD_WORK_JSON_NESTING = 8 ; défaut d'ArduinoJson : 10) : une réponse plus profonde est REFUSÉE (TooDeep) ; les réponses réelles du serveur
+// vont de 2 à 4 niveaux. Pire cas : 752 + 7 × 112 = 1 536 o. 2 048 = 64 + 1 536 + 32 (invocateur) + 104 (exception) + 312 de marge au pire cas statique (objectif 256).
+#define POD_WORK_JSON_NESTING 8u
+#define POD_WORK_DEEPEST_CALL 1536u
 static_assert(POD_WORK_STACK_TOTAL >= POD_NET_GUARD_BYTES + POD_WORK_DEEPEST_CALL + 32u + 104u + POD_NET_MARGIN_GOAL, "pile de travail dédiée trop petite");
 
 #if defined(__arm__)

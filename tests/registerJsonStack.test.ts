@@ -44,14 +44,14 @@ export function registerStackViolations(srcRaw: string): string[] {
   // 1. doRegister ne contient plus aucun jeton ArduinoJson ; le décodage vit dans registerParseWork
   for (const tok of ["deserializeJson(", "JSON_DOC(", "JsonDocument", "DynamicJsonDocument", "JsonVariant", ".as<String>()"])
     for (const [n, b] of [["doRegister", doreg], ["doRegisterDecode", decode]] as const) if (b.includes(tok)) v.push(`${n} contient « ${tok} » : le décodage doit rester sur la pile de travail`);
-  if (!worker.includes("deserializeJson(doc, resp)") || !worker.includes("JSON_DOC(doc, 768)")) v.push("registerParseWork doit porter le document et deserializeJson");
+  if (!worker.includes("deserializeJson(doc, resp, DeserializationOption::NestingLimit(POD_WORK_JSON_NESTING))") || !worker.includes("JSON_DOC(doc, 768)")) v.push("registerParseWork doit porter le document et deserializeJson");
   if (worker.includes(".as<String>()")) v.push("aucune conversion String dans registerParseWork : les valeurs sont validées puis copiées dans des tampons bornés");
   // 2. le code exécuté sur la pile de travail ne touche à aucun état global, journal, mémoire non volatile ni périphérique
   const pure = stripStr(worker + body(src, "static bool __attribute__((noinline)) regDeviceIdOk(") + body(src, "static bool __attribute__((noinline)) regPairCodeOk("));
   for (const re of [/\blogf\(/, /(?<![.\w])(deviceId|pairCode|paired|registered)\b/, /\bsave/, /EEPROM/, /\bepd\b/, /httpCall/, /Serial/, /millis/, /delay\(/, /\bdisplay/])
     if (re.test(pure)) v.push(`le code exécuté sur la pile de travail contient ${re} (effet de bord ou état global)`);
   // 3. un seul lanceur par décodeur (2 au total dans le fichier : pull + register), jamais depuis une transaction réseau
-  if ((src.match(/podWorkRun\(/g) ?? []).length !== 2) v.push("podWorkRun doit être appelé exactement deux fois (pull et register)");
+  if ((src.match(/podWorkRun\(/g) ?? []).length !== 3) v.push("podWorkRun doit être appelé exactement trois fois (pull, register et validate)");
   if (!/auto rk = \[&\]\(\) \{ registerParseWork\(resp, r\); \};\n  return podWorkRun\(rk, &ni\);/.test(src)) v.push("registerParseOnWorkStack : lanceur attendu introuvable");
   if ((src.match(/registerParseOnWorkStack\(/g) ?? []).length !== 2) v.push("registerParseOnWorkStack : une définition et un seul appel (doRegisterDecode)");
   // 4. doRegisterDecode : structure au tas, lancement, puis traitement de l'échec AVANT toute inscription
@@ -191,18 +191,18 @@ export function jsonInventory(): JsonSite[] {
     lines.forEach((l, i) => {
       if (/^\s*\/\//.test(l) || !/\bdeserializeJson\(/.test(l.replace(/\/\/.*$/, ""))) return;
       const fn = enclosing(lines, i);
-      out.push({ sketch: sk, fn, line: i + 1, stack: /^(pullParseWork|registerParseWork)$/.test(fn) ? "travail" : "principale" });
+      out.push({ sketch: sk, fn, line: i + 1, stack: /^(pullParseWork|registerParseWork|validateParseWork)$/.test(fn) ? "travail" : "principale" });
     });
   }
   return out;
 }
 
-test("INVENTAIRE FORMEL des deserializeJson des cinq firmwares R4 : exactement les sites connus ; le e-ink 2,9″ n'en a plus que doValidate sur la pile principale (à migrer AVANT le premier vote réel) ; les quatre autres restent à migrer APRÈS validation matérielle", () => {
+test("INVENTAIRE FORMEL des deserializeJson des cinq firmwares R4 : exactement les sites connus ; le e-ink 2,9″ n'en a plus AUCUN sur la pile principale ; les quatre autres restent à migrer APRÈS validation matérielle", () => {
   const inv = jsonInventory();
   const key = (s: JsonSite) => `${s.sketch}:${s.fn}:${s.stack}`;
   const got = inv.map(key).sort();
   const want = [
-    "pod_uno_r4_eink29:pullParseWork:travail", "pod_uno_r4_eink29:pullParseWork:travail", "pod_uno_r4_eink29:registerParseWork:travail", "pod_uno_r4_eink29:doValidate:principale",
+    "pod_uno_r4_eink29:pullParseWork:travail", "pod_uno_r4_eink29:pullParseWork:travail", "pod_uno_r4_eink29:registerParseWork:travail", "pod_uno_r4_eink29:validateParseWork:travail",
     "pod_uno_r4_eink27:doRegister:principale", "pod_uno_r4_eink27:doPull:principale", "pod_uno_r4_eink27:doPull:principale", "pod_uno_r4_eink27:doValidate:principale",
     "pod_uno_r4_eink27_oled:doRegister:principale", "pod_uno_r4_eink27_oled:doPull:principale", "pod_uno_r4_eink27_oled:doPull:principale", "pod_uno_r4_eink27_oled:doValidate:principale",
     "pod_uno_r4_tft18:doRegister:principale", "pod_uno_r4_tft18:doPull:principale", "pod_uno_r4_tft18:doPull:principale", "pod_uno_r4_tft18:doValidate:principale",

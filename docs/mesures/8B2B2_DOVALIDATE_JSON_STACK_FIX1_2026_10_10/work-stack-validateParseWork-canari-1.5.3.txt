@@ -1,0 +1,8 @@
+# DOVALIDATE-JSON-STACK-FIX1 — pile de travail validateParseWork (pire cas statique, limite d'imbrication 8), canari ; ELF cœur 1.5.3 (e-ink 2,9″). Rien n'a été flashé. (Seule la section « loop » compte pour doValidate : elle n'est appelée que par la boucle principale.)
+# racine validateParseWorkRKN7arduino6Strin : cadre 200 o ; pire chaîne ACYCLIQUE (cycles coupés) : 552 o ; appels indirects atteignables : 10
+  chemin : validateParseWorkRKN7arduino6Strin > AJPB226detail11deserializeINS1_16J > AJPB226detail16JsonDeserializerINS > AJPB226detail16JsonDeserializerINS > AJPB226detail16JsonDeserializerINS > AJPB226detail16JsonDeserializerINS > AJPB226detail4Utf815encodeCodepoin > AJPB226detail13StringBuilder6appen > AJPB226detail15ResourceManager12re
+  composante récursive (1 fonctions) : cycle simple le plus lourd 32 o · somme des cadres 32 o · ex. AJPB226detail11VariantData5clearEP
+  composante récursive (3 fonctions) : cycle simple le plus lourd 112 o · somme des cadres 152 o · ex. AJPB226detail16JsonDeserializerINS, AJPB226detail16JsonDeserializerINS, AJPB226detail16JsonDeserializerINS
+  limite d'imbrication 8 : pire cas statique 1336 o (borne basse) à 1616 o (borne haute) sous l'appelant de validateParseWork
+  budget (2048 − garde 64 − exception 104 − invocateur 32) : 1848 o => marge au pire cas : 232 o (borne haute) / 512 o (borne basse) ; exigée >= 128, objectif >= 256
+exit=1

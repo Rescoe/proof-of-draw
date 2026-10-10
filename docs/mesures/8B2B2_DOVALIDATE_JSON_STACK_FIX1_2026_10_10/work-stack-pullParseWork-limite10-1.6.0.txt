@@ -1,0 +1,9 @@
+# DOVALIDATE-JSON-STACK-FIX1 — pile de travail pullParseWork à la limite PAR DÉFAUT d'ArduinoJson (10), pour mémoire : c'est pourquoi la limite est explicite ; ELF cœur 1.6.0 (e-ink 2,9″). Rien n'a été flashé. (Seule la section « loop » compte pour doValidate : elle n'est appelée que par la boucle principale.)
+# racine pullParseWorkRKN7arduino6StringEiR : cadre 192 o ; pire chaîne ACYCLIQUE (cycles coupés) : 752 o ; appels indirects atteignables : 10
+  chemin : pullParseWorkRKN7arduino6StringEiR > K11AJPB226detail14VariantRefBaseIN > K11AJPB226detail11VariantData6acce > AJPB226detail13TextFormatterINS1_6 > AJPB226detail13TextFormatterINS1_6 > AJPB226detail17CountingDecoratorIN > AJPB226detail6WriterIN7arduino6Str > AJPB226detail6WriterIN7arduino6Str > arduino6String6concatEPKc(tail) > arduino6String6concatEPKc.part.6(t > arduino6String6concatEPKcj(24) > 
+  composante récursive (1 fonctions) : cycle simple le plus lourd 32 o · somme des cadres 32 o · ex. AJPB226detail11VariantData5clearEP
+  composante récursive (3 fonctions) : cycle simple le plus lourd 112 o · somme des cadres 152 o · ex. AJPB226detail16JsonDeserializerINS, AJPB226detail16JsonDeserializerINS, AJPB226detail16JsonDeserializerINS
+  composante récursive (1 fonctions) : cycle simple le plus lourd 40 o · somme des cadres 40 o · ex. K11AJPB226detail11VariantData6acce
+  limite d'imbrication 10 : pire cas statique 1760 o (borne basse) à 2120 o (borne haute) sous l'appelant de pullParseWork
+  budget (2048 − garde 64 − exception 104 − invocateur 32) : 1848 o => marge au pire cas : -272 o (borne haute) / 88 o (borne basse) ; exigée >= 128, objectif >= 256
+exit=1
