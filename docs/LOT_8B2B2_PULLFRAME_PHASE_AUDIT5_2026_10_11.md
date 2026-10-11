@@ -1,6 +1,6 @@
 # LOT 8B-2B-2 — PULLFRAME-PHASE-AUDIT5 (11/10/2026)
 
-**Instrumentation SEULE du canari. Aucune correction. Compilé (cœurs 1.5.3 ET 1.6.0) et testé sur l'hôte (flash, client TLS, tas et LED simulés) : jamais flashé.** Base : `fd8b1dc`. Drapeaux committés : `POD_RENDER_V1 = 0`, `POD_CANARY = 0`. Serveur, Redis (+0), Neon (0), protocole, vote, ACK, rendu, OTA, polling, tailles de pile : inchangés. `pod_http.h` NON modifié.
+**Instrumentation SEULE du canari. Aucune correction. Compilé (cœurs 1.5.3 ET 1.6.0), testé sur l'hôte puis essayé sur une vraie UNO R4 WiFi + e-ink 2,9 pouces le 11/10/2026.** Base : `fd8b1dc`, commit du lot : `3387088`. Drapeaux committés : `POD_RENDER_V1 = 0`, `POD_CANARY = 0` ; le porteur a flashé une copie locale `1/1`. Serveur, Redis (+0), Neon (0), protocole, vote, ACK, rendu, OTA, polling, tailles de pile : inchangés. `pod_http.h` NON modifié.
 
 Ce lot est la suite d'AUDIT4 acceptée en principe par GPT (`docs/AUDIT_GPT_AUDIT4_PULLFRAME_2026_10_11.md`) : « redéfinir `abort()` en canari, signature fixe + LED dédiée + boucle, mesures du tas AVANT les `read()` échantillonnés ». Les trois informations que GPT demandait avant ce lot (LED du démarrage figé, journal `gen=4`, Vercel `/api/pull-frame`) ne sont PAS toutes arrivées ; elles affineront la lecture, pas l'instrument.
 
@@ -110,3 +110,19 @@ Même fichier local `1`/`1`, **sans renvoyer d'image ni de dessin**.
 ## 10. Archives
 
 `docs/AUDIT_GPT_AUDIT4_PULLFRAME_2026_10_11.md`, `docs/mesures/8B2B2_PULLFRAME_PHASE_AUDIT5_2026_10_11/` (journal du démarrage `gen=4`, chaînes statiques avant/après, pile réseau, comparaison de production, tailles), sauvegarde `firmware-backups/2026-10-11_avant-pullframe-phase-audit5/`, harnais `consensus-pod/host/ffl_harness.cpp`.
+
+## 11. Résultat matériel AUDIT5 — 11/10/2026
+
+Le démarrage suivant a relu le blocage précédent :
+
+```text
+DERNIERE PHASE 9 (apres client.print)
+sequence ... M93 V59 R54#
+tas avant read : libre 2976 o puis 2976 o
+sommet vierge 1888 o puis 1888 o
+abort() : OUI
+```
+
+**Verdict : AUDIT5 ACCEPTÉ.** `abort()` est appelée dans `WiFiSSLClient::read()` pendant l'arrivée de la réponse de `/api/pull-frame`. H5 est confirmée au niveau « abandon dans read » ; l'échec exact de l'allocation de `std::string` reste la cause principale, sans être enregistré directement.
+
+Le prochain lot est `PULLFRAME-BOUNDED-SSL-FIX1`, défini dans `docs/HANDOFF_CLAUDE_CLOUD_PULLFRAME_2026_10_11.md`. Aucun AUDIT6 général n'est demandé avant ce correctif borné. Journal brut : `docs/mesures/8B2B2_PULLFRAME_PHASE_AUDIT5_2026_10_11/journal-audit5-3387088-materiel.txt`. Audit : `docs/AUDIT_GPT_AUDIT5_PULLFRAME_2026_10_11.md`.

@@ -1,5 +1,7 @@
 # CLAUDE.md
 
+> **Reprise cloud du 11/10/2026.** Le canari matériel AUDIT5 du commit `3387088` a confirmé `abort() : OUI` pendant `WiFiSSLClient::read()` après la phase 9, avec `M93 V59 R54#`, 2 976 o libres et 1 888 o de sommet vierge avant la lecture. AUDIT5 est accepté ; le prochain lot borné est `PULLFRAME-BOUNDED-SSL-FIX1`. Lire `docs/AUDIT_GPT_AUDIT5_PULLFRAME_2026_10_11.md` et `docs/HANDOFF_CLAUDE_CLOUD_PULLFRAME_2026_10_11.md`. La boîte `docs/ORCHESTRATION/` à `FIN` est historique et ne bloque pas cette reprise manuelle. Ne jamais commiter les drapeaux locaux `1/1` ni `secrets.h`.
+
 ## Rôle
 
 Tu travailles sur le repo existant `proof-of-draw`.
