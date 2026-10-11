@@ -114,7 +114,7 @@ int main() {
   oldPath(4000, true, "reponse 4000 o (FIFO vide : demande 1023)");
 
   // B1 : tailles de réponse × motifs d'arrivée
-  const size_t sizes[] = {0, 1, 2, 15, 16, 239, 240, 241, 255, 480, 481, 511, 960, 1023, 1024, 1025, 4096, 4736, 9472};   // 4096 = fichier du test de débit du capteur
+  const size_t sizes[] = {0, 1, 2, 15, 16, 239, 240, 241, 255, 480, 481, 511, 960, 1023, 1024, 1025, 4096, 4736, 5808, 9472};   // 4096 = fichier du test de débit du capteur
   struct Pat { size_t initial, perCmd; const char* n; } pats[] = {{1u << 30, 0, "tout arrive"}, {0, 1, "1 octet/commande"}, {0, 7, "7 o/commande"}, {0, 239, "239 o/commande"}, {0, 500, "500 o/commande"}, {100, 333, "100 puis 333/cmd"}};
   int combos = 0, bad = 0, maxCmd = 0; size_t worstBlock = 0;
   for (size_t n : sizes) for (auto& p : pats) {
@@ -181,6 +181,12 @@ int main() {
   // C : frame complète 9 472 o comme doFetchFrame (noir 4 736 + rouge 4 736), arrivée par rafales de 700 o, tas AUDIT5
   { auto body = makeBody(9472, 4242); Result r = newPath(body, 9472, 0, 200, 700, 9472, 1888, 2976);
     check(!r.aborted && r.complete && r.got == 9472 && r.equal && r.fault == 0, "C : frame 9472 o (noir+rouge) : identique octet par octet, %zu commandes AT, max demande %zu, pic bloc %zu o, pic vivant %zu o", g_mod.nRecv, g_mod.maxRecvSize, g_peakBlock, g_peakLive); }
+
+  // C2/C3 (LOT8B2B3) : plan unique de l'e-ink 2,7" (5 808 o) et image OLED (1 024 o), tas AUDIT5, arrivée par rafales
+  { auto body = makeBody(5808, 2707); Result r = newPath(body, 5808, 0, 200, 700, 5808, 1888, 2976);
+    check(!r.aborted && r.complete && r.got == 5808 && r.equal && r.fault == 0 && allAtBounded(), "C2 : plan e-ink 2,7 (5808 o) : identique octet par octet, %zu commandes AT, max demande %zu", g_mod.nRecv, g_mod.maxRecvSize); }
+  { auto body = makeBody(1024, 96); Result r = newPath(body, 1024, 0, 200, 700, 1024, 1888, 2976);
+    check(!r.aborted && r.complete && r.got == 1024 && r.equal && r.fault == 0 && allAtBounded(), "C3 : image OLED (1024 o) : identique octet par octet, %zu commandes AT, max demande %zu", g_mod.nRecv, g_mod.maxRecvSize); }
 
   printf("%s : %d controles, %d echec(s)\n", g_fails ? "ECHEC" : "SUCCES", g_checks, g_fails);
   return g_fails ? 1 : 0;

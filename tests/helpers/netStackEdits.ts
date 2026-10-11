@@ -1,6 +1,7 @@
 // tests/helpers/netStackEdits.ts — LOT8B2B2-NETSTACK-FIX1 : table EXACTE (tests/helpers/netStackEdits.json) des modifications apportées aux cinq sketches UNO R4 pour exécuter TOUTE transaction réseau/TLS
 // sur une pile dédiée (podNetStack.h). Comme tests/helpers/edStackEdits.ts : sert à ANNULER les modifications dans les tests — « sketch actuel, modifications annulées » doit être IDENTIQUE, au texte près
 // (hors blocs du canari), au sketch sauvegardé dans firmware-backups/2026-10-09_avant-netstack-fix1/ ; les contrôles des lots précédents s'appliquent alors au texte annulé.
+import { undoPropagation8b2b3 } from "./propagation8b2b3Edits";
 import fs from "node:fs";
 import { undoBoundedSsl } from "./boundedSslEdits";
 import path from "node:path";
@@ -25,4 +26,4 @@ export function undoNetStack(src: string, sketch: string): string {
 }
 
 /** Annule d'abord les modifications réseau, puis celles de PodEd : on retrouve le sketch d'avant STACK-FIX1 (hors blocs du canari). */
-export const undoAllStacks = (src: string, sketch: string): string => undoEdStack(undoNetStack(undoBoundedSsl(src), sketch), sketch);   // PULLFRAME-BOUNDED-SSL-FIX1 annulé en premier
+export const undoAllStacks = (src: string, sketch: string): string => undoEdStack(undoNetStack(undoBoundedSsl(undoPropagation8b2b3(src, sketch)), sketch), sketch);   // LOT8B2B3 annulé en tout premier   // PULLFRAME-BOUNDED-SSL-FIX1 annulé en premier

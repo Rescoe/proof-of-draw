@@ -197,14 +197,14 @@ export function jsonInventory(): JsonSite[] {
   return out;
 }
 
-test("INVENTAIRE FORMEL des deserializeJson des cinq firmwares R4 : exactement les sites connus ; le e-ink 2,9″ n'en a plus AUCUN sur la pile principale ; les quatre autres restent à migrer APRÈS validation matérielle", () => {
+test("INVENTAIRE FORMEL des deserializeJson des cinq firmwares R4 : exactement les sites connus ; le e-ink 2,9″ n'en a plus AUCUN sur la pile principale ; les deux e-ink 2,7″ (lot 8B-2B-3) sont migrés ; les autres restent à migrer APRÈS validation matérielle", () => {
   const inv = jsonInventory();
   const key = (s: JsonSite) => `${s.sketch}:${s.fn}:${s.stack}`;
   const got = inv.map(key).sort();
   const want = [
     "pod_uno_r4_eink29:pullParseWork:travail", "pod_uno_r4_eink29:pullParseWork:travail", "pod_uno_r4_eink29:registerParseWork:travail", "pod_uno_r4_eink29:validateParseWork:travail",
-    "pod_uno_r4_eink27:doRegister:principale", "pod_uno_r4_eink27:doPull:principale", "pod_uno_r4_eink27:doPull:principale", "pod_uno_r4_eink27:doValidate:principale",
-    "pod_uno_r4_eink27_oled:doRegister:principale", "pod_uno_r4_eink27_oled:doPull:principale", "pod_uno_r4_eink27_oled:doPull:principale", "pod_uno_r4_eink27_oled:doValidate:principale",
+    "pod_uno_r4_eink27:pullParseWork:travail", "pod_uno_r4_eink27:pullParseWork:travail", "pod_uno_r4_eink27:registerParseWork:travail", "pod_uno_r4_eink27:validateParseWork:travail",
+    "pod_uno_r4_eink27_oled:pullParseWork:travail", "pod_uno_r4_eink27_oled:pullParseWork:travail", "pod_uno_r4_eink27_oled:registerParseWork:travail", "pod_uno_r4_eink27_oled:validateParseWork:travail",
     "pod_uno_r4_tft18:doRegister:principale", "pod_uno_r4_tft18:doPull:principale", "pod_uno_r4_tft18:doPull:principale", "pod_uno_r4_tft18:doValidate:principale",
     "pod_uno_r4:doRegister:principale", "pod_uno_r4:doPull:principale", "pod_uno_r4:doPull:principale", "pod_uno_r4:doValidate:principale", "pod_uno_r4:benchPollOnce:principale",
   ].sort();

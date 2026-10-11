@@ -45,6 +45,7 @@
 #include "podNetStack.h"   // POD_NET_STACK : transactions réseau/TLS ET journal sur PILE DÉDIÉE (connect() déborde de 456 o sous __StackLimit) — docs/LOT_8B2B2_NETSTACK_FIX1_2026_10_09.md, docs/LOT_8B2B2_NETSTACK_FIX2_2026_10_09.md
 #include <SHA256.h>
 #include "pod_http.h"
+#include "pod_ssl_bounded.h"   // PULLFRAME-BOUNDED-SSL-FIX1 : client TLS dont la commande AT _SSLCLIENTRECEIVE est BORNÉE (240 o) — docs/LOT_8B2B3_R4_EINK27_PROPAGATION_2026_10_12.md
 #include "epd2in7_V2.h"
 #include "pod_vote_r4.h"
 
@@ -414,6 +415,8 @@ static String signED25519(const String& candidateId, float score) {
 }
 
 // ─── HTTP (WiFiSSLClient + pod_http.h) ─────────────────────────────────────
+// PULLFRAME-BOUNDED-SSL-FIX1 : à partir d'ici le nom WiFiSSLClient désigne PodBoundedSSL (pod_ssl_bounded.h, dérivé du vrai WiFiSSLClient, réception modem bornée).
+#define WiFiSSLClient PodBoundedSSL
 struct Conn {
   WiFiSSLClient client;
   podhttp::Reader<WiFiSSLClient> rd;
@@ -727,7 +730,7 @@ static bool doFetchFrame(const String& frameId, const String& frameSource) {
       // Lecture complète garantie par pod_http.h (boucle jusqu'au compte exact ou au timeout) : jamais d'image hachée
       const size_t b = c.rd.readBody(blackBuf, BUF_SIZE);
       logf("[FRAME] lu=%u attendu=%u", (unsigned)b, (unsigned)BUF_SIZE);
-      got = (b == BUF_SIZE && c.rd.complete());
+      got = (b == BUF_SIZE && c.rd.complete() && c.client.fault() == 0);   // défaut collant du client TLS borné : frame refusée (ni affichage, ni ACK)
     } else if (code == 200) {
       logf("[FRAME] taille annoncée %ld != %d (le serveur sert-il bien eink27bw ?)", c.rd.contentLength(), FRAME_BYTES);
     }
@@ -818,6 +821,72 @@ static String macString() {
   return String(b);
 }
 
+// REGISTER-JSON-STACK-FIX1 : la réponse de /api/register est décodée sur la pile de TRAVAIL dédiée (podWorkRun, la même que celle du pull : 2 048 o au tas, garde 64 o, marge >= 128 o, échec fermé), APRÈS le retour
+// complet de httpCall (TLS fermé, jamais imbriquée avec PodNet). Canari c19efb8 (10/10/2026) : JsonDocument + deserializeJson + deviceId.as<String>() + pairCode.as<String>() exécutés sur la pile principale juste après
+// le retour HTTP portaient doRegister à 948 / 1 024 o (marge 76 o < 128 o, marqueur intact : arrêt préventif). Sortie : RegisterParsed, structure BORNÉE (28 o) allouée au TAS ; AUCUN changement de deviceId, pairCode, paired,
+// registered avant un résultat COMPLET et VALIDE. CONTRAT du serveur (lib/deviceStore.ts, lib/podProtocolV3.ts) : deviceId = « dev_ » + 8 caractères [A-Z0-9] ; pairCode = 8 caractères de l'alphabet
+// ABCDEFGHJKLMNPQRSTUVWXYZ23456789 (obligatoire si l'appareil n'est pas appairé, facultatif sinon) ; toute autre valeur (absente, trop courte, trop longue, caractère hors alphabet, type inattendu) est REFUSÉE — jamais tronquée.
+// paired absent ou non booléen => false (comme avant). Échec (NOMEM, NESTED, GUARD, MARGIN, JSON invalide, valeur refusée) : doRegister retourne false, rien n'est inscrit.
+enum RegisterStatus : uint8_t { REG_P_NONE = 0, REG_P_OK = 1, REG_P_JSON = 2, REG_P_INVALID = 3 };
+struct RegisterParsed {
+  uint8_t status;                  // RegisterStatus : exploitable seulement pour REG_P_OK
+  bool paired;
+  const char* jsonErr;             // texte statique de DeserializationError (REG_P_JSON)
+  char deviceId[13];               // 12 caractères + NUL
+  char pairCode[9];                // 8 caractères + NUL, ou vide (appairé, code absent)
+  RegisterParsed() : status(REG_P_NONE), paired(false), jsonErr(nullptr) { deviceId[0] = 0; pairCode[0] = 0; }
+};
+static bool __attribute__((noinline)) regDeviceIdOk(const char* s) {
+  if (strlen(s) != 12 || s[0] != 'd' || s[1] != 'e' || s[2] != 'v' || s[3] != '_') return false;
+  for (uint8_t i = 4; i < 12; i++) if (!((s[i] >= 'A' && s[i] <= 'Z') || (s[i] >= '0' && s[i] <= '9'))) return false;
+  return true;
+}
+static bool __attribute__((noinline)) regPairCodeOk(const char* s) {
+  static const char* const ALPHA = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+  if (strlen(s) != 8) return false;
+  for (uint8_t i = 0; i < 8; i++) if (strchr(ALPHA, s[i]) == nullptr) return false;
+  return true;
+}
+// Exécutée SUR LA PILE DE TRAVAIL (voir registerParseOnWorkStack). Ne touche à AUCUN état global : tout va dans r.
+static void __attribute__((noinline)) registerParseWork(const String& resp, RegisterParsed& r) {
+  JSON_DOC(doc, 768);
+  const DeserializationError err = deserializeJson(doc, resp, DeserializationOption::NestingLimit(POD_WORK_JSON_NESTING));
+  if (err) { r.jsonErr = err.c_str(); r.status = REG_P_JSON; return; }
+  const char* id = doc["deviceId"] | "";
+  const char* pc = doc["pairCode"] | "";
+  const bool isPaired = doc["paired"] | false;
+  if (!regDeviceIdOk(id)) { r.status = REG_P_INVALID; return; }
+  if (pc[0] != '\0' ? !regPairCodeOk(pc) : !isPaired) { r.status = REG_P_INVALID; return; }
+  memcpy(r.deviceId, id, 12); r.deviceId[12] = '\0';
+  if (pc[0] != '\0') { memcpy(r.pairCode, pc, 8); r.pairCode[8] = '\0'; }
+  r.paired = isPaired;
+  r.status = REG_P_OK;
+}
+static bool __attribute__((noinline)) registerParseOnWorkStack(const String& resp, RegisterParsed& r, PodNetInfo& ni) {
+  auto rk = [&]() { registerParseWork(resp, r); };
+  return podWorkRun(rk, &ni);
+}
+// Échec de la pile de travail : rien n'est inscrit. GUARD => le tas voisin peut être corrompu (logf alloue) : arrêt sûr silencieux AVANT tout journal.
+static void __attribute__((noinline)) registerWorkFailed(const PodNetInfo& ni) {
+  if (ni.err == POD_NET_GUARD) logfSafeStop();
+  logf("[REGISTER] analyse JSON sur la pile de travail ECHOUEE (err %u) : %s ; inscription rejetée, rien n'est inscrit", (unsigned)ni.err, podNetWhy(ni));
+}
+// Décodage + inscription de l'état, dans cet ordre, APRÈS le retour de httpCall. Retour : true = réponse complète et valide, état inscrit ; false = rien n'a changé.
+static bool __attribute__((noinline)) doRegisterDecode(const String& resp) {
+  RegisterParsed* const r = new (std::nothrow) RegisterParsed();
+  if (!r) { logf("[REGISTER] réponse rejetée : mémoire insuffisante"); return false; }
+  PodNetInfo ni;
+  const bool ran = registerParseOnWorkStack(resp, *r, ni);
+  bool ok = false;
+  if (!ran) registerWorkFailed(ni);
+  else if (r->status == REG_P_JSON) logf("[REGISTER] JSON illisible: %s", r->jsonErr);
+  else if (r->status != REG_P_OK) logf("[REGISTER] réponse rejetée : deviceId ou code d'appairage absent, trop court, trop long ou invalide");
+  else { deviceId = r->deviceId; pairCode = r->pairCode; paired = r->paired; registered = true; ok = true; }
+  delete r;
+  return ok;
+}
+
+
 static bool doRegister() {
   const String mac = macString();
   if (mac.length() == 0) { logf("[REGISTER] adresse MAC indisponible (module Wi-Fi, pile dédiée) : inscription ANNULÉE"); return false; }
@@ -827,12 +896,7 @@ static bool doRegister() {
                       "\"ownedHashes\":" + loadOwnedHashesJson() + "}";
   String resp;
   if (httpCall("POST", "/api/register", &body, resp) != 200) { logf("[REGISTER] échec — nouvel essai dans 5 s"); return false; }
-  JSON_DOC(doc, 768);
-  if (deserializeJson(doc, resp)) { logf("[REGISTER] JSON illisible"); return false; }
-  deviceId   = doc["deviceId"].as<String>();
-  pairCode   = doc["pairCode"].as<String>();
-  paired     = doc["paired"] | false;
-  registered = true;
+  if (!doRegisterDecode(resp)) return false;
   logf("[REGISTER] deviceId=%s paired=%s", deviceId.c_str(), paired ? "oui" : "non");
 
   if (!paired && !onboardingDrawn) {
@@ -852,73 +916,178 @@ static bool doRegister() {
 }
 
 // ─── PULL ──────────────────────────────────────────────────────────────────
-static bool doPull() {
-  String newBlockHash = "", newCandId = "", newFrameId = "", newFrameSource = "none", newScreen = "";
-  int newBlockIndex = -1, pullRetryAfter = 60;
+// DOPULL-JSON-STACK-FIX1 : TOUT le décodage de la réponse /api/pull s'exécute sur une pile de TRAVAIL dédiée (podWorkRun : POD_WORK_STACK_TOTAL o pris au tas, garde 64 o, marge >= 128 o, objectif 256 o, échec fermé),
+// APRÈS la fermeture de la transaction TLS (httpCall est revenu : la connexion est stop()ée). Cause MESURÉE sur la carte (canari b03c0b4, 10/10/2026) : phases 1 à 3 de doPull saines, marqueur de la pile principale détruit
+// PENDANT deserializeJson(doc, resp) (récursion d'ArduinoJson posée sur les 536 o de cadres setup -> doPull). Vivent ensemble sur la pile de travail : le document JSON, deserializeJson, toutes les lectures et conversions
+// JsonVariant -> String, la branche pendingObservation (sérialisation en String) et ownedBlock ; le document est DÉTRUIT avant le retour sur la pile principale. Le JSON n'est JAMAIS traité pendant que TLS est vivant.
+// Sortie : PullParsed, structure BORNÉE appartenant à l'appelant ; AUCUN effet de bord (état global, EEPROM, affichage, vote, ACK) avant un retour VALIDE (PULL_P_OK ou PULL_P_RATE, pile saine).
+// BORNES (contrat écrit) : identifiants et empreintes <= 64 car., source de frame <= 16 car., observation <= 8 empreintes : trop long ou trop nombreux => REFUSÉ (pull rejeté, RIEN n'est appliqué, aucune frame, aucun vote ni ACK).
+// Les trois textes du cartel (titre <= 255 o, artiste <= 127 o, horodatage <= 63 o ; le serveur n'en envoie jamais plus : 80 / 40 car.) sont TRONQUÉS à une frontière de caractère UTF-8 ; aucune autre troncature.
+// Échec fermé : NOMEM, NESTED, GUARD, MARGIN (pile), JSON invalide, champ hors bornes, mémoire insuffisante pour une chaîne => doPull retourne false sans rien appliquer.
+#define PULL_ID_MAX     64
+#define PULL_SRC_MAX    16
+#define PULL_TITLE_MAX  255
+#define PULL_ARTIST_MAX 127
+#define PULL_TS_MAX     63
+#define PULL_OBS_MAX    8
+#define PULL_SCR_MAX    16        // lot 8B-2B-3 : champ « screen » (OLED + e-ink 2,7″) — « oled096 », « eink27bw » ; plus long => REFUSÉ
+enum PullStatus : uint8_t { PULL_P_NONE = 0, PULL_P_OK = 1, PULL_P_RATE = 2, PULL_P_JSON = 3, PULL_P_BOUNDS = 4, PULL_P_HEAP = 5 };
+struct PullParsed {
+  uint8_t status;                  // PullStatus : le résultat n'est exploitable que pour PULL_P_OK et PULL_P_RATE
+  bool hasCartel, hasObs;
+  int blockIndex, retryAfter, cartelBlockIndex, rateRetrySec;
+  const char* jsonErr;             // texte statique de DeserializationError (PULL_P_JSON)
+  String blockHash, candId, frameSource, frameId, screen, workTitle, artistName, displayTs, obsHashes, obsTarget, owned;
+  PullParsed() : status(PULL_P_NONE), hasCartel(false), hasObs(false), blockIndex(-1), retryAfter(60), cartelBlockIndex(-1), rateRetrySec(60), jsonErr(nullptr) {}
+};
+// copie bornée d'un identifiant : au-delà de max => PULL_P_BOUNDS ; copie incomplète (tas) => PULL_P_HEAP
+static bool __attribute__((noinline)) pullSetId(String& dst, const char* src, size_t max, PullParsed& r) {
+  const size_t n = strlen(src);
+  if (n > max) { r.status = PULL_P_BOUNDS; return false; }
+  dst = "";
+  if (n > 0 && !dst.concat(src, (unsigned int)n)) { r.status = PULL_P_HEAP; return false; }
+  if (dst.length() != n) { r.status = PULL_P_HEAP; return false; }
+  return true;
+}
+// copie d'un texte de cartel, TRONQUÉE à une frontière de caractère UTF-8 au-delà de max
+static bool __attribute__((noinline)) pullSetText(String& dst, const char* src, size_t max, PullParsed& r) {
+  size_t n = strlen(src);
+  if (n > max) { n = max; while (n > 0 && (((uint8_t)src[n]) & 0xC0) == 0x80) n--; }
+  dst = "";
+  if (n > 0 && !dst.concat(src, (unsigned int)n)) { r.status = PULL_P_HEAP; return false; }
+  if (dst.length() != n) { r.status = PULL_P_HEAP; return false; }
+  return true;
+}
+// Exécutée SUR LA PILE DE TRAVAIL (voir pullParseOnWorkStack). Ne touche à AUCUN état global : tout va dans r.
+static void __attribute__((noinline)) pullParseWork(const String& resp, int code, PullParsed& r) {
+  if (code == 429) {
+    JSON_DOC(rate, 256);
+    r.rateRetrySec = 60;
+    if (deserializeJson(rate, resp, DeserializationOption::NestingLimit(POD_WORK_JSON_NESTING)) == DeserializationError::Ok) r.rateRetrySec = max(1, (int)(rate["retryAfter"] | 60));
+    r.status = PULL_P_RATE;
+    return;
+  }
+  JSON_DOC(doc, 2048);
+  const DeserializationError err = deserializeJson(doc, resp, DeserializationOption::NestingLimit(POD_WORK_JSON_NESTING));
+  if (err) { r.jsonErr = err.c_str(); r.status = PULL_P_JSON; return; }
 
-  {
-    String resp;
-    const int code = httpCall("GET", "/api/pull?deviceId=" + deviceId, nullptr, resp);
-    if (code == 429) {
-      int retrySec = 60;
-      JSON_DOC(rate, 256);
-      if (deserializeJson(rate, resp) == DeserializationError::Ok) retrySec = max(1, (int)(rate["retryAfter"] | 60));
-      unsigned long retryMs = (unsigned long)retrySec * 1000UL;
-      if (retryMs > PULL_INTERVAL) retryMs = PULL_INTERVAL;
-      lastPullMs = millis() - (PULL_INTERVAL - retryMs);
-      logf("[PULL] 429 retryAfter=%ds", retrySec);
-      return true;
+  JsonObject chain = doc["chain"];
+  if (!chain.isNull()) { if (!pullSetId(r.blockHash, chain["blockHash"] | "", PULL_ID_MAX, r)) return; r.blockIndex = chain["blockIndex"] | -1; }
+  JsonObject pend = doc["pendingValidation"];
+  if (!pend.isNull() && !pullSetId(r.candId, pend["candidateId"] | "", PULL_ID_MAX, r)) return;
+
+  if (!pullSetId(r.frameSource, doc["frameSource"] | "none", PULL_SRC_MAX, r)) return;
+  if (!pullSetId(r.frameId, doc["frameId"] | "", PULL_ID_MAX, r)) return;
+  r.retryAfter = doc["retryAfter"] | 60;
+  if (r.retryAfter <= 0) r.retryAfter = 60;
+  if (!pullSetId(r.screen, doc["screen"] | "", PULL_SCR_MAX, r)) return;
+  if (r.frameId.length() == 0) {
+    JsonObject fo = doc["frame"];
+    if (!fo.isNull()) {
+      if (!pullSetId(r.frameId, fo["frameId"] | "", PULL_ID_MAX, r)) return;
+      const char* fs = fo["screen"] | "";            // « fo["screen"] | newScreen » d'avant : absent => on garde le « screen » de la racine
+      if (fs[0] != '\0' && !pullSetId(r.screen, fs, PULL_SCR_MAX, r)) return;
     }
-    if (code != 200) { logf("[PULL] erreur HTTP %d", code); return false; }
-
-    JSON_DOC(doc, 2048);
-    const DeserializationError err = deserializeJson(doc, resp);
-    if (err) { logf("[PULL] JSON: %s", err.c_str()); return false; }
-
-    JsonObject chain = doc["chain"];
-    if (!chain.isNull()) { newBlockHash = chain["blockHash"] | ""; newBlockIndex = chain["blockIndex"] | -1; }
-    JsonObject pend = doc["pendingValidation"];
-    if (!pend.isNull()) newCandId = pend["candidateId"] | "";
-
-    newFrameSource = doc["frameSource"] | "none";
-    newFrameId     = doc["frameId"] | "";
-    newScreen      = doc["screen"] | "";
-    pullRetryAfter = doc["retryAfter"] | 60;
-    if (pullRetryAfter <= 0) pullRetryAfter = 60;
-    if (newFrameId.length() == 0) {
-      JsonObject fo = doc["frame"];
-      if (!fo.isNull()) { newFrameId = fo["frameId"] | ""; newScreen = fo["screen"] | newScreen; }
-    }
-
-    JsonObject cm = doc["cartelMeta"];
-    if (!cm.isNull()) {
-      pendingWorkTitle  = cm["workTitle"] | "";
-      pendingArtistName = cm["drawArtistName"] | "";
-      pendingDisplayTs  = cm["displayTs"] | "";
-      currentBlockIndex = cm["blockIndex"] | currentBlockIndex;
-      logf("[PULL] cartel: %s / %s (bloc %d)", asciiFold(pendingWorkTitle).c_str(), asciiFold(pendingArtistName).c_str(), currentBlockIndex);
-    }
-    JsonObject obs = doc["pendingObservation"];
-    if (!obs.isNull()) {
-      JsonArray hArr = obs["blockHashes"].as<JsonArray>();
-      if (hArr.size() > 0) {
-        String arr = "[";
-        for (size_t i = 0; i < hArr.size(); i++) { if (i) arr += ","; arr += "\""; arr += hArr[i].as<String>(); arr += "\""; }
-        pendingObsHashes = arr + "]";
-        pendingObsTarget = obs["targetBlockHash"] | "";
-      }
-    }
-    const char* owned = doc["ownedBlock"] | "";
-    if (strlen(owned) >= 16) saveOwnedBlockHash(String(owned));
   }
 
-  nextPullIntervalMs = (newFrameSource == "none" && newCandId.length() == 0) ? (unsigned long)pullRetryAfter * 1000UL : PULL_INTERVAL;
-  if (newBlockHash.length() > 0 && newBlockHash != currentBlockHash) {
-    currentBlockHash = newBlockHash; currentBlockIndex = newBlockIndex;
+  JsonObject cm = doc["cartelMeta"];
+  if (!cm.isNull()) {
+    r.hasCartel = true;
+    if (!pullSetText(r.workTitle, cm["workTitle"] | "", PULL_TITLE_MAX, r)) return;
+    if (!pullSetText(r.artistName, cm["drawArtistName"] | "", PULL_ARTIST_MAX, r)) return;
+    if (!pullSetText(r.displayTs, cm["displayTs"] | "", PULL_TS_MAX, r)) return;
+    r.cartelBlockIndex = cm["blockIndex"] | r.cartelBlockIndex;
+  }
+  JsonObject obs = doc["pendingObservation"];
+  if (!obs.isNull()) {
+    JsonArray hArr = obs["blockHashes"].as<JsonArray>();
+    if (hArr.size() > 0) {
+      if (hArr.size() > PULL_OBS_MAX) { r.status = PULL_P_BOUNDS; return; }
+      String arr = "[";
+      size_t want = 1;
+      for (size_t i = 0; i < hArr.size(); i++) {
+        const String h = hArr[i].as<String>();                 // conversion JsonVariant -> String : la chaîne la plus profonde (584 o), sur la pile de travail
+        if (h.length() > PULL_ID_MAX) { r.status = PULL_P_BOUNDS; return; }
+        if (i) { arr += ","; want += 1; }
+        arr += "\""; arr += h; arr += "\"";
+        want += h.length() + 2;
+      }
+      arr += "]"; want += 1;
+      if (arr.length() != want) { r.status = PULL_P_HEAP; return; }
+      r.obsHashes = arr;
+      if (r.obsHashes.length() != want) { r.status = PULL_P_HEAP; return; }
+      if (!pullSetId(r.obsTarget, obs["targetBlockHash"] | "", PULL_ID_MAX, r)) return;
+      r.hasObs = true;
+    }
+  }
+  if (!pullSetId(r.owned, doc["ownedBlock"] | "", PULL_ID_MAX, r)) return;
+  r.status = PULL_P_OK;
+}
+// Lanceur : la fermeture et son PodNetInfo ne vivent que le temps de l'appel (noinline : cadre rendu avant la suite de doPull)
+static bool __attribute__((noinline)) pullParseOnWorkStack(const String& resp, int code, PullParsed& r, PodNetInfo& ni) {
+  auto wk = [&]() { pullParseWork(resp, code, r); };
+  return podWorkRun(wk, &ni);
+}
+// Échec de la pile de travail (NOMEM, NESTED, GUARD, MARGIN) : rien n'est appliqué. GUARD = garde écrasée => le tas voisin peut être corrompu (logf alloue) : arrêt sûr silencieux AVANT tout journal.
+static void __attribute__((noinline)) pullWorkFailed(const PodNetInfo& ni) {
+  if (ni.err == POD_NET_GUARD) logfSafeStop();
+  logf("[PULL] analyse JSON sur la pile de travail ECHOUEE (err %u) : %s ; pull rejeté, rien n'est appliqué", (unsigned)ni.err, podNetWhy(ni));
+}
+
+// Analyse + application, dans cet ordre (la réponse est DÉJÀ reçue, TLS fermé). Retour : 0 = pull ÉCHOUÉ (rien d'appliqué) ; 1 = pull appliqué, décision de frame à prendre ; 2 = terminé (429, rien d'autre à faire).
+static int __attribute__((noinline)) doPullApply(PullParsed& r, const String& resp, int code, String& frameId, String& frameSource, String& screen) {
+  r.cartelBlockIndex = currentBlockIndex;
+  PodNetInfo ni;
+  const bool ran = pullParseOnWorkStack(resp, code, r, ni);
+  if (!ran) { pullWorkFailed(ni); return 0; }
+  if (r.status == PULL_P_RATE) {
+    unsigned long retryMs = (unsigned long)r.rateRetrySec * 1000UL;
+    if (retryMs > PULL_INTERVAL) retryMs = PULL_INTERVAL;
+    lastPullMs = millis() - (PULL_INTERVAL - retryMs);
+    logf("[PULL] 429 retryAfter=%ds", r.rateRetrySec);
+    return 2;
+  }
+  if (r.status == PULL_P_JSON) { logf("[PULL] JSON: %s", r.jsonErr); return 0; }
+  if (r.status != PULL_P_OK) { logf("[PULL] réponse rejetée : %s", r.status == PULL_P_BOUNDS ? "champ hors bornes" : "mémoire insuffisante"); return 0; }
+
+  if (r.hasCartel) {
+    pendingWorkTitle = r.workTitle; pendingArtistName = r.artistName; pendingDisplayTs = r.displayTs; currentBlockIndex = r.cartelBlockIndex;
+    logf("[PULL] cartel: %s / %s (bloc %d)", asciiFold(pendingWorkTitle).c_str(), asciiFold(pendingArtistName).c_str(), currentBlockIndex);
+  }
+  if (r.hasObs) { pendingObsHashes = r.obsHashes; pendingObsTarget = r.obsTarget; }
+  if (r.owned.length() >= 16) saveOwnedBlockHash(r.owned);
+
+  nextPullIntervalMs = (r.frameSource == "none" && r.candId.length() == 0) ? (unsigned long)r.retryAfter * 1000UL : PULL_INTERVAL;
+  if (r.blockHash.length() > 0 && r.blockHash != currentBlockHash) {
+    currentBlockHash = r.blockHash; currentBlockIndex = r.blockIndex;
     saveBlockHashToEEPROM(currentBlockHash);
     logf("[PULL] nouveau bloc #%d", currentBlockIndex);
   }
-  if (newCandId.length() > 0) pendingCandidateId = newCandId;
+  if (r.candId.length() > 0) pendingCandidateId = r.candId;
+  frameId = r.frameId; frameSource = r.frameSource; screen = r.screen;
+  return 1;
+}
+// La grosse structure PullParsed vit au TAS (pile principale : 1 024 o), le temps d'un pull ; échec de l'allocation => pull rejeté. Aucune structure volumineuse dans les cadres de doPull ni de doFetchFrame.
+static int __attribute__((noinline)) doPullStage(const String& resp, int code, String& frameId, String& frameSource, String& screen) {
+  PullParsed* const r = new (std::nothrow) PullParsed();
+  if (!r) { logf("[PULL] réponse rejetée : mémoire insuffisante"); return 0; }
+  const int rc = doPullApply(*r, resp, code, frameId, frameSource, screen);
+  delete r;
+  return rc;
+}
+
+
+static bool doPull() {
+  String newFrameId = "", newFrameSource = "none", newScreen = "";
+  int st = 0;
+  {
+    String resp;
+    const int code = httpCall("GET", "/api/pull?deviceId=" + deviceId, nullptr, resp);
+    if (code != 429 && code != 200) { logf("[PULL] erreur HTTP %d", code); return false; }
+    st = doPullStage(resp, code, newFrameId, newFrameSource, newScreen);
+  }                                                  // resp libérée ici, avant toute image
+  if (st == 0) return false;
+  if (st == 2) return true;
 
   if (newFrameSource == "none" || newFrameId.length() == 0) { logf("[PULL] aucune frame"); return true; }
   const String key = frameKey(newFrameId);
@@ -980,24 +1149,101 @@ static bool doValidateV2(const String& candidateId, const String& screenName, si
 }
 
 // ─── VALIDATION ────────────────────────────────────────────────────────────
+// DOVALIDATE-JSON-STACK-FIX1 : la réponse de /api/validate-candidate est décodée sur la pile de TRAVAIL dédiée (podWorkRun : la même que le pull et le register — 2 048 o au tas, garde 64 o, marge >= 128 o, échec fermé),
+// APRÈS le retour complet de httpCall (TLS fermé, jamais imbriquée avec PodNet ni PodEd), et AVANT la lecture du candidat, la signature et le vote. C'était le DERNIER parseur ArduinoJson de la voie vote sur la pile principale
+// (cadre de doValidate 520 o + chaînes ArduinoJson : analyse statique sous les 128 o de marge). Sortie : ValidateParsed, structure BORNÉE (≈ 170 o) allouée au TAS ; les paramètres de sortie de doValidateDecode (identifiant,
+// écran, hash, taille, score) ne sont écrits qu'avec un résultat COMPLET et VALIDE ; sinon rien n'est voté (doValidate efface le candidat, comme avant). CONTRAT (serveur : app/api/validate-candidate/route.ts) :
+// candidateId = 8 à 64 caractères [0-9A-Za-z-] (UUID) ; écran = 1 à 16 caractères [a-z0-9_] ; hash annoncé = EXACTEMENT 64 caractères hexadécimaux (SHA-256) ; taille = 1 à 262 144 ; score_server absent = 0,5.
+// Toute autre valeur est REFUSÉE — jamais tronquée, et un identifiant n'entre jamais dans une URL ou un corps JSON sans avoir été validé. « Déjà voté » ou « pas de candidat » : rien à faire, silencieux (comme avant).
+enum ValidateStatus : uint8_t { VAL_P_NONE = 0, VAL_P_OK = 1, VAL_P_JSON = 2, VAL_P_INVALID = 3 };
+struct ValidateParsed {
+  uint8_t status;                  // ValidateStatus : exploitable seulement pour VAL_P_OK
+  bool skip, hasV2;                // skip = déjà voté / pas de candidat / identifiant vide (rien à faire)
+  int bytes;
+  float score;
+  const char* jsonErr;             // texte statique de DeserializationError (VAL_P_JSON)
+  char candidateId[65];
+  char screen[17];
+  char hash[65];
+  ValidateParsed() : status(VAL_P_NONE), skip(false), hasV2(false), bytes(0), score(0.5f), jsonErr(nullptr) { candidateId[0] = 0; screen[0] = 0; hash[0] = 0; }
+};
+static bool __attribute__((noinline)) valCharsOk(const char* s, size_t minLen, size_t maxLen, const char* alphabetKind) {
+  const size_t n = strlen(s);
+  if (n < minLen || n > maxLen) return false;
+  for (size_t i = 0; i < n; i++) {
+    const char c = s[i];
+    const bool digit = (c >= '0' && c <= '9'), lower = (c >= 'a' && c <= 'z'), upper = (c >= 'A' && c <= 'Z');
+    switch (alphabetKind[0]) {
+      case 'i': if (!(digit || lower || upper || c == '-')) return false; break;      // identifiant : [0-9A-Za-z-]
+      case 'e': if (!(digit || lower || c == '_')) return false; break;               // écran : [a-z0-9_]
+      default:  if (!(digit || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F'))) return false; break;   // hexadécimal
+    }
+  }
+  return true;
+}
+// Exécutée SUR LA PILE DE TRAVAIL (voir validateParseOnWorkStack). Ne touche à AUCUN état global : tout va dans r.
+static void __attribute__((noinline)) validateParseWork(const String& resp, ValidateParsed& r) {
+  JSON_DOC(doc, 768);   // 512 avant la validation réelle : la réponse porte aussi { v2: écran, taille, hash } (≈ 110 o)
+  const DeserializationError err = deserializeJson(doc, resp, DeserializationOption::NestingLimit(POD_WORK_JSON_NESTING));
+  if (err) { r.jsonErr = err.c_str(); r.status = VAL_P_JSON; return; }
+  if ((doc["alreadyVoted"] | false) || doc["candidate"].isNull()) { r.skip = true; r.status = VAL_P_OK; return; }
+  JsonObject cand = doc["candidate"];
+  const char* cid = cand["candidateId"] | "";
+  if (cid[0] == '\0') { r.skip = true; r.status = VAL_P_OK; return; }
+  if (!valCharsOk(cid, 8, 64, "i")) { r.status = VAL_P_INVALID; return; }
+  if (!cand["v2"].isNull()) {
+    const char* sc = cand["v2"]["screen"] | "";
+    const int b = cand["v2"]["bytes"] | 0;
+    const char* h = cand["v2"]["hash"] | "";
+    if (!valCharsOk(sc, 1, 16, "e") || !valCharsOk(h, 64, 64, "h") || b < 1 || b > 262144) { r.status = VAL_P_INVALID; return; }
+    memcpy(r.screen, sc, strlen(sc) + 1); memcpy(r.hash, h, 65); r.bytes = b; r.hasV2 = true;
+  } else {
+    r.score = cand["score_server"] | 0.5f;
+  }
+  memcpy(r.candidateId, cid, strlen(cid) + 1);
+  r.status = VAL_P_OK;
+}
+static bool __attribute__((noinline)) validateParseOnWorkStack(const String& resp, ValidateParsed& r, PodNetInfo& ni) {
+  auto vk = [&]() { validateParseWork(resp, r); };
+  return podWorkRun(vk, &ni);
+}
+// Échec de la pile de travail : aucun vote. GUARD => le tas voisin peut être corrompu (logf alloue) : arrêt sûr silencieux AVANT tout journal.
+static void __attribute__((noinline)) validateWorkFailed(const PodNetInfo& ni) {
+  if (ni.err == POD_NET_GUARD) logfSafeStop();
+  logf("[VALIDATE] analyse JSON sur la pile de travail ECHOUEE (err %u) : %s ; aucun vote", (unsigned)ni.err, podNetWhy(ni));
+}
+// Décodage de la réponse, APRÈS le retour de httpCall. Retour : 0 = rien à voter (déjà voté, pas de candidat, réponse refusée, échec de pile) ; 1 = validation RÉELLE (v2) ; 2 = ancien chemin (v1, score du serveur).
+// Les paramètres de sortie ne sont écrits QUE dans les deux branches valides.
+static int __attribute__((noinline)) doValidateDecode(const String& resp, String& candidateId, String& v2screen, size_t& v2bytes, String& v2hash, float& score) {
+  ValidateParsed* const r = new (std::nothrow) ValidateParsed();
+  if (!r) { logf("[VALIDATE] réponse rejetée : mémoire insuffisante"); return 0; }
+  PodNetInfo ni;
+  const bool ran = validateParseOnWorkStack(resp, *r, ni);
+  int mode = 0;
+  if (!ran) validateWorkFailed(ni);
+  else if (r->status == VAL_P_JSON) logf("[VALIDATE] JSON illisible: %s", r->jsonErr);
+  else if (r->status != VAL_P_OK) logf("[VALIDATE] réponse rejetée : identifiant, écran, hash ou taille absent, hors bornes ou invalide");
+  else if (r->skip) mode = 0;
+  else if (r->hasV2) { candidateId = r->candidateId; v2screen = r->screen; v2hash = r->hash; v2bytes = (size_t)r->bytes; mode = 1; }
+  else { candidateId = r->candidateId; score = r->score; mode = 2; }
+  delete r;
+  return mode;
+}
+
 static bool doValidate() {
   if (pendingCandidateId.length() == 0) return false;
-  String resp;
-  if (httpCall("GET", "/api/validate-candidate?deviceId=" + deviceId, nullptr, resp) != 200 || resp.length() == 0) { pendingCandidateId = ""; return false; }
-  JSON_DOC(doc, 768);
-  if (deserializeJson(doc, resp)) { pendingCandidateId = ""; return false; }
-  if ((doc["alreadyVoted"] | false) || doc["candidate"].isNull()) { pendingCandidateId = ""; return false; }
-  JsonObject cand = doc["candidate"];
-  const String candidateId = cand["candidateId"] | "";
-  if (candidateId.length() == 0) { pendingCandidateId = ""; return false; }
-  if (!cand["v2"].isNull()) {
-    const String screen = cand["v2"]["screen"] | "";
-    const size_t bytes = cand["v2"]["bytes"] | 0;
-    const String hash = cand["v2"]["hash"] | "";
-    pendingCandidateId = "";
-    return doValidateV2(candidateId, screen, bytes, hash);
-  }
-  const float score = cand["score_server"] | 0.5f;
+  String candidateId, v2screen, v2hash;
+  size_t v2bytes = 0;
+  float score = 0.5f;
+  int mode = 0;
+  {
+    String resp;
+    if (httpCall("GET", "/api/validate-candidate?deviceId=" + deviceId, nullptr, resp) != 200 || resp.length() == 0) { pendingCandidateId = ""; return false; }
+    mode = doValidateDecode(resp, candidateId, v2screen, v2bytes, v2hash, score);
+  }                                                  // resp libérée ici, avant la lecture du candidat, la signature et le vote
+  if (mode == 0) { pendingCandidateId = ""; return false; }
+  // Validation RÉELLE : si le serveur annonce { v2 }, on revérifie le contenu au lieu de recopier son score (anciens serveurs / animations : chemin v1 ci-dessous).
+  if (mode == 1) { pendingCandidateId = ""; return doValidateV2(candidateId, v2screen, v2bytes, v2hash); }
 
   const String signature = signED25519(candidateId, score);
   if (signature.length() == 0) { pendingCandidateId = ""; return false; }   // POD_ED_STACK : signature impossible → pas de vote

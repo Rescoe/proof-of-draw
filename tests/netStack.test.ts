@@ -1,3 +1,4 @@
+import { undoPropagation8b2b3 } from "./helpers/propagation8b2b3Edits";
 import test from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
@@ -44,7 +45,7 @@ test("la table couvre les cinq firmwares", () => {
 
 for (const sk of SKETCHES) {
   test(`${sk} : en annulant les modifications EXACTES de la table, on retrouve le sketch d'avant NETSTACK-FIX1 au texte près (hors blocs du canari) ; chaque modification est unique`, () => {
-    const now = undoBoundedSsl(read(`arduino_uno_r4/${sk}/${sk}.ino`)), before = read(`${BACKUP}/${sk}/${sk}.ino`);   // PULLFRAME-BOUNDED-SSL-FIX1 annulé d'abord
+    const now = undoBoundedSsl(undoPropagation8b2b3(read(`arduino_uno_r4/${sk}/${sk}.ino`), sk)), before = read(`${BACKUP}/${sk}/${sk}.ino`);   // PULLFRAME-BOUNDED-SSL-FIX1 annulé d'abord
     assert.equal(noCanary(undoNetStack(now, sk)), noCanary(before));
     for (const e of netEditsFor(sk)) assert.equal(now.split(e.neu).length - 1, 1, `${sk} : « ${e.id} »`);
   });
