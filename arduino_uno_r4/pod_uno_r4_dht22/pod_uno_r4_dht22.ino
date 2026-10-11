@@ -34,10 +34,13 @@
 
 #define SERVER_HOST         "proof-of-draw.vercel.app"
 #define SCREEN_TYPE         "sensor"               // pas un écran : voir lib/sensorData.ts
-#define FIRMWARE_VERSION    "r4dht22-1.2"
+#define FIRMWARE_VERSION    "r4dht22-1.3"
 #define DHT_PIN             2                      // D2
-// PRODUCTION : 1 mesure / 30 min (48 points par jour). Le serveur refuse (sans écrire) toute mesure arrivée moins de 25 min après la précédente.
-#define SENSOR_INTERVAL_MS  1800000UL              // 1 mesure toutes les 30 min
+// CADENCES. Température et humidité : LUES toutes les 30 min (48 points/jour), ENVOYÉES toutes les heures (2 lectures par envoi : 8 commandes Redis par envoi, comme une mesure horaire).
+// Diagnostic de la liaison (signal, latence, débit) : une fois par ENVOI. Le serveur refuse (sans écrire) un envoi arrivé moins de 50 min après le précédent.
+#define READ_INTERVAL_MS    1800000UL              // lecture du DHT22 : 30 min
+#define POST_INTERVAL_MS    3600000UL              // envoi : 1 h
+#define SPEED_EVERY_N_POSTS 1                      // test de débit : tous les N envois (1 = chaque heure ; 2 = toutes les 2 h)
 #define SENSOR_RETRY_MS     300000UL               // après un échec (lecture ou réseau) : nouvel essai dans 5 min
 #define HTTP_TIMEOUT_MS     20000UL
 
@@ -293,35 +296,76 @@ static uint32_t __attribute__((noinline)) netSpeedTest() {
   return kbps;
 }
 
-static unsigned long g_lastLatMs = 0;                      // durée du dernier POST /api/sensor réussi (joint à la mesure suivante)
-static bool doSensor() {
+static unsigned long g_lastLatMs = 0;                      // durée du dernier POST /api/sensor réussi (joint à l'envoi suivant)
+
+// ─── LECTURES EN TAMPON, ENVOI GROUPÉ ──────────────────────────────────────
+// La température est LUE toutes les 30 min (48 points/jour) mais ENVOYÉE une fois par heure, plusieurs lectures par POST : même coût Redis qu'une mesure horaire (8 commandes par envoi,
+// quel que soit le nombre de lectures). Les lectures restent en RAM (12 au plus = 6 h) tant que l'envoi n'a pas réussi : une coupure Internet ne fait plus perdre de points.
+// Chaque lecture porte son ÂGE à l'envoi (le serveur calcule l'heure : la carte n'a pas d'horloge). Un redémarrage de la carte perd les lectures non envoyées (RAM).
+#define RING_MAX 12
+struct Reading { uint32_t tMs; int16_t c10; uint16_t h10; };
+static Reading g_ring[RING_MAX];
+static uint8_t g_n = 0;                                    // lectures en attente, la plus ANCIENNE en premier
+static uint32_t g_posts = 0;                               // nombre d'envois (cadence du test de débit)
+
+static void pushReading(int16_t c10, uint16_t h10) {
+  if (g_n == RING_MAX) { for (uint8_t i = 1; i < RING_MAX; i++) g_ring[i - 1] = g_ring[i]; g_n = RING_MAX - 1; }   // tampon plein : la plus ancienne est abandonnée
+  g_ring[g_n].tMs = millis(); g_ring[g_n].c10 = c10; g_ring[g_n].h10 = h10; g_n++;
+}
+
+/** Lit le DHT22 et met la lecture en tampon. true = lecture réussie. */
+static bool takeReading() {
   int16_t c10 = 0; uint16_t h10 = 0;
   if (!dht22Read(DHT_PIN, c10, h10)) { logf("[DHT22] lecture impossible (câblage D2 ? résistance de rappel ?) — nouvel essai dans 5 min"); return false; }
-  logf("[DHT22] %d.%d C, %u.%u %%", (int)(c10 / 10), (int)(c10 < 0 ? -(c10 % 10) : c10 % 10), (unsigned)(h10 / 10), (unsigned)(h10 % 10));
-  // Diagnostic Wi-Fi joint à la mesure (aucune requête de plus) : signal reçu (dBm) et temps de réponse du DERNIER envoi réussi (ms)
+  logf("[DHT22] %d.%d C, %u.%u %%  (%u en attente d'envoi)", (int)(c10 / 10), (int)(c10 < 0 ? -(c10 % 10) : c10 % 10), (unsigned)(h10 / 10), (unsigned)(h10 % 10), (unsigned)(g_n + 1));
+  pushReading(c10, h10);
+  return true;
+}
+
+/** Envoie les lectures en tampon (+ diagnostic de la liaison). true = reçues et stockées par le serveur (tampon vidé). */
+static bool doPost() {
+  // Diagnostic de la liaison, joint à l'envoi (aucune requête de plus sauf le test de débit, un fichier statique du CDN) : signal reçu, temps de réponse du DERNIER envoi, débit
   int32_t rssi = 0; const bool haveRssi = wifiRssi(rssi) && rssi < 0 && rssi >= -127;
-  const uint32_t dl = netSpeedTest();
-  if (dl > 0) logf("[DEBIT] %lu kbit/s (test de %lu o)", (unsigned long)dl, (unsigned long)SPEED_BYTES); else logf("[DEBIT] test impossible (la mesure part sans débit)");
-  String m = "{\"temp\":" + String((int)c10) + ",\"hum\":" + String((unsigned)h10);
-  if (haveRssi) m += ",\"rssi\":" + String((int)rssi);
-  if (g_lastLatMs > 0 && g_lastLatMs <= 60000UL) m += ",\"lat\":" + String((unsigned)g_lastLatMs);
-  if (dl > 0 && dl <= 1000000UL) m += ",\"dl\":" + String((unsigned)dl);
+  uint32_t dl = 0;
+  if ((g_posts % SPEED_EVERY_N_POSTS) == 0) {
+    dl = netSpeedTest();
+    if (dl > 0) logf("[DEBIT] %lu kbit/s (test de %lu o)", (unsigned long)dl, (unsigned long)SPEED_BYTES); else logf("[DEBIT] test impossible (l'envoi part sans débit)");
+  }
+  String r = "[";
+  const unsigned long nowMs = millis();
+  for (uint8_t i = 0; i < g_n; i++) {
+    const unsigned long ageS = (nowMs - g_ring[i].tMs) / 1000UL;      // millis() non signé : exact même après le dépassement des 49 jours
+    if (i) r += ",";
+    r += "{\"a\":" + String((unsigned)ageS) + ",\"temp\":" + String((int)g_ring[i].c10) + ",\"hum\":" + String((unsigned)g_ring[i].h10) + "}";
+  }
+  r += "]";
+  String m = "{";
+  bool first = true;
+  if (haveRssi) { m += "\"rssi\":" + String((int)rssi); first = false; }
+  if (g_lastLatMs > 0 && g_lastLatMs <= 60000UL) { m += String(first ? "" : ",") + "\"lat\":" + String((unsigned)g_lastLatMs); first = false; }
+  if (dl > 0 && dl <= 1000000UL) { m += String(first ? "" : ",") + "\"dl\":" + String((unsigned)dl); first = false; }
   m += "}";
-  const String body = "{\"deviceId\":\"" + deviceId + "\",\"pairCode\":\"" + pairCode + "\",\"m\":" + m + "}";
+  String body = "{\"deviceId\":\"" + deviceId + "\",\"pairCode\":\"" + pairCode + "\",\"r\":" + r;
+  if (!first) body += ",\"m\":" + m;
+  body += "}";
   String resp;
   const unsigned long tPost = millis();
   const int code = httpCall("POST", "/api/sensor", &body, resp);
-  if (code == 200) g_lastLatMs = millis() - tPost;
-  if (code == 200) { logf("[SENSOR] mesure envoyée"); return true; }
-  if (code == 403) { logf("[SENSOR] refusé (403) : code d'appairage changé, capteur supprimé ou non appairé — nouvelle inscription"); registered = false; paired = false; return false; }
+  if (code == 200) {
+    g_lastLatMs = millis() - tPost;
+    if (resp.indexOf("\"stored\":true") >= 0) { logf("[SENSOR] %u lecture(s) envoyée(s) et stockée(s)", (unsigned)g_n); g_n = 0; g_posts++; return true; }
+    logf("[SENSOR] envoi refusé par l'anti-rafale du serveur (trop tôt après le précédent) : les %u lecture(s) restent en attente", (unsigned)g_n);
+    return false;
+  }
+  if (code == 403) { logf("[SENSOR] refusé (403) : code d'appairage changé, capteur supprimé ou non appairé — nouvelle inscription (lectures conservées)"); registered = false; paired = false; return false; }
   if (code == 404) logf("[SENSOR] 404 : la route /api/sensor n'existe pas sur ce serveur (site pas encore déployé avec le capteur ?)");
-  logf("[SENSOR] échec (%d) — nouvel essai dans 5 min", code);
+  logf("[SENSOR] échec (%d) — %u lecture(s) conservée(s), nouvel essai dans 5 min", code, (unsigned)g_n);
   return false;
 }
 
 // ─── SETUP / LOOP ──────────────────────────────────────────────────────────
-static unsigned long lastRegisterMs = 0, nextSensorDelayMs = 0, lastSensorMs = 0;
-static bool firstSensor = true;
+static unsigned long lastRegisterMs = 0, lastReadMs = 0, lastPostMs = 0, nextReadDelayMs = 0, nextPostDelayMs = 0;
+static bool firstRead = true, firstPost = true, g_everPaired = false;
 
 void setup() {
   Serial.begin(115200);
@@ -339,29 +383,38 @@ void setup() {
   logf("[WIFI] IP: %s", wifiIpString().c_str());
   while (!registered) { if (doRegister()) break; delay(5000); }
   lastRegisterMs = millis();
-  logf("[BOOT] prêt — une mesure toutes les %lu min", SENSOR_INTERVAL_MS / 60000UL);
+  logf("[BOOT] prêt — lecture toutes les %lu min, envoi toutes les %lu min", READ_INTERVAL_MS / 60000UL, POST_INTERVAL_MS / 60000UL);
 }
 
 void loop() {
-  const unsigned long now = millis();
+  if (paired) g_everPaired = true;
+  // LECTURES : indépendantes du réseau (elles continuent pendant une coupure Wi-Fi/Internet et s'accumulent dans le tampon)
+  if (g_everPaired && (firstRead || millis() - lastReadMs >= nextReadDelayMs)) {
+    const bool ok = takeReading();
+    firstRead = false;
+    lastReadMs = millis();
+    nextReadDelayMs = ok ? READ_INTERVAL_MS : SENSOR_RETRY_MS;
+  }
+
   if (wifiStatus() != WL_CONNECTED) { wifiBegin(); delay(5000); return; }
   if (!registered) { if (!doRegister()) { delay(5000); return; } lastRegisterMs = millis(); }
 
   if (!paired) {                                   // en attente d'appairage : on redemande toutes les minutes (5 inscriptions/min/IP au plus côté serveur)
-    if (now - lastRegisterMs >= 60000UL) {
+    if (millis() - lastRegisterMs >= 60000UL) {
       doRegister();
       lastRegisterMs = millis();
-      if (paired) { logf("[PAIR] appairé : première mesure"); firstSensor = true; }
+      if (paired) { logf("[PAIR] appairé : premier envoi"); firstPost = true; }
     }
     delay(250);
     return;
   }
 
-  if (firstSensor || now - lastSensorMs >= nextSensorDelayMs) {
-    firstSensor = false;
-    const bool ok = doSensor();
-    lastSensorMs = millis();
-    nextSensorDelayMs = ok ? SENSOR_INTERVAL_MS : SENSOR_RETRY_MS;
+  // ENVOI : toutes les heures, ou dès que le réseau est de retour après un échec (5 min)
+  if (g_n > 0 && (firstPost || millis() - lastPostMs >= nextPostDelayMs)) {
+    const bool ok = doPost();
+    firstPost = false;
+    lastPostMs = millis();
+    nextPostDelayMs = ok ? POST_INTERVAL_MS : SENSOR_RETRY_MS;
   }
   delay(1000);
 }

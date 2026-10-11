@@ -130,6 +130,8 @@ export interface OwnedDevice {
   lastFrameReceivedAt?: number;
   /** Grandeurs mesurées (capteurs) : permet à l'interface d'afficher « Mesures » sans deviner. */
   sensors?: MeasureKind[];
+  /** Dernière mesure reçue (renseignée par GET /api/devices pour les appareils qui mesurent : 1 LINDEX chacun). */
+  latest?: { t: number; v: Partial<Record<MeasureKind, number>> } | null;
 }
 
 // Unclaimed device (never paired to an artist) — short TTL, this is the
@@ -161,7 +163,7 @@ function linkCodeUsedKey(code: string)  { return `artist:link:used:${code.toUppe
 /** Écrans du device qui acceptent les dessins convertis (défaut : tous). */
 export function convertedScreensOf(d: Device): string[] {
   const list = d.acceptsConvertedScreens ?? d.screens;
-  return list.filter((sc) => d.screens.includes(sc));
+  return list.filter((sc) => d.screens.includes(sc) && sc !== "sensor");   // « sensor » est un pseudo-écran : jamais de conversion
 }
 
 function isOnline(d: Device): boolean {

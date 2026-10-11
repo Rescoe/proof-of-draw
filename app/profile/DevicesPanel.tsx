@@ -16,7 +16,7 @@ import { BENCH_SCREENS } from "@/lib/bench/screens";
 import { animCapable, ANIM_POINTER_FIRMWARE } from "@/lib/anim/pointer";
 import { InlineEdit } from "./InlineEdit";
 import { GiveDeviceModal } from "./GiveDeviceModal";
-import { SensorButton } from "./SensorPanel";
+import { SensorButton, SensorSummary } from "./SensorPanel";
 import { isSensorScreens, measureKindsOf } from "@/lib/measures";
 
 // ── Utilitaires ──────────────────────────────────────────────────────────────
@@ -484,8 +484,10 @@ function DeviceCard({ d, open, onToggle, onRenamed, profile, children }: {
         </div>
       </div>
 
+      {/* Carte SANS écran : les mesures remplacent les pastilles d'écran, la conversion et le compteur de frames */}
+      {isSensorScreens(d.screens) && <SensorSummary d={d} />}
       <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: "0.6rem" }}>
-        {d.screens.map((sid) => (
+        {!isSensorScreens(d.screens) && d.screens.map((sid) => (
           <span key={sid} style={pill} title={`${screenName(sid)} ${screenDims(sid)}`}>
             {screenName(sid)} <span style={{ color: "var(--text3)", fontFamily: "JetBrains Mono, monospace", fontSize: "0.64rem" }}>{screenDims(sid)}</span>
           </span>
@@ -497,7 +499,9 @@ function DeviceCard({ d, open, onToggle, onRenamed, profile, children }: {
       </div>
 
       <div style={{ fontSize: "0.72rem", color: "var(--text3)", marginTop: "0.5rem" }}>
-        {d.framesSent ?? 0} frame{(d.framesSent ?? 0) > 1 ? "s" : ""} · ping {timeSince(d.lastPing)} · enregistré {timeSince(d.createdAt)}
+        {isSensorScreens(d.screens)
+          ? <>{d.latest ? `dernière mesure ${timeSince(d.latest.t * 1000)}` : "aucune mesure reçue"} · enregistré {timeSince(d.createdAt)}</>
+          : <>{d.framesSent ?? 0} frame{(d.framesSent ?? 0) > 1 ? "s" : ""} · ping {timeSince(d.lastPing)} · enregistré {timeSince(d.createdAt)}</>}
       </div>
 
       {open && children}

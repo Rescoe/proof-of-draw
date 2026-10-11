@@ -53,7 +53,7 @@ export function MeasuresChart({ measures, kinds, showTable = false }: { measures
         <div style={{ overflowX: "auto" }}><table style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.8rem", marginTop: 8 }}>
           <thead><tr style={{ textAlign: "left", color: "var(--text3)" }}><th>Heure</th>{kinds.map((k) => <th key={k}>{MEASURE_KINDS[k].label}</th>)}</tr></thead>
           <tbody>
-            {measures.map((m) => (
+            {measures.filter((m) => kinds.some((k) => m.v[k] !== undefined)).map((m) => (
               <tr key={m.t} style={{ borderTop: "1px solid var(--border)" }}>
                 <td style={{ padding: "3px 0" }}>{fmtMeasureDate(m.t)}</td>
                 {kinds.map((k) => <td key={k}>{m.v[k] !== undefined ? formatMeasure(k, m.v[k] as number) : "—"}</td>)}

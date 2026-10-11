@@ -3,6 +3,8 @@
 // GET /api/devices?mine=1 → vue privée scoped à la session
 
 import { NextRequest, NextResponse } from "next/server";
+import { redis } from "@/lib/redis";
+import { MEASURE_ONLINE_MS, decodeMeasure, measKey } from "@/lib/measures";
 
 import { getAllDevices, getDevicesByIds, toPublicDevice, toOwnedDevice } from "@/lib/deviceStore";
 import { getSession } from "@/lib/session";
@@ -39,6 +41,23 @@ export async function GET(req: NextRequest) {
       )
         .filter(Boolean)
         .map((d) => toOwnedDevice(d!));
+
+      // Appareils qui MESURENT : dernière mesure (UN pipeline de LINDEX) ; « en ligne » = a mesuré récemment (leur fiche n'est réécrite que toutes les 12 h)
+      const measuring = owned.filter((d) => (d.sensors?.length ?? 0) > 0);
+      if (measuring.length > 0) {
+        const pl = redis.pipeline();
+        for (const d of measuring) pl.lindex(measKey(d.deviceId), 0);
+        const res = await pl.exec();
+        measuring.forEach((d, i) => {
+          const m = decodeMeasure(res[i]);
+          d.latest = m;
+          if (m) {
+            d.lastSeen = Math.max(d.lastSeen ?? 0, m.t * 1000);
+            d.lastPing = Math.max(d.lastPing ?? 0, m.t * 1000);
+            if ((d.screens ?? []).filter((s) => s !== "sensor").length === 0) d.isOnline = Date.now() - m.t * 1000 <= MEASURE_ONLINE_MS;
+          }
+        });
+      }
 
       return NextResponse.json(
         { devices: owned },

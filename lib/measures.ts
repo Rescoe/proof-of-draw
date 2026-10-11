@@ -27,11 +27,18 @@ export const MEASURE_KINDS: Record<MeasureKind, MeasureKindInfo> = {
   dl:   { label: "Débit descendant (test 4 Ko)", unit: "kbit/s", icon: "⬇", min: 0, max: 1000000, scale: 1, primary: false },
 };
 export const MEASURE_KIND_IDS = Object.keys(MEASURE_KINDS) as MeasureKind[];
+/** Groupes d'affichage : l'environnement (température, humidité) est SÉPARÉ de la qualité de la liaison (signal, latence, débit). */
+export const MEASURE_GROUPS: { id: "env" | "link"; label: string; kinds: MeasureKind[] }[] = [
+  { id: "env", label: "Température et humidité", kinds: ["temp", "hum"] },
+  { id: "link", label: "Connexion de la carte", kinds: ["rssi", "lat", "dl"] },
+];
+/** Grandeurs d'un groupe que l'appareil mesure réellement. */
+export const kindsOfGroup = (kinds: MeasureKind[], group: "env" | "link"): MeasureKind[] => kinds.filter((k) => MEASURE_GROUPS.find((g) => g.id === group)!.kinds.includes(k));
 export const isMeasureKind = (k: unknown): k is MeasureKind => typeof k === "string" && Object.prototype.hasOwnProperty.call(MEASURE_KINDS, k);
 
 // ── Cadence ──────────────────────────────────────────────────────────────────
-/** Intervalle minimal accepté en production : le firmware poste 1 mesure / 30 min (décision du 12/10/2026 : 48 points par jour pour suivre l'évolution de la température). */
-export const MEASURE_MIN_INTERVAL_SEC = 1500;
+/** Intervalle minimal entre deux ENVOIS en production : la carte lit la température toutes les 30 min (48 points/jour) mais n'ENVOIE qu'une fois par heure, deux lectures par envoi (décision du 12/10/2026 : même coût Redis qu'une mesure horaire). */
+export const MEASURE_MIN_INTERVAL_SEC = 3000;
 /** PHASE D'ESSAI (firmware à 1 mesure / 5 min) : intervalle minimal abaissé, avec EXTINCTION AUTOMATIQUE à cette date (règle « mode test » de CLAUDE.md). 16/10/2026 00:00 UTC. */
 export const MEASURE_TEST_UNTIL_MS = Date.UTC(2026, 9, 16);
 export const MEASURE_TEST_INTERVAL_SEC = 240;
@@ -43,8 +50,11 @@ export const MEASURE_KEEP = 48 * 31;
 /** Fenêtre d'historique maximale demandable à l'interface, en heures. */
 export const MEASURE_MAX_HOURS = 24 * 31;
 export const MEASURE_TTL_SEC = 40 * 24 * 3600;
-/** Un capteur est « en ligne » s'il a mesuré depuis moins de 90 min (trois cadences de 30 min). */
-export const MEASURE_ONLINE_MS = 90 * 60 * 1000;
+/** Un capteur est « en ligne » s'il a mesuré depuis moins de 2 h 30 (envoi horaire, dernière lecture jusqu'à 30 min avant l'envoi). */
+export const MEASURE_ONLINE_MS = 150 * 60 * 1000;
+/** Lectures par envoi (la carte les met en tampon, même pendant une coupure) et âge maximal d'une lecture à l'envoi. */
+export const MEASURE_BATCH_MAX = 16;
+export const MEASURE_MAX_AGE_SEC = 24 * 3600;
 /** Réécriture de la fiche appareil (TTL 90 j des appairés) : au plus toutes les 12 h. */
 export const MEASURE_PRESENCE_REFRESH_MS = 12 * 3600 * 1000;
 
@@ -95,6 +105,39 @@ export function parseMeasurePost(body: unknown): ParsedPost {
   }
   if (Object.keys(values).length === 0) return { ok: false, error: "au moins une grandeur requise" };
   return { ok: true, values };
+}
+
+export interface PostedReading { ageSec: number; values: MeasureValues }
+export type ParsedBatch = { ok: true; readings: PostedReading[] } | { ok: false; error: string };
+
+/** Corps d'un ENVOI (firmware r4dht22 >= 1.3) : `{ r: [{ a: 1800, temp: 211, hum: 719 }, { a: 0, … }], m: { rssi: -61, lat: 742, dl: 65 } }`.
+ *  r = lectures en tampon (a = âge en secondes au moment de l'envoi, 0..86400, 1..16 lectures) ; m = diagnostic de la liaison, rattaché à la lecture la PLUS RÉCENTE.
+ *  Les anciens corps `{ m: {…} }` / `{ c, h }` restent acceptés (une seule lecture, âge 0). */
+export function parseMeasureBatch(body: unknown): ParsedBatch {
+  if (!body || typeof body !== "object") return { ok: false, error: "corps invalide" };
+  const b = body as Record<string, unknown>;
+  if (b.r === undefined) {
+    const one = parseMeasurePost(body);
+    return one.ok ? { ok: true, readings: [{ ageSec: 0, values: one.values }] } : one;
+  }
+  if (!Array.isArray(b.r) || b.r.length < 1 || b.r.length > MEASURE_BATCH_MAX) return { ok: false, error: `r : 1 à ${MEASURE_BATCH_MAX} lectures requises` };
+  const readings: PostedReading[] = [];
+  for (const item of b.r) {
+    if (!item || typeof item !== "object" || Array.isArray(item)) return { ok: false, error: "lecture invalide" };
+    const { a, ...rest } = item as Record<string, unknown>;
+    if (!isInt(a) || a < 0 || a > MEASURE_MAX_AGE_SEC) return { ok: false, error: `a (âge en secondes, 0..${MEASURE_MAX_AGE_SEC}) invalide` };
+    const p = parseMeasurePost({ m: rest });
+    if (!p.ok) return p;
+    readings.push({ ageSec: a, values: p.values });
+  }
+  if (b.m !== undefined) {
+    const d = parseMeasurePost({ m: b.m });
+    if (!d.ok) return d;
+    let youngest = readings[0];
+    for (const r of readings) if (r.ageSec < youngest.ageSec) youngest = r;
+    youngest.values = { ...youngest.values, ...d.values };
+  }
+  return { ok: true, readings };
 }
 
 /** « t;temp=215;hum=456 » (≈ 25 o) — grandeurs triées. */

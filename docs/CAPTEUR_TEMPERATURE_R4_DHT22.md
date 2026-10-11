@@ -61,24 +61,30 @@ Chaque mesure embarque deux grandeurs de diagnostic, **dans la même entrée Red
 - **Débit : non mesuré** — il exigerait un transfert de test à chaque mesure (bande passante, commandes Redis, temps d'éveil) pour un bénéfice faible ; `lat` + `rssi` en donnent une image suffisante. À reprendre si besoin.
 - La carte doit se **ré-inscrire** (redémarrage après reflash) pour déclarer `rssi` et `lat` (`sensors` à `/api/register`) ; avant cela le serveur ignore ces deux champs.
 
-## Débit et cadence définitive (12/10/2026, firmware `r4dht22-1.2`)
+## Cadences : lecture 30 min, envoi 1 h, tampon (firmware `r4dht22-1.3`, 12/10/2026)
 
-- **Cadence : 1 mesure toutes les 30 min** (48 points/jour) ; le serveur refuse (sans écrire) toute mesure arrivée moins de **25 min** après la précédente (`MEASURE_MIN_INTERVAL_SEC = 1500`). Historique : 1 488 mesures = 31 jours. « En ligne » = mesure de moins de 90 min.
-- **Débit (`dl`, kbit/s)** : avant chaque mesure la carte télécharge `public/speedtest.bin` (4 096 o pseudo-aléatoires, fichier **statique servi par le CDN** : ni commande Redis, ni fonction serveur) et chronomètre la lecture du corps ; le résultat part dans le même POST. C'est le débit **effectif de bout en bout** (Internet + Wi-Fi + module + UART de la carte, lecture par blocs de 240 o du client borné), **pas la capacité de la box** : attendre quelques dizaines à centaines de kbit/s ; utile surtout pour comparer dans le temps. La mesure part même si le test échoue (`[DEBIT] test impossible`).
-- **Persistance « par-dessus »** : le diagnostic (`rssi`, `lat`, `dl`) vit DANS l'entrée de la mesure, donc **aucune commande Redis de plus** et aucune série dédiée ; il s'efface quand l'anneau de 31 jours fait le tour. Rien n'est conservé au-delà.
-- **Redis** : 8 commandes par mesure × 48 = **384/jour ≈ 11 500/mois** par capteur (≈ 6 % du plan de 200 k). Consommation du CDN : 4 Ko × 48 par jour.
-- Le client TLS du capteur est désormais `PodBoundedSSL` (copie de `pod_ssl_bounded.h`, validé sur carte) : lire 4 Ko avec le client du cœur reproduirait l'`abort()` de l'AUDIT5.
-- Limite : la première mesure après le flash n'a pas encore de `lat` (c'est celle du dernier envoi) ; `dl` est mesuré le même cycle.
+- **Température et humidité : LUES toutes les 30 min** (48 points/jour), **ENVOYÉES toutes les heures**, deux lectures par envoi. Le coût Redis d'un envoi est de 8 commandes **quel que soit le nombre de lectures** (un seul `LPUSH` à plusieurs valeurs) : **192 commandes/jour ≈ 5 800/mois** et par capteur (≈ 3 % du plan de 200 k) — au lieu de 11 500 pour un envoi à chaque lecture.
+- **Tampon** : les lectures restent en RAM (12 au plus = 6 h) tant que le serveur ne les a pas stockées (`"stored":true`) ; **une coupure Internet ne fait donc plus perdre de points** (les lectures continuent pendant la coupure et partent au retour du réseau). Chaque lecture porte son **âge** à l'envoi ; le serveur calcule l'heure (`t = maintenant − âge`). Une réinitialisation de la carte perd les lectures non envoyées.
+- **Connexion de la carte** (une fois par envoi, joint au même POST, rattaché à la lecture la plus récente) : `rssi` (signal, dBm : −50 excellent, −70 correct, −85 limite), `lat` (temps de réponse du DERNIER envoi, ms) et `dl` (**débit**, kbit/s). Le débit est le temps de lecture de `public/speedtest.bin` (4 096 o, **fichier statique du CDN** : aucune commande Redis, aucune fonction serveur), lu par blocs de 240 o par le client borné `PodBoundedSSL` : c'est le débit **effectif de bout en bout** (Internet + Wi-Fi + module + UART de la carte), pas la capacité de la box. `SPEED_EVERY_N_POSTS` règle sa fréquence (1 = chaque heure, 2 = toutes les 2 h).
+- **Pas de « temps réel »** : la valeur affichée est celle du dernier envoi (au plus 1 h + 30 min de retard). Un affichage vraiment instantané coûterait une requête de la carte à la demande (non prévu : la carte ne reçoit rien du serveur) ou un sondage serveur.
+- **Persistance « par-dessus »** : le diagnostic vit DANS l'entrée de la lecture : aucune commande de plus, aucune série dédiée, effacé quand l'anneau de 31 jours (1 488 entrées) fait le tour.
+- Serveur : envois espacés d'au moins **50 min** (`MEASURE_MIN_INTERVAL_SEC = 3000`) ; si l'anti-rafale refuse, la carte **garde** ses lectures et réessaie 5 min plus tard. « En ligne » = dernière lecture de moins de 2 h 30. Risque connu : si la réponse d'un envoi est perdue après stockage, les mêmes lectures peuvent être renvoyées (doublons rares, non filtrés pour ne pas ajouter de commande Redis).
+
+## Affichage (profil et vue réseau)
+
+- **Carte de l'appareil sans écran** : plus de pastille d'écran, de « Conversion », de compteur de frames ni de « ping » ; elle affiche **la dernière température/humidité**, la **ligne Connexion** (signal · latence · débit) et « dernière mesure il y a… ». Le point vert/rouge suit la dernière mesure (pas la fiche, réécrite seulement toutes les 12 h). Le résumé vient de `GET /api/devices` (1 `LINDEX` par capteur, un pipeline).
+- **« 📈 Historique »** : deux parties séparées — « 🌡 Température et humidité » et « 📶 Connexion de la carte » (courbe + tableau chacune), période 24 h / 7 j / 31 j.
+- **Panneau latéral du réseau** : mêmes deux parties (valeurs du snapshot, courbes 48 h à la demande).
 
 ## Cadence et PHASE D'ESSAI
 
-- Firmware : `SENSOR_INTERVAL_MS = 1800000UL` (**1 mesure / 30 min**, production ; l'essai à 5 min utilisait `300000UL`, puis 1 h brièvement).
-- Serveur : intervalle minimal **240 s** jusqu'au **16/10/2026 00:00 UTC**, puis **1 500 s** (25 min) automatiquement (`MEASURE_TEST_UNTIL_MS`, extinction de l'essai : règle « mode test » de CLAUDE.md). Le firmware est maintenant à 1 h : aucune action avant cette date.
+- Firmware : `READ_INTERVAL_MS = 1800000UL` (lecture) et `POST_INTERVAL_MS = 3600000UL` (envoi) ; l'essai à 5 min utilisait `300000UL`.
+- Serveur : intervalle minimal **240 s** jusqu'au **16/10/2026 00:00 UTC**, puis **3 000 s** (50 min) automatiquement (`MEASURE_TEST_UNTIL_MS`, extinction de l'essai : règle « mode test » de CLAUDE.md). Le firmware est maintenant à 1 h : aucune action avant cette date.
 - Pour prolonger l'essai : changer `MEASURE_TEST_UNTIL_MS` (une ligne) ; pour revenir à 1 h plus tôt : reflasher, et mettre la date à une valeur passée.
 
 ## Quota Redis (règle PRIMORDIALE)
 
-Par POST accepté : limite IP 2 + lecture appareil 1 + anti-rafale 1 + `LPUSH/LTRIM/EXPIRE/SADD` 4 = **8 commandes** (la fiche n'est réécrite que toutes les 12 h). **Production à 30 min : 384/jour ≈ 11 500/mois** et par capteur (≈ 6 % du plan mensuel de 200 k). L'essai à 5 min avait coûté ≈ 2 300/jour. Historique : 1 `LRANGE` (ouverture du panneau, ou clic « 48 h » ; les réponses publiques sont mises en cache 2 min côté CDN). Snapshot réseau : + 1 `SMEMBERS` et N `LINDEX` par reconstruction. Un redémarrage en boucle ne coûte qu'une commande utile (l'anti-rafale refuse le reste).
+Par POST accepté : limite IP 2 + lecture appareil 1 + anti-rafale 1 + `LPUSH/LTRIM/EXPIRE/SADD` 4 = **8 commandes** (la fiche n'est réécrite que toutes les 12 h). **Production (envoi horaire de 2 lectures) : 192/jour ≈ 5 800/mois** et par capteur (≈ 3 % du plan mensuel de 200 k). Le profil lit en plus 1 `LINDEX` par capteur à chaque chargement de la liste. L'essai à 5 min avait coûté ≈ 2 300/jour. Historique : 1 `LRANGE` (ouverture du panneau, ou clic « 48 h » ; les réponses publiques sont mises en cache 2 min côté CDN). Snapshot réseau : + 1 `SMEMBERS` et N `LINDEX` par reconstruction. Un redémarrage en boucle ne coûte qu'une commande utile (l'anti-rafale refuse le reste).
 
 ## Garde-fous (tests : `tests/sensor.test.ts`)
 

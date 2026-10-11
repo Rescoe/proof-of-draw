@@ -5,7 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import {
   MEASURE_KEEP, MEASURE_MAX_HOURS, MEASURE_MIN_INTERVAL_SEC, MEASURE_TEST_INTERVAL_SEC, MEASURE_TEST_UNTIL_MS, clampHours, decodeMeasure, decodeMeasures, encodeMeasure, formatMeasure, isSensorScreens,
-  measureKindsOf, measureMinIntervalSec, parseDeclaredSensors, parseMeasurePost, primaryKinds, summarize,
+  kindsOfGroup, measureKindsOf, measureMinIntervalSec, parseDeclaredSensors, parseMeasureBatch, parseMeasurePost, primaryKinds, summarize,
 } from "../lib/measures";
 import { assembleNetworkSnapshot, toNetworkDevice, type DeviceRecord } from "../lib/networkSnapshot";
 import { describeChoice, findCompiler, runProcess } from "./helpers/cppHarness";
@@ -56,7 +56,7 @@ test("summarize par grandeur, formats, bornes d'historique", () => {
 test("CADENCE : l'essai à 5 min s'éteint tout seul le 16/10/2026 00:00 UTC", () => {
   assert.equal(measureMinIntervalSec(MEASURE_TEST_UNTIL_MS - 1), MEASURE_TEST_INTERVAL_SEC);
   assert.equal(measureMinIntervalSec(MEASURE_TEST_UNTIL_MS), MEASURE_MIN_INTERVAL_SEC);
-  assert.equal(MEASURE_TEST_INTERVAL_SEC, 240); assert.equal(MEASURE_MIN_INTERVAL_SEC, 1500);   // 30 min de cadence, refus sous 25 min
+  assert.equal(MEASURE_TEST_INTERVAL_SEC, 240); assert.equal(MEASURE_MIN_INTERVAL_SEC, 3000);   // envoi horaire, refus sous 50 min
   assert.equal(new Date(MEASURE_TEST_UNTIL_MS).toISOString(), "2026-10-16T00:00:00.000Z");
 });
 
@@ -134,11 +134,12 @@ test("FIRMWARE capteur : copies identiques des fichiers partagés, aucun canari,
   const ino = read(`${D}/pod_uno_r4_dht22.ino`);
   assert.doesNotMatch(ino, /POD_CANARY|POD_RENDER_V1|podCanary|POD_FF|Ed25519|EEPROM|set_new_handler|operator\s+new/);
   assert.match(ino, /#define SCREEN_TYPE\s+"sensor"/);
-  assert.match(ino, /#define SENSOR_INTERVAL_MS\s+1800000UL/);   // PRODUCTION : 1 mesure / 30 min (serveur : refus sous 25 min)
+  assert.match(ino, /#define READ_INTERVAL_MS\s+1800000UL/);   // lecture toutes les 30 min
+  assert.match(ino, /#define POST_INTERVAL_MS\s+3600000UL/);   // envoi toutes les heures (serveur : refus sous 50 min)
   assert.match(ino, /sensors\\":\[\\"temp\\",\\"hum\\",\\"rssi\\",\\"lat\\",\\"dl\\"\]/);
   assert.match(ino, /wifiRssi\(rssi\)/);
-  assert.match(ino, /\{\\"temp\\":"/);
-  assert.match(ino, /\\"m\\":" \+ m \+ "\}"/);
+  assert.match(ino, /\\"r\\":" \+ r/);
+  assert.match(ino, /\\"a\\":" \+ String\(\(unsigned\)ageS\)/);
   assert.match(ino, /httpCall\("POST", "\/api\/sensor"/);
   assert.ok(!fs.existsSync(path.join(root, D, "secrets.h")), "aucun secrets.h dans le dépôt");
   // tout appel au module Wi-Fi passe par les enveloppes, toute transaction TLS par podNetRun
@@ -227,4 +228,44 @@ test("DÉBIT : grandeur dl (kbit/s), fichier statique de 4 Ko servi par le CDN, 
   assert.match(ino, /if \(dl > 0 && dl <= 1000000UL\)/);
   assert.match(read("lib/measures.ts"), /aucune commande Redis, aucune fonction serveur/);
   assert.doesNotMatch(read("app/api/sensor/route.ts"), /speedtest/, "le fichier est statique : la route n'est pas concernée");
+});
+
+test("ENVOI GROUPÉ : lectures en tampon avec âge, un seul LPUSH pour tout le lot, diagnostic rattaché à la plus récente", () => {
+  // corps du firmware r4dht22-1.3
+  const b = parseMeasureBatch({ r: [{ a: 1800, temp: 211, hum: 719 }, { a: 0, temp: 205, hum: 725 }], m: { rssi: -61, lat: 742, dl: 65 } });
+  assert.ok(b.ok); if (!b.ok) return;
+  assert.equal(b.readings.length, 2);
+  assert.deepEqual(b.readings[0], { ageSec: 1800, values: { temp: 211, hum: 719 } });
+  assert.deepEqual(b.readings[1], { ageSec: 0, values: { temp: 205, hum: 725, rssi: -61, lat: 742, dl: 65 } }, "le diagnostic va sur la lecture la plus RÉCENTE");
+  // anciens corps : une seule lecture d'âge 0
+  assert.deepEqual(parseMeasureBatch({ m: { temp: 200 } }), { ok: true, readings: [{ ageSec: 0, values: { temp: 200 } }] });
+  assert.deepEqual(parseMeasureBatch({ c: 215, h: 456 }), { ok: true, readings: [{ ageSec: 0, values: { temp: 215, hum: 456 } }] });
+  for (const bad of [{ r: [] }, { r: "x" }, { r: [{ a: -1, temp: 1 }] }, { r: [{ a: 86401, temp: 1 }] }, { r: [{ a: 1.5, temp: 1 }] }, { r: [{ temp: 1 }] }, { r: [{ a: 0 }] }, { r: [{ a: 0, temp: 9999 }] }, { r: [{ a: 0, temp: 1 }], m: { rssi: 3 } }, { r: Array.from({ length: 17 }, () => ({ a: 0, temp: 1 })) }])
+    assert.equal(parseMeasureBatch(bad).ok, false, JSON.stringify(bad).slice(0, 60));
+  assert.equal(parseMeasureBatch({ r: Array.from({ length: 16 }, (_, i) => ({ a: i * 100, temp: 1 })) }).ok, true);
+  const r = read("app/api/sensor/route.ts");
+  assert.match(r, /\.lpush\(key, \.\.\.stored\.map\(encodeMeasure\)\)/, "un seul LPUSH, N valeurs");
+  assert.match(r, /\.sort\(\(a, b\) => a\.t - b\.t\)/, "ordre chronologique : la plus récente en tête de liste");
+  assert.match(r, /t: nowS - r\.ageSec/);
+  // firmware : tampon de 12 lectures, ré-essai sans perte, lecture indépendante du réseau
+  const ino = read("arduino_uno_r4/pod_uno_r4_dht22/pod_uno_r4_dht22.ino");
+  assert.match(ino, /#define RING_MAX 12/); assert.match(ino, /resp\.indexOf\("\\"stored\\":true"\) >= 0/);
+  assert.ok(ino.indexOf("takeReading();") < ino.indexOf("wifiStatus() != WL_CONNECTED) { wifiBegin()"), "la lecture précède le test du Wi-Fi : elle continue pendant une coupure");
+  assert.match(ino, /g_n = 0; g_posts\+\+; return true;/);
+});
+
+test("PROFIL : une carte sans écran affiche ses mesures (pas de conversion, de frames ni de ping) ; température et connexion sont deux parties", () => {
+  const d = read("app/profile/DevicesPanel.tsx");
+  assert.match(d, /\{isSensorScreens\(d\.screens\) && <SensorSummary d=\{d\} \/>\}/);
+  assert.match(d, /\{!isSensorScreens\(d\.screens\) && d\.screens\.map/);
+  assert.match(d, /dernière mesure \$\{timeSince\(d\.latest\.t \* 1000\)\}/);
+  assert.match(read("lib/deviceStore.ts"), /sc !== "sensor"\);   \/\/ « sensor » est un pseudo-écran/);
+  const api = read("app/api/devices/route.ts");
+  assert.match(api, /pl\.lindex\(measKey\(d\.deviceId\), 0\)/); assert.match(api, /d\.isOnline = Date\.now\(\) - m\.t \* 1000 <= MEASURE_ONLINE_MS/);
+  const sp = read("app/profile/SensorPanel.tsx");
+  assert.match(sp, /MEASURE_GROUPS\.map/); assert.match(sp, /kindsOfGroup\(kinds, g\.id\)/);
+  assert.match(read("app/network/SidePanel.tsx"), /MEASURE_GROUPS\.map/);
+  assert.deepEqual(kindsOfGroup(["temp", "hum", "rssi", "lat", "dl"], "env"), ["temp", "hum"]);
+  assert.deepEqual(kindsOfGroup(["temp", "hum", "rssi", "lat", "dl"], "link"), ["rssi", "lat", "dl"]);
+  assert.deepEqual(kindsOfGroup(["temp", "hum"], "link"), []);
 });
