@@ -259,7 +259,7 @@ function DeviceCard({ device }: { device: ArtistDevice }) {
               border: "1px solid var(--border)", background: "var(--bg)",
               fontSize: "0.73rem", color: "var(--text2)",
             }}>
-              {profile?.name ?? sid}
+              {profile?.name ?? (sid === "sensor" ? "Capteur" : sid)}
               {profile && (
                 <div style={{ display: "flex", gap: 2 }}>
                   {profile.colors.map((c: string) => (

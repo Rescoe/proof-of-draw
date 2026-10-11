@@ -2,6 +2,7 @@
 
 import { useMemo, useRef, useState, useCallback, useEffect } from "react";
 import type { NetworkSnapshot, NetworkDevice } from "@/lib/networkSnapshot";
+import { formatMeasure } from "@/lib/measures";
 
 type Props = {
   snapshot: NetworkSnapshot;
@@ -23,6 +24,13 @@ const SCREEN_COLOR: Record<string, string> = {
   tft18:     "#fbbf24",
   tft28:     "#2dd4bf",   // turquoise : TFT 2.8" tactile (distinct du TFT 1.8" jaune)
 };
+/** « 21,1 °C · 72 % » : dernière mesure d'un capteur (vue réseau). */
+function measureLine(m: NonNullable<NetworkDevice["measures"]>): string {
+  const l = m.latest;
+  if (!l) return "";
+  return m.kinds.filter((k) => l.v[k] !== undefined).map((k) => formatMeasure(k, l.v[k] as number)).join(" · ");
+}
+
 function screenColor(s: string) { return SCREEN_COLOR[s] ?? "#a2a3bb"; }
 
 const PARTICLE_COUNT = 3; // particules par lien
@@ -580,7 +588,7 @@ export function NetworkStage({ snapshot, onDeviceSelect, selectedDeviceId, onSer
                 />
                 <text x="0" y="-8" textAnchor="middle" fontSize="8"
                       fill={online ? "var(--accent)" : "var(--text3)"}
-                      fontFamily="monospace" fontWeight="700">ESP</text>
+                      fontFamily="monospace" fontWeight="700">{node.device.measures ? "CAPTEUR" : "ESP"}</text>
                 <text x="0" y="3" textAnchor="middle" fontSize="10"
                       fill="var(--text)" fontFamily="monospace" fontWeight="700">
                   {(() => {
@@ -593,7 +601,9 @@ export function NetworkStage({ snapshot, onDeviceSelect, selectedDeviceId, onSer
                 {labelMaxLen > 6 && (
                   <text x="0" y="16" textAnchor="middle" fontSize="8"
                         fill="var(--text2)" fontFamily="monospace">
-                    {node.device.screens.length} écran{node.device.screens.length > 1 ? "s" : ""}
+                    {node.device.measures
+                      ? (node.device.measures.latest ? measureLine(node.device.measures) : "en attente")
+                      : <>{node.device.screens.length} écran{node.device.screens.length > 1 ? "s" : ""}</>}
                   </text>
                 )}
                 <circle cx="22" cy="-22" r="6"

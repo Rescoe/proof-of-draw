@@ -43,6 +43,15 @@ export default function DrawCanvasPage() {
   const deviceId = String(Array.isArray(rawDevice) ? rawDevice[0] : rawDevice ?? "").trim();
   const screenParam = String(Array.isArray(rawScreen) ? rawScreen[0] : rawScreen ?? "");
 
+  if (screenParam === "sensor") {
+    return (
+      <div style={{ maxWidth: 480, margin: "80px auto", padding: 24, textAlign: "center" }}>
+        <h1 style={{ fontSize: 22 }}>Capteur sans écran</h1>
+        <p style={{ color: "var(--text2)" }}>Cet appareil mesure (température, humidité…) mais n&apos;affiche rien : il n&apos;y a pas de dessin à envoyer. Ses mesures sont dans « 🌡 Mesures » sur sa carte, dans Mon profil.</p>
+        <Link href="/profile" style={{ color: "var(--accent)", fontWeight: 600 }}>← Retour à mon profil</Link>
+      </div>
+    );
+  }
   if (!isValidScreenId(screenParam)) {
     return (
       <div style={{ maxWidth: 480, margin: "80px auto", padding: 24, textAlign: "center" }}>

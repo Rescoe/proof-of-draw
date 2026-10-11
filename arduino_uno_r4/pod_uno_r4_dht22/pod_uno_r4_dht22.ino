@@ -1,5 +1,5 @@
 // pod_uno_r4_dht22.ino
-// Proof-of-Draw — capteur de TEMPÉRATURE : UNO R4 WiFi + DHT22 (AM2302). Une mesure par heure vers /api/sensor, historique heure par heure dans « Mon profil » (🌡 Températures).
+// Proof-of-Draw — capteur de TEMPÉRATURE + HUMIDITÉ : UNO R4 WiFi + DHT22 (AM2302). Mesures vers /api/sensor (essai : 1 / 5 min ; production : 1 / heure), historique dans « Mon profil » (🌡 Mesures) et dans la vue réseau.
 //
 // ⚠ COMPILÉ NULLE PART À CE JOUR (écrit dans une session cloud sans chaîne ARM) et JAMAIS ESSAYÉ SUR LA CARTE. Le réseau (pile TLS dédiée, pile Wi-Fi dédiée, pile de travail JSON, journal) est la copie
 // des blocs VALIDÉS sur carte du firmware e-ink 2,9″ (canaris 09–10/10/2026), canari retiré. Le seul code neuf : dht22.h (décodage testé sur l'hôte) et doSensor().
@@ -33,9 +33,11 @@
 
 #define SERVER_HOST         "proof-of-draw.vercel.app"
 #define SCREEN_TYPE         "sensor"               // pas un écran : voir lib/sensorData.ts
-#define FIRMWARE_VERSION    "r4dht22-1.0"
+#define FIRMWARE_VERSION    "r4dht22-1.1"
 #define DHT_PIN             2                      // D2
-#define SENSOR_INTERVAL_MS  3600000UL              // 1 mesure par heure
+// ⚠ PHASE D'ESSAI : 1 mesure / 5 min. PRODUCTION : 3600000UL (1 / heure). Le serveur n'accepte l'intervalle court que jusqu'au 16/10/2026 00:00 UTC (lib/measures.ts : extinction automatique),
+// puis refuse (sans écrire) toute mesure < 50 min après la précédente : reflasher à 3600000UL AVANT cette date.
+#define SENSOR_INTERVAL_MS  300000UL               // essai : 5 min
 #define SENSOR_RETRY_MS     300000UL               // après un échec (lecture ou réseau) : nouvel essai dans 5 min
 #define HTTP_TIMEOUT_MS     20000UL
 
@@ -250,7 +252,7 @@ static bool __attribute__((noinline)) doRegisterDecode(const String& resp) {
 static bool doRegister() {
   const String mac = macString();
   if (mac.length() == 0) { logf("[REGISTER] adresse MAC indisponible (module Wi-Fi, pile dédiée) : inscription ANNULÉE"); return false; }
-  const String body = "{\"mac\":\"" + mac + "\",\"screens\":[\"" SCREEN_TYPE "\"],\"firmware\":\"" FIRMWARE_VERSION "\"}";
+  const String body = "{\"mac\":\"" + mac + "\",\"screens\":[\"" SCREEN_TYPE "\"],\"firmware\":\"" FIRMWARE_VERSION "\",\"sensors\":[\"temp\",\"hum\"]}";   // grandeurs mesurées (lib/measures.ts)
   String resp;
   if (httpCall("POST", "/api/register", &body, resp) != 200) { logf("[REGISTER] échec — nouvel essai dans 5 s"); return false; }
   if (!doRegisterDecode(resp)) return false;
@@ -265,11 +267,12 @@ static bool doSensor() {
   int16_t c10 = 0; uint16_t h10 = 0;
   if (!dht22Read(DHT_PIN, c10, h10)) { logf("[DHT22] lecture impossible (câblage D2 ? résistance de rappel ?) — nouvel essai dans 5 min"); return false; }
   logf("[DHT22] %d.%d C, %u.%u %%", (int)(c10 / 10), (int)(c10 < 0 ? -(c10 % 10) : c10 % 10), (unsigned)(h10 / 10), (unsigned)(h10 % 10));
-  const String body = "{\"deviceId\":\"" + deviceId + "\",\"pairCode\":\"" + pairCode + "\",\"c\":" + String((int)c10) + ",\"h\":" + String((unsigned)h10) + "}";
+  const String body = "{\"deviceId\":\"" + deviceId + "\",\"pairCode\":\"" + pairCode + "\",\"m\":{\"temp\":" + String((int)c10) + ",\"hum\":" + String((unsigned)h10) + "}}";
   String resp;
   const int code = httpCall("POST", "/api/sensor", &body, resp);
   if (code == 200) { logf("[SENSOR] mesure envoyée"); return true; }
-  if (code == 403 || code == 404) { logf("[SENSOR] refusé (%d) : code d'appairage changé ou capteur supprimé — nouvelle inscription", code); registered = false; paired = false; return false; }
+  if (code == 403) { logf("[SENSOR] refusé (403) : code d'appairage changé, capteur supprimé ou non appairé — nouvelle inscription"); registered = false; paired = false; return false; }
+  if (code == 404) logf("[SENSOR] 404 : la route /api/sensor n'existe pas sur ce serveur (site pas encore déployé avec le capteur ?)");
   logf("[SENSOR] échec (%d) — nouvel essai dans 5 min", code);
   return false;
 }
@@ -294,7 +297,7 @@ void setup() {
   logf("[WIFI] IP: %s", wifiIpString().c_str());
   while (!registered) { if (doRegister()) break; delay(5000); }
   lastRegisterMs = millis();
-  logf("[BOOT] prêt — une mesure par heure");
+  logf("[BOOT] prêt — une mesure toutes les %lu min", SENSOR_INTERVAL_MS / 60000UL);
 }
 
 void loop() {

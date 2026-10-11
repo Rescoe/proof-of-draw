@@ -7,7 +7,7 @@ import { redis } from "@/lib/redis";
 import { decrementDeviceCount, incrementDeviceCount } from "@/lib/rateLimit";
 import type { SceneCapability } from "@/lib/scene/spec";
 import { generateLinkCode, type LinkCodeStatus } from "@/lib/linkCode";
-import { isSensorScreens } from "@/lib/sensorData";
+import { isSensorScreens, measureKindsOf, type MeasureKind } from "@/lib/measures";
 
 export interface Device {
   deviceId:   string;
@@ -44,6 +44,9 @@ export interface Device {
   // (contrat ANA↔PoD note 37 §6). ABSENT = pas de scene-v1 → l'appareil reçoit toujours une frame fixe.
   // Ne s'applique qu'à l'écran oled096 / tft18 du device ; les e-ink ne reçoivent jamais de scène.
   sceneCapability?: SceneCapability;
+
+  // ── Mesures : grandeurs que cette carte mesure (capteurs). ABSENT = aucune, sauf pour le pseudo-écran historique « sensor » (temp + hum) — toujours lire via measureKindsOf().
+  sensors?: MeasureKind[];
 }
 
 // ─── ArtistProfile ────────────────────────────────────────────────────────────
@@ -125,6 +128,8 @@ export interface OwnedDevice {
   acceptsAnaArt?: boolean;
   acceptsConvertedScreens?: string[];
   lastFrameReceivedAt?: number;
+  /** Grandeurs mesurées (capteurs) : permet à l'interface d'afficher « Mesures » sans deviner. */
+  sensors?: MeasureKind[];
 }
 
 // Unclaimed device (never paired to an artist) — short TTL, this is the
@@ -201,6 +206,7 @@ export function toOwnedDevice(d: Device): OwnedDevice {
     acceptsAnaArt:      d.acceptsAnaArt ?? false,
     acceptsConvertedScreens: convertedScreensOf(d),
     lastFrameReceivedAt: d.lastFrameReceivedAt,
+    ...(measureKindsOf(d).length > 0 ? { sensors: measureKindsOf(d) } : {}),
   };
 }
 
@@ -258,7 +264,8 @@ export async function registerDevice(
   mac: string,
   screens: string[],
   firmware: string,
-  sceneCapability?: SceneCapability
+  sceneCapability?: SceneCapability,
+  sensors?: MeasureKind[]
 ): Promise<{ device: Device; isNew: boolean }> {
   const existing = await getDeviceByMac(mac);
   const knownId  = existing ? null : await redis.get<string>(macKey(mac));
@@ -267,6 +274,7 @@ export async function registerDevice(
     existing.firmware = firmware;
     existing.screens  = screens;
     existing.sceneCapability = sceneCapability;   // absent = firmware sans scene-v1 (efface une déclaration périmée)
+    if (sensors) existing.sensors = sensors; else delete existing.sensors;   // grandeurs mesurées : déclaration du firmware courant
     existing.lastSeen = Date.now();
     await saveDevice(existing);
     // S'assurer que l'index global contient bien ce device (idempotent) — JAMAIS un capteur : il gonflerait le quorum de validation (getGlobalActiveCount / getPoolSnapshot)
@@ -287,6 +295,7 @@ export async function registerDevice(
     screens,
     firmware,
     ...(sceneCapability ? { sceneCapability } : {}),
+    ...(sensors ? { sensors } : {}),
     pairCode:   generatePairCode(),
     lastSeen:   Date.now(),
     lastPing:   Date.now(),
@@ -410,6 +419,7 @@ export async function getGlobalActiveCount(activeWindowMs = ACTIVE_WINDOW_MS): P
       // indéfiniment le minage.
       const isPaired  = !!(d.artistId || d.artistName);
       const isActive  = now - d.lastPing < activeWindowMs;
+      if (isSensorScreens(d.screens)) return null;   // un capteur seul ne vote pas (entrée héritée d'avant le correctif du 12/10/2026)
       return (isPaired && isActive) ? d : null;
     } catch {
       return null;
@@ -436,7 +446,7 @@ export async function getPoolSnapshot(activeWindowMs = ACTIVE_WINDOW_MS): Promis
   const devices: Device[] = [];
   for (const raw of values) {
     if (!raw) continue;
-    try { devices.push(typeof raw === "string" ? JSON.parse(raw) : (raw as Device)); } catch { /* entrée illisible : ignorée */ }
+    try { const d = typeof raw === "string" ? JSON.parse(raw) : (raw as Device); if (!isSensorScreens(d.screens)) devices.push(d); } catch { /* entrée illisible : ignorée */ }   // un capteur seul n'est jamais un validateur
   }
   const legacy = devices.filter((d) => !!(d.artistId || d.artistName) && now - d.lastPing < activeWindowMs).length;
   return { devices, legacyCount: Math.max(1, legacy) };

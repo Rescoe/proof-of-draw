@@ -4,6 +4,8 @@ import { useEffect, useRef, useState } from "react";
 import type { NetworkDevice, NetworkPreview } from "@/lib/networkSnapshot";
 import { eink29bwrToCanvas, eink27bwToCanvas, oled096ToCanvas } from "@/lib/screenToCanvas";
 import { DeviceShownNow, type DisplaysMap } from "./LiveDisplays";
+import { MEASURE_KINDS, formatMeasure, type Measure } from "@/lib/measures";
+import { MeasuresChart } from "../MeasuresChart";
 
 // ─── Types locaux (évite d'importer des modules serveur) ─────────────────────
 
@@ -216,6 +218,8 @@ export function SidePanel({
       setActivity(null);
       return;
     }
+    // Capteur sans écran : ni dernier bloc ni activité on-chain (2 lectures Redis évitées à chaque clic)
+    if (device.measures && device.screens.length === 0) { setLoadingBlock(false); setLoadingActivity(false); setLastBlock(null); setLastImage(null); setActivity(null); return; }
     setLoadingBlock(true);
     setLastBlock(null);
     setLastImage(null);
@@ -299,6 +303,7 @@ export function SidePanel({
       {/* ── Aperçu : écrans connectés + métriques ── */}
       {tab === "apercu" && (
         <>
+          {device.measures && <DeviceMeasuresSection key={device.deviceId} device={device} />}   {/* key : l'historique chargé ne survit pas au changement d'appareil */}
           <DeviceShownNow device={device} displays={displays} />
           <div className="nv2-panel__section">
             <div className="nv2-panel__section-label">Écrans connectés</div>
@@ -684,6 +689,42 @@ function EspDeviceLog({
           </div>
         ))}
       </div>
+    </div>
+  );
+}
+
+
+// ── Mesures d'un capteur (public) : dernière valeur du snapshot + historique 48 h chargé à la demande (1 LRANGE, mis en cache par le CDN) ──
+function DeviceMeasuresSection({ device }: { device: NetworkDevice }) {
+  const m = device.measures!;
+  const [history, setHistory] = useState<Measure[] | null>(null);
+  const [state, setState] = useState<"idle" | "loading" | "error">("idle");
+  const load = () => {
+    setState("loading");
+    fetch(`/api/sensor?deviceId=${encodeURIComponent(device.deviceId)}&public=1`)
+      .then(async (r) => { if (!r.ok) throw new Error(); const j = await r.json(); setHistory(j.measures as Measure[]); setState("idle"); })
+      .catch(() => setState("error"));
+  };
+  const last = m.latest;
+  return (
+    <div className="nv2-panel__section">
+      <div className="nv2-panel__section-label">Mesures</div>
+      {!last && <p className="nv2-muted nv2-small">Aucune mesure reçue pour l&apos;instant.</p>}
+      {last && (
+        <div className="nv2-metrics-grid">
+          {m.kinds.filter((k) => last.v[k] !== undefined).map((k) => (
+            <div key={k} className="nv2-metric"><span>{MEASURE_KINDS[k].icon} {MEASURE_KINDS[k].label}</span><strong>{formatMeasure(k, last.v[k] as number)}</strong></div>
+          ))}
+          <div className="nv2-metric"><span>Mesuré</span><strong>{formatRelativeTime(last.t * 1000)}</strong></div>
+        </div>
+      )}
+      {last && !history && (
+        <button type="button" className="nv2-tab" onClick={load} disabled={state === "loading"} style={{ marginTop: 8 }}>
+          {state === "loading" ? "Chargement…" : "Voir les dernières 48 h"}
+        </button>
+      )}
+      {state === "error" && <p className="nv2-muted nv2-small">Historique indisponible.</p>}
+      {history && history.length > 0 && <MeasuresChart measures={history} kinds={m.kinds} />}
     </div>
   );
 }

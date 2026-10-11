@@ -1,6 +1,6 @@
 // app/api/onboard/route.ts
 import { NextRequest, NextResponse } from "next/server";
-import { isSensorScreens } from "@/lib/sensorData";
+import { isSensorScreens } from "@/lib/measures";
 import { getArtist, getDeviceByMac, getDeviceByPairCode, setArtistName } from "@/lib/deviceStore";
 import { getSession, setSession } from "@/lib/session";
 import { ensureSessionProfile, resolveSessionArtist } from "@/lib/artistDirectory";

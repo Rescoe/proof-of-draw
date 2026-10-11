@@ -11,7 +11,7 @@ import {
 } from "@/lib/rateLimit";
 import { redis } from "@/lib/redis";
 import { parseSceneCapability } from "@/lib/scene/delivery";
-import { isSensorScreens } from "@/lib/sensorData";
+import { isSensorScreens, measureKindsOf, parseDeclaredSensors, MEASURE_INDEX_KEY } from "@/lib/measures";
 
 // TTL du Set de pool = durée de vie max d'un device inactif
 // Si un device ne se re-register pas pendant 48h son entrée device: expire,
@@ -45,7 +45,7 @@ export async function POST(req: NextRequest) {
     // 3. Device cap — vérifié seulement pour les nouveaux devices
     const capReached = await isDeviceCapReached();
     // scene-v1 : déclaration facultative (firmware OLED/TFT compatibles) ; toute valeur invalide = pas de scene-v1.
-    const { device, isNew } = await registerDevice(macNorm, screens, firmware ?? "unknown", parseSceneCapability(body.sceneCapability));
+    const { device, isNew } = await registerDevice(macNorm, screens, firmware ?? "unknown", parseSceneCapability(body.sceneCapability), parseDeclaredSensors(body.sensors));
 
     if (isNew && capReached) {
       return NextResponse.json(
@@ -82,6 +82,11 @@ export async function POST(req: NextRequest) {
     // Un capteur (screens = ["sensor"]) n'est pas un écran : aucune pool, aucun SADD (ni devices:all, voir registerDevice), aucune invalidation de la vue réseau.
     const sensor = isSensorScreens(screens);
     if (sensor) { removedScreens.length = 0; addedScreens.length = 0; unchangedScreens.length = 0; }
+    // Nettoyage des entrées créées AVANT ce correctif (la R4 DHT22 s'était inscrite dans pool:screen:sensor et devices:all) : 2 SREM, capteurs seulement.
+    const cleanup: Promise<unknown>[] = sensor ? [redis.srem("pool:screen:sensor", device.deviceId), redis.srem("devices:all", device.deviceId)] : [];
+    // Index des appareils qui mesurent (lu par la vue réseau) : SADD idempotent, seulement pour ceux qui déclarent des grandeurs.
+    if (measureKindsOf(device).length > 0) cleanup.push(redis.sadd(MEASURE_INDEX_KEY, device.deviceId));
+    await Promise.all(cleanup).catch(() => {});
 
     for (const screenId of removedScreens) {
       poolOps.push(redis.srem(`pool:screen:${screenId}`, device.deviceId));

@@ -1,5 +1,6 @@
 import type { NetworkDevice } from "@/lib/networkSnapshot";
 import { HARDWARE_COLOR, type LayoutNode } from "../../model";
+import { formatMeasure } from "@/lib/measures";
 
 type Props = {
   node: LayoutNode;
@@ -14,7 +15,10 @@ type Props = {
 };
 
 export function DeviceNode({ node, device, selected, hitRadius, detailed, active, scale = 1, onSelect, onFocus }: Props) {
-  const icon = device.hardware === "uno-r4" ? "R4" : device.hardware === "esp8266" ? "ESP" : "?";
+  const icon = device.measures && device.screens.length === 0 ? "🌡" : device.hardware === "uno-r4" ? "R4" : device.hardware === "esp8266" ? "ESP" : "?";
+  // Capteur : dernière mesure sous le nœud (vue Constellation) — lue dans le snapshot, aucune requête
+  const latest = device.measures?.latest;
+  const reading = latest ? device.measures!.kinds.filter((k) => latest.v[k] !== undefined).map((k) => formatMeasure(k, latest.v[k] as number)).join(" · ") : "";
   return (
     <g className={`ng-node ng-device${selected ? " is-selected" : ""}${device.isOnline ? " is-online" : " is-offline"}${active ? " is-active" : ""}`}
       transform={`translate(${node.x} ${node.y}) scale(${scale})`} role="button" tabIndex={0} aria-label={`Appareil ${device.publicId}, ${device.isOnline ? "en ligne" : "hors ligne"}`}
@@ -26,6 +30,7 @@ export function DeviceNode({ node, device, selected, hitRadius, detailed, active
       <text className="ng-device__icon" textAnchor="middle" y={4}>{icon}</text>
       <circle className="ng-device__status" cx={node.radius * 0.68} cy={-node.radius * 0.68} r={5} />
       {detailed && <text className="ng-device__label" textAnchor="middle" y={node.radius + 17}>{device.publicId.slice(0, 11)}</text>}
+      {reading && <text className="ng-device__label" textAnchor="middle" y={node.radius + (detailed ? 31 : 17)} style={{ fontWeight: 700 }}>{reading}</text>}
     </g>
   );
 }

@@ -10,6 +10,7 @@ import { readShownRecords, type DisplayKV } from "@/lib/displayState";
 import { animCapable } from "@/lib/anim/pointer";
 import { publicDeviceId } from "@/lib/network/publicId";
 import { hardwareOfFirmware, type Hardware } from "@/lib/network/hardware";
+import { MEASURE_INDEX_KEY, MEASURE_ONLINE_MS, SENSOR_SCREEN, measKey, measureKindsOf, toDeviceMeasures, type DeviceMeasures } from "@/lib/measures";
 
 // Ré-exporté pour compatibilité avec les composants qui importent ScreenType
 export type ScreenType = ScreenId;
@@ -22,6 +23,7 @@ export type DeviceRecord = {
   artistName?: string;
   artistId?: string;
   sceneCapability?: { sceneV1?: boolean };
+  sensors?: string[];
   pairCode?: string;
   lastSeen: number;
   lastPing: number;
@@ -86,6 +88,9 @@ export type NetworkDevice = {
   // un device peut avoir plusieurs écrans
   screens: DeviceScreenInfo[];
 
+  /** Mesures (capteurs) : grandeurs + DERNIÈRE mesure seulement (l'historique public passe par /api/sensor?public=1). Absent = l'appareil ne mesure pas. */
+  measures?: DeviceMeasures;
+
   lastSeen: number;
   lastPing: number;
   framesSent: number;
@@ -149,8 +154,14 @@ export function toNetworkDevice(
   device: DeviceRecord,
   recentFrame: NetworkFrame | null,
   now: number = Date.now(),
+  latestMeasureRaw?: unknown,
 ): NetworkDevice {
-  const screens = Array.isArray(device.screens) ? device.screens : [];
+  // « sensor » est un pseudo-écran (carte sans écran) : jamais un écran de la vue réseau
+  const screens = (Array.isArray(device.screens) ? device.screens : []).filter((s) => s !== SENSOR_SCREEN);
+  const kinds = measureKindsOf(device);
+  const measures = kinds.length > 0 ? toDeviceMeasures(kinds, latestMeasureRaw) : undefined;
+  // Un capteur est en ligne s'il a MESURÉ récemment (sa fiche n'est réécrite que toutes les 12 h)
+  const measuredAtMs = measures?.latest ? measures.latest.t * 1000 : 0;
   const animationScreens = screens.filter((s) => animCapable({ screens, firmware: device.firmware }, s));
   const name = device.artistName?.trim();
   return {
@@ -166,11 +177,12 @@ export function toNetworkDevice(
       const meta = getScreenMeta(screen);
       return { screen, label: meta.label, description: meta.description };
     }),
-    lastSeen:   device.lastSeen ?? 0,
-    lastPing:   device.lastPing ?? 0,
+    ...(measures ? { measures } : {}),
+    lastSeen:   Math.max(device.lastSeen ?? 0, measuredAtMs),
+    lastPing:   Math.max(device.lastPing ?? 0, measuredAtMs),
     framesSent: device.framesSent ?? 0,
     createdAt:  device.createdAt ?? 0,
-    isOnline:   Math.max(device.lastSeen || 0, device.lastPing || 0) > 0 && now - Math.max(device.lastSeen || 0, device.lastPing || 0) <= ONLINE_WINDOW_MS,
+    isOnline:   (() => { const last = Math.max(device.lastSeen || 0, device.lastPing || 0, measuredAtMs); return last > 0 && now - last <= (kinds.length > 0 && screens.length === 0 ? MEASURE_ONLINE_MS : ONLINE_WINDOW_MS); })(),
     recentFrame,
   };
 }
@@ -330,12 +342,16 @@ async function buildNetworkSnapshot(): Promise<NetworkSnapshot> {
       )
     );
 
+  // + les appareils qui mesurent (cartes sans écran : dans aucune pool) — 1 SMEMBERS
+  const measureIds = ((await redis.smembers<string[]>(MEASURE_INDEX_KEY)) ?? []).filter(Boolean);
+
   const allDeviceIds = [
-    ...new Set(
-      poolResults.flatMap(
+    ...new Set([
+      ...poolResults.flatMap(
         (p) => p.ids
-      )
-    ),
+      ),
+      ...measureIds,
+    ]),
   ];
 
   /*
@@ -375,6 +391,16 @@ async function buildNetworkSnapshot(): Promise<NetworkSnapshot> {
     ]);
     framesWaiting = Number(waiting) || 0;
 
+    // Dernière mesure de chaque appareil qui mesure : UN pipeline (N LINDEX), une fois par reconstruction du snapshot (≤ 1 / 5 min)
+    const latestOf: Record<string, unknown> = {};
+    const measuring = allDeviceIds.filter((id, i) => !!parsedDevices[i] && measureKindsOf(parsedDevices[i] as DeviceRecord).length > 0);
+    if (measuring.length > 0) {
+      const pl = redis.pipeline();
+      for (const id of measuring) pl.lindex(measKey(id), 0);
+      const res = await pl.exec();
+      measuring.forEach((id, i) => { latestOf[id] = res[i]; });
+    }
+
     const now = Date.now();
     for (let i = 0; i < allDeviceIds.length; i++) {
       const device = parsedDevices[i];
@@ -395,7 +421,7 @@ async function buildNetworkSnapshot(): Promise<NetworkSnapshot> {
           };
         }
       }
-      devices.push(toNetworkDevice(device, recent, now));
+      devices.push(toNetworkDevice(device, recent, now, latestOf[device.deviceId]));
     }
   }
 
