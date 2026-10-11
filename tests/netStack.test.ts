@@ -4,6 +4,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { compileHarness, describeChoice, findCompiler, runProcess } from "./helpers/cppHarness";
+import { undoBoundedSsl } from "./helpers/boundedSslEdits";
 import { NET_SKETCHES, netEditsFor, undoNetStack } from "./helpers/netStackEdits";
 
 // LOT8B2B2-NETSTACK-FIX1 — TOUTE transaction réseau/TLS des cinq firmwares UNO R4 sur une pile dédiée (consensus-pod/src/adapters/podNetStack.h).
@@ -43,7 +44,7 @@ test("la table couvre les cinq firmwares", () => {
 
 for (const sk of SKETCHES) {
   test(`${sk} : en annulant les modifications EXACTES de la table, on retrouve le sketch d'avant NETSTACK-FIX1 au texte près (hors blocs du canari) ; chaque modification est unique`, () => {
-    const now = read(`arduino_uno_r4/${sk}/${sk}.ino`), before = read(`${BACKUP}/${sk}/${sk}.ino`);
+    const now = undoBoundedSsl(read(`arduino_uno_r4/${sk}/${sk}.ino`)), before = read(`${BACKUP}/${sk}/${sk}.ino`);   // PULLFRAME-BOUNDED-SSL-FIX1 annulé d'abord
     assert.equal(noCanary(undoNetStack(now, sk)), noCanary(before));
     for (const e of netEditsFor(sk)) assert.equal(now.split(e.neu).length - 1, 1, `${sk} : « ${e.id} »`);
   });

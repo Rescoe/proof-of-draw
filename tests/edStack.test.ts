@@ -5,6 +5,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { compileHarness, describeChoice, findCompiler, runProcess } from "./helpers/cppHarness";
+import { undoBoundedSsl } from "./helpers/boundedSslEdits";
 import { ED_EDITS, ED_SKETCHES, editsFor, undoEdStack } from "./helpers/edStackEdits";
 import { undoNetStack } from "./helpers/netStackEdits";
 import { verifyEd25519 } from "../lib/ed25519";
@@ -22,7 +23,7 @@ const stripComments = (s: string) => s.replace(/\/\*[\s\S]*?\*\//g, "").replace(
 // ── 1. le correctif ne change RIEN d'autre dans les cinq firmwares ─────────────────────────────────────────────
 for (const sk of ED_SKETCHES) {
   test(`${sk} : en annulant les modifications EXACTES de la table (tests/helpers/edStackEdits.ts), on retrouve le sketch d'avant le correctif au texte près`, () => {
-    const now = read(`arduino_uno_r4/${sk}/${sk}.ino`), before = read(`${BACKUP}/${sk}/${sk}.ino`);
+    const now = undoBoundedSsl(read(`arduino_uno_r4/${sk}/${sk}.ino`)), before = read(`${BACKUP}/${sk}/${sk}.ino`);   // PULLFRAME-BOUNDED-SSL-FIX1 annulé d'abord
     // l'instrument de canari (blocs « POD_RENDER_V1 && POD_CANARY », absents du chemin désactivé) a évolué depuis (BOOT-FIX2) : il est exclu de la comparaison, comme dans la vue « POD_RENDER_V1 = 0 »
     const noCanary = (s: string) => s.replace(/#if POD_RENDER_V1 && POD_CANARY\n[\s\S]*?\n#endif\n/g, "");
     assert.equal(noCanary(undoEdStack(undoNetStack(now, sk), sk)), noCanary(before));   // NETSTACK-FIX1 (transactions réseau) annulé d'abord, puis PodEd

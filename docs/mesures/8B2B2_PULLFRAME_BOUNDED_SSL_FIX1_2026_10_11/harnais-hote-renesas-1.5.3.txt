@@ -1,0 +1,24 @@
+In file included from /tmp/claude-0/wb/1.5.3/libraries/WiFiS3/src/WiFiSSLClient.h:24,
+                 from /home/user/proof-of-draw/consensus-pod/host/wifis3/bounded_ssl_harness.cpp:12:
+In file included from /tmp/claude-0/wb/1.5.3/libraries/WiFiS3/src/WiFiSSLClient.h:24,
+                 from /tmp/claude-0/wb/1.5.3/libraries/WiFiS3/src/WiFiSSLClient.cpp:1:
+OK   A reponse 400 o (control) : l'AT émise par le VRAI cœur demande 1023 octets (attendu 1023)
+OK   A reponse 400 o (control) : pas d'abort, 400 octets exacts (pic bloc 481 o)
+OK   A reponse 960 o (control) : l'AT émise par le VRAI cœur demande 1023 octets (attendu 1023)
+OK   A reponse 960 o (control) : pas d'abort, 960 octets exacts (pic bloc 961 o)
+OK   A reponse 1023 o : l'AT émise par le VRAI cœur demande 1023 octets (attendu 1023)
+OK   A reponse 1023 o : HeapAbort (abort() sur la carte) à l'allocation de 1921 o > bloc contigu 1888 o
+OK   A reponse 4000 o (FIFO vide : demande 1023) : l'AT émise par le VRAI cœur demande 1023 octets (attendu 1023)
+OK   A reponse 4000 o (FIFO vide : demande 1023) : HeapAbort (abort() sur la carte) à l'allocation de 1921 o > bloc contigu 1888 o
+OK   B1 : 106 combinaisons (taille x motif d'arrivee) : octets exacts et dans l'ordre, aucun abort sous bloc 300 o et total vivant 330 o ; AT _SSLCLIENTRECEIVE max demandee = 240 (<= 240) ; pic de bloc alloue = 257 o
+OK   B2 : reponse 4000 o d'un coup, tas AUDIT5 (1888/2976) : pas d'abort, 4000 o exacts, pic bloc 257 o, pic vivant 307 o
+OK   B3 : corps tronque (5000 sur 9472) : 5000 o recus, INCOMPLET (donc ni affichage ni ACK), octets recus exacts
+OK   B4 : 8 octets en trop apres le corps : exactement 9472 o lus, identiques, surplus non lu
+OK   B5 : aucun octet recu : delai de 2 s (horloge virtuelle) -> readHeaders = -1, pas de blocage ni d'abort
+OK   B6 : module muet (delai du modem) une commande sur 3 : 3000 o exacts apres reessais (19 commandes), aucun defaut collant
+OK   B7 : module qui renvoie 280 o pour 240 demandes : defaut collant OVERLONG, read = -1, connected = 0 (echec ferme)
+OK   B8 : reponse AT coupee : read = 0 (rien de stocke), les octets partiels ne sont JAMAIS livres ; Content-Length exact les revele ensuite
+OK   B9 : lectures de tailles melangees (1,7,241,1000,5000…) : 6000 o identiques dans l'ordre, AT max = 240
+OK   B10 : 300 scenarios aleatoires (taille 0-9999, arrivee progressive) : 0 echec(s)
+OK   C : frame 9472 o (noir+rouge) : identique octet par octet, 40 commandes AT, max demande 240, pic bloc 257 o, pic vivant 307 o
+SUCCES : 19 controles, 0 echec(s)

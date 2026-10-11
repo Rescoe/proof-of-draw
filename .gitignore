@@ -67,3 +67,6 @@ esp8266/**/secrets.h
 
 # builds locaux de canari (contiennent les identifiants Wi-Fi de secrets.h : JAMAIS commités)
 /canary-builds/
+
+# sources WiFiS3 tierces téléchargées par scripts/fetch-wifis3-sources.js (jamais commitées)
+/consensus-pod/host/wifis3/.cache/

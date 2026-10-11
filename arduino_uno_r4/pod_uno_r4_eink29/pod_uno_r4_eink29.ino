@@ -36,6 +36,7 @@
 #include "podEdStack.h"   // POD_ED_STACK : Ed25519 sur PILE DÉDIÉE (la pile principale de la R4 n'a que 1 024 o) — docs/LOT_8B2B2_PILE_ED25519_R4_2026_10_08.md
 #include <SHA256.h>
 #include "pod_http.h"
+#include "pod_ssl_bounded.h"   // PULLFRAME-BOUNDED-SSL-FIX1 : client TLS dont la commande AT _SSLCLIENTRECEIVE est BORNÉE (240 o) — docs/LOT_8B2B2_PULLFRAME_BOUNDED_SSL_FIX1_2026_10_11.md
 #include "epd29b.h"
 #include "pod_vote_r4.h"       // validation réelle (vote v2) : SHA-256 + métriques entières en flux — ⚠ NON TESTÉ sur la carte
 
@@ -584,6 +585,8 @@ static String signED25519(const String& candidateId, float score) {
 }
 
 // ─── HTTP (WiFiSSLClient + pod_http.h) ─────────────────────────────────────
+// PULLFRAME-BOUNDED-SSL-FIX1 : à partir d'ici le nom WiFiSSLClient désigne PodBoundedSSL (pod_ssl_bounded.h, dérivé du vrai WiFiSSLClient, réception modem bornée) ; le canari le redirige ensuite vers son client espion (dérivé de PodBoundedSSL).
+#define WiFiSSLClient PodBoundedSSL
 #if POD_RENDER_V1 && POD_CANARY
 // PULLFRAME-PHASE-AUDIT5 (canari seulement) : AUDIT4 a montré (journal du démarrage précédent) que les seize premiers read() reviennent avec 0 octet et connected() avec « vrai » pendant ≈ 224 ms, puis plus rien avant la 1re seconde : le gel commence au moment où la réponse du serveur
 // arrive. Hypothèse (NON démontrée) : le module accumule le bloc reçu dans une std::string (data_res += c) ; si le tas ne fournit pas le bloc demandé, operator new appelle abort(), puis _exit = « b . » : boucle vide, interruptions actives, ni message ni reset.
@@ -721,6 +724,7 @@ struct FfSSL : public WiFiSSLClient {
     return r;
   }
 };
+#undef WiFiSSLClient
 #define WiFiSSLClient FfSSL
 static const char* podFfName(uint8_t n) {
   static const char* const t[] = { "aucune (avant la premiere marque)", "avant doFetchFrame (doPull)", "entree de doFetchFrame", "avant podNetRun", "entree de la transaction (pile reseau)", "client TLS construit", "avant client.connect", "apres client.connect",
@@ -1140,7 +1144,7 @@ static bool doFetchFrame(const String& frameId, const String& frameSource) {
       POD_FF_MARK(12, "plan rouge lu");
 #endif
       logf("[FRAME] lu noir=%u rouge=%u attendu=%u", (unsigned)b, (unsigned)r, (unsigned)BUF_SIZE);
-      got = (b == BUF_SIZE && r == BUF_SIZE);
+      got = (b == BUF_SIZE && r == BUF_SIZE && c.client.fault() == 0);   // défaut collant du client TLS borné : frame refusée (ni affichage, ni ACK)
     } else if (code == 200) {
       logf("[FRAME] taille annoncée %ld != %d (le serveur sert-il bien eink29bwr ?)", c.rd.contentLength(), FRAME_BYTES);
     }

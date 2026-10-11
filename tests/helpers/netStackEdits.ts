@@ -2,6 +2,7 @@
 // sur une pile dédiée (podNetStack.h). Comme tests/helpers/edStackEdits.ts : sert à ANNULER les modifications dans les tests — « sketch actuel, modifications annulées » doit être IDENTIQUE, au texte près
 // (hors blocs du canari), au sketch sauvegardé dans firmware-backups/2026-10-09_avant-netstack-fix1/ ; les contrôles des lots précédents s'appliquent alors au texte annulé.
 import fs from "node:fs";
+import { undoBoundedSsl } from "./boundedSslEdits";
 import path from "node:path";
 import { undoEdStack } from "./edStackEdits";
 
@@ -24,4 +25,4 @@ export function undoNetStack(src: string, sketch: string): string {
 }
 
 /** Annule d'abord les modifications réseau, puis celles de PodEd : on retrouve le sketch d'avant STACK-FIX1 (hors blocs du canari). */
-export const undoAllStacks = (src: string, sketch: string): string => undoEdStack(undoNetStack(src, sketch), sketch);
+export const undoAllStacks = (src: string, sketch: string): string => undoEdStack(undoNetStack(undoBoundedSsl(src), sketch), sketch);   // PULLFRAME-BOUNDED-SSL-FIX1 annulé en premier
