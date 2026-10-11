@@ -156,3 +156,21 @@ test("DHT22 : décodage (code réel de dht22.h) — trames de la fiche technique
   assert.equal(r.status, 0, r.stdout);
   assert.match(r.stdout, /SUCCES : 0 echec/);
 });
+
+test("CONSTELLATION : un capteur seul est un nœud « appareil » de la hiérarchie et de la mise en page (sans nœud-écran), distinct visuellement", async () => {
+  const { buildNetworkHierarchy, layoutNetwork } = await import("../app/network/model");
+  const now = Date.now();
+  const rec: DeviceRecord = { deviceId: "dev_I25D9Z7A", screens: ["sensor"], firmware: "r4dht22-1.1", lastSeen: now, lastPing: now, framesSent: 0, createdAt: now, artistName: "Roubzi" };
+  const screenDev = toNetworkDevice({ ...rec, deviceId: "dev_AAAAAAAA", screens: ["eink29bwr"] }, null, now);
+  const sensor = toNetworkDevice(rec, null, now, `${Math.floor(now / 1000)};temp=197;hum=740`);
+  const layout = layoutNetwork(buildNetworkHierarchy([screenDev, sensor]));
+  const dev = layout.nodes.filter((n) => n.kind === "device");
+  assert.equal(dev.length, 2, "les deux appareils sont des nœuds");
+  assert.equal(layout.nodes.filter((n) => n.kind === "screen").length, 1, "le capteur n'ajoute aucun nœud-écran");
+  assert.ok(dev.some((n) => n.id.includes(sensor.publicId)), "le nœud du capteur existe");
+  // forme et couleur propres au capteur (losange ambre), légende
+  const node = read("app/network/graph/nodes/DeviceNode.tsx");
+  assert.match(node, /isSensor/); assert.match(node, /#fbbf24/); assert.match(node, /rotate\(45\)/);
+  assert.match(read("app/network/graph/Graph.tsx"), /is-sensor" \/>capteur/);
+  assert.match(read("app/network/NetworkStage.tsx"), /transform="rotate\(45\)"/);
+});

@@ -47,6 +47,7 @@ Le chemin complet fonctionne : lecture DHT22 → `/api/sensor` 200 → stockage.
 ## Visibilité dans l'application
 
 - **Profil** : bouton « 🌡 Mesures » (valeur courante, période 24 h / 7 j / 31 j, courbe par grandeur, tableau horaire). Pas de « Dessiner/Animer » ni de réglages d'affichage pour un capteur seul. La page `/draw/…/sensor` affiche « Capteur sans écran » au lieu de « Écran inconnu ».
+- **Repérage visuel** (12/10/2026) : un capteur seul est un **losange ambre** (les appareils à écran restent des cercles : bleus en topologie, couleur de famille en constellation), avec une entrée « capteur » dans la légende de la constellation.
 - **Topologie** : nœud « CAPTEUR » avec la dernière mesure (« 21,1 °C · 71,9 % »). **Constellation** : nœud 🌡 avec la même ligne. **Panneau latéral** (clic) : section « Mesures » (valeurs, âge), bouton « Voir les dernières 48 h » (courbe) ; aucune lecture de bloc ni d'activité pour un capteur.
 - La dernière mesure vient du **snapshot réseau** (1 `SMEMBERS` + un pipeline de `LINDEX` par reconstruction, ≤ 1 / 5 min) : au plus ≈ 5 min de retard. Un capteur est « en ligne » s'il a mesuré depuis < 2 h 30.
 - Les températures sont donc **publiques** (dernière valeur + 48 h) pour les appareils qui mesurent ; l'historique long reste privé.

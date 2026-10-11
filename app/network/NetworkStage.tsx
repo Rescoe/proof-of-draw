@@ -579,15 +579,23 @@ export function NetworkStage({ snapshot, onDeviceSelect, selectedDeviceId, onSer
                           strokeDasharray="6, 6"
                           className="nv2-sel-ring" />
                 )}
-                {online && <circle r="36" fill="rgba(59,130,246,0.07)" />}
+                {online && !node.device.measures && <circle r="36" fill="rgba(59,130,246,0.07)" />}
+                {node.device.measures ? (
+                  /* capteur : losange ambre (les ESP à écran restent des cercles bleus) */
+                  <rect x="-24" y="-24" width="48" height="48" rx="7" transform="rotate(45)"
+                    fill={isSelected ? "rgba(251,191,36,0.18)" : "rgba(42,33,8,0.95)"}
+                    stroke={online ? "#fbbf24" : "rgba(251,191,36,0.35)"}
+                    strokeWidth={isSelected ? 3 : 2} />
+                ) : (
                 <circle
                   r="30"
                   fill={isSelected ? "rgba(59,130,246,0.15)" : "rgba(10,10,15,0.95)"}
                   stroke={online ? "var(--accent)" : "rgba(148,163,184,0.3)"}
                   strokeWidth={isSelected ? 3 : 2}
                 />
+                )}
                 <text x="0" y="-8" textAnchor="middle" fontSize="8"
-                      fill={online ? "var(--accent)" : "var(--text3)"}
+                      fill={node.device.measures ? "#fbbf24" : online ? "var(--accent)" : "var(--text3)"}
                       fontFamily="monospace" fontWeight="700">{node.device.measures ? "CAPTEUR" : "ESP"}</text>
                 <text x="0" y="3" textAnchor="middle" fontSize="10"
                       fill="var(--text)" fontFamily="monospace" fontWeight="700">
@@ -629,7 +637,7 @@ export function NetworkStage({ snapshot, onDeviceSelect, selectedDeviceId, onSer
           cette colonne, ce qui aligne au passage le bas de la carte avec celui
           du panel/terminal voisin (cf. align-items:stretch côté NetworkMap). */}
       <p className="nv2-stage-hint" aria-hidden="true">
-        Cliquez sur un ESP, un écran ou le serveur RESCOE pour sélectionner · glisser pour déplacer · Ctrl+molette/pincer pour zoomer
+        Cliquez sur un ESP, un capteur (◆ ambre), un écran ou le serveur RESCOE pour sélectionner · glisser pour déplacer · Ctrl+molette/pincer pour zoomer
       </p>
     </div>
   );
