@@ -2,7 +2,7 @@
 
 import { useMemo, useRef, useState, useCallback, useEffect } from "react";
 import type { NetworkSnapshot, NetworkDevice } from "@/lib/networkSnapshot";
-import { formatMeasure } from "@/lib/measures";
+import { formatMeasure, primaryKinds } from "@/lib/measures";
 
 type Props = {
   snapshot: NetworkSnapshot;
@@ -28,7 +28,7 @@ const SCREEN_COLOR: Record<string, string> = {
 function measureLine(m: NonNullable<NetworkDevice["measures"]>): string {
   const l = m.latest;
   if (!l) return "";
-  return m.kinds.filter((k) => l.v[k] !== undefined).map((k) => formatMeasure(k, l.v[k] as number)).join(" · ");
+  return primaryKinds(m.kinds).filter((k) => l.v[k] !== undefined).map((k) => formatMeasure(k, l.v[k] as number)).join(" · ");
 }
 
 function screenColor(s: string) { return SCREEN_COLOR[s] ?? "#a2a3bb"; }
@@ -36,7 +36,7 @@ function screenColor(s: string) { return SCREEN_COLOR[s] ?? "#a2a3bb"; }
 const PARTICLE_COUNT = 3; // particules par lien
 
 type ViewBox = { x: number; y: number; w: number; h: number };
-const ZOOM_MIN  = 0.4;
+const ZOOM_MIN  = 0.15;
 const ZOOM_MAX  = 4.0;
 const ZOOM_STEP = 0.25;
 
@@ -67,15 +67,51 @@ export function NetworkStage({ snapshot, onDeviceSelect, selectedDeviceId, onSer
       const ratio = w < 520 ? 0.85 : 0.62;
       const h = Math.max(280, Math.min(680, w * ratio));
       setDims({ width: w, height: h });
-      setVb((prev) => ({ ...prev, w, h }));
     });
     ro.observe(el);
     return () => ro.disconnect();
   }, []);
 
   const devices = snapshot.devices;
-  const cx = dims.width / 2;
-  const cy = dims.height / 2;
+
+  // Échelle des nœuds/texte — se réduit moins vite qu'avant (le monde grandit avec le nombre d'appareils au lieu de tout serrer dans le cadre).
+  const nodeScale = Math.max(0.75, Math.min(1, 14 / Math.max(devices.length, 1)));
+
+  // MONDE élargi (12/10/2026) : chaque anneau reçoit le rayon que son nombre de nœuds EXIGE (espacement d'arc ≥ 170 × échelle : un appareil + ses écrans satellites ne se
+  // touchent plus) et deux anneaux restent écartés d'au moins 185 × échelle. Quand le tout dépasse le cadre, le monde grandit (facteur worldFactor, borné) et la vue initiale
+  // le cadre ENTIER : on dézoome / zoome / déplace à volonté. Petit réseau : facteur 1, rien ne change. Déterministe (SSR).
+  const ringCounts = useMemo(() => {
+    const out: number[] = [];
+    let remaining = devices.length;
+    let capacity = Math.min(devices.length, 8);
+    while (remaining > 0) {
+      const n = Math.min(remaining, capacity);
+      out.push(n);
+      remaining -= n;
+      capacity = Math.round(capacity * 1.7);
+    }
+    return out;
+  }, [devices.length]);
+  const ringRadiusList = useMemo(() => {
+    const base = Math.min(dims.width, dims.height);
+    const maxRadius = base * 0.42, minRadius = base * 0.24;
+    const arc = 170 * nodeScale, gap = 185 * nodeScale;
+    const out: number[] = [];
+    ringCounts.forEach((count, ring) => {
+      const wished = ringCounts.length === 1 ? maxRadius * 0.78 : minRadius + ((maxRadius - minRadius) * ring) / (ringCounts.length - 1);
+      const needed = (count * arc) / (Math.PI * 2);
+      out.push(Math.max(wished, needed, ring === 0 ? 0 : out[ring - 1] + gap));
+    });
+    return out;
+  }, [ringCounts, dims.width, dims.height, nodeScale]);
+  const worldFactor = useMemo(() => {
+    if (ringRadiusList.length === 0) return 1;
+    const outer = ringRadiusList[ringRadiusList.length - 1] + 130 * nodeScale;
+    return Math.min(4, Math.max(1, (outer * 2) / Math.min(dims.width, dims.height)));
+  }, [ringRadiusList, nodeScale, dims.width, dims.height]);
+  const worldW = r3(dims.width * worldFactor), worldH = r3(dims.height * worldFactor);
+  const cx = worldW / 2;
+  const cy = worldH / 2;
 
   // Anneaux concentriques auto-adaptatifs : répartit les devices sur plusieurs
   // cercles à mesure que leur nombre croît, plutôt qu'un seul cercle qui se
@@ -83,25 +119,10 @@ export function NetworkStage({ snapshot, onDeviceSelect, selectedDeviceId, onSer
   // moteur de graphe force-directed (cf. non-goal "réarchitecture totale").
   const espLayout = useMemo((): { device: NetworkDevice; x: number; y: number; ring: number }[] => {
     if (devices.length === 0) return [];
-    const maxRadius = Math.min(dims.width, dims.height) * 0.42;
-    const minRadius = Math.min(dims.width, dims.height) * 0.24;
-
-    const ringCounts: number[] = [];
-    let remaining = devices.length;
-    let capacity = Math.min(devices.length, 8);
-    while (remaining > 0) {
-      const n = Math.min(remaining, capacity);
-      ringCounts.push(n);
-      remaining -= n;
-      capacity = Math.round(capacity * 1.7);
-    }
-
     const out: { device: NetworkDevice; x: number; y: number; ring: number }[] = [];
     let idx = 0;
     ringCounts.forEach((count, ring) => {
-      const radius = ringCounts.length === 1
-        ? maxRadius * 0.78
-        : minRadius + ((maxRadius - minRadius) * ring) / (ringCounts.length - 1);
+      const radius = ringRadiusList[ring];
       // Décale chaque anneau pour éviter l'alignement radial des nœuds
       const ringOffset = ring * 0.35;
       for (let i = 0; i < count; i++) {
@@ -116,11 +137,7 @@ export function NetworkStage({ snapshot, onDeviceSelect, selectedDeviceId, onSer
       }
     });
     return out;
-  }, [dims.width, dims.height, devices, cx, cy]);
-
-  // Échelle des nœuds/texte — se réduit quand le réseau grandit pour que
-  // tout reste lisible sans déborder (4, 10, 50, 100+ ESP).
-  const nodeScale = Math.max(0.5, Math.min(1, 9 / Math.max(devices.length, 1)));
+  }, [devices, ringCounts, ringRadiusList, cx, cy]);
 
   // Rayons distincts des anneaux — pour le tracé décoratif (un cercle par anneau)
   const ringRadii = useMemo(() => {
@@ -136,7 +153,7 @@ export function NetworkStage({ snapshot, onDeviceSelect, selectedDeviceId, onSer
         const spreadAngle = total > 1 ? (Math.PI * 0.7) / (total - 1) : 0;
         const baseAngle = Math.atan2(node.y - cy, node.x - cx);
         const angle = baseAngle + (si - (total - 1) / 2) * spreadAngle;
-        const dist = 80 * nodeScale;
+        const dist = 92 * nodeScale;
         return {
           screen,
           deviceId: node.device.deviceId,
@@ -171,8 +188,11 @@ export function NetworkStage({ snapshot, onDeviceSelect, selectedDeviceId, onSer
   }, [dims.width]);
 
   const resetZoom = useCallback(() => {
-    setVb({ x: 0, y: 0, w: dims.width, h: dims.height });
-  }, [dims]);
+    setVb({ x: 0, y: 0, w: worldW, h: worldH });
+  }, [worldW, worldH]);
+
+  // Vue initiale = le monde ENTIER (se recadre si la taille du cadre ou du monde change)
+  useEffect(() => { setVb({ x: 0, y: 0, w: worldW, h: worldH }); }, [worldW, worldH]);
 
   // Ref pour éviter les stale closures dans le handler natif
   const vbRef = useRef(vb);
@@ -369,7 +389,7 @@ export function NetworkStage({ snapshot, onDeviceSelect, selectedDeviceId, onSer
             `}</style>
           </defs>
 
-          <rect width={dims.width} height={dims.height} fill="url(#nv2-grid)" />
+          <rect x={-worldW} y={-worldH} width={worldW * 3} height={worldH * 3} fill="url(#nv2-grid)" />
 
           {/* Core — cliquable : ouvre les infos serveur dans le side panel */}
           <g

@@ -1,8 +1,8 @@
 // pod_uno_r4_dht22.ino
-// Proof-of-Draw — capteur de TEMPÉRATURE + HUMIDITÉ : UNO R4 WiFi + DHT22 (AM2302). Mesures vers /api/sensor (essai : 1 / 5 min ; production : 1 / heure), historique dans « Mon profil » (🌡 Mesures) et dans la vue réseau.
+// Proof-of-Draw — capteur de TEMPÉRATURE + HUMIDITÉ : UNO R4 WiFi + DHT22 (AM2302). Mesures vers /api/sensor (production : 1 / heure ; essai : 1 / 5 min), historique dans « Mon profil » (🌡 Mesures) et dans la vue réseau.
 //
-// ⚠ COMPILÉ NULLE PART À CE JOUR (écrit dans une session cloud sans chaîne ARM) et JAMAIS ESSAYÉ SUR LA CARTE. Le réseau (pile TLS dédiée, pile Wi-Fi dédiée, pile de travail JSON, journal) est la copie
-// des blocs VALIDÉS sur carte du firmware e-ink 2,9″ (canaris 09–10/10/2026), canari retiré. Le seul code neuf : dht22.h (décodage testé sur l'hôte) et doSensor().
+// Compilé, flashé et VALIDÉ sur la carte par le porteur (12/10/2026) ; écrit sans chaîne ARM. Le réseau (pile TLS dédiée, pile Wi-Fi dédiée, pile de travail JSON, journal) est la copie des blocs VALIDÉS du firmware e-ink 2,9″, canari retiré.
+// Seul code neuf : dht22.h (décodage testé sur l'hôte) et doSensor() (mesure + diagnostic Wi-Fi : signal reçu et latence du dernier envoi).
 // Ce capteur ne calcule rien, ne vote pas, n'affiche rien et n'entre dans AUCUNE pool : il s'enregistre avec screens = ["sensor"].
 //
 // CÂBLAGE : DHT22  VCC → 3,3 V · GND → GND · DATA → D2 (résistance de rappel 10 kΩ DATA↔3,3 V si le module n'en a pas : les modules à 3 broches l'ont déjà).
@@ -35,9 +35,8 @@
 #define SCREEN_TYPE         "sensor"               // pas un écran : voir lib/sensorData.ts
 #define FIRMWARE_VERSION    "r4dht22-1.1"
 #define DHT_PIN             2                      // D2
-// ⚠ PHASE D'ESSAI : 1 mesure / 5 min. PRODUCTION : 3600000UL (1 / heure). Le serveur n'accepte l'intervalle court que jusqu'au 16/10/2026 00:00 UTC (lib/measures.ts : extinction automatique),
-// puis refuse (sans écrire) toute mesure < 50 min après la précédente : reflasher à 3600000UL AVANT cette date.
-#define SENSOR_INTERVAL_MS  300000UL               // essai : 5 min
+// PRODUCTION : 1 mesure / heure. (Essai : 300000UL = 5 min, accepté par le serveur seulement jusqu'au 16/10/2026 00:00 UTC ; au-delà le serveur refuse toute mesure < 50 min après la précédente.)
+#define SENSOR_INTERVAL_MS  3600000UL              // 1 mesure par heure
 #define SENSOR_RETRY_MS     300000UL               // après un échec (lecture ou réseau) : nouvel essai dans 5 min
 #define HTTP_TIMEOUT_MS     20000UL
 
@@ -252,7 +251,7 @@ static bool __attribute__((noinline)) doRegisterDecode(const String& resp) {
 static bool doRegister() {
   const String mac = macString();
   if (mac.length() == 0) { logf("[REGISTER] adresse MAC indisponible (module Wi-Fi, pile dédiée) : inscription ANNULÉE"); return false; }
-  const String body = "{\"mac\":\"" + mac + "\",\"screens\":[\"" SCREEN_TYPE "\"],\"firmware\":\"" FIRMWARE_VERSION "\",\"sensors\":[\"temp\",\"hum\"]}";   // grandeurs mesurées (lib/measures.ts)
+  const String body = "{\"mac\":\"" + mac + "\",\"screens\":[\"" SCREEN_TYPE "\"],\"firmware\":\"" FIRMWARE_VERSION "\",\"sensors\":[\"temp\",\"hum\",\"rssi\",\"lat\"]}";   // grandeurs mesurées (lib/measures.ts)
   String resp;
   if (httpCall("POST", "/api/register", &body, resp) != 200) { logf("[REGISTER] échec — nouvel essai dans 5 s"); return false; }
   if (!doRegisterDecode(resp)) return false;
@@ -263,13 +262,22 @@ static bool doRegister() {
 
 // ─── MESURE ────────────────────────────────────────────────────────────────
 // Retour : true = mesure acceptée OU refusée proprement par l'anti-rafale du serveur (rien à refaire avant une heure) ; false = lecture, réseau ou serveur en échec (nouvel essai dans 5 min).
+static unsigned long g_lastLatMs = 0;                      // durée du dernier POST /api/sensor réussi (joint à la mesure suivante)
 static bool doSensor() {
   int16_t c10 = 0; uint16_t h10 = 0;
   if (!dht22Read(DHT_PIN, c10, h10)) { logf("[DHT22] lecture impossible (câblage D2 ? résistance de rappel ?) — nouvel essai dans 5 min"); return false; }
   logf("[DHT22] %d.%d C, %u.%u %%", (int)(c10 / 10), (int)(c10 < 0 ? -(c10 % 10) : c10 % 10), (unsigned)(h10 / 10), (unsigned)(h10 % 10));
-  const String body = "{\"deviceId\":\"" + deviceId + "\",\"pairCode\":\"" + pairCode + "\",\"m\":{\"temp\":" + String((int)c10) + ",\"hum\":" + String((unsigned)h10) + "}}";
+  // Diagnostic Wi-Fi joint à la mesure (aucune requête de plus) : signal reçu (dBm) et temps de réponse du DERNIER envoi réussi (ms)
+  int32_t rssi = 0; const bool haveRssi = wifiRssi(rssi) && rssi < 0 && rssi >= -127;
+  String m = "{\"temp\":" + String((int)c10) + ",\"hum\":" + String((unsigned)h10);
+  if (haveRssi) m += ",\"rssi\":" + String((int)rssi);
+  if (g_lastLatMs > 0 && g_lastLatMs <= 60000UL) m += ",\"lat\":" + String((unsigned)g_lastLatMs);
+  m += "}";
+  const String body = "{\"deviceId\":\"" + deviceId + "\",\"pairCode\":\"" + pairCode + "\",\"m\":" + m + "}";
   String resp;
+  const unsigned long tPost = millis();
   const int code = httpCall("POST", "/api/sensor", &body, resp);
+  if (code == 200) g_lastLatMs = millis() - tPost;
   if (code == 200) { logf("[SENSOR] mesure envoyée"); return true; }
   if (code == 403) { logf("[SENSOR] refusé (403) : code d'appairage changé, capteur supprimé ou non appairé — nouvelle inscription"); registered = false; paired = false; return false; }
   if (code == 404) logf("[SENSOR] 404 : la route /api/sensor n'existe pas sur ce serveur (site pas encore déployé avec le capteur ?)");

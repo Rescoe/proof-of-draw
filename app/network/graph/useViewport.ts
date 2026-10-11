@@ -17,7 +17,11 @@ export function useViewport(world: WorldBounds, locked: boolean) {
   const contentRef = useRef<SVGGElement>(null);
   const transformRef = useRef<ViewportTransform>({ x: 0, y: 0, scale: 1, width: 1, height: 1, fitScale: 1 });
   const [view, setView] = useState(transformRef.current);
-  const pointers = useRef(new Map<number, { x: number; y: number }>());
+  // Tous les doigts/pointeurs sont suivis, y compris ceux posés SUR un nœud (avant, un doigt sur un appareil était ignoré : le pincement devenait un déplacement).
+  // fromNode : le pointeur est parti d'un nœud (pas de capture : le clic / la sélection restent possibles tant qu'on ne bouge pas) ; dragging : il déplace la vue.
+  const pointers = useRef(new Map<number, { x: number; y: number; sx: number; sy: number; fromNode: boolean; dragging: boolean }>());
+  // Après un déplacement ou un pincement, le clic qui suit le relâchement ne doit PAS sélectionner le nœud sous le doigt.
+  const suppressClick = useRef(false);
   const previousPinch = useRef<{ x: number; y: number; distance: number } | null>(null);
   const publishTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -131,24 +135,36 @@ export function useViewport(world: WorldBounds, locked: boolean) {
 
   const onPointerDown = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
     if (locked) return;
-    // Ne jamais capturer le pointeur d'un nœud : la capture par le viewport
-    // redirigerait le `pointerup` et empêcherait le clic/sélection du SVG.
-    if ((event.target as Element).closest(".ng-node")) return;
-    event.currentTarget.setPointerCapture(event.pointerId);
-    pointers.current.set(event.pointerId, point(event));
+    const p = point(event);
+    const fromNode = !!(event.target as Element).closest(".ng-node");
+    if (pointers.current.size === 0) suppressClick.current = false;
+    // Un pointeur parti d'un nœud n'est PAS capturé : la capture par le viewport redirigerait le `pointerup` et empêcherait le clic/sélection du SVG.
+    if (!fromNode) event.currentTarget.setPointerCapture(event.pointerId);
+    pointers.current.set(event.pointerId, { ...p, sx: p.x, sy: p.y, fromNode, dragging: !fromNode });
+    previousPinch.current = null;
   }, [locked, point]);
 
   const onPointerMove = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
     if (locked || !pointers.current.has(event.pointerId)) return;
     const next = point(event);
-    const previous = pointers.current.get(event.pointerId)!;
-    pointers.current.set(event.pointerId, next);
+    const rec = pointers.current.get(event.pointerId)!;
+    const previous = { x: rec.x, y: rec.y };
+    rec.x = next.x; rec.y = next.y;
     const active = [...pointers.current.values()];
     if (active.length === 1) {
+      // Doigt/souris parti d'un nœud : on ne déplace la vue qu'au-delà de 8 px (sinon c'est un clic) ; à partir de là c'est un glissement de la vue.
+      if (!rec.dragging) {
+        if (Math.hypot(rec.x - rec.sx, rec.y - rec.sy) < 8) return;
+        rec.dragging = true;
+        try { event.currentTarget.setPointerCapture(event.pointerId); } catch { /* pointeur déjà terminé */ }
+      }
+      suppressClick.current = suppressClick.current || rec.fromNode;
       const current = transformRef.current;
       apply({ ...current, x: current.x + next.x - previous.x, y: current.y + next.y - previous.y });
       return;
     }
+    // Deux pointeurs (quel que soit l'endroit où ils sont posés) : pincement = zoom + déplacement du milieu
+    suppressClick.current = true;
     const [a, b] = active;
     const pinch = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2, distance: Math.max(1, Math.hypot(a.x - b.x, a.y - b.y)) };
     if (previousPinch.current) {
@@ -160,10 +176,19 @@ export function useViewport(world: WorldBounds, locked: boolean) {
   }, [apply, locked, point, zoomAt]);
 
   const releasePointer = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
+    const rec = pointers.current.get(event.pointerId);
+    if (rec?.dragging && rec.fromNode) suppressClick.current = true;
     pointers.current.delete(event.pointerId);
     previousPinch.current = null;
     try { event.currentTarget.releasePointerCapture(event.pointerId); } catch { /* déjà libéré */ }
+    // le doigt restant continue comme un glissement simple (il n'est plus candidat au clic)
+    pointers.current.forEach((r) => { r.dragging = true; r.sx = r.x; r.sy = r.y; });
     setView({ ...transformRef.current });
+  }, []);
+
+  /** Phase de capture : avale le clic qui suit un glissement ou un pincement (sinon l'appareil sous le doigt serait sélectionné). */
+  const onClickCapture = useCallback((event: React.MouseEvent<HTMLDivElement>) => {
+    if (suppressClick.current) { suppressClick.current = false; event.stopPropagation(); event.preventDefault(); }
   }, []);
 
   const onKeyDown = useCallback((event: React.KeyboardEvent<HTMLDivElement>) => {
@@ -191,6 +216,7 @@ export function useViewport(world: WorldBounds, locked: boolean) {
       onPointerMove,
       onPointerUp: releasePointer,
       onPointerCancel: releasePointer,
+      onClickCapture,
       onKeyDown,
     },
   };

@@ -69,7 +69,7 @@ type Orbits = { deviceOrbit: number; deviceRingGap: number; screenOrbit: number 
 function artistFootprint(artist: ArtistGroup, orbits: Orbits): number {
   const count = artist.devices.length;
   const rings = count <= 8 ? 1 : 2 + Math.floor((count - 9) / 14);
-  return orbits.deviceOrbit + (rings - 1) * orbits.deviceRingGap + 8 + orbits.screenOrbit + GRAPH_GEOMETRY.screenRadius + 50;
+  return orbits.deviceOrbit + (rings - 1) * orbits.deviceRingGap + 8 + orbits.screenOrbit + GRAPH_GEOMETRY.screenRadius + 90;   // + marge des libellés (12/10/2026 : 50 -> 90, les artistes voisins se touchaient)
 }
 
 const wrapPi = (a: number) => Math.atan2(Math.sin(a), Math.cos(a));
@@ -99,7 +99,7 @@ function resolveArtistPositions(artists: ArtistGroup[], orbits: Orbits): Map<str
   const stagger = n > 6;
   const perRing = stagger ? Math.ceil(n / 2) : n;
   const sinHalf = Math.sin(Math.PI / Math.max(2, perRing));
-  const radius = Math.max(footprint + 200, (footprint * 0.62) / (0.6 * sinHalf));
+  const radius = 1.15 * Math.max(footprint + 200, (footprint * 0.62) / (0.6 * sinHalf));   // + 15 % de respiration (12/10/2026)
 
   items.forEach((item, i) => {
     const slot = step * i + rotation;

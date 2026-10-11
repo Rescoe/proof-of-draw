@@ -14,12 +14,15 @@ export const MEASURE_INDEX_KEY = "meas:devices";
 export const measKey = (deviceId: string) => `meas:${deviceId}`;
 export const measGateKey = (deviceId: string) => `meas:gate:${deviceId}`;
 
-export type MeasureKind = "temp" | "hum";
-export interface MeasureKindInfo { label: string; unit: string; icon: string; min: number; max: number }
-/** Valeurs ENTIÈRES en dixièmes d'unité (215 = 21,5 °C ; 456 = 45,6 %). */
+export type MeasureKind = "temp" | "hum" | "rssi" | "lat";
+/** Valeurs ENTIÈRES. scale : 10 = stockée en dixièmes d'unité (215 = 21,5 °C) ; 1 = entier tel quel. primary : affichée sur les nœuds du réseau ; sinon DIAGNOSTIC (panneaux seulement). */
+export interface MeasureKindInfo { label: string; unit: string; icon: string; min: number; max: number; scale: 1 | 10; primary: boolean }
 export const MEASURE_KINDS: Record<MeasureKind, MeasureKindInfo> = {
-  temp: { label: "Température", unit: "°C", icon: "🌡", min: -400, max: 800 },
-  hum:  { label: "Humidité", unit: "%", icon: "💧", min: 0, max: 1000 },
+  temp: { label: "Température", unit: "°C", icon: "🌡", min: -400, max: 800, scale: 10, primary: true },
+  hum:  { label: "Humidité", unit: "%", icon: "💧", min: 0, max: 1000, scale: 10, primary: true },
+  // Diagnostic de la liaison Wi-Fi de la carte (dans la MÊME mesure : aucune commande Redis de plus) : puissance du signal reçu et temps de réponse du serveur
+  rssi: { label: "Signal Wi-Fi", unit: "dBm", icon: "📶", min: -127, max: 0, scale: 1, primary: false },
+  lat:  { label: "Latence serveur", unit: "ms", icon: "⏱", min: 0, max: 60000, scale: 1, primary: false },
 };
 export const MEASURE_KIND_IDS = Object.keys(MEASURE_KINDS) as MeasureKind[];
 export const isMeasureKind = (k: unknown): k is MeasureKind => typeof k === "string" && Object.prototype.hasOwnProperty.call(MEASURE_KINDS, k);
@@ -83,7 +86,7 @@ export function parseMeasurePost(body: unknown): ParsedPost {
     if (v === undefined || v === null) continue;
     if (!isMeasureKind(k)) return { ok: false, error: `grandeur inconnue : ${k}` };
     const info = MEASURE_KINDS[k];
-    if (!isInt(v) || v < info.min || v > info.max) return { ok: false, error: `${k} (entier en dixièmes, ${info.min}..${info.max}) invalide` };
+    if (!isInt(v) || v < info.min || v > info.max) return { ok: false, error: `${k} (entier ${info.scale === 10 ? "en dixièmes, " : ""}${info.min}..${info.max}) invalide` };
     values[k] = v;
   }
   if (Object.keys(values).length === 0) return { ok: false, error: "au moins une grandeur requise" };
@@ -128,10 +131,12 @@ export function summarize(measures: Measure[], kind: MeasureKind): MeasureSummar
 }
 
 /** « 21,5 °C » depuis des dixièmes. */
-export function formatMeasure(kind: MeasureKind, tenths: number): string {
+export function formatMeasure(kind: MeasureKind, stored: number): string {
   const info = MEASURE_KINDS[kind];
-  return `${(tenths / 10).toFixed(1).replace(".", ",")} ${info.unit}`;
+  return info.scale === 10 ? `${(stored / 10).toFixed(1).replace(".", ",")} ${info.unit}` : `${stored} ${info.unit}`;
 }
+/** Grandeurs affichées sur les nœuds du réseau (les grandeurs de diagnostic restent dans les panneaux). */
+export const primaryKinds = (kinds: MeasureKind[]): MeasureKind[] => kinds.filter((k) => MEASURE_KINDS[k].primary);
 
 /** Nombre d'heures demandé par l'interface : entier borné à [1, MEASURE_KEEP], 168 (7 jours) par défaut. */
 export function clampHours(raw: unknown): number {

@@ -1,6 +1,6 @@
 import type { NetworkDevice } from "@/lib/networkSnapshot";
 import { HARDWARE_COLOR, type LayoutNode } from "../../model";
-import { formatMeasure } from "@/lib/measures";
+import { formatMeasure, primaryKinds } from "@/lib/measures";
 
 type Props = {
   node: LayoutNode;
@@ -19,7 +19,7 @@ export function DeviceNode({ node, device, selected, hitRadius, detailed, active
   // Capteur : dernière mesure sous le nœud (vue Constellation) — lue dans le snapshot, aucune requête
   const latest = device.measures?.latest;
   const isSensor = !!device.measures && device.screens.length === 0;   // capteur seul : losange ambre (les autres appareils sont des cercles)
-  const reading = latest ? device.measures!.kinds.filter((k) => latest.v[k] !== undefined).map((k) => formatMeasure(k, latest.v[k] as number)).join(" · ") : "";
+  const reading = latest ? primaryKinds(device.measures!.kinds).filter((k) => latest.v[k] !== undefined).map((k) => formatMeasure(k, latest.v[k] as number)).join(" · ") : "";
   return (
     <g className={`ng-node ng-device${isSensor ? " ng-device--sensor" : ""}${selected ? " is-selected" : ""}${device.isOnline ? " is-online" : " is-offline"}${active ? " is-active" : ""}`}
       transform={`translate(${node.x} ${node.y}) scale(${scale})`} role="button" tabIndex={0} aria-label={`Appareil ${device.publicId}, ${device.isOnline ? "en ligne" : "hors ligne"}`}

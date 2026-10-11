@@ -10,7 +10,8 @@ function Chart({ points, kind }: { points: { t: number; x: number }[]; kind: Mea
   if (points.length < 2) return <p style={{ color: "var(--text3)", fontSize: "0.8rem", margin: "0.4rem 0" }}>Au moins deux mesures sont nécessaires pour tracer la courbe.</p>;
   const W = 640, H = 170, P = 28;
   const t0 = points[0].t, t1 = points[points.length - 1].t;
-  const xs = points.map((p) => p.x), lo = Math.floor(Math.min(...xs) / 10) * 10 - 10, hi = Math.ceil(Math.max(...xs) / 10) * 10 + 10;
+  const sc = MEASURE_KINDS[kind].scale, step = sc === 10 ? 10 : Math.max(1, Math.pow(10, Math.floor(Math.log10(Math.max(1, Math.max(...points.map((p) => Math.abs(p.x))) / 4)))));
+  const xs = points.map((p) => p.x), lo = Math.floor(Math.min(...xs) / step) * step - step, hi = Math.ceil(Math.max(...xs) / step) * step + step;
   const px = (t: number) => P + ((t - t0) / Math.max(1, t1 - t0)) * (W - 2 * P);
   const py = (x: number) => H - P - ((x - lo) / Math.max(1, hi - lo)) * (H - 2 * P);
   const d = points.map((p, i) => `${i ? "L" : "M"}${px(p.t).toFixed(1)},${py(p.x).toFixed(1)}`).join(" ");
@@ -18,8 +19,8 @@ function Chart({ points, kind }: { points: { t: number; x: number }[]; kind: Mea
     <svg viewBox={`0 0 ${W} ${H}`} role="img" aria-label={`Courbe : ${MEASURE_KINDS[kind].label}`} style={{ width: "100%", height: "auto", maxHeight: 200 }}>
       <line x1={P} y1={H - P} x2={W - P} y2={H - P} stroke="var(--border)" />
       <line x1={P} y1={P} x2={P} y2={H - P} stroke="var(--border)" />
-      <text x={4} y={P + 4} fontSize="10" fill="var(--text3)">{(hi / 10).toFixed(0)}</text>
-      <text x={4} y={H - P} fontSize="10" fill="var(--text3)">{(lo / 10).toFixed(0)}</text>
+      <text x={4} y={P + 4} fontSize="10" fill="var(--text3)">{(hi / sc).toFixed(0)}</text>
+      <text x={4} y={H - P} fontSize="10" fill="var(--text3)">{(lo / sc).toFixed(0)}</text>
       <path d={d} fill="none" stroke="var(--accent)" strokeWidth="2" strokeLinejoin="round" />
     </svg>
   );

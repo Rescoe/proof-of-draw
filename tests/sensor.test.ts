@@ -5,7 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import {
   MEASURE_KEEP, MEASURE_MIN_INTERVAL_SEC, MEASURE_TEST_INTERVAL_SEC, MEASURE_TEST_UNTIL_MS, clampHours, decodeMeasure, decodeMeasures, encodeMeasure, formatMeasure, isSensorScreens,
-  measureKindsOf, measureMinIntervalSec, parseDeclaredSensors, parseMeasurePost, summarize,
+  measureKindsOf, measureMinIntervalSec, parseDeclaredSensors, parseMeasurePost, primaryKinds, summarize,
 } from "../lib/measures";
 import { assembleNetworkSnapshot, toNetworkDevice, type DeviceRecord } from "../lib/networkSnapshot";
 import { describeChoice, findCompiler, runProcess } from "./helpers/cppHarness";
@@ -134,9 +134,11 @@ test("FIRMWARE capteur : copies identiques des fichiers partagés, aucun canari,
   const ino = read(`${D}/pod_uno_r4_dht22.ino`);
   assert.doesNotMatch(ino, /POD_CANARY|POD_RENDER_V1|podCanary|POD_FF|Ed25519|EEPROM|set_new_handler|operator\s+new/);
   assert.match(ino, /#define SCREEN_TYPE\s+"sensor"/);
-  assert.match(ino, /#define SENSOR_INTERVAL_MS\s+(300000|3600000)UL/);   // 300000 = essai (extinction du serveur le 16/10/2026), 3600000 = production
-  assert.match(ino, /sensors\\":\[\\"temp\\",\\"hum\\"\]/);
-  assert.match(ino, /\\"m\\":\{\\"temp\\":/);
+  assert.match(ino, /#define SENSOR_INTERVAL_MS\s+3600000UL/);   // PRODUCTION : 1 mesure / heure (l'essai à 300000 s'éteint côté serveur le 16/10/2026)
+  assert.match(ino, /sensors\\":\[\\"temp\\",\\"hum\\",\\"rssi\\",\\"lat\\"\]/);
+  assert.match(ino, /wifiRssi\(rssi\)/);
+  assert.match(ino, /\{\\"temp\\":"/);
+  assert.match(ino, /\\"m\\":" \+ m \+ "\}"/);
   assert.match(ino, /httpCall\("POST", "\/api\/sensor"/);
   assert.ok(!fs.existsSync(path.join(root, D, "secrets.h")), "aucun secrets.h dans le dépôt");
   // tout appel au module Wi-Fi passe par les enveloppes, toute transaction TLS par podNetRun
@@ -173,4 +175,36 @@ test("CONSTELLATION : un capteur seul est un nœud « appareil » de la hiérarc
   assert.match(node, /isSensor/); assert.match(node, /#fbbf24/); assert.match(node, /rotate\(45\)/);
   assert.match(read("app/network/graph/Graph.tsx"), /is-sensor" \/>capteur/);
   assert.match(read("app/network/NetworkStage.tsx"), /transform="rotate\(45\)"/);
+});
+
+test("DIAGNOSTIC Wi-Fi : rssi (dBm entier) et lat (ms) sont des grandeurs valides, non affichées sur les nœuds, sans commande Redis de plus", () => {
+  assert.deepEqual(parseMeasurePost({ m: { temp: 211, hum: 719, rssi: -61, lat: 742 } }), { ok: true, values: { temp: 211, hum: 719, rssi: -61, lat: 742 } });
+  for (const bad of [{ m: { rssi: 5 } }, { m: { rssi: -128 } }, { m: { rssi: -60.5 } }, { m: { lat: -1 } }, { m: { lat: 60001 } }]) assert.equal(parseMeasurePost(bad).ok, false, JSON.stringify(bad));
+  assert.equal(encodeMeasure({ t: 5, v: { temp: 200, rssi: -61, lat: 742 } }), "5;temp=200;rssi=-61;lat=742");
+  assert.deepEqual(decodeMeasure("5;temp=200;rssi=-61;lat=742"), { t: 5, v: { temp: 200, rssi: -61, lat: 742 } });
+  assert.equal(formatMeasure("rssi", -61), "-61 dBm"); assert.equal(formatMeasure("lat", 742), "742 ms"); assert.equal(formatMeasure("temp", 197), "19,7 °C");
+  assert.deepEqual(primaryKinds(["temp", "hum", "rssi", "lat"]), ["temp", "hum"]);
+  assert.match(read("app/network/graph/nodes/DeviceNode.tsx"), /primaryKinds\(device\.measures!\.kinds\)/);
+  assert.match(read("app/network/NetworkStage.tsx"), /primaryKinds\(m\.kinds\)/);
+});
+
+test("TOPOLOGIE : rayon des anneaux dicté par l'espacement d'arc, monde élargi borné, vue initiale = monde entier, zoom arrière possible", () => {
+  const n = read("app/network/NetworkStage.tsx");
+  assert.match(n, /const arc = 170 \* nodeScale, gap = 185 \* nodeScale;/);
+  assert.match(n, /Math\.max\(wished, needed, ring === 0 \? 0 : out\[ring - 1\] \+ gap\)/);
+  assert.match(n, /Math\.min\(4, Math\.max\(1, /);
+  assert.match(n, /setVb\(\{ x: 0, y: 0, w: worldW, h: worldH \}\)/);
+  assert.match(n, /const ZOOM_MIN  = 0\.15;/);
+  // ordre de grandeur : 60 appareils sur 4 anneaux exigent un rayon extérieur bien supérieur à celui du cadre, donc un monde élargi (facteur borné à 4)
+  const arcRadius = (count: number, nodeScale: number) => (count * 170 * nodeScale) / (Math.PI * 2);
+  assert.ok(arcRadius(60, 0.75) > arcRadius(8, 1) * 0.9 && arcRadius(8, 1) > 200);
+});
+
+test("CONSTELLATION : un doigt posé sur un appareil participe au pincement ; glissement depuis un nœud = déplacement de la vue ; le clic qui suit est avalé", () => {
+  const v = read("app/network/graph/useViewport.ts");
+  assert.doesNotMatch(v, /closest\("\.ng-node"\)\) return;/, "plus de pointeur ignoré sur un nœud");
+  assert.match(v, /fromNode/); assert.match(v, /Math\.hypot\(rec\.x - rec\.sx, rec\.y - rec\.sy\) < 8/);
+  assert.match(v, /if \(!fromNode\) event\.currentTarget\.setPointerCapture/);
+  assert.match(v, /onClickCapture/); assert.match(v, /suppressClick\.current = true;/);
+  assert.match(read("app/network/graph/Graph.tsx"), /\{\.\.\.viewport\.handlers\}/);
 });

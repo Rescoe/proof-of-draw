@@ -49,13 +49,22 @@ Le chemin complet fonctionne : lecture DHT22 → `/api/sensor` 200 → stockage.
 - **Profil** : bouton « 🌡 Mesures » (valeur courante, période 24 h / 7 j / 31 j, courbe par grandeur, tableau horaire). Pas de « Dessiner/Animer » ni de réglages d'affichage pour un capteur seul. La page `/draw/…/sensor` affiche « Capteur sans écran » au lieu de « Écran inconnu ».
 - **Repérage visuel** (12/10/2026) : un capteur seul est un **losange ambre** (les appareils à écran restent des cercles : bleus en topologie, couleur de famille en constellation), avec une entrée « capteur » dans la légende de la constellation.
 - **Topologie** : nœud « CAPTEUR » avec la dernière mesure (« 21,1 °C · 71,9 % »). **Constellation** : nœud 🌡 avec la même ligne. **Panneau latéral** (clic) : section « Mesures » (valeurs, âge), bouton « Voir les dernières 48 h » (courbe) ; aucune lecture de bloc ni d'activité pour un capteur.
+- **Lisibilité de la vue réseau (12/10/2026)** — *Topologie* : le rayon de chaque anneau est dicté par le nombre de nœuds (espacement d'arc ≥ 170 × échelle, anneaux écartés d'au moins 185 × échelle) ; le **monde s'agrandit** (facteur ≤ 4) quand le cadre ne suffit pas, la vue initiale le cadre en entier, le zoom arrière descend à 15 % ; les écrans satellites sont un peu plus éloignés de leur appareil. *Constellation* : plus de respiration entre artistes (rayon +15 %, marge des libellés 50 → 90). *Constellation, tactile* : un doigt posé sur un appareil participe désormais au **pincement** (avant, seuls les doigts posés dans le vide comptaient) ; un glissement qui part d'un appareil déplace la vue (seuil 8 px, sinon c'est un clic), et le clic qui suit un glissement ou un pincement est ignoré (aucune sélection involontaire).
 - La dernière mesure vient du **snapshot réseau** (1 `SMEMBERS` + un pipeline de `LINDEX` par reconstruction, ≤ 1 / 5 min) : au plus ≈ 5 min de retard. Un capteur est « en ligne » s'il a mesuré depuis < 2 h 30.
 - Les températures sont donc **publiques** (dernière valeur + 48 h) pour les appareils qui mesurent ; l'historique long reste privé.
 
+## Diagnostic de la liaison Wi-Fi (12/10/2026)
+
+Chaque mesure embarque deux grandeurs de diagnostic, **dans la même entrée Redis (aucune commande de plus)** : `rssi` (puissance du signal reçu, dBm entier, −127..0 ; −50 excellent, −70 correct, −85 limite) et `lat` (temps de réponse du serveur au DERNIER envoi réussi, ms). Elles apparaissent dans « 🌡 Mesures » du profil (boutons de grandeur, courbe, tableau) et dans la section « Mesures » du panneau réseau, **pas** sur les nœuds (seules température et humidité y sont, `primary` dans `MEASURE_KINDS`).
+
+- « Connectée ou non » : déjà visible (pastille en ligne/hors ligne = dernière mesure < 2 h 30). Une coupure se lit comme un trou dans la courbe.
+- **Débit : non mesuré** — il exigerait un transfert de test à chaque mesure (bande passante, commandes Redis, temps d'éveil) pour un bénéfice faible ; `lat` + `rssi` en donnent une image suffisante. À reprendre si besoin.
+- La carte doit se **ré-inscrire** (redémarrage après reflash) pour déclarer `rssi` et `lat` (`sensors` à `/api/register`) ; avant cela le serveur ignore ces deux champs.
+
 ## Cadence et PHASE D'ESSAI
 
-- Firmware `r4dht22-1.1` : `SENSOR_INTERVAL_MS = 300000UL` (**1 mesure / 5 min**, essai). Production : `3600000UL`.
-- Serveur : intervalle minimal **240 s** jusqu'au **16/10/2026 00:00 UTC**, puis **3 000 s** automatiquement (`MEASURE_TEST_UNTIL_MS`, extinction de l'essai : règle « mode test » de CLAUDE.md). **Reflasher à 1 h avant cette date**, sinon la carte sera refusée (sans écriture) une fois sur deux.
+- Firmware `r4dht22-1.1` : `SENSOR_INTERVAL_MS = 3600000UL` (**1 mesure / heure**, production — depuis le 12/10/2026 soir ; l'essai à 5 min utilisait `300000UL`).
+- Serveur : intervalle minimal **240 s** jusqu'au **16/10/2026 00:00 UTC**, puis **3 000 s** automatiquement (`MEASURE_TEST_UNTIL_MS`, extinction de l'essai : règle « mode test » de CLAUDE.md). Le firmware est maintenant à 1 h : aucune action avant cette date.
 - Pour prolonger l'essai : changer `MEASURE_TEST_UNTIL_MS` (une ligne) ; pour revenir à 1 h plus tôt : reflasher, et mettre la date à une valeur passée.
 
 ## Quota Redis (règle PRIMORDIALE)
