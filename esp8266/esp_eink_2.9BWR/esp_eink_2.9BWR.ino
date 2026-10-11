@@ -174,7 +174,7 @@ static uint16_t g_pcMinStack = 0xFFFF;
 // BALLAST DE REPRÉSENTATIVITÉ : le canari ÉLIMINE le chemin de vote (doValidate retourne avant tout) ; le compilateur retire alors ≈ 1,2 Ko de RAM statique que le build POD_RENDER_V1=1 NON canari conserve.
 // Sans ballast, le tas mesuré serait ≈ 1,2 Ko trop OPTIMISTE pour la configuration à valider. Valeur mesurée (cœur 3.1.2, gcc 10.3, ArduinoJson 7.4.3) : ON 35 056 o − canari 33 820 o = 1 236 o ; le démarrage
 // affiche la RAM statique réelle pour la comparer à la référence ON.
-static volatile uint8_t g_pcBallast[1236];
+static volatile uint8_t g_pcBallast[1284];
 extern "C" { extern char _data_start; extern char _bss_end; }
 static const __FlashStringHelper* canaryPhaseName(uint32_t p) {
   switch (p) {
@@ -216,12 +216,14 @@ static void canaryBoot() {
   g_pcStepMs = millis();
   canaryStep(PCP_BOOT, F("demarrage"));
 }
-/** Pré-vol AVANT de construire WiFiClientSecure : false = pas assez de tas pour BearSSL, la frame sera réessayée plus tard (aucune allocation, aucun ACK). */
-static bool canaryTlsPreflight() {
+/** Pré-vol AVANT de construire un WiFiClientSecure (téléchargement ET ACK : les deux plans de 9 472 o sont encore vivants dans les deux cas) : false = pas assez de tas pour BearSSL ;
+ *  aucune allocation, aucun TLS ouvert. `consequence` dit ce qui arrive à l'appelant (le journal ne ment jamais sur l'état de l'écran ni de l'ACK). */
+static bool canaryTlsPreflight(uint8_t phase, const __FlashStringHelper* label, const __FlashStringHelper* consequence) {
   g_pcHeapPre = ESP.getFreeHeap();
-  canaryStep(PCP_PLANES, F("planes allouees (9472 o), avant TLS"));
+  canaryStep(phase, label);
   if (g_pcHeapPre < POD_CANARY_TLS_MIN_HEAP || ESP.getMaxFreeBlockSize() < POD_CANARY_TLS_MIN_BLOCK) {
-    Serial.printf_P(PSTR("[CANARY] REFUS pre-vol TLS : tas=%u (min %lu) maxBloc=%u (min %lu) — tampons liberes, pas d'ACK, nouvel essai au prochain pull\n"), g_pcHeapPre, POD_CANARY_TLS_MIN_HEAP, ESP.getMaxFreeBlockSize(), POD_CANARY_TLS_MIN_BLOCK);
+    Serial.printf_P(PSTR("[CANARY] REFUS pre-vol TLS : tas=%u (min %lu) maxBloc=%u (min %lu) — "), g_pcHeapPre, POD_CANARY_TLS_MIN_HEAP, ESP.getMaxFreeBlockSize(), POD_CANARY_TLS_MIN_BLOCK);
+    Serial.println(consequence);
     return false;
   }
   return true;
@@ -1156,7 +1158,7 @@ bool doFetchFrame(const String& frameId, const String& frameSource) {
   memset(blackBuf, 0xFF, BUF_SIZE);
   memset(redBuf,   0xFF, BUF_SIZE);
 #if POD_RENDER_V1 && POD_CANARY
-  if (!canaryTlsPreflight()) {
+  if (!canaryTlsPreflight(PCP_PLANES, F("planes allouees (9472 o), avant TLS"), F("tampons liberes, pas d'ACK, nouvel essai au prochain pull"))) {
     free(blackBuf); blackBuf = nullptr;
     free(redBuf);   redBuf   = nullptr;
     return false;
@@ -1273,26 +1275,44 @@ bool doFetchFrame(const String& frameId, const String& frameSource) {
     return false;
   }
 
+#if POD_RENDER_V1 && POD_CANARY
+  // LOT8B2C-FIX1 : en canari le RÉSULTAT de l'ACK décide du succès. L'écran a PU être affiché (hasDisplayedFrame), mais la frame n'est « terminée » (lastFrameId, frameReady, PCP_DONE, retour true) QU'APRÈS
+  // un ACK HTTP 200 ; sinon retour false : le serveur reproposera la frame au prochain pull (≥ 60 s, jamais de polling accéléré). Pré-vol BearSSL aussi pour l'ACK : les plans (9 472 o) sont encore vivants.
+  hasDisplayedFrame = true;
+  if (!canaryTlsPreflight(PCP_ACK, F("rendu OK, pre-vol TLS avant l'ACK (plans encore vivants)"), F("AUCUN ACK envoye : l'ecran a PU etre affiche mais la frame N'EST PAS acquittee (retentee au prochain pull)"))) {
+    free(blackBuf); blackBuf = nullptr;
+    free(redBuf);   redBuf   = nullptr;
+    frameReady = false;
+    return false;
+  }
+  if (!ackFrame(frameId)) {
+    Serial.println(F("[CANARY] ECHEC ACK : refuse ou impossible — l'ecran a PU etre affiche mais la frame N'EST PAS acquittee (lastFrameId et frameReady inchanges), retentee au prochain pull"));
+    free(blackBuf); blackBuf = nullptr;
+    free(redBuf);   redBuf   = nullptr;
+    frameReady = false;
+    return false;
+  }
+  lastFrameId           = frameId;
+  frameReady            = true;
+  lastFrameWasConsensus = (frameSource == "consensus");
+  pendingCandidateId    = "";
+  canaryStep(PCP_DONE, F("ACK recu (HTTP 200) : frame acquittee"));
+  Serial.printf_P(PSTR("[FETCHFRAME] ✅ affichée et acquittée frameId=%s source=%s\n"), frameId.c_str(), frameSource.c_str());
+  logHeapState("FETCHFRAME-AFTER");
+  canaryStreamReport();
+  g_pcRtc.abn = 0;
+  return true;
+#endif
   hasDisplayedFrame     = true;
   lastFrameId           = frameId;
   frameReady            = true;
-#if POD_RENDER_V1 && POD_CANARY
-  canaryStep(PCP_ACK, F("rendu OK, ACK en cours"));
-#endif
   ackFrame(frameId);
-#if POD_RENDER_V1 && POD_CANARY
-  canaryStep(PCP_DONE, F("ACK envoye (code HTTP: ligne [HTTP POST] ci-dessus)"));
-#endif
   lastFrameWasConsensus = (frameSource == "consensus");
   pendingCandidateId    = "";
 
   Serial.printf("[FETCHFRAME] ✅ affichée frameId=%s source=%s\n",
                 frameId.c_str(), frameSource.c_str());
   logHeapState("FETCHFRAME-AFTER");
-#if POD_RENDER_V1 && POD_CANARY
-  canaryStreamReport();
-  g_pcRtc.abn = 0;
-#endif
   return true;
 }
 

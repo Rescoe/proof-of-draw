@@ -89,11 +89,18 @@ Tout est absent quand `POD_CANARY = 0`. Chaînes en flash (`F()` / `PSTR()`), st
 | image uniforme / quasi uniforme | blanc, noir, rouge, un pixel, noir+rouge partout : **296 appels du producteur de ≤ 32 o, `yield()` à chacun**, `renderHash` cohérent, rouge prioritaire, cartel gravé même sur image blanche |
 | rollback / libération | 20 cycles : occupation constante 9 472 o ; échecs intercalés : tout libéré |
 | RTC, reset, arrêt | phase RTC = TERMINE après succès, = FRAMEHASH après échec du panneau ; reset 3 ⇒ ALERTE ; second reset anormal ⇒ ARRÊT sans requête ; reset normal remet le compteur à zéro |
-| contrôles négatifs | 15 mutants REFUSÉS (ACK avant rendu, rendu pendant TLS, plans non libérés, ACK malgré échec, garde de surplus supprimée, pré-vol supprimé, vote autorisé / non oublié, producteur sans `yield`, > 32 o, arrêt sur resets anormaux supprimé, RTC non écrite…) |
+| contrôles négatifs | 18 mutants REFUSÉS (ACK avant rendu, résultat de l'ACK ignoré, pré-vol avant l'ACK supprimé, frame marquée acquittée avant l'ACK, rendu pendant TLS, plans non libérés, ACK malgré échec, garde de surplus supprimée, pré-vol supprimé, vote autorisé / non oublié, producteur sans `yield`, > 32 o, arrêt sur resets anormaux supprimé, RTC non écrite…) |
 
 **Ce que l'hôte NE prouve PAS** : BearSSL réel, tas réel (fragmentation, taille des contextes), durées réelles, chien de garde matériel, panneau réel, orientation et couleurs à l'écran.
 
-Tests : `npm test` = **786 / 786, aucun ignoré** (ArduinoJson 7.4.3 et Crypto fournis par variables d'environnement) ; `tsc` et `git diff --check` propres ; ESLint 107 problèmes **avant et après**. Pour que `npm test` soit entièrement vert avec g++ 13, deux corrections d'infrastructure de test (déjà faites sur la branche R4) sont reprises ici : `-Wno-mismatched-new-delete` dans `tests/helpers/cppHarness.ts` (g++ ≥ 11 refuse le `new (std::nothrow)` des harnais d'extraction) et un dossier de travail distinct dans `tests/edStack.test.ts` (Linux). Sur `3239d2e` ces 7 tests échouent à l'identique.
+Tests : `npm test` = **790 / 790, aucun ignoré** (ArduinoJson 7.4.3 et Crypto fournis par variables d'environnement) ; `tsc` propre ; `git diff --check` propre **après FIX1** (la première version du lot annonçait « propre » à tort : le fichier de harnais, non suivi, n'était pas contrôlé et contenait un espace final ligne 110 ; contrôle refait sur les fichiers indexés, `git diff --check --cached`) ; ESLint 107 problèmes **avant et après**. Pour que `npm test` soit entièrement vert avec g++ 13, deux corrections d'infrastructure de test (déjà faites sur la branche R4) sont reprises ici : `-Wno-mismatched-new-delete` dans `tests/helpers/cppHarness.ts` (g++ ≥ 11 refuse le `new (std::nothrow)` des harnais d'extraction) et un dossier de travail distinct dans `tests/edStack.test.ts` (Linux). Sur `3239d2e` ces 7 tests échouent à l'identique.
+
+### 4 bis. FIX1 (audit GPT de `01cafd0`)
+
+1. **Le résultat de `ackFrame()` décide du succès (canari).** ACK refusé ou impossible ⇒ journal `[CANARY] ECHEC ACK` (l'écran a pu être physiquement affiché), plans libérés, **ni** `PCP_DONE`, **ni** « acquittée », **ni** `lastFrameId` mis à jour, `frameReady=false`, retour `false` : le serveur re-proposera la frame (aucun polling accéléré). Production inchangée.
+2. **Pré-vol BearSSL avant l'ACK** (étape `pre-vol TLS avant l'ACK`, mêmes seuils que le téléchargement : les deux plans de 9 472 o sont encore vivants). Mémoire insuffisante ⇒ aucun TLS d'ACK, diagnostic `REFUS pre-vol TLS`, même sortie en échec.
+3. Succès seulement après `ACK recu (HTTP 200)` : `PCP_DONE`, `lastFrameId`, `frameReady`.
+4. Tests hôte ajoutés (canari) : ACK 200 ; ACK refusé ; mémoire insuffisante avant l'ACK (zéro POST) ; aucun faux `PCP_DONE` ; frame non acquittée ; une seule tentative réseau par chemin ; trois mutants de plus. RAM statique du canari recalée par le lest (35 052 o contre 35 056 o pour ON) ; OFF inchangé (RAM 34 812, flash 408 108, empreinte de désassemblage `fb40a24f3c64b136`, avertissements identiques).
 
 ## 5. Protocole du canari matériel (à exécuter par le porteur, après audit)
 

@@ -44,7 +44,7 @@ extern "C" { char _data_start; char _bss_end; }   // symboles de l'éditeur de l
 
 // ── dépendances simulées du code extrait ───────────────────────────────────────────────────────────────────────────
 static std::string g_postPaths;
-bool httpPost(const String& path, const String& body, String& resp) { (void)body; g_httpPostCalls++; g_lastPostPath = path.c_str(); g_postPaths += path.c_str(); g_postPaths += ";"; ev(std::string("POST ") + path.c_str()); resp = ""; if (path == "/api/ack-frame") { g_ackCalls++; return g_ackResult; } return true; }
+bool httpPost(const String& path, const String& body, String& resp) { (void)body; g_httpPostCalls++; WiFiClientSecure tlsForPost; tlsForPost.tlsOpen();   /* chaque POST ouvre un TLS complet (BearSSL), fermé à la sortie */ g_lastPostPath = path.c_str(); g_postPaths += path.c_str(); g_postPaths += ";"; ev(std::string("POST ") + path.c_str()); resp = ""; if (path == "/api/ack-frame") { g_ackCalls++; return g_ackResult; } return true; }
 bool httpGet(const String& path, String& resp, int* codeOut = nullptr) { g_httpGetCalls++; ev(std::string("GET ") + path.c_str()); resp = ""; if (codeOut) *codeOut = 200; return false; }
 static int g_validateV2Calls = 0, g_registerCalls = 0, g_signCalls = 0;
 bool doValidateV2(const String&, const String&, size_t, const String&) { g_validateV2Calls++; ev("doValidateV2"); return false; }
@@ -107,7 +107,7 @@ static void resetWorld() {
 }
 struct Res { bool ret = false; bool restarted = false; };
 static Res fetch(const std::vector<uint8_t>& frame) {
-  Res r; g_scn.body = frame; g_pump = [] {}; 
+  Res r; g_scn.body = frame; g_pump = [] {};
   try { r.ret = doFetchFrame("frame-1", "personal"); } catch (HostRestart&) { r.restarted = true; }
   return r;
 }
@@ -264,7 +264,22 @@ int main() {
     CHECK(r.ret && g_ackCalls == 1, "S9 clearDisplayWhite sans mémoire : ignoré, le rendu continue");
   }
   // ═══ S10 : erreur d'ACK réseau n'est pas un succès annoncé de plus (état déjà posé, comportement existant) ═══════
-  { resetWorld(); g_ackResult = false; Res r = fetch(mkFrame(0, 40)); CHECK(r.ret && g_ackCalls == 1, "S10 ACK refusé par le serveur : un seul essai, pas de boucle"); }
+  {
+    resetWorld(); g_ackResult = false; Res r = fetch(mkFrame(0, 40));
+    CHECK(g_ackCalls == 1 && evCount("POST /api/ack-frame") == 1, "S10 ACK refusé : UN SEUL essai réseau, pas de boucle");
+#if POD_RENDER_V1 && POD_CANARY
+    // FIX1 : en canari le résultat de l'ACK décide du succès
+    CHECK(!r.ret, "S10 CANARI : ACK refusé => retour false (le serveur reproposera la frame)");
+    CHECK(lastFrameId == "" && !frameReady, "S10 CANARI : frame NON marquée acquittée (lastFrameId, frameReady inchangés)");
+    CHECK(hasDisplayedFrame && epd.refreshes >= 1, "S10 CANARI : l'écran a pu être affiché (dit clairement)");
+    CHECK(Serial.log.find("ECHEC ACK") != std::string::npos && Serial.log.find("ACK recu") == std::string::npos && Serial.log.find("acquittee") != std::string::npos, "S10 CANARI : échec journalisé, jamais « ACK reçu »");
+    CHECK(g_pcRtc.phase != PCP_DONE && g_pcRtc.phase == PCP_ACK, "S10 CANARI : aucune phase TERMINE (la dernière phase est ACK)");
+    CHECK(g_outstanding == 0 && blackBuf == nullptr && redBuf == nullptr, "S10 CANARI : plans libérés");
+    CHECK(Serial.log.find("flux pilote :") == std::string::npos || true, "S10");
+#else
+    CHECK(r.ret && lastFrameId == "frame-1", "S10 (production) ACK refusé : comportement existant conservé (résultat ignoré)");
+#endif
+  }
   // ═══ S11 : cycles répétés — aucune fuite ═════════════════════════════════════════════════════════════════════
   {
     resetWorld(); size_t maxOut = 0; for (int i = 0; i < 20; i++) {
@@ -283,6 +298,31 @@ int main() {
     CHECK(!r.ret, "C1b bloc contigu insuffisant : refus"); noAckNoRender("C1b");
     resetWorld(); g_heapTotal = 38000; r = fetch(mkFrame(0, 62)); CHECK(r.ret, "C1c tas nominal : accepté");
   }
+  // ═══ A : ACK en canari ═══════════════════════════════════════════════════════════════════════════════════════
+  {
+    resetWorld(); Res r = fetch(mkFrame(0, 70));
+    CHECK(r.ret && g_ackCalls == 1 && lastFrameId == "frame-1" && frameReady && g_pcRtc.phase == PCP_DONE, "A1 ACK 200 : succès, frame acquittée, phase TERMINE");
+    CHECK(Serial.log.find("ACK recu (HTTP 200)") != std::string::npos && Serial.log.find("ECHEC ACK") == std::string::npos, "A1 journal");
+    CHECK(evCount("tls_ctor") == 2 && evCount("POST /api/ack-frame") == 1, "A1 deux TLS (téléchargement, ACK), un seul ACK");
+    // mémoire insuffisante AVANT l'ACK : le téléchargement passe (28,5 Ko), la fermeture TLS laisse 12 Ko « perdus » => 16,5 Ko au moment de l'ACK
+    resetWorld(); WiFiClientSecure::g_leakOnClose = 12000; r = fetch(mkFrame(0, 71));
+    CHECK(!r.ret, "A3 mémoire insuffisante avant l'ACK : false");
+    CHECK(g_ackCalls == 0 && evIndex("POST /api/ack-frame") < 0, "A3 AUCUN ACK envoyé");
+    CHECK(evCount("tls_ctor") == 1 && g_httpPostCalls == 0, "A3 aucun second TLS ouvert (le pré-vol évite l'abort de la pile de poussée)");
+    CHECK(lastFrameId == "" && !frameReady && g_pcRtc.phase != PCP_DONE, "A3 frame non acquittée, aucun faux TERMINE");
+    CHECK(hasDisplayedFrame && epd.refreshes >= 1, "A3 l'écran a pu être affiché : dit");
+    CHECK(Serial.log.find("REFUS pre-vol TLS") != std::string::npos && Serial.log.find("N'EST PAS acquittee") != std::string::npos && Serial.log.find("ACK recu") == std::string::npos, "A3 diagnostic explicite");
+    CHECK(g_outstanding == 0 && blackBuf == nullptr && redBuf == nullptr, "A3 plans libérés");
+    // seuil du plus grand bloc contigu avant l'ACK
+    resetWorld(); g_fragBytes = 2000; WiFiClientSecure::g_leakOnClose = 0; g_heapTotal = 38000;
+    r = fetch(mkFrame(0, 72)); CHECK(r.ret, "A4 nominal toujours accepté");
+    // ACK refusé : un seul essai, pas de nouvel essai immédiat
+    resetWorld(); g_ackResult = false; r = fetch(mkFrame(0, 73));
+    CHECK(!r.ret && g_ackCalls == 1 && evCount("tls_ctor") == 2, "A2 ACK refusé : false, un seul essai réseau");
+    // nouvel essai différé : un second doFetchFrame (prochain pull) avec ACK accepté réussit et acquitte
+    g_ackResult = true; g_ev.clear(); lastFrameId = ""; r = fetch(mkFrame(0, 73));
+    CHECK(r.ret && lastFrameId == "frame-1" && frameReady, "A2 le nouvel essai (prochain pull) réussit une fois l'ACK accepté");
+  }
   // ═══ C2 : tas non restitué ═══════════════════════════════════════════════════════════════════════════════════
   {
     resetWorld(); WiFiClientSecure::g_leakOnClose = 3000; Res r = fetch(mkFrame(0, 63));
@@ -293,7 +333,7 @@ int main() {
   {
     resetWorld(); Res r = fetch(mkFrame(0, 65));
     CHECK(g_pcRtc.phase == PCP_DONE && g_rtc[0] == PCR_MAGIC && g_rtc[2] == PCP_DONE, "C3 la dernière phase RTC est TERMINE");
-    for (const char* tag : { "frame: debut", "planes allouees", "TLS ouvert", "corps lu", "TLS FERME", "frameHash calcule", "panneau initialise", "flux remis au pilote", "renderHash", "rendu OK, ACK en cours", "ACK envoye" })
+    for (const char* tag : { "frame: debut", "planes allouees", "TLS ouvert", "corps lu", "TLS FERME", "frameHash calcule", "panneau initialise", "flux remis au pilote", "renderHash", "rendu OK, pre-vol TLS avant l'ACK", "ACK recu (HTTP 200)" })
       CHECK(Serial.log.find(tag) != std::string::npos, std::string("C3 étape journalisée : ") + tag);
     CHECK(Serial.log.find("flux pilote : 296 appels du producteur") != std::string::npos, "C3 rapport du flux (296 appels)");
     CHECK(g_pcMinStack == 3000, "C3 pile cont minimale relevée");

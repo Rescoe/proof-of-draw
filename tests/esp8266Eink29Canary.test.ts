@@ -80,6 +80,17 @@ test("canari : aucun vote — doValidate et doObsConfirm retournent avant tout r
   assert.match(reach, /AUCUN vote en build canari/);
 });
 
+test("canari : l'ACK décide du succès — pré-vol avant l'ACK, retour false sur échec, DONE seulement après HTTP 200, aucune ancienne étape DONE/ACK hors du bloc", () => {
+  const src = read(INO);
+  const body = between(src, "  // LOT8B2C-FIX1 : en canari le RÉSULTAT de l'ACK décide du succès.", "#endif\n  hasDisplayedFrame     = true;");
+  const i = body.indexOf("canaryTlsPreflight(PCP_ACK"), j = body.indexOf("ackFrame(frameId)"), k = body.indexOf("lastFrameId           = frameId;"), d = body.indexOf("canaryStep(PCP_DONE");
+  assert.ok(i > 0 && i < j && j < k && k < d, "ordre : pré-vol, ACK, état acquitté, TERMINE");
+  assert.equal((src.match(/canaryStep\(PCP_DONE/g) ?? []).length, 1, "une seule inscription TERMINE");
+  assert.equal((src.match(/ackFrame\(frameId\)/g) ?? []).length, 2, "un ACK en canari (bloc gardé), un en production");
+  assert.match(body, /if \(!ackFrame\(frameId\)\) \{[\s\S]*?frameReady = false;\s*return false;/);
+  assert.doesNotMatch(body.slice(0, k), /lastFrameId\s*=|frameReady\s*=\s*true/, "rien n'est marqué acquitté avant l'ACK");
+});
+
 test("pas d'accélération du polling : doPull retourne true après un échec de doFetchFrame (nouvel essai à PULL_INTERVAL) ; intervalles inchangés", () => {
   const s = read(INO);
   assert.match(s, /bool fetchOk = doFetchFrame\(newFrameId, newFrameSource\);[\s\S]*?if \(!fetchOk\) \{[\s\S]*?prochaine tentative dans 60s[\s\S]*?\}\s*return true;/);
@@ -153,9 +164,12 @@ const MUTANTS: [string, number, number, boolean, string, string, string][] = [
   ["ACK malgré lecture incomplète", 1, 1, false, "fetch", "    if (bRead != BUF_SIZE || rRead != BUF_SIZE) {", "    if (false) {"],
   ["ACK malgré échec du rendu", 1, 1, false, "fetch", "  if (podRenderAndShow() != 2) {", "  if (podRenderAndShow() == 99) {"],
   ["garde Content-Length / surplus supprimée (canari)", 1, 1, false, "fetch", "if ((canaryClen >= 0 && canaryClen != (int)(2 * BUF_SIZE)) || canarySurplus > 0) {", "if (false) {"],
-  ["pré-vol TLS supprimé (canari)", 1, 1, false, "fetch", "if (!canaryTlsPreflight()) {", "if (false) {"],
+  ["pré-vol TLS supprimé (canari)", 1, 1, false, "fetch", "if (!canaryTlsPreflight(PCP_PLANES,", "if (false && !canaryTlsPreflight(PCP_PLANES,"],
   ["plan rouge non libéré si le second malloc échoue", 1, 0, false, "fetch", "    free(blackBuf); blackBuf = nullptr;\n    free(redBuf);   redBuf   = nullptr;\n    return false;\n  }\n  memset(blackBuf", "    return false;\n  }\n  memset(blackBuf"],
   ["vote autorisé en canari", 1, 1, true, "vote", "AUCUN vote en build canari", "VOTE AUTORISE"],
+  ["ACK : résultat ignoré en canari", 1, 1, false, "fetch", "if (!ackFrame(frameId)) {", "if (ackFrame(frameId) && false) {"],
+  ["ACK : pré-vol avant l'ACK supprimé", 1, 1, false, "fetch", "if (!canaryTlsPreflight(PCP_ACK,", "if (false && !canaryTlsPreflight(PCP_ACK,"],
+  ["ACK : frame marquée acquittée avant l'ACK", 1, 1, false, "fetch", "  hasDisplayedFrame = true;\n  if (!canaryTlsPreflight(PCP_ACK,", "  hasDisplayedFrame = true; lastFrameId = frameId; frameReady = true;\n  if (!canaryTlsPreflight(PCP_ACK,"],
   ["vote : candidat non oublié en canari", 1, 1, true, "vote", "    pendingCandidateId = \"\";\n  }\n  return true;\n#endif", "  }\n  return true;\n#endif"],
   ["vote : ni oubli ni retour anticipé en canari (le vote s'exécute)", 1, 1, true, "vote", "    pendingCandidateId = \"\";\n  }\n  return true;\n#endif", "  }\n#endif"],
   ["producteur sans yield (pilote)", 1, 0, false, "driver", "yield();", ""],
