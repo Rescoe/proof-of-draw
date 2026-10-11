@@ -40,7 +40,7 @@ export async function POST(req: NextRequest) {
     const values = Object.fromEntries(Object.entries(post.values).filter(([k]) => (kinds as string[]).includes(k)));
     if (Object.keys(values).length === 0) return NextResponse.json({ error: "grandeur non déclarée par cet appareil" }, { status: 400 });
 
-    // anti-rafale (SET NX) : intervalle minimal selon la phase (essai 4 min, production 50 min ; extinction automatique de l'essai : lib/measures.ts)
+    // anti-rafale (SET NX) : intervalle minimal selon la phase (essai 4 min, production 25 min ; extinction automatique de l'essai : lib/measures.ts)
     const minSec = measureMinIntervalSec();
     const gate = await redis.set(measGateKey(deviceId), "1", { nx: true, ex: minSec });
     if (gate === null) return NextResponse.json({ ok: true, stored: false, nextSec: minSec });

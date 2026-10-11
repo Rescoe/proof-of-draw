@@ -4,10 +4,10 @@
 
 import { useEffect, useMemo, useState } from "react";
 import type { OwnedDevice } from "@/lib/deviceStore";
-import { MEASURE_KEEP, MEASURE_KINDS, formatMeasure, measureKindsOf, type Measure } from "@/lib/measures";
+import { MEASURE_MAX_HOURS, MEASURE_KINDS, formatMeasure, measureKindsOf, type Measure } from "@/lib/measures";
 import { MeasuresChart, fmtMeasureDate } from "../MeasuresChart";
 
-const PERIODS = [{ h: 24, label: "24 h" }, { h: 168, label: "7 jours" }, { h: MEASURE_KEEP, label: "31 jours" }];
+const PERIODS = [{ h: 24, label: "24 h" }, { h: 168, label: "7 jours" }, { h: MEASURE_MAX_HOURS, label: "31 jours" }];
 
 export function SensorButton({ d }: { d: OwnedDevice }) {
   const [open, setOpen] = useState(false);
@@ -30,7 +30,7 @@ function SensorModal({ d, onClose }: { d: OwnedDevice; onClose: () => void }) {
 
   useEffect(() => {
     let alive = true;
-    fetch(`/api/sensor?deviceId=${encodeURIComponent(d.deviceId)}&hours=${MEASURE_KEEP}`, { credentials: "same-origin" })
+    fetch(`/api/sensor?deviceId=${encodeURIComponent(d.deviceId)}&hours=${MEASURE_MAX_HOURS}`, { credentials: "same-origin" })
       .then(async (r) => { const j = await r.json(); if (!alive) return; if (!r.ok) setErr(typeof j.error === "string" ? j.error : "Erreur"); else setAll(j.measures as Measure[]); })
       .catch(() => alive && setErr("Erreur réseau"));
     return () => { alive = false; };

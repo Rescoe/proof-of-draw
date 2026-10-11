@@ -7,14 +7,14 @@
 // Un appareil qui mesure n'est ni un écran ni un validateur seul : s'il n'a que le pseudo-écran « sensor », il n'entre ni dans devices:all (quorum), ni dans les pools d'écrans.
 //
 // COÛT REDIS par appareil et par POST : limite IP 2 + lecture appareil 1 + anti-rafale SET NX 1 + LPUSH/LTRIM/EXPIRE/SADD 4 = 8 commandes (la fiche n'est réécrite que toutes les 12 h).
-// À 1 mesure/h : 192/jour ≈ 5 800/mois ; en PHASE D'ESSAI (1 mesure/5 min, voir MEASURE_TEST_UNTIL_MS) : ≈ 2 300/jour (≈ 7 000 pour l'essai jusqu'au 16/10). Lecture de l'historique : 1 LRANGE ; vue réseau : 1 SMEMBERS + N LINDEX par reconstruction (≤ 1/5 min).
+// À 1 mesure / 30 min : 384/jour ≈ 11 500/mois et par capteur (≈ 6 % du plan de 200 k) ; l'essai à 5 min (jusqu'au 16/10, voir MEASURE_TEST_UNTIL_MS) coûtait ≈ 2 300/jour. Lecture de l'historique : 1 LRANGE ; vue réseau : 1 SMEMBERS + N LINDEX par reconstruction (≤ 1/5 min).
 
 export const SENSOR_SCREEN = "sensor";
 export const MEASURE_INDEX_KEY = "meas:devices";
 export const measKey = (deviceId: string) => `meas:${deviceId}`;
 export const measGateKey = (deviceId: string) => `meas:gate:${deviceId}`;
 
-export type MeasureKind = "temp" | "hum" | "rssi" | "lat";
+export type MeasureKind = "temp" | "hum" | "rssi" | "lat" | "dl";
 /** Valeurs ENTIÈRES. scale : 10 = stockée en dixièmes d'unité (215 = 21,5 °C) ; 1 = entier tel quel. primary : affichée sur les nœuds du réseau ; sinon DIAGNOSTIC (panneaux seulement). */
 export interface MeasureKindInfo { label: string; unit: string; icon: string; min: number; max: number; scale: 1 | 10; primary: boolean }
 export const MEASURE_KINDS: Record<MeasureKind, MeasureKindInfo> = {
@@ -23,24 +23,28 @@ export const MEASURE_KINDS: Record<MeasureKind, MeasureKindInfo> = {
   // Diagnostic de la liaison Wi-Fi de la carte (dans la MÊME mesure : aucune commande Redis de plus) : puissance du signal reçu et temps de réponse du serveur
   rssi: { label: "Signal Wi-Fi", unit: "dBm", icon: "📶", min: -127, max: 0, scale: 1, primary: false },
   lat:  { label: "Latence serveur", unit: "ms", icon: "⏱", min: 0, max: 60000, scale: 1, primary: false },
+  // Débit de téléchargement mesuré par la carte : durée de lecture d'un fichier STATIQUE de 4 Ko servi par le CDN (public/speedtest.bin : aucune commande Redis, aucune fonction serveur). Débit EFFECTIF de bout en bout (Internet + Wi-Fi + module + UART de la carte), pas la capacité de la box.
+  dl:   { label: "Débit descendant (test 4 Ko)", unit: "kbit/s", icon: "⬇", min: 0, max: 1000000, scale: 1, primary: false },
 };
 export const MEASURE_KIND_IDS = Object.keys(MEASURE_KINDS) as MeasureKind[];
 export const isMeasureKind = (k: unknown): k is MeasureKind => typeof k === "string" && Object.prototype.hasOwnProperty.call(MEASURE_KINDS, k);
 
 // ── Cadence ──────────────────────────────────────────────────────────────────
-/** Intervalle minimal accepté en production : le firmware poste 1 mesure/h. */
-export const MEASURE_MIN_INTERVAL_SEC = 3000;
+/** Intervalle minimal accepté en production : le firmware poste 1 mesure / 30 min (décision du 12/10/2026 : 48 points par jour pour suivre l'évolution de la température). */
+export const MEASURE_MIN_INTERVAL_SEC = 1500;
 /** PHASE D'ESSAI (firmware à 1 mesure / 5 min) : intervalle minimal abaissé, avec EXTINCTION AUTOMATIQUE à cette date (règle « mode test » de CLAUDE.md). 16/10/2026 00:00 UTC. */
 export const MEASURE_TEST_UNTIL_MS = Date.UTC(2026, 9, 16);
 export const MEASURE_TEST_INTERVAL_SEC = 240;
 export function measureMinIntervalSec(now: number = Date.now()): number {
   return now < MEASURE_TEST_UNTIL_MS ? MEASURE_TEST_INTERVAL_SEC : MEASURE_MIN_INTERVAL_SEC;
 }
-/** Mesures conservées par appareil (31 jours à 1/h ; ≈ 62 h pendant l'essai à 5 min). */
-export const MEASURE_KEEP = 24 * 31;
+/** Mesures conservées par appareil : 31 jours à 1 mesure / 30 min. Les grandeurs de diagnostic (rssi, lat, dl) sont DANS la même entrée : aucune commande Redis de plus ; elles s'effacent d'elles-mêmes quand l'anneau fait le tour (pas de persistance dédiée). */
+export const MEASURE_KEEP = 48 * 31;
+/** Fenêtre d'historique maximale demandable à l'interface, en heures. */
+export const MEASURE_MAX_HOURS = 24 * 31;
 export const MEASURE_TTL_SEC = 40 * 24 * 3600;
-/** Un capteur est « en ligne » s'il a mesuré depuis moins de 2 h 30 (au moins deux cadences horaires manquées pour l'en retirer). */
-export const MEASURE_ONLINE_MS = 150 * 60 * 1000;
+/** Un capteur est « en ligne » s'il a mesuré depuis moins de 90 min (trois cadences de 30 min). */
+export const MEASURE_ONLINE_MS = 90 * 60 * 1000;
 /** Réécriture de la fiche appareil (TTL 90 j des appairés) : au plus toutes les 12 h. */
 export const MEASURE_PRESENCE_REFRESH_MS = 12 * 3600 * 1000;
 
@@ -133,15 +137,16 @@ export function summarize(measures: Measure[], kind: MeasureKind): MeasureSummar
 /** « 21,5 °C » depuis des dixièmes. */
 export function formatMeasure(kind: MeasureKind, stored: number): string {
   const info = MEASURE_KINDS[kind];
+  if (kind === "dl" && stored >= 1000) return `${(stored / 1000).toFixed(1).replace(".", ",")} Mbit/s`;
   return info.scale === 10 ? `${(stored / 10).toFixed(1).replace(".", ",")} ${info.unit}` : `${stored} ${info.unit}`;
 }
 /** Grandeurs affichées sur les nœuds du réseau (les grandeurs de diagnostic restent dans les panneaux). */
 export const primaryKinds = (kinds: MeasureKind[]): MeasureKind[] => kinds.filter((k) => MEASURE_KINDS[k].primary);
 
-/** Nombre d'heures demandé par l'interface : entier borné à [1, MEASURE_KEEP], 168 (7 jours) par défaut. */
+/** Nombre d'heures demandé par l'interface : entier borné à [1, MEASURE_MAX_HOURS], 168 (7 jours) par défaut. */
 export function clampHours(raw: unknown): number {
   const n = Math.floor(Number(raw));
-  return Number.isFinite(n) && n >= 1 ? Math.min(n, MEASURE_KEEP) : 168;
+  return Number.isFinite(n) && n >= 1 ? Math.min(n, MEASURE_MAX_HOURS) : 168;
 }
 
 /** Résumé PUBLIC d'un appareil pour la vue réseau : dernière mesure (aucun historique). */

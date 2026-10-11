@@ -114,7 +114,7 @@ int main() {
   oldPath(4000, true, "reponse 4000 o (FIFO vide : demande 1023)");
 
   // B1 : tailles de réponse × motifs d'arrivée
-  const size_t sizes[] = {0, 1, 2, 15, 16, 239, 240, 241, 255, 480, 481, 511, 960, 1023, 1024, 1025, 4736, 9472};
+  const size_t sizes[] = {0, 1, 2, 15, 16, 239, 240, 241, 255, 480, 481, 511, 960, 1023, 1024, 1025, 4096, 4736, 9472};   // 4096 = fichier du test de débit du capteur
   struct Pat { size_t initial, perCmd; const char* n; } pats[] = {{1u << 30, 0, "tout arrive"}, {0, 1, "1 octet/commande"}, {0, 7, "7 o/commande"}, {0, 239, "239 o/commande"}, {0, 500, "500 o/commande"}, {100, 333, "100 puis 333/cmd"}};
   int combos = 0, bad = 0, maxCmd = 0; size_t worstBlock = 0;
   for (size_t n : sizes) for (auto& p : pats) {

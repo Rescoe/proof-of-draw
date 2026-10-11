@@ -4,7 +4,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import {
-  MEASURE_KEEP, MEASURE_MIN_INTERVAL_SEC, MEASURE_TEST_INTERVAL_SEC, MEASURE_TEST_UNTIL_MS, clampHours, decodeMeasure, decodeMeasures, encodeMeasure, formatMeasure, isSensorScreens,
+  MEASURE_KEEP, MEASURE_MAX_HOURS, MEASURE_MIN_INTERVAL_SEC, MEASURE_TEST_INTERVAL_SEC, MEASURE_TEST_UNTIL_MS, clampHours, decodeMeasure, decodeMeasures, encodeMeasure, formatMeasure, isSensorScreens,
   measureKindsOf, measureMinIntervalSec, parseDeclaredSensors, parseMeasurePost, primaryKinds, summarize,
 } from "../lib/measures";
 import { assembleNetworkSnapshot, toNetworkDevice, type DeviceRecord } from "../lib/networkSnapshot";
@@ -50,13 +50,13 @@ test("summarize par grandeur, formats, bornes d'historique", () => {
   assert.deepEqual([h.min, h.max, h.avg, h.count, h.last?.t], [500, 700, 600, 2, 20]);
   assert.equal(summarize([], "temp").count, 0);
   assert.equal(formatMeasure("temp", 215), "21,5 °C"); assert.equal(formatMeasure("temp", -35), "-3,5 °C"); assert.equal(formatMeasure("hum", 456), "45,6 %");
-  assert.equal(clampHours(undefined), 168); assert.equal(clampHours("abc"), 168); assert.equal(clampHours(0), 168); assert.equal(clampHours(24), 24); assert.equal(clampHours(99999), MEASURE_KEEP);
+  assert.equal(clampHours(undefined), 168); assert.equal(clampHours("abc"), 168); assert.equal(clampHours(0), 168); assert.equal(clampHours(24), 24); assert.equal(clampHours(99999), MEASURE_MAX_HOURS); assert.equal(MEASURE_MAX_HOURS, 744); assert.equal(MEASURE_KEEP, 1488, "31 jours à 48 points par jour");
 });
 
 test("CADENCE : l'essai à 5 min s'éteint tout seul le 16/10/2026 00:00 UTC", () => {
   assert.equal(measureMinIntervalSec(MEASURE_TEST_UNTIL_MS - 1), MEASURE_TEST_INTERVAL_SEC);
   assert.equal(measureMinIntervalSec(MEASURE_TEST_UNTIL_MS), MEASURE_MIN_INTERVAL_SEC);
-  assert.equal(MEASURE_TEST_INTERVAL_SEC, 240); assert.equal(MEASURE_MIN_INTERVAL_SEC, 3000);
+  assert.equal(MEASURE_TEST_INTERVAL_SEC, 240); assert.equal(MEASURE_MIN_INTERVAL_SEC, 1500);   // 30 min de cadence, refus sous 25 min
   assert.equal(new Date(MEASURE_TEST_UNTIL_MS).toISOString(), "2026-10-16T00:00:00.000Z");
 });
 
@@ -134,8 +134,8 @@ test("FIRMWARE capteur : copies identiques des fichiers partagés, aucun canari,
   const ino = read(`${D}/pod_uno_r4_dht22.ino`);
   assert.doesNotMatch(ino, /POD_CANARY|POD_RENDER_V1|podCanary|POD_FF|Ed25519|EEPROM|set_new_handler|operator\s+new/);
   assert.match(ino, /#define SCREEN_TYPE\s+"sensor"/);
-  assert.match(ino, /#define SENSOR_INTERVAL_MS\s+3600000UL/);   // PRODUCTION : 1 mesure / heure (l'essai à 300000 s'éteint côté serveur le 16/10/2026)
-  assert.match(ino, /sensors\\":\[\\"temp\\",\\"hum\\",\\"rssi\\",\\"lat\\"\]/);
+  assert.match(ino, /#define SENSOR_INTERVAL_MS\s+1800000UL/);   // PRODUCTION : 1 mesure / 30 min (serveur : refus sous 25 min)
+  assert.match(ino, /sensors\\":\[\\"temp\\",\\"hum\\",\\"rssi\\",\\"lat\\",\\"dl\\"\]/);
   assert.match(ino, /wifiRssi\(rssi\)/);
   assert.match(ino, /\{\\"temp\\":"/);
   assert.match(ino, /\\"m\\":" \+ m \+ "\}"/);
@@ -145,7 +145,7 @@ test("FIRMWARE capteur : copies identiques des fichiers partagés, aucun canari,
   const code = ino.replace(/\/\/.*$/gm, "");
   const wifiCalls = [...code.matchAll(/WiFi\.(\w+)\(/g)].length;
   assert.equal(wifiCalls, 6, "WiFi.status/firmwareVersion/begin/macAddress/RSSI/localIP : seulement dans les six enveloppes");
-  assert.equal((code.match(/podNetRun\(/g) ?? []).length, 1);
+  assert.equal((code.match(/podNetRun\(/g) ?? []).length, 2, "netHttpRaw + netSpeedTest : toute transaction TLS sur pile dédiée");
 });
 
 const cc = findCompiler();
@@ -207,4 +207,24 @@ test("CONSTELLATION : un doigt posé sur un appareil participe au pincement ; gl
   assert.match(v, /if \(!fromNode\) event\.currentTarget\.setPointerCapture/);
   assert.match(v, /onClickCapture/); assert.match(v, /suppressClick\.current = true;/);
   assert.match(read("app/network/graph/Graph.tsx"), /\{\.\.\.viewport\.handlers\}/);
+});
+
+test("DÉBIT : grandeur dl (kbit/s), fichier statique de 4 Ko servi par le CDN, client TLS borné, aucune commande Redis de plus", () => {
+  assert.deepEqual(parseMeasurePost({ m: { temp: 200, dl: 81 } }), { ok: true, values: { temp: 200, dl: 81 } });
+  for (const bad of [{ m: { dl: -1 } }, { m: { dl: 1000001 } }, { m: { dl: 8.5 } }]) assert.equal(parseMeasurePost(bad).ok, false, JSON.stringify(bad));
+  assert.equal(formatMeasure("dl", 81), "81 kbit/s"); assert.equal(formatMeasure("dl", 2500), "2,5 Mbit/s");
+  assert.deepEqual(primaryKinds(["temp", "hum", "rssi", "lat", "dl"]), ["temp", "hum"]);
+  const bin = fs.readFileSync(path.join(root, "public/speedtest.bin"));
+  assert.equal(bin.length, 4096);
+  assert.ok(new Set(bin).size > 200, "octets variés : incompressible, aucune compression CDN possible");
+  const D = "arduino_uno_r4/pod_uno_r4_dht22", ino = read(`${D}/pod_uno_r4_dht22.ino`);
+  assert.equal(read(`${D}/pod_ssl_bounded.h`), read("arduino_uno_r4/pod_uno_r4_eink29/pod_ssl_bounded.h"), "copie identique du client borné validé sur carte");
+  assert.ok(ino.indexOf("#define WiFiSSLClient PodBoundedSSL") > 0 && ino.indexOf("#define WiFiSSLClient PodBoundedSSL") < ino.indexOf("struct Conn {"));
+  assert.match(ino, /#define SPEED_PATH\s+"\/speedtest\.bin"/); assert.match(ino, /#define SPEED_BYTES\s+4096UL/);
+  // le test de débit est UNE transaction réseau sur pile dédiée, avant le POST ; son échec n'empêche pas la mesure
+  assert.equal((ino.replace(/\/\/.*$/gm, "").match(/podNetRun\(/g) ?? []).length, 2);
+  assert.ok(ino.indexOf("netSpeedTest();") < ino.indexOf('httpCall("POST", "/api/sensor"'));
+  assert.match(ino, /if \(dl > 0 && dl <= 1000000UL\)/);
+  assert.match(read("lib/measures.ts"), /aucune commande Redis, aucune fonction serveur/);
+  assert.doesNotMatch(read("app/api/sensor/route.ts"), /speedtest/, "le fichier est statique : la route n'est pas concernée");
 });

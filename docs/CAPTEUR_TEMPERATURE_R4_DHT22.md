@@ -61,15 +61,24 @@ Chaque mesure embarque deux grandeurs de diagnostic, **dans la même entrée Red
 - **Débit : non mesuré** — il exigerait un transfert de test à chaque mesure (bande passante, commandes Redis, temps d'éveil) pour un bénéfice faible ; `lat` + `rssi` en donnent une image suffisante. À reprendre si besoin.
 - La carte doit se **ré-inscrire** (redémarrage après reflash) pour déclarer `rssi` et `lat` (`sensors` à `/api/register`) ; avant cela le serveur ignore ces deux champs.
 
+## Débit et cadence définitive (12/10/2026, firmware `r4dht22-1.2`)
+
+- **Cadence : 1 mesure toutes les 30 min** (48 points/jour) ; le serveur refuse (sans écrire) toute mesure arrivée moins de **25 min** après la précédente (`MEASURE_MIN_INTERVAL_SEC = 1500`). Historique : 1 488 mesures = 31 jours. « En ligne » = mesure de moins de 90 min.
+- **Débit (`dl`, kbit/s)** : avant chaque mesure la carte télécharge `public/speedtest.bin` (4 096 o pseudo-aléatoires, fichier **statique servi par le CDN** : ni commande Redis, ni fonction serveur) et chronomètre la lecture du corps ; le résultat part dans le même POST. C'est le débit **effectif de bout en bout** (Internet + Wi-Fi + module + UART de la carte, lecture par blocs de 240 o du client borné), **pas la capacité de la box** : attendre quelques dizaines à centaines de kbit/s ; utile surtout pour comparer dans le temps. La mesure part même si le test échoue (`[DEBIT] test impossible`).
+- **Persistance « par-dessus »** : le diagnostic (`rssi`, `lat`, `dl`) vit DANS l'entrée de la mesure, donc **aucune commande Redis de plus** et aucune série dédiée ; il s'efface quand l'anneau de 31 jours fait le tour. Rien n'est conservé au-delà.
+- **Redis** : 8 commandes par mesure × 48 = **384/jour ≈ 11 500/mois** par capteur (≈ 6 % du plan de 200 k). Consommation du CDN : 4 Ko × 48 par jour.
+- Le client TLS du capteur est désormais `PodBoundedSSL` (copie de `pod_ssl_bounded.h`, validé sur carte) : lire 4 Ko avec le client du cœur reproduirait l'`abort()` de l'AUDIT5.
+- Limite : la première mesure après le flash n'a pas encore de `lat` (c'est celle du dernier envoi) ; `dl` est mesuré le même cycle.
+
 ## Cadence et PHASE D'ESSAI
 
-- Firmware `r4dht22-1.1` : `SENSOR_INTERVAL_MS = 3600000UL` (**1 mesure / heure**, production — depuis le 12/10/2026 soir ; l'essai à 5 min utilisait `300000UL`).
-- Serveur : intervalle minimal **240 s** jusqu'au **16/10/2026 00:00 UTC**, puis **3 000 s** automatiquement (`MEASURE_TEST_UNTIL_MS`, extinction de l'essai : règle « mode test » de CLAUDE.md). Le firmware est maintenant à 1 h : aucune action avant cette date.
+- Firmware : `SENSOR_INTERVAL_MS = 1800000UL` (**1 mesure / 30 min**, production ; l'essai à 5 min utilisait `300000UL`, puis 1 h brièvement).
+- Serveur : intervalle minimal **240 s** jusqu'au **16/10/2026 00:00 UTC**, puis **1 500 s** (25 min) automatiquement (`MEASURE_TEST_UNTIL_MS`, extinction de l'essai : règle « mode test » de CLAUDE.md). Le firmware est maintenant à 1 h : aucune action avant cette date.
 - Pour prolonger l'essai : changer `MEASURE_TEST_UNTIL_MS` (une ligne) ; pour revenir à 1 h plus tôt : reflasher, et mettre la date à une valeur passée.
 
 ## Quota Redis (règle PRIMORDIALE)
 
-Par POST accepté : limite IP 2 + lecture appareil 1 + anti-rafale 1 + `LPUSH/LTRIM/EXPIRE/SADD` 4 = **8 commandes** (la fiche n'est réécrite que toutes les 12 h). **Essai à 5 min : ≈ 2 300 commandes/jour, ≈ 7 000 jusqu'au 16/10** (≈ 3,5 % du plan mensuel de 200 k). **Production à 1 h : ≈ 190/jour ≈ 5 800/mois** et par capteur. Historique : 1 `LRANGE` (ouverture du panneau, ou clic « 48 h » ; les réponses publiques sont mises en cache 2 min côté CDN). Snapshot réseau : + 1 `SMEMBERS` et N `LINDEX` par reconstruction. Un redémarrage en boucle ne coûte qu'une commande utile (l'anti-rafale refuse le reste).
+Par POST accepté : limite IP 2 + lecture appareil 1 + anti-rafale 1 + `LPUSH/LTRIM/EXPIRE/SADD` 4 = **8 commandes** (la fiche n'est réécrite que toutes les 12 h). **Production à 30 min : 384/jour ≈ 11 500/mois** et par capteur (≈ 6 % du plan mensuel de 200 k). L'essai à 5 min avait coûté ≈ 2 300/jour. Historique : 1 `LRANGE` (ouverture du panneau, ou clic « 48 h » ; les réponses publiques sont mises en cache 2 min côté CDN). Snapshot réseau : + 1 `SMEMBERS` et N `LINDEX` par reconstruction. Un redémarrage en boucle ne coûte qu'une commande utile (l'anti-rafale refuse le reste).
 
 ## Garde-fous (tests : `tests/sensor.test.ts`)
 

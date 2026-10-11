@@ -50,7 +50,7 @@ export function MeasuresChart({ measures, kinds, showTable = false }: { measures
       </div>
       <Chart points={points} kind={kind} />
       {showTable && (
-        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.8rem", marginTop: 8 }}>
+        <div style={{ overflowX: "auto" }}><table style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.8rem", marginTop: 8 }}>
           <thead><tr style={{ textAlign: "left", color: "var(--text3)" }}><th>Heure</th>{kinds.map((k) => <th key={k}>{MEASURE_KINDS[k].label}</th>)}</tr></thead>
           <tbody>
             {measures.map((m) => (
@@ -60,7 +60,7 @@ export function MeasuresChart({ measures, kinds, showTable = false }: { measures
               </tr>
             ))}
           </tbody>
-        </table>
+        </table></div>
       )}
     </div>
   );

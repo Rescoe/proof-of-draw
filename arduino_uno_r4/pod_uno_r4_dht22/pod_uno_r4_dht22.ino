@@ -1,5 +1,5 @@
 // pod_uno_r4_dht22.ino
-// Proof-of-Draw — capteur de TEMPÉRATURE + HUMIDITÉ : UNO R4 WiFi + DHT22 (AM2302). Mesures vers /api/sensor (production : 1 / heure ; essai : 1 / 5 min), historique dans « Mon profil » (🌡 Mesures) et dans la vue réseau.
+// Proof-of-Draw — capteur de TEMPÉRATURE + HUMIDITÉ : UNO R4 WiFi + DHT22 (AM2302). Mesures vers /api/sensor (production : 1 / 30 min), historique dans « Mon profil » (🌡 Mesures) et dans la vue réseau.
 //
 // Compilé, flashé et VALIDÉ sur la carte par le porteur (12/10/2026) ; écrit sans chaîne ARM. Le réseau (pile TLS dédiée, pile Wi-Fi dédiée, pile de travail JSON, journal) est la copie des blocs VALIDÉS du firmware e-ink 2,9″, canari retiré.
 // Seul code neuf : dht22.h (décodage testé sur l'hôte) et doSensor() (mesure + diagnostic Wi-Fi : signal reçu et latence du dernier envoi).
@@ -17,6 +17,7 @@
 #include <WiFiS3.h>
 #include <ArduinoJson.h>
 #include "pod_http.h"
+#include "pod_ssl_bounded.h"   // client TLS à réception modem BORNÉE (240 o) : validé sur carte (e-ink 2,9″, 11/10/2026) ; indispensable pour le test de débit (4 Ko lus d'un coup = abort() avec le client du cœur)
 #include "podNetStack.h"   // transactions TLS, appels au module Wi-Fi et journal sur PILES DÉDIÉES (la pile principale du cœur R4 ne fait que 1 024 o)
 #include "dht22.h"
 #include <new>
@@ -33,10 +34,10 @@
 
 #define SERVER_HOST         "proof-of-draw.vercel.app"
 #define SCREEN_TYPE         "sensor"               // pas un écran : voir lib/sensorData.ts
-#define FIRMWARE_VERSION    "r4dht22-1.1"
+#define FIRMWARE_VERSION    "r4dht22-1.2"
 #define DHT_PIN             2                      // D2
-// PRODUCTION : 1 mesure / heure. (Essai : 300000UL = 5 min, accepté par le serveur seulement jusqu'au 16/10/2026 00:00 UTC ; au-delà le serveur refuse toute mesure < 50 min après la précédente.)
-#define SENSOR_INTERVAL_MS  3600000UL              // 1 mesure par heure
+// PRODUCTION : 1 mesure / 30 min (48 points par jour). Le serveur refuse (sans écrire) toute mesure arrivée moins de 25 min après la précédente.
+#define SENSOR_INTERVAL_MS  1800000UL              // 1 mesure toutes les 30 min
 #define SENSOR_RETRY_MS     300000UL               // après un échec (lecture ou réseau) : nouvel essai dans 5 min
 #define HTTP_TIMEOUT_MS     20000UL
 
@@ -134,6 +135,8 @@ static String __attribute__((noinline)) wifiIpString() {
 }
 
 
+// À partir d'ici le nom WiFiSSLClient désigne PodBoundedSSL (pod_ssl_bounded.h) : chaque lecture TLS demande au module AU PLUS 240 o.
+#define WiFiSSLClient PodBoundedSSL
 struct Conn {
   WiFiSSLClient client;
   podhttp::Reader<WiFiSSLClient> rd;
@@ -251,7 +254,7 @@ static bool __attribute__((noinline)) doRegisterDecode(const String& resp) {
 static bool doRegister() {
   const String mac = macString();
   if (mac.length() == 0) { logf("[REGISTER] adresse MAC indisponible (module Wi-Fi, pile dédiée) : inscription ANNULÉE"); return false; }
-  const String body = "{\"mac\":\"" + mac + "\",\"screens\":[\"" SCREEN_TYPE "\"],\"firmware\":\"" FIRMWARE_VERSION "\",\"sensors\":[\"temp\",\"hum\",\"rssi\",\"lat\"]}";   // grandeurs mesurées (lib/measures.ts)
+  const String body = "{\"mac\":\"" + mac + "\",\"screens\":[\"" SCREEN_TYPE "\"],\"firmware\":\"" FIRMWARE_VERSION "\",\"sensors\":[\"temp\",\"hum\",\"rssi\",\"lat\",\"dl\"]}";   // grandeurs mesurées (lib/measures.ts)
   String resp;
   if (httpCall("POST", "/api/register", &body, resp) != 200) { logf("[REGISTER] échec — nouvel essai dans 5 s"); return false; }
   if (!doRegisterDecode(resp)) return false;
@@ -262,6 +265,34 @@ static bool doRegister() {
 
 // ─── MESURE ────────────────────────────────────────────────────────────────
 // Retour : true = mesure acceptée OU refusée proprement par l'anti-rafale du serveur (rien à refaire avant une heure) ; false = lecture, réseau ou serveur en échec (nouvel essai dans 5 min).
+// ─── TEST DE DÉBIT ─────────────────────────────────────────────────────────
+// Télécharge public/speedtest.bin (4 096 o, fichier STATIQUE servi par le CDN : aucune commande Redis, aucune fonction serveur) et chronomètre la lecture du corps. Résultat en kbit/s (octets x 8 bits / ms),
+// 0 = échec (la mesure part quand même, sans cette grandeur). C'est le débit EFFECTIF de bout en bout (Internet + Wi-Fi + module + UART de la carte), pas la capacité de la box.
+#define SPEED_PATH  "/speedtest.bin"
+#define SPEED_BYTES 4096UL
+static uint32_t __attribute__((noinline)) netSpeedTest() {
+  uint32_t kbps = 0; PodNetInfo ni;
+  auto tx = [&]() {
+    Conn c(HTTP_TIMEOUT_MS);
+    const int code = c.request("GET", SPEED_PATH, nullptr);
+    if (code == 200 && (c.rd.contentLength() < 0 || c.rd.contentLength() == (long)SPEED_BYTES)) {
+      const unsigned long t0 = millis();
+      size_t total = 0;
+      while (total < SPEED_BYTES) {
+        const size_t want = (SPEED_BYTES - total) < sizeof(g_body) ? (SPEED_BYTES - total) : sizeof(g_body);
+        const size_t r = c.rd.readBody((uint8_t*)g_body, want);
+        if (r == 0) break;
+        total += r;
+      }
+      const unsigned long dt = millis() - t0;
+      if (total == SPEED_BYTES && c.client.fault() == 0 && dt > 0) { kbps = (uint32_t)((SPEED_BYTES * 8UL) / dt); if (kbps == 0) kbps = 1; }
+    }
+    c.client.stop();
+  };
+  if (!podNetRun(tx, &ni)) return 0;
+  return kbps;
+}
+
 static unsigned long g_lastLatMs = 0;                      // durée du dernier POST /api/sensor réussi (joint à la mesure suivante)
 static bool doSensor() {
   int16_t c10 = 0; uint16_t h10 = 0;
@@ -269,9 +300,12 @@ static bool doSensor() {
   logf("[DHT22] %d.%d C, %u.%u %%", (int)(c10 / 10), (int)(c10 < 0 ? -(c10 % 10) : c10 % 10), (unsigned)(h10 / 10), (unsigned)(h10 % 10));
   // Diagnostic Wi-Fi joint à la mesure (aucune requête de plus) : signal reçu (dBm) et temps de réponse du DERNIER envoi réussi (ms)
   int32_t rssi = 0; const bool haveRssi = wifiRssi(rssi) && rssi < 0 && rssi >= -127;
+  const uint32_t dl = netSpeedTest();
+  if (dl > 0) logf("[DEBIT] %lu kbit/s (test de %lu o)", (unsigned long)dl, (unsigned long)SPEED_BYTES); else logf("[DEBIT] test impossible (la mesure part sans débit)");
   String m = "{\"temp\":" + String((int)c10) + ",\"hum\":" + String((unsigned)h10);
   if (haveRssi) m += ",\"rssi\":" + String((int)rssi);
   if (g_lastLatMs > 0 && g_lastLatMs <= 60000UL) m += ",\"lat\":" + String((unsigned)g_lastLatMs);
+  if (dl > 0 && dl <= 1000000UL) m += ",\"dl\":" + String((unsigned)dl);
   m += "}";
   const String body = "{\"deviceId\":\"" + deviceId + "\",\"pairCode\":\"" + pairCode + "\",\"m\":" + m + "}";
   String resp;
