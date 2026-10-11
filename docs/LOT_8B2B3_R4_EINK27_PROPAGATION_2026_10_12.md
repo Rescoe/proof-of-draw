@@ -1,4 +1,5 @@
 # Lot 8B-2B-3 — LOT8B2B3-R4-EINK27-PROPAGATION-1 (12/10/2026)
+> **PRÊT — TEST MATÉRIEL REPORTÉ, carte indisponible.** (12/10/2026) Code, compilations et canaris logiciels terminés au commit `0391c71` ; jamais flashé ; ne pas fusionner dans `main` ; ne pas poursuivre vers le TFT R4 dans cette branche.
 
 Propagation **étroite** des mécanismes validés sur carte pour l'UNO R4 WiFi + e-ink 2,9″ vers **UNO R4 WiFi + e-ink 2,7″ (solo)** et **UNO R4 WiFi + e-ink 2,7″ + OLED**. Réalisé par Claude (implémenteur), à auditer par GPT/Codex. **Testé sur l'hôte seulement : jamais compilé pour la carte, jamais flashé.**
 
