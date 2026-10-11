@@ -1,0 +1,295 @@
+TAP version 13
+# Subtest: sketch : les quatre fragments exacts, drapeaux 0/0, aucun new_handler ni operator new, pas de propagation aux autres firmwares
+ok 1 - sketch : les quatre fragments exacts, drapeaux 0/0, aucun new_handler ni operator new, pas de propagation aux autres firmwares
+  ---
+  duration_ms: 15.624793
+  type: 'test'
+  ...
+# Subtest: en-tête : plafond 240, réservation unique, défaut collant, échec fermé
+ok 2 - en-tête : plafond 240, réservation unique, défaut collant, échec fermé
+  ---
+  duration_ms: 0.552985
+  type: 'test'
+  ...
+# Subtest: cœur Renesas 1.5.3 (VRAI code) : ancien chemin → abort sous bloc contigu 1888 o ; nouveau chemin → AT bornée à 240, octets exacts, échec fermé
+ok 3 - cœur Renesas 1.5.3 (VRAI code) : ancien chemin → abort sous bloc contigu 1888 o ; nouveau chemin → AT bornée à 240, octets exacts, échec fermé
+  ---
+  duration_ms: 3421.577234
+  type: 'test'
+  ...
+# Subtest: cœur Renesas 1.6.0 (VRAI code) : ancien chemin → abort sous bloc contigu 1888 o ; nouveau chemin → AT bornée à 240, octets exacts, échec fermé
+ok 4 - cœur Renesas 1.6.0 (VRAI code) : ancien chemin → abort sous bloc contigu 1888 o ; nouveau chemin → AT bornée à 240, octets exacts, échec fermé
+  ---
+  duration_ms: 3246.083809
+  type: 'test'
+  ...
+# Subtest: CONTRÔLE NÉGATIF : « plafond relevé à 1023 » est REFUSÉ par le harnais (cœur 1.6.0)
+ok 5 - CONTRÔLE NÉGATIF : « plafond relevé à 1023 » est REFUSÉ par le harnais (cœur 1.6.0)
+  ---
+  duration_ms: 3913.934434
+  type: 'test'
+  ...
+# Subtest: CONTRÔLE NÉGATIF : « plafond non appliqué » est REFUSÉ par le harnais (cœur 1.6.0)
+ok 6 - CONTRÔLE NÉGATIF : « plafond non appliqué » est REFUSÉ par le harnais (cœur 1.6.0)
+  ---
+  duration_ms: 3337.64492
+  type: 'test'
+  ...
+# Subtest: CONTRÔLE NÉGATIF : « pas de réservation (la chaîne regrandit) » est REFUSÉ par le harnais (cœur 1.6.0)
+ok 7 - CONTRÔLE NÉGATIF : « pas de réservation (la chaîne regrandit) » est REFUSÉ par le harnais (cœur 1.6.0)
+  ---
+  duration_ms: 2560.856157
+  type: 'test'
+  ...
+# Subtest: CONTRÔLE NÉGATIF : « réponse trop longue acceptée » est REFUSÉ par le harnais (cœur 1.6.0)
+ok 8 - CONTRÔLE NÉGATIF : « réponse trop longue acceptée » est REFUSÉ par le harnais (cœur 1.6.0)
+  ---
+  duration_ms: 2414.888077
+  type: 'test'
+  ...
+# Subtest: CONTRÔLE NÉGATIF : « read() ne signale pas le défaut » est REFUSÉ par le harnais (cœur 1.6.0)
+ok 9 - CONTRÔLE NÉGATIF : « read() ne signale pas le défaut » est REFUSÉ par le harnais (cœur 1.6.0)
+  ---
+  duration_ms: 2322.813316
+  type: 'test'
+  ...
+# Subtest: CONTRÔLE NÉGATIF : « connected() ignore le défaut » est REFUSÉ par le harnais (cœur 1.6.0)
+ok 10 - CONTRÔLE NÉGATIF : « connected() ignore le défaut » est REFUSÉ par le harnais (cœur 1.6.0)
+  ---
+  duration_ms: 2406.831206
+  type: 'test'
+  ...
+# [dopullJsonStack] compilateur C++ : g++ (g++ (Ubuntu 13.3.0-6ubuntu2~24.04.1) 13.3.0)
+# Subtest: DOPULL-JSON-STACK-FIX1 (statique) : le décodage de /api/pull vit tout entier sur la pile de travail, rien n'est appliqué avant un retour valide, ordre des effets conservé ; CONTRÔLES NÉGATIFS
+ok 11 - DOPULL-JSON-STACK-FIX1 (statique) : le décodage de /api/pull vit tout entier sur la pile de travail, rien n'est appliqué avant un retour valide, ordre des effets conservé ; CONTRÔLES NÉGATIFS
+  ---
+  duration_ms: 63.472185
+  type: 'test'
+  ...
+# Subtest: DOPULL-JSON-STACK-FIX1 : les quatre autres firmwares R4 sont INCHANGÉS (aucun décodage sur pile de travail : propagation après validation matérielle) ; l'en-tête podNetStack.h porte podWorkRun et sa taille justifiée
+ok 12 - DOPULL-JSON-STACK-FIX1 : les quatre autres firmwares R4 sont INCHANGÉS (aucun décodage sur pile de travail : propagation après validation matérielle) ; l'en-tête podNetStack.h porte podWorkRun et sa taille justifiée
+  ---
+  duration_ms: 3.995894
+  type: 'test'
+  ...
+# Subtest: DOPULL-JSON-STACK-FIX1 (canari) : une ligne « [CANARY] pull JSON » (pile de travail utilisée / marge / erreur / statut, tas avant et après), verrou sur toute erreur de pile ou statut inattendu ; le contrôle de la pile principale suit le RETOUR du rapport (règle A/B/C) ; aucune variable globale de plus
+ok 13 - DOPULL-JSON-STACK-FIX1 (canari) : une ligne « [CANARY] pull JSON » (pile de travail utilisée / marge / erreur / statut, tas avant et après), verrou sur toute erreur de pile ou statut inattendu ; le contrôle de la pile principale suit le RETOUR du rapport (règle A/B/C) ; aucune variable globale de plus
+  ---
+  duration_ms: 1.989211
+  type: 'test'
+  ...
+# Subtest: DOPULL-JSON-STACK-FIX1 (HÔTE) : le code RÉEL du décodage contre ArduinoJson réel — minimale, complète, 429, tronquée, trop imbriquée, hors bornes, observation à 8/9, UTF-8, NOMEM/NESTED/GUARD/MARGIN, panne d'allocation à chaque point : tout ou rien
+ok 14 - DOPULL-JSON-STACK-FIX1 (HÔTE) : le code RÉEL du décodage contre ArduinoJson réel — minimale, complète, 429, tronquée, trop imbriquée, hors bornes, observation à 8/9, UTF-8, NOMEM/NESTED/GUARD/MARGIN, panne d'allocation à chaque point : tout ou rien
+  ---
+  duration_ms: 4420.913058
+  type: 'test'
+  ...
+# Subtest: DOPULL-JSON-STACK-FIX1 (HÔTE) : CONTRÔLES NÉGATIFS — borne supprimée, copie non vérifiée, effet avant la validation, échec de pile ignoré, journal avant l'arrêt sûr : le harnais les REFUSE
+ok 15 - DOPULL-JSON-STACK-FIX1 (HÔTE) : CONTRÔLES NÉGATIFS — borne supprimée, copie non vérifiée, effet avant la validation, échec de pile ignoré, journal avant l'arrêt sûr : le harnais les REFUSE
+  ---
+  duration_ms: 37369.439314
+  type: 'test'
+  ...
+# [registerJsonStack] compilateur C++ : g++ (g++ (Ubuntu 13.3.0-6ubuntu2~24.04.1) 13.3.0)
+# Subtest: REGISTER-JSON-STACK-FIX1 (statique) : la réponse du register est décodée sur la pile de travail APRÈS httpCall, rien n'est inscrit avant un résultat complet, valeurs refusées jamais tronquées ; CONTRÔLES NÉGATIFS
+ok 16 - REGISTER-JSON-STACK-FIX1 (statique) : la réponse du register est décodée sur la pile de travail APRÈS httpCall, rien n'est inscrit avant un résultat complet, valeurs refusées jamais tronquées ; CONTRÔLES NÉGATIFS
+  ---
+  duration_ms: 28.710066
+  type: 'test'
+  ...
+# Subtest: REGISTER-JSON-STACK-FIX1 (canari) : ligne « [CANARY] register JSON » (utilisation, marge, erreur, statut, tas avant / après), verrou sur erreur de pile ou statut ≠ OK, contrôle de la pile principale APRÈS le retour du rapport, rien en production
+ok 17 - REGISTER-JSON-STACK-FIX1 (canari) : ligne « [CANARY] register JSON » (utilisation, marge, erreur, statut, tas avant / après), verrou sur erreur de pile ou statut ≠ OK, contrôle de la pile principale APRÈS le retour du rapport, rien en production
+  ---
+  duration_ms: 1.703252
+  type: 'test'
+  ...
+# Subtest: REGISTER-JSON-STACK-FIX1 (HÔTE) : le code RÉEL du décodage contre ArduinoJson réel — appairé / non appairé / champs absents / types inattendus / valeurs trop courtes, trop longues, hors alphabet / JSON tronqué / NOMEM, NESTED, GUARD, MARGIN / allocation impossible : tout ou rien
+not ok 18 - REGISTER-JSON-STACK-FIX1 (HÔTE) : le code RÉEL du décodage contre ArduinoJson réel — appairé / non appairé / champs absents / types inattendus / valeurs trop courtes, trop longues, hors alphabet / JSON tronqué / NOMEM, NESTED, GUARD, MARGIN / allocation impossible : tout ou rien
+  ---
+  duration_ms: 3190.163056
+  type: 'test'
+  location: '/tmp/claude-0/base_wt/tests/registerJsonStack.test.ts:2:13620'
+  failureType: 'testCodeFailure'
+  error: |-
+    compilation du harnais C++ (pod_metrics.h) impossible
+      commande : g++ -std=c++11 -Wall -Wextra -Werror -O2 -I/tmp/regwork-Ot4DxZ/b-NPZcb0 -I/tmp/claude-0/base_wt/consensus-pod/host/shim -I/tmp/claude-0/base_wt/consensus-pod/src/adapters -isystem /tmp/claude-0/core/libs/ArduinoJson/src -DARDUINOJSON_ENABLE_ARDUINO_STRING=1 -DARDUINOJSON_ENABLE_ARDUINO_STREAM=0 -DARDUINOJSON_ENABLE_ARDUINO_PRINT=0 -DARDUINOJSON_ENABLE_PROGMEM=0 /tmp/claude-0/base_wt/consensus-pod/host/register_work_harness.cpp -o /tmp/regwork-Ot4DxZ/b-NPZcb0/register_work_harness
+      répertoire : /tmp/claude-0/base_wt
+      code de sortie : 1
+      erreur de lancement : aucune
+      --- stdout ---
+    (vide)
+      --- stderr ---
+    In file included from /tmp/claude-0/base_wt/consensus-pod/host/register_work_harness.cpp:39:
+    /tmp/regwork-Ot4DxZ/b-NPZcb0/register_extract.inc: In function 'bool doRegisterDecode(const String&)':
+    /tmp/regwork-Ot4DxZ/b-NPZcb0/register_extract.inc:57:10: error: 'void operator delete(void*)' called on pointer returned from a mismatched allocation function [-Werror=mismatched-new-delete]
+       57 |   delete r;
+          |          ^
+    In function 'void* operator new(std::size_t, const std::nothrow_t&)',
+        inlined from 'bool doRegisterDecode(const String&)' at /tmp/regwork-Ot4DxZ/b-NPZcb0/register_extract.inc:48:63:
+    /tmp/claude-0/base_wt/consensus-pod/host/register_work_harness.cpp:34:118: note: returned from 'void* malloc(size_t)'
+       34 | void* operator new(std::size_t n, const std::nothrow_t&) noexcept { if (g_failNew) return nullptr; return std::malloc(n); }
+          |                                                                                                           ~~~~~~~~~~~^~~
+    cc1plus: all warnings being treated as errors
+  code: 'ERR_TEST_FAILURE'
+  stack: |-
+    compileHarness (/tmp/claude-0/base_wt/tests/helpers/cppHarness.ts:84:55)
+    build (/tmp/claude-0/base_wt/tests/registerJsonStack.test.ts:140:3)
+    TestContext.<anonymous> (/tmp/claude-0/base_wt/tests/registerJsonStack.test.ts:147:24)
+    Test.runInAsyncScope (node:async_hooks:214:14)
+    Test.run (node:internal/test_runner/test:1047:25)
+    Test.processPendingSubtests (node:internal/test_runner/test:744:18)
+    Test.postRun (node:internal/test_runner/test:1173:19)
+    Test.run (node:internal/test_runner/test:1101:12)
+    async Test.processPendingSubtests (node:internal/test_runner/test:744:7)
+  ...
+# Subtest: REGISTER-JSON-STACK-FIX1 (HÔTE) : CONTRÔLES NÉGATIFS — validation relâchée, troncature, état inscrit trop tôt, échec de pile ignoré, journal avant l'arrêt sûr : le harnais les REFUSE
+not ok 19 - REGISTER-JSON-STACK-FIX1 (HÔTE) : CONTRÔLES NÉGATIFS — validation relâchée, troncature, état inscrit trop tôt, échec de pile ignoré, journal avant l'arrêt sûr : le harnais les REFUSE
+  ---
+  duration_ms: 2830.303115
+  type: 'test'
+  location: '/tmp/claude-0/base_wt/tests/registerJsonStack.test.ts:2:14153'
+  failureType: 'testCodeFailure'
+  error: |-
+    compilation du harnais C++ (pod_metrics.h) impossible
+      commande : g++ -std=c++11 -Wall -Wextra -Werror -O2 -I/tmp/regwork-Ot4DxZ/b-xOmVel -I/tmp/claude-0/base_wt/consensus-pod/host/shim -I/tmp/claude-0/base_wt/consensus-pod/src/adapters -isystem /tmp/claude-0/core/libs/ArduinoJson/src -DARDUINOJSON_ENABLE_ARDUINO_STRING=1 -DARDUINOJSON_ENABLE_ARDUINO_STREAM=0 -DARDUINOJSON_ENABLE_ARDUINO_PRINT=0 -DARDUINOJSON_ENABLE_PROGMEM=0 -Wno-unused-variable -Wno-unused-parameter -Wno-unused-function -Wno-unused-but-set-variable /tmp/claude-0/base_wt/consensus-pod/host/register_work_harness.cpp -o /tmp/regwork-Ot4DxZ/b-xOmVel/register_work_harness
+      répertoire : /tmp/claude-0/base_wt
+      code de sortie : 1
+      erreur de lancement : aucune
+      --- stdout ---
+    (vide)
+      --- stderr ---
+    In file included from /tmp/claude-0/base_wt/consensus-pod/host/register_work_harness.cpp:39:
+    /tmp/regwork-Ot4DxZ/b-xOmVel/register_extract.inc: In function 'bool doRegisterDecode(const String&)':
+    /tmp/regwork-Ot4DxZ/b-xOmVel/register_extract.inc:56:10: error: 'void operator delete(void*)' called on pointer returned from a mismatched allocation function [-Werror=mismatched-new-delete]
+       56 |   delete r;
+          |          ^
+    In function 'void* operator new(std::size_t, const std::nothrow_t&)',
+        inlined from 'bool doRegisterDecode(const String&)' at /tmp/regwork-Ot4DxZ/b-xOmVel/register_extract.inc:47:63:
+    /tmp/claude-0/base_wt/consensus-pod/host/register_work_harness.cpp:34:118: note: returned from 'void* malloc(size_t)'
+       34 | void* operator new(std::size_t n, const std::nothrow_t&) noexcept { if (g_failNew) return nullptr; return std::malloc(n); }
+          |                                                                                                           ~~~~~~~~~~~^~~
+    cc1plus: all warnings being treated as errors
+  code: 'ERR_TEST_FAILURE'
+  stack: |-
+    compileHarness (/tmp/claude-0/base_wt/tests/helpers/cppHarness.ts:84:55)
+    build (/tmp/claude-0/base_wt/tests/registerJsonStack.test.ts:140:3)
+    TestContext.<anonymous> (/tmp/claude-0/base_wt/tests/registerJsonStack.test.ts:170:26)
+    Test.runInAsyncScope (node:async_hooks:214:14)
+    Test.run (node:internal/test_runner/test:1047:25)
+    Test.processPendingSubtests (node:internal/test_runner/test:744:18)
+    Test.postRun (node:internal/test_runner/test:1173:19)
+    Test.run (node:internal/test_runner/test:1101:12)
+    async Test.processPendingSubtests (node:internal/test_runner/test:744:7)
+  ...
+# Subtest: INVENTAIRE FORMEL des deserializeJson des cinq firmwares R4 : exactement les sites connus ; le e-ink 2,9″ n'en a plus AUCUN sur la pile principale ; les quatre autres restent à migrer APRÈS validation matérielle
+ok 20 - INVENTAIRE FORMEL des deserializeJson des cinq firmwares R4 : exactement les sites connus ; le e-ink 2,9″ n'en a plus AUCUN sur la pile principale ; les quatre autres restent à migrer APRÈS validation matérielle
+  ---
+  duration_ms: 34.33046
+  type: 'test'
+  ...
+# [validateJsonStack] compilateur C++ : g++ (g++ (Ubuntu 13.3.0-6ubuntu2~24.04.1) 13.3.0)
+# Subtest: DOVALIDATE-JSON-STACK-FIX1 (statique) : la réponse du validate est décodée sur la pile de travail APRÈS httpCall et AVANT la lecture du candidat, la signature et le vote ; sorties seulement avec un résultat complet ; valeurs refusées jamais tronquées ; CONTRÔLES NÉGATIFS
+ok 21 - DOVALIDATE-JSON-STACK-FIX1 (statique) : la réponse du validate est décodée sur la pile de travail APRÈS httpCall et AVANT la lecture du candidat, la signature et le vote ; sorties seulement avec un résultat complet ; valeurs refusées jamais tronquées ; CONTRÔLES NÉGATIFS
+  ---
+  duration_ms: 41.122845
+  type: 'test'
+  ...
+# Subtest: DOVALIDATE-JSON-STACK-FIX1 : les quatre autres firmwares R4 sont INCHANGÉS (doValidate d'avant, aucune pile de travail) ; en-tête : deux constantes seulement
+ok 22 - DOVALIDATE-JSON-STACK-FIX1 : les quatre autres firmwares R4 sont INCHANGÉS (doValidate d'avant, aucune pile de travail) ; en-tête : deux constantes seulement
+  ---
+  duration_ms: 6.189855
+  type: 'test'
+  ...
+# Subtest: DOVALIDATE-JSON-STACK-FIX1 (canari) : ligne « [CANARY] validate JSON », verrou sur erreur de pile ou statut ≠ OK, contrôle V: APRÈS le retour du rapport, rien en production
+ok 23 - DOVALIDATE-JSON-STACK-FIX1 (canari) : ligne « [CANARY] validate JSON », verrou sur erreur de pile ou statut ≠ OK, contrôle V: APRÈS le retour du rapport, rien en production
+  ---
+  duration_ms: 1.559788
+  type: 'test'
+  ...
+# Subtest: DOVALIDATE-JSON-STACK-FIX1 (HÔTE) : le code RÉEL du décodage contre ArduinoJson réel — v2 / v1 / déjà voté / candidat nul / valeurs invalides, absentes, trop longues, hors alphabet, mal typées / JSON tronqué / NOMEM, NESTED, GUARD, MARGIN / allocation impossible : tout ou rien
+not ok 24 - DOVALIDATE-JSON-STACK-FIX1 (HÔTE) : le code RÉEL du décodage contre ArduinoJson réel — v2 / v1 / déjà voté / candidat nul / valeurs invalides, absentes, trop longues, hors alphabet, mal typées / JSON tronqué / NOMEM, NESTED, GUARD, MARGIN / allocation impossible : tout ou rien
+  ---
+  duration_ms: 2263.15102
+  type: 'test'
+  location: '/tmp/claude-0/base_wt/tests/validateJsonStack.test.ts:2:15125'
+  failureType: 'testCodeFailure'
+  error: |-
+    compilation du harnais C++ (pod_metrics.h) impossible
+      commande : g++ -std=c++11 -Wall -Wextra -Werror -O2 -I/tmp/valwork-lzgYb8/b-hNRP0u -I/tmp/claude-0/base_wt/consensus-pod/host/shim -I/tmp/claude-0/base_wt/consensus-pod/src/adapters -isystem /tmp/claude-0/core/libs/ArduinoJson/src -DARDUINOJSON_ENABLE_ARDUINO_STRING=1 -DARDUINOJSON_ENABLE_ARDUINO_STREAM=0 -DARDUINOJSON_ENABLE_ARDUINO_PRINT=0 -DARDUINOJSON_ENABLE_PROGMEM=0 /tmp/claude-0/base_wt/consensus-pod/host/validate_work_harness.cpp -o /tmp/valwork-lzgYb8/b-hNRP0u/validate_work_harness
+      répertoire : /tmp/claude-0/base_wt
+      code de sortie : 1
+      erreur de lancement : aucune
+      --- stdout ---
+    (vide)
+      --- stderr ---
+    In file included from /tmp/claude-0/base_wt/consensus-pod/host/validate_work_harness.cpp:35:
+    /tmp/valwork-lzgYb8/b-hNRP0u/validate_extract.inc: In function 'int doValidateDecode(const String&, String&, String&, size_t&, String&, float&)':
+    /tmp/valwork-lzgYb8/b-hNRP0u/validate_extract.inc:72:10: error: 'void operator delete(void*)' called on pointer returned from a mismatched allocation function [-Werror=mismatched-new-delete]
+       72 |   delete r;
+          |          ^
+    In function 'void* operator new(std::size_t, const std::nothrow_t&)',
+        inlined from 'int doValidateDecode(const String&, String&, String&, size_t&, String&, float&)' at /tmp/valwork-lzgYb8/b-hNRP0u/validate_extract.inc:61:63:
+    /tmp/claude-0/base_wt/consensus-pod/host/validate_work_harness.cpp:33:118: note: returned from 'void* malloc(size_t)'
+       33 | void* operator new(std::size_t n, const std::nothrow_t&) noexcept { if (g_failNew) return nullptr; return std::malloc(n); }
+          |                                                                                                           ~~~~~~~~~~~^~~
+    cc1plus: all warnings being treated as errors
+  code: 'ERR_TEST_FAILURE'
+  stack: |-
+    compileHarness (/tmp/claude-0/base_wt/tests/helpers/cppHarness.ts:84:55)
+    build (/tmp/claude-0/base_wt/tests/validateJsonStack.test.ts:154:3)
+    TestContext.<anonymous> (/tmp/claude-0/base_wt/tests/validateJsonStack.test.ts:161:24)
+    Test.runInAsyncScope (node:async_hooks:214:14)
+    Test.run (node:internal/test_runner/test:1047:25)
+    Test.processPendingSubtests (node:internal/test_runner/test:744:18)
+    Test.postRun (node:internal/test_runner/test:1173:19)
+    Test.run (node:internal/test_runner/test:1101:12)
+    async Test.processPendingSubtests (node:internal/test_runner/test:744:7)
+  ...
+# Subtest: DOVALIDATE-JSON-STACK-FIX1 (HÔTE) : CONTRÔLES NÉGATIFS — validation relâchée, sorties écrites trop tôt, échec de pile ignoré, journal avant l'arrêt sûr : le harnais les REFUSE
+not ok 25 - DOVALIDATE-JSON-STACK-FIX1 (HÔTE) : CONTRÔLES NÉGATIFS — validation relâchée, sorties écrites trop tôt, échec de pile ignoré, journal avant l'arrêt sûr : le harnais les REFUSE
+  ---
+  duration_ms: 3063.808126
+  type: 'test'
+  location: '/tmp/claude-0/base_wt/tests/validateJsonStack.test.ts:2:15662'
+  failureType: 'testCodeFailure'
+  error: |-
+    compilation du harnais C++ (pod_metrics.h) impossible
+      commande : g++ -std=c++11 -Wall -Wextra -Werror -O2 -I/tmp/valwork-lzgYb8/b-NBwPfJ -I/tmp/claude-0/base_wt/consensus-pod/host/shim -I/tmp/claude-0/base_wt/consensus-pod/src/adapters -isystem /tmp/claude-0/core/libs/ArduinoJson/src -DARDUINOJSON_ENABLE_ARDUINO_STRING=1 -DARDUINOJSON_ENABLE_ARDUINO_STREAM=0 -DARDUINOJSON_ENABLE_ARDUINO_PRINT=0 -DARDUINOJSON_ENABLE_PROGMEM=0 -Wno-unused-variable -Wno-unused-parameter -Wno-unused-function -Wno-unused-but-set-variable /tmp/claude-0/base_wt/consensus-pod/host/validate_work_harness.cpp -o /tmp/valwork-lzgYb8/b-NBwPfJ/validate_work_harness
+      répertoire : /tmp/claude-0/base_wt
+      code de sortie : 1
+      erreur de lancement : aucune
+      --- stdout ---
+    (vide)
+      --- stderr ---
+    In file included from /tmp/claude-0/base_wt/consensus-pod/host/validate_work_harness.cpp:35:
+    /tmp/valwork-lzgYb8/b-NBwPfJ/validate_extract.inc: In function 'int doValidateDecode(const String&, String&, String&, size_t&, String&, float&)':
+    /tmp/valwork-lzgYb8/b-NBwPfJ/validate_extract.inc:71:10: error: 'void operator delete(void*)' called on pointer returned from a mismatched allocation function [-Werror=mismatched-new-delete]
+       71 |   delete r;
+          |          ^
+    In function 'void* operator new(std::size_t, const std::nothrow_t&)',
+        inlined from 'int doValidateDecode(const String&, String&, String&, size_t&, String&, float&)' at /tmp/valwork-lzgYb8/b-NBwPfJ/validate_extract.inc:60:63:
+    /tmp/claude-0/base_wt/consensus-pod/host/validate_work_harness.cpp:33:118: note: returned from 'void* malloc(size_t)'
+       33 | void* operator new(std::size_t n, const std::nothrow_t&) noexcept { if (g_failNew) return nullptr; return std::malloc(n); }
+          |                                                                                                           ~~~~~~~~~~~^~~
+    cc1plus: all warnings being treated as errors
+  code: 'ERR_TEST_FAILURE'
+  stack: |-
+    compileHarness (/tmp/claude-0/base_wt/tests/helpers/cppHarness.ts:84:55)
+    build (/tmp/claude-0/base_wt/tests/validateJsonStack.test.ts:154:3)
+    TestContext.<anonymous> (/tmp/claude-0/base_wt/tests/validateJsonStack.test.ts:185:26)
+    Test.runInAsyncScope (node:async_hooks:214:14)
+    Test.run (node:internal/test_runner/test:1047:25)
+    Test.processPendingSubtests (node:internal/test_runner/test:744:18)
+    Test.postRun (node:internal/test_runner/test:1173:19)
+    Test.run (node:internal/test_runner/test:1101:12)
+    async Test.processPendingSubtests (node:internal/test_runner/test:744:7)
+  ...
+1..25
+# tests 25
+# suites 0
+# pass 21
+# fail 4
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 42460.257668

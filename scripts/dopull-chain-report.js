@@ -16,7 +16,7 @@ const fr = (n) => (n && funcs.get(n) ? funcs.get(n).frame : 0);
 const skip = new Set(["_printf_float", "__cvt", "_dtoa_r", ...names.filter((k) => /logfEmit/.test(k))]);
 const short = (s) => s.replace(/^_Z[NL]?\d*/, "").slice(0, 26);
 const category = (n) => /ArduinoJson/.test(n) ? "ArduinoJson" : /asciiFold/.test(n) ? "asciiFold" : /EEPROM|saveBlockHash|saveOwnedBlock|persist|saveKeys/i.test(n) ? "EEPROM" : /^_ZL4logf|logf/.test(n) ? "journal (logf)" : /String/.test(n) ? "String" : "autre";
-const hal = find(/^hal_entry$/), am = find(/^_Z12arduino_mainv$/), setup = find(/^setup$/), loop = find(/^loop$/), doPull = find(new RegExp("^_ZL" + rootName.length + rootName + "v$"));
+const hal = find(/^hal_entry$/), am = find(/^_Z12arduino_mainv$/), setup = find(/^setup$/), loop = find(/^loop$/), doPull = find(new RegExp("^_ZL" + rootName.length + rootName + "v(\\.[A-Za-z0-9_]+)*$"));   // gcc >= 8 : suffixes « .isra.0 », « .constprop.0 » (mesures du LOT8B2B3-FIX1 avec g++ 13)
 if (!doPull) { console.error(rootName + " introuvable dans le désassemblage"); process.exit(1); }
 const out = [];
 out.push(`# doPull : cadre ${fr(doPull)} o ; appelés directs : ${funcs.get(doPull).calls.size + funcs.get(doPull).tails.size} ; appels indirects dans doPull : ${funcs.get(doPull).indirect}`);

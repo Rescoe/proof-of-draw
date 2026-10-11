@@ -61,6 +61,9 @@
 #ifndef POD_RENDER_MODE_DEFAULT
 #define POD_RENDER_MODE_DEFAULT POD_R_FIT   // constante de compilation : le réglage cartelMode n'est PAS exposé (pas d'interface, pas de réglage serveur)
 #endif
+#ifndef POD_CANARY
+#define POD_CANARY 0   // 1 = BUILD LOCAL TEMPORAIRE de CANARI (-DPOD_RENDER_V1=1 -DPOD_CANARY=1) : journal [CANARY] des marges de pile ; sans effet si POD_RENDER_V1 = 0. NE JAMAIS COMMITER 1 (docs/LOT_8B2B3_R4_EINK27_PROPAGATION_2026_10_12.md).
+#endif
 #if POD_RENDER_V1
 #include "podRenderStream.h"
 #include "crypto_uno_r4.h"
@@ -325,6 +328,69 @@ static String loadOwnedHashesJson() {
   return json + "]";
 }
 
+#if POD_RENDER_V1 && POD_CANARY
+// ─── CANARI MINIMAL (LOT8B2B3-R4-EINK27-PROPAGATION-FIX1) ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+// Seulement ce qu'il faut pour valider les MARGES de pile des mécanismes propagés du 2,9″ (pas de journal de phases AUDIT1-5 : la cause SSL est établie et corrigée). Entièrement ABSENT de la production (POD_CANARY = 0).
+//  • pile principale (1 024 o) : zone libre peinte au démarrage (0x5A + marqueur « CNRY » et longueur au fond) ; podCanaryMain() relève la marge CUMULÉE à la SORTIE de register / pull / pull-frame (affichage + ACK) / validate (destructeur de portée) ;
+//  • piles dédiées (Wi-Fi, réseau, travail JSON) : utilisé / marge / erreur relevés APRÈS le retour de chaque exécution (jamais depuis le corps d'une transaction), une ligne à la première apparition puis seulement si la marge BAISSE ;
+//  • ARRÊT FATAL (boucle silencieuse, plus aucun réseau, vote, ACK ni affichage) si : marqueur de fond détruit, marge principale < 128 o, pile dédiée en erreur (GUARD, MARGIN, NOMEM, NESTED) ou marge dédiée < 128 o ; < 256 o = « SOUS L'OBJECTIF » (sans arrêt) ;
+//  • abort() redéfinie : une signature d'UN seul appel d'écriture USB non bloquant (jamais d'allocation, ni logf), puis boucle. Ne JAMAIS installer de new_handler.
+// Ed25519 : relevé de production au démarrage (« [ED25519] pile dédiée … ») ; mêmes pile et fonctions que le vote. Statiques du canari seulement : 4 tableaux de 8 entrées (relevés des piles dédiées, 40 o).
+extern char __StackLimit, __StackTop;
+static const uint8_t CANARY_PAINT = 0x5A;
+static const uint32_t CANARY_MAGIC = 0x434E5259UL;   // « CNRY »
+enum PodCanaryKind : uint8_t { PCK_WIFI = 0, PCK_HTTP, PCK_FRAME, PCK_FRAME_OLED, PCK_CANDIDATE, PCK_REG_JSON, PCK_PULL_JSON, PCK_VAL_JSON, PCK_COUNT };
+static void __attribute__((noinline)) podCanaryHalt(const char* why) { logf("[CANARY] ARRET FATAL : %s", why); logfSafeStop(); }
+static void __attribute__((noinline)) podCanaryPaint() {
+  volatile uint8_t* lo = (volatile uint8_t*)&__StackLimit;
+  volatile uint8_t* hi = (volatile uint8_t*)__builtin_frame_address(0) - 192;
+  if (hi <= lo + 16) return;
+  for (volatile uint8_t* p = lo + 8; p < hi; p++) *p = CANARY_PAINT;
+  *(volatile uint32_t*)lo = CANARY_MAGIC;
+  *(volatile uint32_t*)(lo + 4) = (uint32_t)(hi - lo);
+}
+static void __attribute__((noinline)) podCanaryMain(const char* where) {
+  volatile uint8_t* lo = (volatile uint8_t*)&__StackLimit;
+  const uint32_t len = *(volatile uint32_t*)(lo + 4);
+  if (*(volatile uint32_t*)lo != CANARY_MAGIC || len < 32 || len > 1024) podCanaryHalt("marqueur de fond de pile principale detruit (ou jamais peint)");
+  volatile uint8_t* top = lo + len;
+  volatile uint8_t* p = lo + 8;
+  while (p < top && *p == CANARY_PAINT) p++;
+  const uint32_t margin = (uint32_t)(p - lo), used = (uint32_t)((const uint8_t*)&__StackTop - (const uint8_t*)p);
+  logf("[CANARY] pile principale apres %s : marge >= %u o (utilisee <= %u o sur %u)%s", where, (unsigned)margin, (unsigned)used, (unsigned)((const uint8_t*)&__StackTop - (const uint8_t*)&__StackLimit), margin < 128 ? " — ALERTE" : (margin < 256 ? " (SOUS L'OBJECTIF 256)" : " (OK)"));
+  if (margin < 128) podCanaryHalt("marge de la pile principale < 128 o");
+}
+// Relevé SANS appel (feuille, cadre minimal) : appelé juste après le retour d'une exécution sur pile dédiée ; AUCUNE sortie ici (un relevé profond ne doit pas creuser la pile principale que l'on mesure).
+static uint16_t g_pcMin[PCK_COUNT] = { 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF }, g_pcUsed[PCK_COUNT] = { 0, 0, 0, 0, 0, 0, 0, 0 }, g_pcShown[PCK_COUNT] = { 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF, 0xFFFF };
+static uint8_t g_pcErr[PCK_COUNT] = { 0, 0, 0, 0, 0, 0, 0, 0 };
+static void __attribute__((noinline)) podCanaryNote(PodCanaryKind kind, const PodNetInfo& ni, bool ran) {
+  const uint16_t m = ni.margin;
+  if (m < g_pcMin[kind]) { g_pcMin[kind] = m; g_pcUsed[kind] = ni.used; }
+  if (!ran) g_pcErr[kind] = 0xFF; else if (ni.err != POD_NET_OK) g_pcErr[kind] = (uint8_t)ni.err;
+}
+// Rapport + arrêt, UNIQUEMENT à la SORTIE d'une portée (jamais depuis le corps d'un relevé) : une ligne à la première apparition puis seulement si la marge BAISSE.
+static void __attribute__((noinline)) podCanaryFlush() {
+  static const char* const NAMES[PCK_COUNT] = { "Wi-Fi", "HTTP/TLS", "pull-frame", "pull-frame OLED", "candidat", "register JSON", "pull JSON", "validate JSON" };
+  for (uint8_t k = 0; k < PCK_COUNT; k++) {
+    if (g_pcMin[k] == 0xFFFF) continue;
+    const bool bad = g_pcErr[k] != 0 || g_pcMin[k] < 128;
+    if (!bad && g_pcMin[k] >= g_pcShown[k]) continue;
+    g_pcShown[k] = g_pcMin[k];
+    logf("[CANARY] pile dediee %s : utilisee %u o, marge %u o, erreur %u%s", NAMES[k], (unsigned)g_pcUsed[k], (unsigned)g_pcMin[k], (unsigned)g_pcErr[k], bad ? " — ALERTE" : (g_pcMin[k] < 256 ? " (SOUS L'OBJECTIF 256)" : " (OK)"));
+    if (bad) podCanaryHalt(NAMES[k]);
+  }
+}
+struct PodCanaryScope {
+  const char* where;
+  explicit PodCanaryScope(const char* w) : where(w) {}
+  ~PodCanaryScope() { podCanaryFlush(); podCanaryMain(where); }
+};
+extern "C" void abort(void) {
+  static const char t[] = "\r\n[CANARY] ABORT()\r\n";
+  if (Serial.availableForWrite() >= (int)sizeof(t)) Serial.write((const uint8_t*)t, sizeof(t) - 1);
+  for (;;) { __asm volatile("nop"); }
+}
+#endif
 // ─── MODULE Wi-Fi sur PILE DÉDIÉE (NETSTACK-WIFI-CALLS-FIX1, 09/10/2026) ──────────────────────────────────
 // Canari FIX3-R1 (matériel) : WiFi.macAddress() appelé depuis doRegister détruit le marqueur de pile (24 o sous __StackLimit) : chaque appel au module (ModemClass → vsnprintf) pose une feuille de 400 – 600 o sur le cadre
 // de l'appelant. TOUT appel direct au module hors transaction PodNet passe donc par ces fonctions : il s'exécute sur POD_WIFI_STACK_TOTAL o pris un instant au tas (garde 64 o, filigrane, marge >= 128 o, objectif 256 o).
@@ -339,6 +405,9 @@ static uint8_t __attribute__((noinline)) wifiStatusT(const char* tag) {
   uint8_t st = POD_WIFI_UNKNOWN; PodNetInfo ni; (void)tag;           // tag : seulement pour le relevé du canari
   auto wx = [&]() { st = (uint8_t)WiFi.status(); };
   const bool ran = podWifiRun(wx, &ni);
+#if POD_RENDER_V1 && POD_CANARY
+  podCanaryNote(PCK_WIFI, ni, ran);
+#endif
   if (!ran) { wifiFailed("status", ni); return POD_WIFI_UNKNOWN; }
   return st;
 }
@@ -347,6 +416,9 @@ static String __attribute__((noinline)) wifiFirmware() {
   String fw; PodNetInfo ni;
   auto wx = [&]() { fw = String(WiFi.firmwareVersion()); };
   const bool ran = podWifiRun(wx, &ni);
+#if POD_RENDER_V1 && POD_CANARY
+  podCanaryNote(PCK_WIFI, ni, ran);
+#endif
   if (!ran) { wifiFailed("firmwareVersion", ni); return String("?"); }
   return fw;
 }
@@ -354,12 +426,18 @@ static void __attribute__((noinline)) wifiBegin() {
   PodNetInfo ni;
   auto wx = [&]() { WiFi.begin(WIFI_SSID, WIFI_PASSWORD); };
   const bool ran = podWifiRun(wx, &ni);
+#if POD_RENDER_V1 && POD_CANARY
+  podCanaryNote(PCK_WIFI, ni, ran);
+#endif
   if (!ran) wifiFailed("begin", ni);
 }
 static bool __attribute__((noinline)) wifiMac(uint8_t m[6]) {
   PodNetInfo ni;
   auto wx = [&]() { WiFi.macAddress(m); };
   const bool ran = podWifiRun(wx, &ni);
+#if POD_RENDER_V1 && POD_CANARY
+  podCanaryNote(PCK_WIFI, ni, ran);
+#endif
   if (!ran) { memset(m, 0, 6); wifiFailed("macAddress", ni); return false; }
   return true;
 }
@@ -367,6 +445,9 @@ static bool __attribute__((noinline)) wifiRssi(int32_t& rssi) {
   PodNetInfo ni; int32_t r = 0;
   auto wx = [&]() { r = (int32_t)WiFi.RSSI(); };
   const bool ran = podWifiRun(wx, &ni);
+#if POD_RENDER_V1 && POD_CANARY
+  podCanaryNote(PCK_WIFI, ni, ran);
+#endif
   if (!ran) { rssi = 0; wifiFailed("RSSI", ni); return false; }
   rssi = r;
   return true;
@@ -375,6 +456,9 @@ static String __attribute__((noinline)) wifiIpString() {
   String ip; PodNetInfo ni;                  // la chaîne « a.b.c.d » est formée SUR la pile dédiée (IPAddress::toString → sniprintf : jamais sur la pile principale)
   auto wx = [&]() { ip = WiFi.localIP().toString(); };
   const bool ran = podWifiRun(wx, &ni);
+#if POD_RENDER_V1 && POD_CANARY
+  podCanaryNote(PCK_WIFI, ni, ran);
+#endif
   if (!ran) { wifiFailed("localIP", ni); return String("?"); }
   return ip;
 }
@@ -450,6 +534,9 @@ static int httpCall(const char* method, const String& path, const String* body, 
   resp = "";
   int code = -4; bool complete = false; PodNetInfo ni;
   const bool ran = netHttpRaw(method, path, body, code, complete, ni);
+#if POD_RENDER_V1 && POD_CANARY
+  podCanaryNote(PCK_HTTP, ni, ran);
+#endif
   if (!ran) { logf("[HTTP %s] pile réseau dédiée : %s (erreur %u, marge %u o)%s", method, podNetWhy(ni), (unsigned)ni.err, (unsigned)ni.margin, podNetExecuted(ni) ? " — la requête a PU atteindre le serveur (POST, vote ou ACK possibles)" : ""); return podNetExecuted(ni) ? -5 : -4; }
   logf("[HTTP %s] %s -> %d", method, path.length() > 60 ? (path.substring(0, 60) + "...").c_str() : path.c_str(), code);
   if (code < 0) { if (code == -2) logf("[HTTP] connexion TLS impossible (voir l'en-tête du sketch)"); return code; }
@@ -718,6 +805,9 @@ static bool ackFrame(const String& frameId, const char* screen) {
 }
 
 static bool doFetchFrame(const String& frameId, const String& frameSource) {
+#if POD_RENDER_V1 && POD_CANARY
+  PodCanaryScope canaryScope("pull-frame + affichage + ACK e-ink");
+#endif
   const unsigned long t0 = millis();
   bool got = false, noFrame = false;
   PodNetInfo ni;                                     // POD_NET_STACK : la transaction tourne sur la pile réseau dédiée
@@ -737,6 +827,9 @@ static bool doFetchFrame(const String& frameId, const String& frameSource) {
     c.client.stop();
   };
   const bool ran = podNetRun(tx, &ni);
+#if POD_RENDER_V1 && POD_CANARY
+  podCanaryNote(PCK_FRAME, ni, ran);
+#endif
   if (!ran) { got = false; noFrame = false; logf("[FRAME] pile réseau dédiée : %s (erreur %u, marge %u o) — image NON présentée, pas d'ACK", podNetWhy(ni), (unsigned)ni.err, (unsigned)ni.margin); }
   if (noFrame) { logf("[FRAME] pas de frame disponible"); return true; }
   if (!got) { logf("[FRAME] image incomplète — pas d'ACK, nouvel essai au prochain pull"); return false; }
@@ -765,6 +858,9 @@ static bool doFetchFrame(const String& frameId, const String& frameSource) {
 }
 
 static bool doFetchFrameOLED(const String& frameId, const String& frameSource) {
+#if POD_RENDER_V1 && POD_CANARY
+  PodCanaryScope canaryScope("pull-frame + affichage + ACK OLED");
+#endif
   if (!oledReady) { logf("[OLED] écran non détecté — pas d'ACK"); return false; }
   bool got = false, noFrame = false;
   uint8_t* buf = oled.getBuffer();
@@ -783,6 +879,9 @@ static bool doFetchFrameOLED(const String& frameId, const String& frameSource) {
     c.client.stop();
   };
   const bool ran = podNetRun(tx, &ni);
+#if POD_RENDER_V1 && POD_CANARY
+  podCanaryNote(PCK_FRAME_OLED, ni, ran);
+#endif
   if (!ran) { got = false; noFrame = false; logf("[OLED] pile réseau dédiée : %s (erreur %u, marge %u o) — image NON présentée, pas d'ACK", podNetWhy(ni), (unsigned)ni.err, (unsigned)ni.margin); }
   if (noFrame) return true;
   if (!got) { logf("[OLED] image incomplète — pas d'ACK"); return false; }
@@ -798,6 +897,9 @@ static bool doFetchFrameOLED(const String& frameId, const String& frameSource) {
 
 // ─── OBS-CONFIRM ───────────────────────────────────────────────────────────
 static bool doObsConfirm() {
+#if POD_RENDER_V1 && POD_CANARY
+  PodCanaryScope canaryScope("obs-confirm");
+#endif
   if (pendingObsHashes.length() == 0) return true;
   String body = "{\"deviceId\":\"" + deviceId + "\",\"blockHashes\":" + pendingObsHashes;
   if (pendingObsTarget.length() == 64) body += ",\"targetBlockHash\":\"" + pendingObsTarget + "\"";
@@ -877,6 +979,9 @@ static bool __attribute__((noinline)) doRegisterDecode(const String& resp) {
   if (!r) { logf("[REGISTER] réponse rejetée : mémoire insuffisante"); return false; }
   PodNetInfo ni;
   const bool ran = registerParseOnWorkStack(resp, *r, ni);
+#if POD_RENDER_V1 && POD_CANARY
+  podCanaryNote(PCK_REG_JSON, ni, ran);
+#endif
   bool ok = false;
   if (!ran) registerWorkFailed(ni);
   else if (r->status == REG_P_JSON) logf("[REGISTER] JSON illisible: %s", r->jsonErr);
@@ -888,6 +993,9 @@ static bool __attribute__((noinline)) doRegisterDecode(const String& resp) {
 
 
 static bool doRegister() {
+#if POD_RENDER_V1 && POD_CANARY
+  PodCanaryScope canaryScope("register");
+#endif
   const String mac = macString();
   if (mac.length() == 0) { logf("[REGISTER] adresse MAC indisponible (module Wi-Fi, pile dédiée) : inscription ANNULÉE"); return false; }
   const String body = "{\"mac\":\"" + mac + "\",\"screens\":[\"" SCREEN_E27 "\",\"" SCREEN_OLED "\"],"
@@ -1039,6 +1147,9 @@ static int __attribute__((noinline)) doPullApply(PullParsed& r, const String& re
   r.cartelBlockIndex = currentBlockIndex;
   PodNetInfo ni;
   const bool ran = pullParseOnWorkStack(resp, code, r, ni);
+#if POD_RENDER_V1 && POD_CANARY
+  podCanaryNote(PCK_PULL_JSON, ni, ran);
+#endif
   if (!ran) { pullWorkFailed(ni); return 0; }
   if (r.status == PULL_P_RATE) {
     unsigned long retryMs = (unsigned long)r.rateRetrySec * 1000UL;
@@ -1078,6 +1189,9 @@ static int __attribute__((noinline)) doPullStage(const String& resp, int code, S
 
 
 static bool doPull() {
+#if POD_RENDER_V1 && POD_CANARY
+  PodCanaryScope canaryScope("pull");
+#endif
   String newFrameId = "", newFrameSource = "none", newScreen = "";
   int st = 0;
   {
@@ -1119,6 +1233,9 @@ static void __attribute__((noinline)) netReadCandidate(const String& candidateId
     c.client.stop();
   };
   const bool ran = podNetRun(tx, &ni);
+#if POD_RENDER_V1 && POD_CANARY
+  podCanaryNote(PCK_CANDIDATE, ni, ran);
+#endif
   if (!ran) { memset(&chk, 0, sizeof(chk)); logf("[VALIDATE2] pile réseau dédiée : %s (erreur %u, marge %u o) — pas de vote", podNetWhy(ni), (unsigned)ni.err, (unsigned)ni.margin); }
 }
 
@@ -1219,6 +1336,9 @@ static int __attribute__((noinline)) doValidateDecode(const String& resp, String
   if (!r) { logf("[VALIDATE] réponse rejetée : mémoire insuffisante"); return 0; }
   PodNetInfo ni;
   const bool ran = validateParseOnWorkStack(resp, *r, ni);
+#if POD_RENDER_V1 && POD_CANARY
+  podCanaryNote(PCK_VAL_JSON, ni, ran);
+#endif
   int mode = 0;
   if (!ran) validateWorkFailed(ni);
   else if (r->status == VAL_P_JSON) logf("[VALIDATE] JSON illisible: %s", r->jsonErr);
@@ -1231,6 +1351,9 @@ static int __attribute__((noinline)) doValidateDecode(const String& resp, String
 }
 
 static bool doValidate() {
+#if POD_RENDER_V1 && POD_CANARY
+  PodCanaryScope canaryScope("validate");
+#endif
   if (pendingCandidateId.length() == 0) return false;
   String candidateId, v2screen, v2hash;
   size_t v2bytes = 0;
@@ -1285,11 +1408,17 @@ static void selfTestEd25519() {
 // ─── SETUP / LOOP ──────────────────────────────────────────────────────────
 void setup() {
   paintStack();
+#if POD_RENDER_V1 && POD_CANARY
+  podCanaryPaint();
+#endif
   Serial.begin(115200);
   while (!Serial && millis() < 2500) {}
   logf("\n[BOOT] Proof-of-Draw UNO R4 WiFi multiscreen e-ink 2.7\" + OLED — %s", FIRMWARE_VERSION);
   logf("[WARNING] PORT NON TESTE SUR LE MATERIEL — 06/10/2026");
   reportMem("boot");
+#if POD_RENDER_V1 && POD_CANARY
+  logf("[CANARY] BUILD LOT8B2B3-FIX1 | " FIRMWARE_VERSION " | compile " __DATE__ " " __TIME__ " | RENDER_V1=%d", (int)POD_RENDER_V1);
+#endif
 
   clearBothPlanes();
   Wire.begin();

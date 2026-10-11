@@ -115,7 +115,7 @@ const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "wificalls-"));
 const exe = path.join(tmp, process.platform === "win32" ? "wifi_calls_harness.exe" : "wifi_calls_harness");
 
 function extractWifi(sk: string): string {
-  const src = read(ino(sk));
+  const src = read(ino(sk)).replace(/#if POD_RENDER_V1 && POD_CANARY\n[\s\S]*?\n#endif\n/g, "");   // le texte de PRODUCTION (les blocs de canari sont exclus par le préprocesseur dans le harnais)
   const blk = src.slice(src.indexOf(BLOCK_START), src.indexOf(BLOCK_END));
   const helper = /static char macHexDigit\(uint8_t v\) \{[^\n]*\n/.exec(src)![0];
   const mac = /static String macString\(\) \{[\s\S]*?\n\}\n/.exec(src)![0];

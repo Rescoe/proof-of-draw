@@ -1,0 +1,5 @@
+tag: c29_1.5.3_off
+Sketch uses 133284 bytes (50%) of program storage space. Maximum is 262144 bytes.
+Global variables use 23008 bytes (70%) of dynamic memory, leaving 9760 bytes for local variables. Maximum is 32768 bytes.
+avertissements du sketch (body.h) :
+(aucun si vide)

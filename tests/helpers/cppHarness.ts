@@ -79,7 +79,8 @@ export function runProcess(program: string, args: string[], timeoutMs?: number):
 
 /** Compile le harnais ; lève une erreur DIAGNOSTIQUÉE en cas d'échec. Retourne la ligne de commande exécutée (pour l'afficher). */
 export function compileHarness(compiler: string, source: string, exe: string, extraArgs: string[] = []): string {
-  const args = ["-std=c++11", "-Wall", "-Wextra", "-Werror", "-O2", ...extraArgs, source, "-o", exe];
+  // -Wno-mismatched-new-delete : g++ >= 11 refuse (-Werror) le « new (std::nothrow) » / « delete » des harnais d'extraction (opérateurs du shim hôte) ; sans effet sur le code embarqué. Constaté sur 3239d2e ET sur le lot (docs/mesures/8B2B3_FIX1_2026_10_12/).
+  const args = ["-std=c++11", "-Wall", "-Wextra", "-Wno-mismatched-new-delete", "-Werror", "-O2", ...extraArgs, source, "-o", exe];
   const report = runProcess(compiler, args);
   if (report.status !== 0 || report.spawnError) throw new Error(formatFailure("compilation du harnais C++ (pod_metrics.h) impossible", report));
   return report.command;

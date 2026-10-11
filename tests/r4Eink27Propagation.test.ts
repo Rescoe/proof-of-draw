@@ -13,7 +13,10 @@ import { propBackup, PROP_SKETCHES } from "./helpers/propagation8b2b3Edits";
 // Compilation ARM, mesures de pile et canaris matériels : NON faits ici (docs/LOT_8B2B3_R4_EINK27_PROPAGATION_2026_10_12.md).
 const root = path.join(__dirname, "..");
 const read = (p: string) => fs.readFileSync(path.join(root, p), "utf8").replace(/\r\n/g, "\n");
-const ino = (sk: string) => read(`arduino_uno_r4/${sk}/${sk}.ino`);
+const inoRaw = (sk: string) => read(`arduino_uno_r4/${sk}/${sk}.ino`);
+const CANARY_RE = /#if POD_RENDER_V1 && POD_CANARY\n[\s\S]*?\n#endif\n/g;
+/** Le sketch de PRODUCTION : blocs de canari (FIX1) retirés ; le texte comparé aux sauvegardes et au 2,9″ ne change donc pas. */
+const ino = (sk: string) => inoRaw(sk).replace(CANARY_RE, "");
 const E29 = "arduino_uno_r4/pod_uno_r4_eink29/pod_uno_r4_eink29.ino";
 const noCanary = (s: string) => s.replace(/#if POD_RENDER_V1 && POD_CANARY\n[\s\S]*?\n#endif\n/g, "");
 const stripLine = (s: string) => s.replace(/("(?:[^"\\\n]|\\.)*")|\/\/.*$/gm, (_m, str?: string) => str ?? "");
@@ -50,6 +53,7 @@ const NEW_REG = "  if (!doRegisterDecode(resp)) return false;\n";
 /** Le sketch d'après le lot, avec TOUTES les régions du lot retirées/rétablies : doit égaler la sauvegarde ainsi traitée. */
 function normalizeNow(now: string): string {
   let s = now;
+  s = s.replace(/#ifndef POD_CANARY\n#define POD_CANARY 0 [^\n]*\n#endif\n/, "");
   s = s.split("\n").filter((l) => !l.startsWith(MARK_INC) && !l.startsWith("// PULLFRAME-BOUNDED-SSL-FIX1 : à partir d'ici") && l !== "#define WiFiSSLClient PodBoundedSSL").join("\n");
   assert.ok(s.includes(NEW_FAULT) && s.includes(NEW_REG));
   s = s.replace(NEW_FAULT, OLD_FAULT).replace(NEW_REG, OLD_REG);
@@ -79,7 +83,10 @@ for (const sk of PROP_SKETCHES) {
   test(`${sk} : client TLS borné — copie byte-identique du 2,9″, redirection AVANT Conn, drapeaux 0/0, aucun new_handler/operator new, fault() testé avant affichage et ACK`, () => {
     const src = ino(sk), code = stripLine(src);
     const hdr = fs.readFileSync(path.join(root, `arduino_uno_r4/${sk}/pod_ssl_bounded.h`));
-    assert.equal(hdr.compare(fs.readFileSync(path.join(root, "arduino_uno_r4/pod_uno_r4_eink29/pod_ssl_bounded.h"))), 0, "copie divergente du 2,9″ (validé sur carte)");
+    const codeOf = (b: string) => b.split("\n").filter((l) => !l.startsWith("//")).join("\n");
+    assert.equal(codeOf(hdr.toString()), codeOf(fs.readFileSync(path.join(root, "arduino_uno_r4/pod_uno_r4_eink29/pod_ssl_bounded.h"), "utf8")), "code divergent du 2,9″ (validé sur carte) : seules les lignes de commentaire d'en-tête peuvent différer");
+    assert.doesNotMatch(hdr.toString(), /SEUL|aucune propagation/, "le commentaire ne doit plus prétendre à l'absence de propagation");
+    assert.match(hdr.toString(), /PROPAGATION EXPLICITE/);
     assert.ok(src.indexOf(MARK_INC) > src.indexOf('#include "pod_http.h"'), "include après pod_http.h");
     assert.ok(src.indexOf("#define WiFiSSLClient PodBoundedSSL") < src.indexOf("struct Conn {"), "redirection avant Conn");
     assert.match(src, /struct Conn \{\n  WiFiSSLClient client;\n  podhttp::Reader<WiFiSSLClient> rd;/);
@@ -255,5 +262,62 @@ for (const sk of PROP_SKETCHES) for (const version of ["1.5.3", "1.6.0"]) {
     assert.match(r.stdout, /AT _SSLCLIENTRECEIVE max demandee = 240/);
     assert.match(r.stdout, /OK   C2 : plan e-ink 2,7 \(5808 o\)/);
     assert.match(r.stdout, /OK   C3 : image OLED \(1024 o\)/);
+    assert.match(r.stdout, /OK   C4 : image OLED 1024 o, module defectueux : defaut collant, corps incomplet/);
   });
 }
+
+// ── Canari minimal (FIX1) : marges de pile seulement, éliminé quand POD_CANARY = 0 ─────────────────────────────────────────────────────────────────────────────────────────
+for (const sk of PROP_SKETCHES) {
+  test(`${sk} : canari minimal — drapeaux 0/0 au dépôt, TOUT le code sous « #if POD_RENDER_V1 && POD_CANARY », aucun réseau/EEPROM/redémarrage dans le canari, arrêt fatal sur marge < 128 o ou erreur de pile`, () => {
+    const raw = inoRaw(sk), prod = ino(sk);
+    assert.match(raw, /#ifndef POD_RENDER_V1\n#define POD_RENDER_V1 0\n#endif/);
+    assert.match(raw, /#ifndef POD_CANARY\n#define POD_CANARY 0 /);
+    assert.equal((raw.match(/#define POD_CANARY\b/g) ?? []).length, 1);
+    assert.doesNotMatch(raw, /#define POD_(RENDER_V1|CANARY) 1\b/);
+    assert.doesNotMatch(stripLine(prod), /podCanary|\[CANARY\]|CANARY_PAINT|CANARY_MAGIC|PodCanary|g_pc\w+|extern "C" void abort/, "du code de canari existe hors des blocs gardés");
+    const blocks = [...raw.matchAll(/#if POD_RENDER_V1 && POD_CANARY\n([\s\S]*?)\n#endif\n/g)].map((m) => m[1]);
+    const code = stripLine(blocks.join("\n"));
+    assert.doesNotMatch(code, /ackFrame\(|httpCall\(|Conn\b|WiFi(?!SSLClient)|\.request\(|persistFrameId|EEPROM|NVIC_SystemReset|delay\(|set_new_handler|operator\s+new/, "le canari ne touche ni réseau, ni EEPROM, ni redémarrage");
+    // l'arrêt fatal existe pour les quatre conditions, et il est SILENCIEUX après le journal (logfSafeStop : aucune E/S)
+    assert.match(code, /margin < 128\) podCanaryHalt\("marge de la pile principale < 128 o"\)/);
+    assert.match(code, /podCanaryHalt\("marqueur de fond de pile principale detruit/);
+    assert.match(code, /const bool bad = g_pcErr\[k\] != 0 \|\| g_pcMin\[k\] < 128;[\s\S]*?if \(bad\) podCanaryHalt\(NAMES\[k\]\);/);
+    assert.match(code, /static void __attribute__\(\(noinline\)\) podCanaryHalt\(const char\* why\) \{ logf\([^\n]*\); logfSafeStop\(\); \}/);
+    // le relevé est une FEUILLE (aucun appel, aucune sortie) ; le rapport ne se fait qu'à la sortie d'une portée
+    const note = /static void __attribute__\(\(noinline\)\) podCanaryNote\([^{]*\{([\s\S]*?)\n\}\n/.exec(code)![1];
+    assert.doesNotMatch(note, /logf|Serial|\(\w+\)\s*\(|podCanary/, "podCanaryNote ne doit rien appeler");
+    assert.match(code, /~PodCanaryScope\(\) \{ podCanaryFlush\(\); podCanaryMain\(where\); \}/);
+    // abort() redéfinie : un seul appel d'écriture non bloquant, jamais logf/allocation
+    const ab = /extern "C" void abort\(void\) \{([\s\S]*?)\n\}\n/.exec(code)![1];
+    assert.match(ab, /Serial\.availableForWrite\(\) >= \(int\)sizeof\(t\)/);
+    assert.doesNotMatch(ab, /logf|String|malloc|new\b/);
+    // les relevés couvrent toutes les piles dédiées, à la sortie de l'exécution (après `const bool ran`)
+    const hooks = [...raw.matchAll(/const bool ran = ([^;\n]*);\n#if POD_RENDER_V1 && POD_CANARY\n  podCanaryNote\((PCK_\w+), ni, ran\);\n#endif\n/g)].map((m) => m[2]);
+    const want = ["PCK_WIFI", "PCK_WIFI", "PCK_WIFI", "PCK_WIFI", "PCK_WIFI", "PCK_WIFI", "PCK_HTTP", "PCK_FRAME", "PCK_CANDIDATE", "PCK_REG_JSON", "PCK_PULL_JSON", "PCK_VAL_JSON", ...(sk === "pod_uno_r4_eink27_oled" ? ["PCK_FRAME_OLED"] : [])].sort();
+    assert.deepEqual(hooks.sort(), want);
+    // portées de sortie : register, pull, validate, obs-confirm, pull-frame (e-ink, + OLED)
+    for (const tag of ["register", "pull", "validate", "obs-confirm", "pull-frame + affichage + ACK e-ink", ...(sk === "pod_uno_r4_eink27_oled" ? ["pull-frame + affichage + ACK OLED"] : [])])
+      assert.ok(raw.includes(`#if POD_RENDER_V1 && POD_CANARY\n  PodCanaryScope canaryScope("${tag}");\n#endif\n`), `portée « ${tag} » absente`);
+    // peinture au démarrage, empreinte de build
+    assert.match(raw, /void setup\(\) \{\n  paintStack\(\);\n#if POD_RENDER_V1 && POD_CANARY\n  podCanaryPaint\(\);\n#endif/);
+    assert.match(raw, /\[CANARY\] BUILD LOT8B2B3-FIX1 \| " FIRMWARE_VERSION " \| compile " __DATE__ " " __TIME__/);
+    // la production (blocs retirés) n'a aucun appel hors des fonctions du lot : même nombre de podNetRun/podWifiRun/podWorkRun que le sketch d'avant + les trois décodeurs
+    assert.equal((prod.match(/podWorkRun\(/g) ?? []).length, 3);
+  });
+
+  test(`${sk} : le canari ne change AUCUN octet de production (mêmes appels réseau, même ordre) et le firmware annoncé est inchangé`, () => {
+    assert.equal(inoRaw(sk).replace(CANARY_RE, "").replace(/#ifndef POD_CANARY\n#define POD_CANARY 0 [^\n]*\n#endif\n/, ""), ino(sk).replace(/#ifndef POD_CANARY\n#define POD_CANARY 0 [^\n]*\n#endif\n/, ""));
+    assert.match(inoRaw(sk), /#define FIRMWARE_VERSION\s+"r4(eink27|multiscreen)-1\.1"/);
+  });
+}
+
+test("OLED : défaut collant du client borné ⇒ doFetchFrameOLED ne peut atteindre ni affichage ni ACK ; alternance e-ink/OLED, sauvegarde et restauration inchangées", () => {
+  const o = ino("pod_uno_r4_eink27_oled"), df = fnText(o, "doFetchFrameOLED");
+  assert.match(df, /n == OLED_BUF_SIZE && c\.rd\.complete\(\)/);
+  // dans cet ordre : image complète, puis (et seulement alors) sauvegarde/affichage, puis l'ACK, en dernier
+  assert.ok(df.indexOf("if (!got)") > 0 && df.indexOf("if (!got)") < df.indexOf("ackFrame("), "ACK après la garde d'intégrité");
+  assert.equal((df.match(/ackFrame\(/g) ?? []).length, 1);
+  assert.match(df, /OLED_BUF_SIZE|oledBuf/);
+  const before = propBackup("pod_uno_r4_eink27_oled").replace(/\r\n/g, "\n");
+  for (const f of ["saveOledFrame", "restoreOledFrame", "oledStatus", "displayOnboardingOLED", "doFetchFrameOLED"]) assert.equal(fnText(o, f), fnText(before, f), `${f} inchangée`);
+});

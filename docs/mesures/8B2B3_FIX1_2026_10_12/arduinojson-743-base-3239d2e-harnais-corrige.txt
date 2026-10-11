@@ -1,0 +1,260 @@
+TAP version 13
+# Subtest: sketch : les quatre fragments exacts, drapeaux 0/0, aucun new_handler ni operator new, pas de propagation aux autres firmwares
+ok 1 - sketch : les quatre fragments exacts, drapeaux 0/0, aucun new_handler ni operator new, pas de propagation aux autres firmwares
+  ---
+  duration_ms: 8.219456
+  type: 'test'
+  ...
+# Subtest: en-tête : plafond 240, réservation unique, défaut collant, échec fermé
+ok 2 - en-tête : plafond 240, réservation unique, défaut collant, échec fermé
+  ---
+  duration_ms: 0.445702
+  type: 'test'
+  ...
+# Subtest: cœur Renesas 1.5.3 (VRAI code) : ancien chemin → abort sous bloc contigu 1888 o ; nouveau chemin → AT bornée à 240, octets exacts, échec fermé
+ok 3 - cœur Renesas 1.5.3 (VRAI code) : ancien chemin → abort sous bloc contigu 1888 o ; nouveau chemin → AT bornée à 240, octets exacts, échec fermé
+  ---
+  duration_ms: 1991.673813
+  type: 'test'
+  ...
+# Subtest: cœur Renesas 1.6.0 (VRAI code) : ancien chemin → abort sous bloc contigu 1888 o ; nouveau chemin → AT bornée à 240, octets exacts, échec fermé
+ok 4 - cœur Renesas 1.6.0 (VRAI code) : ancien chemin → abort sous bloc contigu 1888 o ; nouveau chemin → AT bornée à 240, octets exacts, échec fermé
+  ---
+  duration_ms: 2111.775833
+  type: 'test'
+  ...
+# Subtest: CONTRÔLE NÉGATIF : « plafond relevé à 1023 » est REFUSÉ par le harnais (cœur 1.6.0)
+ok 5 - CONTRÔLE NÉGATIF : « plafond relevé à 1023 » est REFUSÉ par le harnais (cœur 1.6.0)
+  ---
+  duration_ms: 2023.683771
+  type: 'test'
+  ...
+# Subtest: CONTRÔLE NÉGATIF : « plafond non appliqué » est REFUSÉ par le harnais (cœur 1.6.0)
+ok 6 - CONTRÔLE NÉGATIF : « plafond non appliqué » est REFUSÉ par le harnais (cœur 1.6.0)
+  ---
+  duration_ms: 1938.340097
+  type: 'test'
+  ...
+# Subtest: CONTRÔLE NÉGATIF : « pas de réservation (la chaîne regrandit) » est REFUSÉ par le harnais (cœur 1.6.0)
+ok 7 - CONTRÔLE NÉGATIF : « pas de réservation (la chaîne regrandit) » est REFUSÉ par le harnais (cœur 1.6.0)
+  ---
+  duration_ms: 2003.602958
+  type: 'test'
+  ...
+# Subtest: CONTRÔLE NÉGATIF : « réponse trop longue acceptée » est REFUSÉ par le harnais (cœur 1.6.0)
+ok 8 - CONTRÔLE NÉGATIF : « réponse trop longue acceptée » est REFUSÉ par le harnais (cœur 1.6.0)
+  ---
+  duration_ms: 1923.730763
+  type: 'test'
+  ...
+# Subtest: CONTRÔLE NÉGATIF : « read() ne signale pas le défaut » est REFUSÉ par le harnais (cœur 1.6.0)
+ok 9 - CONTRÔLE NÉGATIF : « read() ne signale pas le défaut » est REFUSÉ par le harnais (cœur 1.6.0)
+  ---
+  duration_ms: 1991.674574
+  type: 'test'
+  ...
+# Subtest: CONTRÔLE NÉGATIF : « connected() ignore le défaut » est REFUSÉ par le harnais (cœur 1.6.0)
+ok 10 - CONTRÔLE NÉGATIF : « connected() ignore le défaut » est REFUSÉ par le harnais (cœur 1.6.0)
+  ---
+  duration_ms: 1969.516206
+  type: 'test'
+  ...
+# [dopullJsonStack] compilateur C++ : g++ (g++ (Ubuntu 13.3.0-6ubuntu2~24.04.1) 13.3.0)
+# Subtest: DOPULL-JSON-STACK-FIX1 (statique) : le décodage de /api/pull vit tout entier sur la pile de travail, rien n'est appliqué avant un retour valide, ordre des effets conservé ; CONTRÔLES NÉGATIFS
+ok 11 - DOPULL-JSON-STACK-FIX1 (statique) : le décodage de /api/pull vit tout entier sur la pile de travail, rien n'est appliqué avant un retour valide, ordre des effets conservé ; CONTRÔLES NÉGATIFS
+  ---
+  duration_ms: 25.964202
+  type: 'test'
+  ...
+# Subtest: DOPULL-JSON-STACK-FIX1 : les quatre autres firmwares R4 sont INCHANGÉS (aucun décodage sur pile de travail : propagation après validation matérielle) ; l'en-tête podNetStack.h porte podWorkRun et sa taille justifiée
+ok 12 - DOPULL-JSON-STACK-FIX1 : les quatre autres firmwares R4 sont INCHANGÉS (aucun décodage sur pile de travail : propagation après validation matérielle) ; l'en-tête podNetStack.h porte podWorkRun et sa taille justifiée
+  ---
+  duration_ms: 2.581398
+  type: 'test'
+  ...
+# Subtest: DOPULL-JSON-STACK-FIX1 (canari) : une ligne « [CANARY] pull JSON » (pile de travail utilisée / marge / erreur / statut, tas avant et après), verrou sur toute erreur de pile ou statut inattendu ; le contrôle de la pile principale suit le RETOUR du rapport (règle A/B/C) ; aucune variable globale de plus
+ok 13 - DOPULL-JSON-STACK-FIX1 (canari) : une ligne « [CANARY] pull JSON » (pile de travail utilisée / marge / erreur / statut, tas avant et après), verrou sur toute erreur de pile ou statut inattendu ; le contrôle de la pile principale suit le RETOUR du rapport (règle A/B/C) ; aucune variable globale de plus
+  ---
+  duration_ms: 1.630293
+  type: 'test'
+  ...
+# Subtest: DOPULL-JSON-STACK-FIX1 (HÔTE) : le code RÉEL du décodage contre ArduinoJson réel — minimale, complète, 429, tronquée, trop imbriquée, hors bornes, observation à 8/9, UTF-8, NOMEM/NESTED/GUARD/MARGIN, panne d'allocation à chaque point : tout ou rien
+ok 14 - DOPULL-JSON-STACK-FIX1 (HÔTE) : le code RÉEL du décodage contre ArduinoJson réel — minimale, complète, 429, tronquée, trop imbriquée, hors bornes, observation à 8/9, UTF-8, NOMEM/NESTED/GUARD/MARGIN, panne d'allocation à chaque point : tout ou rien
+  ---
+  duration_ms: 2380.385942
+  type: 'test'
+  ...
+# Subtest: DOPULL-JSON-STACK-FIX1 (HÔTE) : CONTRÔLES NÉGATIFS — borne supprimée, copie non vérifiée, effet avant la validation, échec de pile ignoré, journal avant l'arrêt sûr : le harnais les REFUSE
+ok 15 - DOPULL-JSON-STACK-FIX1 (HÔTE) : CONTRÔLES NÉGATIFS — borne supprimée, copie non vérifiée, effet avant la validation, échec de pile ignoré, journal avant l'arrêt sûr : le harnais les REFUSE
+  ---
+  duration_ms: 29585.974797
+  type: 'test'
+  ...
+# [edStack] compilateur C++ : g++ (g++ (Ubuntu 13.3.0-6ubuntu2~24.04.1) 13.3.0)
+# Subtest: pod_uno_r4_eink29 : en annulant les modifications EXACTES de la table (tests/helpers/edStackEdits.ts), on retrouve le sketch d'avant le correctif au texte près
+ok 16 - pod_uno_r4_eink29 : en annulant les modifications EXACTES de la table (tests/helpers/edStackEdits.ts), on retrouve le sketch d'avant le correctif au texte près
+  ---
+  duration_ms: 14.168888
+  type: 'test'
+  ...
+# Subtest: pod_uno_r4_eink29 : plus AUCUN appel direct Ed25519::sign/verify/derivePublicKey (tout passe par PodEd), chaque appel contrôle son résultat, défauts POD_RENDER_V1/POD_CANARY inchangés
+ok 17 - pod_uno_r4_eink29 : plus AUCUN appel direct Ed25519::sign/verify/derivePublicKey (tout passe par PodEd), chaque appel contrôle son résultat, défauts POD_RENDER_V1/POD_CANARY inchangés
+  ---
+  duration_ms: 9.779792
+  type: 'test'
+  ...
+# Subtest: pod_uno_r4_eink27 : en annulant les modifications EXACTES de la table (tests/helpers/edStackEdits.ts), on retrouve le sketch d'avant le correctif au texte près
+ok 18 - pod_uno_r4_eink27 : en annulant les modifications EXACTES de la table (tests/helpers/edStackEdits.ts), on retrouve le sketch d'avant le correctif au texte près
+  ---
+  duration_ms: 3.403319
+  type: 'test'
+  ...
+# Subtest: pod_uno_r4_eink27 : plus AUCUN appel direct Ed25519::sign/verify/derivePublicKey (tout passe par PodEd), chaque appel contrôle son résultat, défauts POD_RENDER_V1/POD_CANARY inchangés
+ok 19 - pod_uno_r4_eink27 : plus AUCUN appel direct Ed25519::sign/verify/derivePublicKey (tout passe par PodEd), chaque appel contrôle son résultat, défauts POD_RENDER_V1/POD_CANARY inchangés
+  ---
+  duration_ms: 4.265781
+  type: 'test'
+  ...
+# Subtest: pod_uno_r4_eink27_oled : en annulant les modifications EXACTES de la table (tests/helpers/edStackEdits.ts), on retrouve le sketch d'avant le correctif au texte près
+ok 20 - pod_uno_r4_eink27_oled : en annulant les modifications EXACTES de la table (tests/helpers/edStackEdits.ts), on retrouve le sketch d'avant le correctif au texte près
+  ---
+  duration_ms: 3.384932
+  type: 'test'
+  ...
+# Subtest: pod_uno_r4_eink27_oled : plus AUCUN appel direct Ed25519::sign/verify/derivePublicKey (tout passe par PodEd), chaque appel contrôle son résultat, défauts POD_RENDER_V1/POD_CANARY inchangés
+ok 21 - pod_uno_r4_eink27_oled : plus AUCUN appel direct Ed25519::sign/verify/derivePublicKey (tout passe par PodEd), chaque appel contrôle son résultat, défauts POD_RENDER_V1/POD_CANARY inchangés
+  ---
+  duration_ms: 4.660335
+  type: 'test'
+  ...
+# Subtest: pod_uno_r4_tft18 : en annulant les modifications EXACTES de la table (tests/helpers/edStackEdits.ts), on retrouve le sketch d'avant le correctif au texte près
+ok 22 - pod_uno_r4_tft18 : en annulant les modifications EXACTES de la table (tests/helpers/edStackEdits.ts), on retrouve le sketch d'avant le correctif au texte près
+  ---
+  duration_ms: 1.994936
+  type: 'test'
+  ...
+# Subtest: pod_uno_r4_tft18 : plus AUCUN appel direct Ed25519::sign/verify/derivePublicKey (tout passe par PodEd), chaque appel contrôle son résultat, défauts POD_RENDER_V1/POD_CANARY inchangés
+ok 23 - pod_uno_r4_tft18 : plus AUCUN appel direct Ed25519::sign/verify/derivePublicKey (tout passe par PodEd), chaque appel contrôle son résultat, défauts POD_RENDER_V1/POD_CANARY inchangés
+  ---
+  duration_ms: 3.713792
+  type: 'test'
+  ...
+# Subtest: pod_uno_r4 : en annulant les modifications EXACTES de la table (tests/helpers/edStackEdits.ts), on retrouve le sketch d'avant le correctif au texte près
+ok 24 - pod_uno_r4 : en annulant les modifications EXACTES de la table (tests/helpers/edStackEdits.ts), on retrouve le sketch d'avant le correctif au texte près
+  ---
+  duration_ms: 6.408092
+  type: 'test'
+  ...
+# Subtest: pod_uno_r4 : plus AUCUN appel direct Ed25519::sign/verify/derivePublicKey (tout passe par PodEd), chaque appel contrôle son résultat, défauts POD_RENDER_V1/POD_CANARY inchangés
+ok 25 - pod_uno_r4 : plus AUCUN appel direct Ed25519::sign/verify/derivePublicKey (tout passe par PodEd), chaque appel contrôle son résultat, défauts POD_RENDER_V1/POD_CANARY inchangés
+  ---
+  duration_ms: 6.160525
+  type: 'test'
+  ...
+# Subtest: table des modifications : chaque modification est unique, signale l'échec fermé, n'écrit jamais d'EEPROM sur échec, et un vote impossible n'est JAMAIS envoyé
+ok 26 - table des modifications : chaque modification est unique, signale l'échec fermé, n'écrit jamais d'EEPROM sur échec, et un vote impossible n'est JAMAIS envoyé
+  ---
+  duration_ms: 0.335382
+  type: 'test'
+  ...
+# Subtest: podEdStack.h : aucune variable globale (hors crochets de test hôte), trampoline Thumb de 8 instructions (SP déplacé sur la pile dédiée puis rétabli, sans CONTROL ni PSP), effacement AVANT free(), échec fermé
+ok 27 - podEdStack.h : aucune variable globale (hors crochets de test hôte), trampoline Thumb de 8 instructions (SP déplacé sur la pile dédiée puis rétabli, sans CONTROL ni PSP), effacement AVANT free(), échec fermé
+  ---
+  duration_ms: 2.792845
+  type: 'test'
+  ...
+# Subtest: scripts/stack-callgraph.js : frames (push, stmdb, sub sp, vpush), appels directs, appels terminaux (b.w), appels indirects comptés, pire chemin et cadre propre
+ok 28 - scripts/stack-callgraph.js : frames (push, stmdb, sub sp, vpush), appels directs, appels terminaux (b.w), appels indirects comptés, pire chemin et cadre propre
+  ---
+  duration_ms: 2.006237
+  type: 'test'
+  ...
+# Subtest: DIFFÉRENTIEL HÔTE : dérivation, signature et vérification via PodEd == Node/OpenSSL et RFC 8032, octet par octet (21 vecteurs, frontières de bloc SHA-512, message de vote) ; falsifications rejetées ; 4 cycles sans dérive du tas ; effacement avant free() ; échec fermé (garde, marge, malloc)
+ok 29 - DIFFÉRENTIEL HÔTE : dérivation, signature et vérification via PodEd == Node/OpenSSL et RFC 8032, octet par octet (21 vecteurs, frontières de bloc SHA-512, message de vote) ; falsifications rejetées ; 4 cycles sans dérive du tas ; effacement avant free() ; échec fermé (garde, marge, malloc)
+  ---
+  duration_ms: 1551.401149
+  type: 'test'
+  ...
+# Subtest: CONTRÔLES NÉGATIFS DU CODE : sans le contrôle de garde, sans le contrôle de marge, sans remise à zéro de la sortie, sans effacement, ou avec un malloc non vérifié, le harnais REFUSE le wrapper
+ok 30 - CONTRÔLES NÉGATIFS DU CODE : sans le contrôle de garde, sans le contrôle de marge, sans remise à zéro de la sortie, sans effacement, ou avec un malloc non vérifié, le harnais REFUSE le wrapper
+  ---
+  duration_ms: 4926.192076
+  type: 'test'
+  ...
+# Subtest: SIGNATURE RÉELLE D'UN VOTE par PodEd (hôte) VÉRIFIÉE par la référence du serveur (lib/ed25519.ts, celle de /api/validation-result) : vote v1 « deviceId:candidateId:score », vote v2 « pod-vote-v2|… » accept et reject ; message ou clé altérés refusés
+ok 31 - SIGNATURE RÉELLE D'UN VOTE par PodEd (hôte) VÉRIFIÉE par la référence du serveur (lib/ed25519.ts, celle de /api/validation-result) : vote v1 « deviceId:candidateId:score », vote v2 « pod-vote-v2|… » accept et reject ; message ou clé altérés refusés
+  ---
+  duration_ms: 963.489696
+  type: 'test'
+  ...
+# [registerJsonStack] compilateur C++ : g++ (g++ (Ubuntu 13.3.0-6ubuntu2~24.04.1) 13.3.0)
+# Subtest: REGISTER-JSON-STACK-FIX1 (statique) : la réponse du register est décodée sur la pile de travail APRÈS httpCall, rien n'est inscrit avant un résultat complet, valeurs refusées jamais tronquées ; CONTRÔLES NÉGATIFS
+ok 32 - REGISTER-JSON-STACK-FIX1 (statique) : la réponse du register est décodée sur la pile de travail APRÈS httpCall, rien n'est inscrit avant un résultat complet, valeurs refusées jamais tronquées ; CONTRÔLES NÉGATIFS
+  ---
+  duration_ms: 29.876394
+  type: 'test'
+  ...
+# Subtest: REGISTER-JSON-STACK-FIX1 (canari) : ligne « [CANARY] register JSON » (utilisation, marge, erreur, statut, tas avant / après), verrou sur erreur de pile ou statut ≠ OK, contrôle de la pile principale APRÈS le retour du rapport, rien en production
+ok 33 - REGISTER-JSON-STACK-FIX1 (canari) : ligne « [CANARY] register JSON » (utilisation, marge, erreur, statut, tas avant / après), verrou sur erreur de pile ou statut ≠ OK, contrôle de la pile principale APRÈS le retour du rapport, rien en production
+  ---
+  duration_ms: 2.245247
+  type: 'test'
+  ...
+# Subtest: REGISTER-JSON-STACK-FIX1 (HÔTE) : le code RÉEL du décodage contre ArduinoJson réel — appairé / non appairé / champs absents / types inattendus / valeurs trop courtes, trop longues, hors alphabet / JSON tronqué / NOMEM, NESTED, GUARD, MARGIN / allocation impossible : tout ou rien
+ok 34 - REGISTER-JSON-STACK-FIX1 (HÔTE) : le code RÉEL du décodage contre ArduinoJson réel — appairé / non appairé / champs absents / types inattendus / valeurs trop courtes, trop longues, hors alphabet / JSON tronqué / NOMEM, NESTED, GUARD, MARGIN / allocation impossible : tout ou rien
+  ---
+  duration_ms: 1696.798483
+  type: 'test'
+  ...
+# Subtest: REGISTER-JSON-STACK-FIX1 (HÔTE) : CONTRÔLES NÉGATIFS — validation relâchée, troncature, état inscrit trop tôt, échec de pile ignoré, journal avant l'arrêt sûr : le harnais les REFUSE
+ok 35 - REGISTER-JSON-STACK-FIX1 (HÔTE) : CONTRÔLES NÉGATIFS — validation relâchée, troncature, état inscrit trop tôt, échec de pile ignoré, journal avant l'arrêt sûr : le harnais les REFUSE
+  ---
+  duration_ms: 19336.967187
+  type: 'test'
+  ...
+# Subtest: INVENTAIRE FORMEL des deserializeJson des cinq firmwares R4 : exactement les sites connus ; le e-ink 2,9″ n'en a plus AUCUN sur la pile principale ; les quatre autres restent à migrer APRÈS validation matérielle
+ok 36 - INVENTAIRE FORMEL des deserializeJson des cinq firmwares R4 : exactement les sites connus ; le e-ink 2,9″ n'en a plus AUCUN sur la pile principale ; les quatre autres restent à migrer APRÈS validation matérielle
+  ---
+  duration_ms: 7.953193
+  type: 'test'
+  ...
+# [validateJsonStack] compilateur C++ : g++ (g++ (Ubuntu 13.3.0-6ubuntu2~24.04.1) 13.3.0)
+# Subtest: DOVALIDATE-JSON-STACK-FIX1 (statique) : la réponse du validate est décodée sur la pile de travail APRÈS httpCall et AVANT la lecture du candidat, la signature et le vote ; sorties seulement avec un résultat complet ; valeurs refusées jamais tronquées ; CONTRÔLES NÉGATIFS
+ok 37 - DOVALIDATE-JSON-STACK-FIX1 (statique) : la réponse du validate est décodée sur la pile de travail APRÈS httpCall et AVANT la lecture du candidat, la signature et le vote ; sorties seulement avec un résultat complet ; valeurs refusées jamais tronquées ; CONTRÔLES NÉGATIFS
+  ---
+  duration_ms: 21.618929
+  type: 'test'
+  ...
+# Subtest: DOVALIDATE-JSON-STACK-FIX1 : les quatre autres firmwares R4 sont INCHANGÉS (doValidate d'avant, aucune pile de travail) ; en-tête : deux constantes seulement
+ok 38 - DOVALIDATE-JSON-STACK-FIX1 : les quatre autres firmwares R4 sont INCHANGÉS (doValidate d'avant, aucune pile de travail) ; en-tête : deux constantes seulement
+  ---
+  duration_ms: 1.976211
+  type: 'test'
+  ...
+# Subtest: DOVALIDATE-JSON-STACK-FIX1 (canari) : ligne « [CANARY] validate JSON », verrou sur erreur de pile ou statut ≠ OK, contrôle V: APRÈS le retour du rapport, rien en production
+ok 39 - DOVALIDATE-JSON-STACK-FIX1 (canari) : ligne « [CANARY] validate JSON », verrou sur erreur de pile ou statut ≠ OK, contrôle V: APRÈS le retour du rapport, rien en production
+  ---
+  duration_ms: 1.627814
+  type: 'test'
+  ...
+# Subtest: DOVALIDATE-JSON-STACK-FIX1 (HÔTE) : le code RÉEL du décodage contre ArduinoJson réel — v2 / v1 / déjà voté / candidat nul / valeurs invalides, absentes, trop longues, hors alphabet, mal typées / JSON tronqué / NOMEM, NESTED, GUARD, MARGIN / allocation impossible : tout ou rien
+ok 40 - DOVALIDATE-JSON-STACK-FIX1 (HÔTE) : le code RÉEL du décodage contre ArduinoJson réel — v2 / v1 / déjà voté / candidat nul / valeurs invalides, absentes, trop longues, hors alphabet, mal typées / JSON tronqué / NOMEM, NESTED, GUARD, MARGIN / allocation impossible : tout ou rien
+  ---
+  duration_ms: 1778.378819
+  type: 'test'
+  ...
+# Subtest: DOVALIDATE-JSON-STACK-FIX1 (HÔTE) : CONTRÔLES NÉGATIFS — validation relâchée, sorties écrites trop tôt, échec de pile ignoré, journal avant l'arrêt sûr : le harnais les REFUSE
+ok 41 - DOVALIDATE-JSON-STACK-FIX1 (HÔTE) : CONTRÔLES NÉGATIFS — validation relâchée, sorties écrites trop tôt, échec de pile ignoré, journal avant l'arrêt sûr : le harnais les REFUSE
+  ---
+  duration_ms: 22650.569057
+  type: 'test'
+  ...
+1..41
+# tests 41
+# suites 0
+# pass 41
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 41149.881257

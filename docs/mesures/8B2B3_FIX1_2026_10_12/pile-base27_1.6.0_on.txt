@@ -1,0 +1,40 @@
+##### sections
+.text                    130564        16384
+.data                       912    536870912
+.noinit                      24    536871824
+.bss                      18464    536871848
+.data_flash                   0   1074790400
+Total                   4791935
+##### chaînes de la pile principale
+# chaînes STATIQUES sur la pile principale (1 024 o) : hal_entry 8 + arduino_main 16 + setup 224 / loop 56
+register (toutes branches)                                 depuis setup  1080 o  marge   -56 o  SOUS 128 !  doRegisterv(232) > K11ArduinoJson8V743PB226 > ArduinoJson8V743PB2215co > K11ArduinoJson8V743PB226 > ArduinoJson8V743PB226det > ArduinoJson8V743PB226det > ArduinoJson8V743PB226det
+register (hors affichage d'appairage)                      depuis setup  1080 o  marge   -56 o  SOUS 128 !  doRegisterv(232) > K11ArduinoJson8V743PB226 > ArduinoJson8V743PB2215co > K11ArduinoJson8V743PB226 > ArduinoJson8V743PB226det > ArduinoJson8V743PB226det > ArduinoJson8V743PB226det
+register (toutes branches)                                 depuis loop    912 o  marge   112 o  SOUS 128 !  doRegisterv(232) > K11ArduinoJson8V743PB226 > ArduinoJson8V743PB2215co > K11ArduinoJson8V743PB226 > ArduinoJson8V743PB226det > ArduinoJson8V743PB226det > ArduinoJson8V743PB226det
+register (hors affichage d'appairage)                      depuis loop    912 o  marge   112 o  SOUS 128 !  doRegisterv(232) > K11ArduinoJson8V743PB226 > ArduinoJson8V743PB2215co > K11ArduinoJson8V743PB226 > ArduinoJson8V743PB226det > ArduinoJson8V743PB226det > ArduinoJson8V743PB226det
+pull + pull-frame + affichage + ACK (toutes branches)      depuis setup  1096 o  marge   -72 o  SOUS 128 !  doPullv.isra.0(272) > ArduinoJson8V743PB2215co > K11ArduinoJson8V743PB226 > ArduinoJson8V743PB226det > ArduinoJson8V743PB226det > ArduinoJson8V743PB226det > ArduinoJson8V743PB226det
+pull + pull-frame + affichage + ACK (toutes branches)      depuis loop    928 o  marge    96 o  SOUS 128 !  doPullv.isra.0(272) > ArduinoJson8V743PB2215co > K11ArduinoJson8V743PB226 > ArduinoJson8V743PB226det > ArduinoJson8V743PB226det > ArduinoJson8V743PB226det > ArduinoJson8V743PB226det
+validate / vote (toutes branches)                          depuis loop   1400 o  marge  -376 o  SOUS 128 !  doValidatev(488) > doRegisterv(232) > K11ArduinoJson8V743PB226 > ArduinoJson8V743PB2215co > K11ArduinoJson8V743PB226 > ArduinoJson8V743PB226det > ArduinoJson8V743PB226det
+validate / vote (hors affichage d'appairage)               depuis loop   1400 o  marge  -376 o  SOUS 128 !  doValidatev(488) > doRegisterv(232) > K11ArduinoJson8V743PB226 > ArduinoJson8V743PB2215co > K11ArduinoJson8V743PB226 > ArduinoJson8V743PB226det > ArduinoJson8V743PB226det
+=> pire marge hors branche d'appairage : -376 o (validate / vote (hors affichage d'appairage) depuis loop)
+##### transactions réseau (pile dédiée 2 048 o)
+# Profondeur statique des transactions réseau (octets) — pile dédiée de 1984 o utilisables, cadre matériel d'exception 104 o
+# site (lambda)              cadre pire cas (avec %f) sans %f reste (pire cas) reste (sans %f)
+netReadCandidate               304               1416    1056              464             824
+netHttpRaw                     240               1352     992              528             888
+doFetchFrame                   240               1352     992              528             888
+##### module Wi-Fi (pile dédiée 1 536 o)
+  wifiBegin        profondeur  664 o   appels indirects atteignables 30   Z10podWifiRunIZL9wifiB > CWifi5beginEPKcS1_(88) > CWifi6statusEv(56) > ModemClass5beginEii(88 > ModemClass5writeERKNSt >
+  wifiIpString     profondeur  640 o   appels indirects atteignables 30   Z10podWifiRunIZL12wifi > CWifi7localIPEv(72) > ModemClass5beginEii(88 > ModemClass5writeERKNSt > vsniprintf(112) > _svfi
+  wifiFirmware     profondeur  600 o   appels indirects atteignables 30   Z10podWifiRunIZL12wifi > CWifi15firmwareVersion > ModemClass5beginEii(88 > ModemClass5writeERKNSt > vsniprintf(112) > _s
+  wifiMac          profondeur  592 o   appels indirects atteignables 30   Z10podWifiRunIZL7wifiM > CWifi10macAddressEPh(7 > ModemClass5beginEii(88 > ModemClass5writeERKNSt > vsniprintf(112) > _s
+  wifiStatusT      profondeur  584 o   appels indirects atteignables 30   Z10podWifiRunIZL11wifi > CWifi6statusEv(56) > ModemClass5beginEii(88 > ModemClass5writeERKNSt > vsniprintf(112) > _svfip
+  wifi             profondeur  496 o   appels indirects atteignables 28   Z10podWifiRunIZL8wifiR > CWifi4RSSIEv(56) > ModemClass5writeERKNSt > vsniprintf(112) > _svfiprintf_r(152) > __ssputs_r(3
+=> pire cas statique 664 o ; exigé = 64 (garde) + 664 + 32 (réserve) + 104 (cadre d'exception) + 256 (objectif de marge) = 1120 o ; taille 1536 o → SUFFISANTE (réserve 416 o)
+=> 6 appelants du module, dont 0 hors invocateur de podWifiRun (AUCUN : tout appel direct passe par la pile dédiée)
+##### Ed25519
+PILE DÉDIÉE : podedimpl::run (appelée par le trampoline)         1360 o   podedimplL3runEPv(16) > Ed255196verifyEPKhS1_PKvj(760) > Ed255193mulERNS_5PointEPKmb(144) > Ed255193mulERNS_5PointEPKmS1_b(312) > Curve255195mul_PEPmPKmS2_(104) > Curve255196reduceEPmS0_h(24)
+hal_entry > arduino_mainv > setup > _ZN5PodEd15derivePublicKeyEPhPKhP9PodEdInfo > PodEd (execute+malloc+trampoline)   412 o  marge 612 o
+hal_entry > arduino_mainv > loop > doValidatev > _ZN5PodEd4signEPhPKhS2_PKvjP9PodEdInfo > PodEd (execute+malloc+trampoline)   740 o  marge 284 o
+hal_entry > arduino_mainv > setup > PodEd (execute+malloc+trampoline)   364 o  marge 660 o
+##### pile de travail JSON : pullParseWork (imbrication 8)
+pullParseWork introuvable

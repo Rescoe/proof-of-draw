@@ -1,4 +1,6 @@
-// pod_ssl_bounded.h — PULLFRAME-BOUNDED-SSL-FIX1 (11/10/2026). UNO R4 WiFi + e-ink 2,9″ SEUL (aucune propagation avant le canari matériel).
+// pod_ssl_bounded.h — client TLS Renesas/WiFiS3 à réception BORNÉE. Origine : PULLFRAME-BOUNDED-SSL-FIX1 (11/10/2026), validé sur carte sur l'UNO R4 e-ink 2,9″.
+// PROPAGATION EXPLICITE (LOT8B2B3-R4-EINK27-PROPAGATION-1, 12/10/2026) aux UNO R4 e-ink 2,7″ (solo et + OLED) : cette copie ne diffère de celle du 2,9″ que par ce commentaire (code identique, testé) ;
+// elle n'est PAS validée sur carte pour le 2,7″ (canari matériel à faire). Hors périmètre : TFT 1,8″, TFT 2,8″ et ESP8266 (BearSSL : ce composant est propre au cœur Renesas, ne jamais l'y copier).
 //
 // PROBLÈME (démontré sur la carte par AUDIT5 : abort() DANS WiFiSSLClient::read(), tas libre 2 976 o, sommet contigu vierge 1 888 o)
 //   WiFiSSLClient::_read() (cœurs Renesas 1.5.3 = 1.6.0, fichiers identiques : docs/PREUVE_WIFIS3_RX_BORNE_RENESAS_1_5_3_1_6_0_2026_10_11.md) envoie

@@ -1,0 +1,50 @@
+##### sections
+.text                    134132        16384
+.data                       912    536870912
+.noinit                      24    536871824
+.bss                      18464    536871848
+.data_flash                   0   1074790400
+Total                   4831063
+##### chaînes de la pile principale
+# chaînes STATIQUES sur la pile principale (1 024 o) : hal_entry 8 + arduino_main 16 + setup 224 / loop 56
+register (toutes branches)                                 depuis setup   816 o  marge   208 o  sous 256  doRegisterv(168) > displayOnboardingQRRKN7a > qrcode_initText(32) > qrcode_initBytes(144) > drawFinderPattern(56) > setFunctionModule(16) > bb_setBit(8)
+register (hors affichage d'appairage)                      depuis setup   664 o  marge   360 o  ok  doRegisterv(168) > httpCallPKcRKN7arduino6S > K7arduino6String9substri > arduino6StringC1EPKc(16) > arduino6String4copyEPKcj > arduino6String7reserveEj > arduino6String12changeBu
+register (toutes branches)                                 depuis loop    648 o  marge   376 o  ok  doRegisterv(168) > displayOnboardingQRRKN7a > qrcode_initText(32) > qrcode_initBytes(144) > drawFinderPattern(56) > setFunctionModule(16) > bb_setBit(8)
+register (hors affichage d'appairage)                      depuis loop    496 o  marge   528 o  ok  doRegisterv(168) > httpCallPKcRKN7arduino6S > K7arduino6String9substri > arduino6StringC1EPKc(16) > arduino6String4copyEPKcj > arduino6String7reserveEj > arduino6String12changeBu
+pull + pull-frame + affichage + ACK (toutes branches)      depuis setup   760 o  marge   264 o  ok  doPullv.isra.0(168) > doPullStageRKN7arduino6S > doPullApplyR10PullParsed > asciiFoldRKN7arduino6Str > arduino6String6concatEc( > arduino6String6concatEPK > arduino6String7reserveEj
+pull + pull-frame + affichage + ACK (toutes branches)      depuis loop    592 o  marge   432 o  ok  doPullv.isra.0(168) > doPullStageRKN7arduino6S > doPullApplyR10PullParsed > asciiFoldRKN7arduino6Str > arduino6String6concatEc( > arduino6String6concatEPK > arduino6String7reserveEj
+validate / vote (toutes branches)                          depuis loop   1040 o  marge   -16 o  SOUS 128 !  doValidatev(392) > doRegisterv(168) > displayOnboardingQRRKN7a > qrcode_initText(32) > qrcode_initBytes(144) > drawFinderPattern(56) > setFunctionModule(16)
+validate / vote (hors affichage d'appairage)               depuis loop    888 o  marge   136 o  sous 256  doValidatev(392) > doRegisterv(168) > httpCallPKcRKN7arduino6S > K7arduino6String9substri > arduino6StringC1EPKc(16) > arduino6String4copyEPKcj > arduino6String7reserveEj
+=> pire marge hors branche d'appairage : 136 o (validate / vote (hors affichage d'appairage) depuis loop)
+##### transactions réseau (pile dédiée 2 048 o)
+# Profondeur statique des transactions réseau (octets) — pile dédiée de 1984 o utilisables, cadre matériel d'exception 104 o
+# site (lambda)              cadre pire cas (avec %f) sans %f reste (pire cas) reste (sans %f)
+netReadCandidate               312               1424    1064              456             816
+netHttpRaw                     248               1360    1000              520             880
+doFetchFrame                   248               1360    1000              520             880
+##### module Wi-Fi (pile dédiée 1 536 o)
+  wifiBegin        profondeur  664 o   appels indirects atteignables 30   Z10podWifiRunIZL9wifiB > CWifi5beginEPKcS1_(88) > CWifi6statusEv(56) > ModemClass5beginEii(88 > ModemClass5writeERKNSt >
+  wifiIpString     profondeur  640 o   appels indirects atteignables 30   Z10podWifiRunIZL12wifi > CWifi7localIPEv(72) > ModemClass5beginEii(88 > ModemClass5writeERKNSt > vsniprintf(112) > _svfi
+  wifiFirmware     profondeur  600 o   appels indirects atteignables 30   Z10podWifiRunIZL12wifi > CWifi15firmwareVersion > ModemClass5beginEii(88 > ModemClass5writeERKNSt > vsniprintf(112) > _s
+  wifiMac          profondeur  592 o   appels indirects atteignables 30   Z10podWifiRunIZL7wifiM > CWifi10macAddressEPh(7 > ModemClass5beginEii(88 > ModemClass5writeERKNSt > vsniprintf(112) > _s
+  wifiStatusT      profondeur  584 o   appels indirects atteignables 30   Z10podWifiRunIZL11wifi > CWifi6statusEv(56) > ModemClass5beginEii(88 > ModemClass5writeERKNSt > vsniprintf(112) > _svfip
+  wifi             profondeur  496 o   appels indirects atteignables 28   Z10podWifiRunIZL8wifiR > CWifi4RSSIEv(56) > ModemClass5writeERKNSt > vsniprintf(112) > _svfiprintf_r(152) > __ssputs_r(3
+=> pire cas statique 664 o ; exigé = 64 (garde) + 664 + 32 (réserve) + 104 (cadre d'exception) + 256 (objectif de marge) = 1120 o ; taille 1536 o → SUFFISANTE (réserve 416 o)
+=> 6 appelants du module, dont 0 hors invocateur de podWifiRun (AUCUN : tout appel direct passe par la pile dédiée)
+##### Ed25519
+PILE DÉDIÉE : podedimpl::run (appelée par le trampoline)         1360 o   podedimplL3runEPv(16) > Ed255196verifyEPKhS1_PKvj(760) > Ed255193mulERNS_5PointEPKmb(144) > Ed255193mulERNS_5PointEPKmS1_b(312) > Curve255195mul_PEPmPKmS2_(104) > Curve255196reduceEPmS0_h(24)
+hal_entry > arduino_mainv > setup > _ZN5PodEd15derivePublicKeyEPhPKhP9PodEdInfo > PodEd (execute+malloc+trampoline)   412 o  marge 612 o
+hal_entry > arduino_mainv > loop > doValidatev > _ZN5PodEd4signEPhPKhS2_PKvjP9PodEdInfo > PodEd (execute+malloc+trampoline)   644 o  marge 380 o
+hal_entry > arduino_mainv > setup > PodEd (execute+malloc+trampoline)   364 o  marge 660 o
+##### pile de travail JSON : pullParseWork (imbrication 8)
+# racine pullParseWorkRKN7arduino6StringEiR : cadre 192 o ; pire chaîne ACYCLIQUE (cycles coupés) : 768 o ; appels indirects atteignables : 10
+  limite d'imbrication 8 : pire cas statique 1160 o (borne basse) à 1160 o (borne haute) sous l'appelant de pullParseWork
+  budget (2048 − garde 64 − exception 104 − invocateur 32) : 1848 o => marge au pire cas : 688 o (borne haute) / 688 o (borne basse) ; exigée >= 128, objectif >= 256
+##### pile de travail JSON : registerParseWork (imbrication 8)
+# racine registerParseWorkRKN7arduino6Strin : cadre 112 o ; pire chaîne ACYCLIQUE (cycles coupés) : 428 o ; appels indirects atteignables : 10
+  limite d'imbrication 8 : pire cas statique 820 o (borne basse) à 820 o (borne haute) sous l'appelant de registerParseWork
+  budget (2048 − garde 64 − exception 104 − invocateur 32) : 1848 o => marge au pire cas : 1028 o (borne haute) / 1028 o (borne basse) ; exigée >= 128, objectif >= 256
+##### pile de travail JSON : validateParseWork (imbrication 8)
+# racine validateParseWorkRKN7arduino6Strin : cadre 208 o ; pire chaîne ACYCLIQUE (cycles coupés) : 524 o ; appels indirects atteignables : 10
+  limite d'imbrication 8 : pire cas statique 916 o (borne basse) à 916 o (borne haute) sous l'appelant de validateParseWork
+  budget (2048 − garde 64 − exception 104 − invocateur 32) : 1848 o => marge au pire cas : 932 o (borne haute) / 932 o (borne basse) ; exigée >= 128, objectif >= 256

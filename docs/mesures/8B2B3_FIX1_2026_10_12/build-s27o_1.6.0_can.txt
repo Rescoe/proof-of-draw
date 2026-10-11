@@ -1,0 +1,10 @@
+tag: s27o_1.6.0_can
+Sketch uses 150408 bytes (57%) of program storage space. Maximum is 262144 bytes.
+Global variables use 21804 bytes (66%) of dynamic memory, leaving 10964 bytes for local variables. Maximum is 32768 bytes.
+avertissements du sketch (body.h) :
+body.h:347:16: warning: array subscript 16 is outside array bounds of 'char [1]' [-Warray-bounds=]
+body.h:349:3: warning: array subscript 'volatile uint32_t {aka volatile long unsigned int}[0]' is partly outside array bounds of 'char [1]' [-Warray-bounds=]
+body.h:350:3: warning: array subscript 1 is outside array bounds of 'char [1]' [-Warray-bounds=]
+body.h:354:24: warning: array subscript 1 is outside array bounds of 'char [1]' [-Warray-bounds=]
+body.h:355:7: warning: array subscript 'volatile uint32_t {aka volatile long unsigned int}[0]' is partly outside array bounds of 'char [1]' [-Warray-bounds=]
+(aucun si vide)

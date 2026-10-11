@@ -188,6 +188,12 @@ int main() {
   { auto body = makeBody(1024, 96); Result r = newPath(body, 1024, 0, 200, 700, 1024, 1888, 2976);
     check(!r.aborted && r.complete && r.got == 1024 && r.equal && r.fault == 0 && allAtBounded(), "C3 : image OLED (1024 o) : identique octet par octet, %zu commandes AT, max demande %zu", g_mod.nRecv, g_mod.maxRecvSize); }
 
+  // C4 (LOT8B2B3-FIX1) : image OLED (1 024 o) avec un module défectueux (280 o pour 240 demandés) : défaut collant, corps INCOMPLET (donc ni affichage ni ACK dans doFetchFrameOLED, qui exige n == OLED_BUF_SIZE && complete())
+  { auto body = makeBody(1024, 98); auto resp = makeResponse(body, 1024); moduleLoad(resp, 1u << 30, 0); g_mod.overlongExtra = 40; PodBoundedSSL c; c.connect("example.test", 443);
+    heapReset(1888, 2976); g_heapArmed = true; bool ab = false; int code = 0; size_t got = 0; bool complete = false; std::vector<uint8_t> out(1024);
+    try { podhttp::Reader<PodBoundedSSL> rd(c, 5000); code = rd.readHeaders(); if (code == 200) { got = rd.readBody(out.data(), 1024); complete = rd.complete(); } } catch (const HeapAbort&) { ab = true; } g_heapArmed = false;
+    check(!ab && !(code == 200 && complete && got == 1024) && c.fault() != 0 && c.connected() == 0, "C4 : image OLED 1024 o, module defectueux : defaut collant, corps incomplet (code %d, %zu o, complete=%d) : ni affichage ni ACK", code, got, (int)complete); }
+
   printf("%s : %d controles, %d echec(s)\n", g_fails ? "ECHEC" : "SUCCES", g_checks, g_fails);
   return g_fails ? 1 : 0;
 }
