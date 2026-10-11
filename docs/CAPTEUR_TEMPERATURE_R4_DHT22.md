@@ -2,7 +2,30 @@
 
 Une carte (avec ou sans écran) envoie des **mesures** à PoD ; elles sont visibles dans **Mon profil** (carte de l'appareil → « 🌡 Mesures »), dans la **Topologie** et dans la **Constellation** (clic sur l'appareil). La R4 DHT22 ne calcule rien, ne vote pas, n'affiche rien.
 
-> ⚠ Le sketch n'a **jamais été compilé pour la R4 par l'implémenteur** (pas de chaîne ARM dans la session cloud) ; le porteur l'a toutefois compilé, flashé, appairé et obtenu des mesures correctes (`21.1 C, 71.9 %`, 12/10/2026). Le serveur, lui, n'avait pas encore la route : le **404** de `/api/sensor` venait de là (site non déployé avec ce code), pas de Redis — Redis crée les clés à la première écriture, rien à préparer. Le corps de ce 404 (page HTML) dépasse aussi le tampon de réponse du firmware (511 o) : d'où « corps incomplet » (−3).
+> Le sketch n'a pas pu être compilé dans la session cloud (pas de chaîne ARM) ; **le porteur l'a compilé, flashé, appairé et validé sur la carte** (`21.1 C, 71.9 %` puis `19.7 C, 74.0 %` avec `/api/sensor -> 200`, 12/10/2026). Le serveur, lui, n'avait pas encore la route : le **404** de `/api/sensor` venait de là (site non déployé avec ce code), pas de Redis — Redis crée les clés à la première écriture, rien à préparer. Le corps de ce 404 (page HTML) dépasse aussi le tampon de réponse du firmware (511 o) : d'où « corps incomplet » (−3).
+
+## Validation matérielle (12/10/2026)
+
+Firmware `r4dht22-1.1` sur la carte du porteur, serveur déployé avec le modèle de mesures. Journal série :
+
+```
+[HTTP POST] /api/register -> -2        (1re tentative : TLS impossible, transitoire)
+[REGISTER] échec — nouvel essai dans 5 s
+[HTTP POST] /api/register -> 200
+[REGISTER] deviceId=dev_I25D9Z7A paired=oui
+[BOOT] prêt — une mesure toutes les 5 min
+[DHT22] 19.7 C, 74.0 %
+[HTTP POST] /api/sensor -> 200
+[SENSOR] mesure envoyée
+```
+
+Le chemin complet fonctionne : lecture DHT22 → `/api/sensor` 200 → stockage. Le `-2` initial est absorbé par la boucle de ré-essai (5 s). **Non encore éprouvé** : coupure Wi-Fi/Internet prolongée, fonctionnement sur plusieurs jours (fuite de tas éventuelle), affichage dans la topologie/constellation (à confirmer à l'œil).
+
+## Ce que fait — et ne fait pas — cet appareil
+
+- Il **ne reçoit aucune frame, ne vote pas, ne calcule rien** : pas de `pull`, pas de `pull-frame`, pas de validation ; il n'est dans aucune pool d'écran. Il fait : Wi-Fi → inscription (`/api/register`) → lecture DHT22 → `POST /api/sensor`.
+- **Reprise après coupure** (par le code, non testée sur une longue panne) : Wi-Fi perdu → `WiFi.begin` répété toutes les 5 s jusqu'au retour, puis mesure immédiate ; serveur/Internet injoignable → nouvel essai 5 min après ; code d'appairage changé → 403 → ré-inscription automatique ; Wi-Fi absent au démarrage → redémarrage de la carte. Les mesures de la période de coupure sont **perdues** (pas de tampon local). Aucun chien de garde matériel : un blocage dur du module Wi-Fi exigerait un redémarrage manuel.
+- Mise à jour du firmware : **manuelle (câble USB)** ; l'OTA n'existe pas encore (lot 8 du plan de travail).
 
 ## Modèle de données (générique, pensé pour d'autres capteurs)
 
