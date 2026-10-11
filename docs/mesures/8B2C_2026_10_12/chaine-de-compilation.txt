@@ -1,0 +1,7 @@
+LOT8B2C — chaîne de compilation ESP8266 obtenue dans la session cloud (12/10/2026)
+- cœur : esp8266/Arduino tag 3.1.2 (git, sous-modules bearssl, SoftwareSerial, LittleFS/littlefs, ESP8266SdFat, uzlib, esptool) ; plateforme déclarée « esp8266com:esp8266 3.1.2 » (dossier sketchbook/hardware)
+- toolchain : esp-quick-toolchain 3.1.0-gcc10.3 (xtensa-lx106-elf-gcc 10.3, archive SHA-256 89d21f38…3ed83 VÉRIFIÉE = celle du package_esp8266com_index) — la MÊME que celle du porteur (docs/mesures/8B2A_2026_10_08/versions.txt)
+- arduino-cli 1.1.1 (release GitHub) ; préprocesseur .ino : arduino/ctags compilé depuis les sources (la version du porteur est 1.4.1 ; sans conséquence sur le code généré)
+- bibliothèques : ArduinoJson 7.4.3, Crypto (arduinolibs, 0.4.0), QRCode (ricmoo) ; carte nodemcuv2, options par défaut ; --warnings all ; -fstack-usage
+- CALIBRAGE sur le firmware de base (origin/main 3239d2e) : RAM statique 34 812 o (documenté 34 808 o, lot 8B-2A), flash 408 108 o (documenté 408 120 o) => écart ≤ 12 o : mesures représentatives
+- commandes : cloud-esp-build.sh <dossier-du-sketch> <étiquette> [drapeaux -D…] ; rapports : scripts/esp8266-eink29-measure.sh

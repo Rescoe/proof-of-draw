@@ -1,0 +1,25 @@
+Variables and constants in RAM (global, static), used 34812 / 80192 bytes (43%)
+Instruction RAM (IRAM_ATTR, ICACHE_RAM_ATTR), used 60827 / 65536 bytes (92%)
+Code in flash (default, ICACHE_FLASH_ATTR), used 408108 / 1048576 bytes (38%)
+--- avertissements du projet (normalisés : sans chemin ni numéro de ligne)
+      1 AES128.cpp: warning: unused parameter 'input' [-Wunused-parameter]
+      1 AES128.cpp: warning: unused parameter 'output' [-Wunused-parameter]
+      1 AES256.cpp: warning: unused parameter 'input' [-Wunused-parameter]
+      1 AES256.cpp: warning: unused parameter 'output' [-Wunused-parameter]
+      4 esp_eink_2.9BWR.ino: warning: 'DynamicJsonDocument' is deprecated: use JsonDocument instead [-Wdeprecated-declarations]
+      2 qrcode.c: warning: comparison is always false due to limited range of data type [-Wtype-limits]
+--- cadres de pile statiques (octets)
+560 bool doPull()
+416 bool doValidate()
+272 bool doFetchFrame(const String&, const String&)
+240 bool doRegister()
+80 void setup()
+80 bool Epd::DisplayStream(Epd::ProduceFn, void*)
+64 bool ackFrame(const String&)
+32 void loop()
+32 doFetchFrame(const String&, const String&)::<lambda(WiFiClient*, uint8_t*, size_t)>
+32 bool clearDisplayWhite()
+16 bool initDisplayForRefresh()
+16 bool doValidate()
+--- désassemblage normalisé (empreinte)
+fb40a24f3c64b136

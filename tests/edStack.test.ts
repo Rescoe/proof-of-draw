@@ -150,7 +150,8 @@ function ensureLib(): string[] {
   return libObjs;
 }
 function buildHarness(name: string, hdr: string): string {
-  const dir = path.join(tmp, name); fs.mkdirSync(path.join(dir, "host"), { recursive: true }); fs.mkdirSync(path.join(dir, "src", "adapters"), { recursive: true });
+  const dir = path.join(tmp, `${name}_src`);   // hors du chemin de l'exécutable (sous Linux « tmp/name » était à la fois le dossier et la sortie de l'éditeur de liens)
+  fs.mkdirSync(path.join(dir, "host"), { recursive: true }); fs.mkdirSync(path.join(dir, "src", "adapters"), { recursive: true });
   fs.writeFileSync(path.join(dir, "src", "adapters", "podEdStack.h"), hdr);
   fs.copyFileSync(path.join(root, "consensus-pod", "host", "ed_stack_harness.cpp"), path.join(dir, "host", "ed_stack_harness.cpp"));
   const e = exe(name);
