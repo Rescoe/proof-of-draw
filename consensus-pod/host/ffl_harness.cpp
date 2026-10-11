@@ -17,6 +17,8 @@
 typedef uint64_t bd_addr_t;
 typedef uint64_t bd_size_t;
 struct Stall {};
+static int g_mallFree = 5760, g_mallDec = 0, g_virgin = 1900, g_abortInRead = 0;
+static void (*g_abortHook)() = nullptr;
 static uint8_t g_flash[8192];
 static int g_programs = 0, g_erases = 0, g_failEraseAt = 0, g_failProgramAt = 0, g_outsideWrites = 0, g_nonBlankWrites = 0;
 static int g_stallOnByte = -1;                     // programmation de cet octet : ne revient jamais
@@ -75,12 +77,12 @@ static void initPins() {
 }
 /** LED allumées, lues comme l'œil : anode (broche 7) en sortie HAUTE et cathode en sortie BASSE. Bit i = LED i du sketch (F, R, C, A, H). */
 static uint8_t ledMask() {
-  const uint8_t cath[5] = { 3, 4, 8, 0, 6 };
+  const uint8_t cath[6] = { 3, 4, 8, 0, 6, 5 };
   uint8_t m = 0;
   const uint32_t a = g_pin_cfg[28 + 7].pin;
   const PinState& pa = g_pins[a >> 8][a & 0xFF];
   if (!(pa.out && pa.high)) return 0;
-  for (int i = 0; i < 5; i++) { const uint32_t c = g_pin_cfg[28 + cath[i]].pin; const PinState& pc = g_pins[c >> 8][c & 0xFF]; if (pc.out && !pc.high) m |= (uint8_t)(1u << i); }
+  for (int i = 0; i < 6; i++) { const uint32_t c = g_pin_cfg[28 + cath[i]].pin; const PinState& pc = g_pins[c >> 8][c & 0xFF]; if (pc.out && !pc.high) m |= (uint8_t)(1u << i); }
   return m;
 }
 
@@ -90,7 +92,7 @@ class WiFiSSLClient {
  public:
   virtual ~WiFiSSLClient() {}
   virtual int read() { return -1; }
-  virtual int read(uint8_t* b, size_t n) { g_baseReads++; g_rdCalls++; if (g_stallReadAt != 0 && g_rdCalls == g_stallReadAt) throw Stall{}; if (g_rdCalls <= g_dataAfter) return 0; std::memset(b, 'x', n); return (int)n; }
+  virtual int read(uint8_t* b, size_t n) { g_baseReads++; g_rdCalls++; g_mallFree -= g_mallDec; if (g_abortInRead != 0 && g_rdCalls == g_abortInRead && g_abortHook) g_abortHook(); if (g_stallReadAt != 0 && g_rdCalls == g_stallReadAt) throw Stall{}; if (g_rdCalls <= g_dataAfter) return 0; std::memset(b, 'x', n); return (int)n; }
   virtual uint8_t connected() { g_baseConns++; g_cnCalls++; if (g_stallConnAt != 0 && g_cnCalls == g_stallConnAt) throw Stall{}; return 1; }
 };
 
@@ -107,6 +109,11 @@ alignas(4) static char g_stackLimitObj[16];
 static volatile uint32_t g_podPaintLen = 0x1A1;
 static void setMarker(bool ok) { uint32_t m = ok ? 0x434E5259UL : 0xDEADBEEFUL, l = 0x1A1; std::memcpy(g_stackLimitObj, &m, 4); std::memcpy(g_stackLimitObj + 4, &l, 4); }
 
+// mesures du tas (AUDIT5) : mallinfo() et sbrk(0) simulés. Sur l'hôte, le test remplace la boucle finale par « throw Stall{} » et n'installe PAS abort() (il appelle podFfDie directement).
+struct mallinfo { int arena; int fordblks; int uordblks; };
+static struct mallinfo mallinfo() { struct mallinfo m = { 8000, g_mallFree, 8000 - g_mallFree }; return m; }
+static char* sbrk(int) { return reinterpret_cast<char*>(reinterpret_cast<uintptr_t>(g_stackLimitObj) - static_cast<uintptr_t>(g_virgin)); }
+
 #include "ffl_extract.inc"
 
 static int g_checks = 0, g_failed = 0;
@@ -118,6 +125,7 @@ static void reset() {
   g_programs = g_erases = g_failEraseAt = g_failProgramAt = g_outsideWrites = g_nonBlankWrites = 0; g_stallOnByte = -1;
   g_rdCalls = g_cnCalls = g_stallReadAt = g_stallConnAt = g_baseReads = g_baseConns = 0; g_dataAfter = 30;
   g_podFfPos = 0; g_podFfPhase = 0; g_podFfT0 = 0; g_podFfNR = 0; g_podFfNC = 0; g_podFfNE = 0; g_podFfTk = 0; g_podFfLed = 0;
+  g_mallFree = 5760; g_mallDec = 0; g_virgin = 1900; g_abortInRead = 0; g_abortHook = nullptr;
   g_log.clear(); Serial.out.clear(); Serial.avail = 256; setMarker(true);
   initPins(); for (int p = 0; p < 8; p++) for (int i = 0; i < 256; i++) g_pins[p][i] = PinState();
   g_now = 1000; g_auto = 1; g_ledSeen.clear();
@@ -131,14 +139,14 @@ static void run(int maxPhase) {                                              // 
 static uint8_t at(int off) { return g_flash[0x1C00 + off]; }
 /** Relit le journal comme le ferait un humain, SANS le code du sketch : phases en chiffres hexadécimaux, événements « <lettre><temps> » séparés par des espaces. */
 static std::string dump() {
-  std::string s; const char* L = "RDZCKXT";
+  std::string s; const char* L = "RDZCKXTMV";
   for (int off = 8; off < 1024; off++) {
     const uint8_t b = at(off);
     if (b == 0xFF) break;
     const uint8_t hi = b >> 4, lo = b & 0xF;
     if ((hi ^ lo) == 0xF) { s += "0123456789abcdef"[hi]; }
-    else if (b == 0xBD) s += '!';
-    else if ((hi ^ lo) == 0xA && hi < 7) { s += ' '; s += L[hi]; off++; if (off < 1024 && at(off) != 0xFF) s += std::to_string((int)at(off)); }
+    else if (b == 0xBD) s += '!'; else if (b == 0xAB) s += '#';
+    else if ((hi ^ lo) == 0xA && hi < 9) { s += ' '; s += L[hi]; off++; if (off < 1024 && at(off) != 0xFF) s += std::to_string((int)at(off)); }
     else s += '?';
   }
   return s;
@@ -171,7 +179,8 @@ int main() {
   CHECK(g_erases == 1 && g_podFfPos == 9 && Serial.out == "Z", "S1 un effacement, position 9, jeton de controle Z");
   CHECK(has("jeton serie Z ecrit"), "S1 jeton rapporte");
   CHECK(g_outsideWrites == 0 && block0Intact(), "S1 etancheite du bloc 7");
-  CHECK(g_ledSeen.size() >= 5 && g_ledSeen[g_ledSeen.size() - 5] == 1 && g_ledSeen[g_ledSeen.size() - 4] == 2 && g_ledSeen[g_ledSeen.size() - 3] == 4 && g_ledSeen[g_ledSeen.size() - 2] == 8 && g_ledSeen[g_ledSeen.size() - 1] == 16, "S1 test sequentiel des cinq LED : F, R, C, A, H");
+  CHECK(g_ledSeen.size() >= 8 && g_ledSeen[g_ledSeen.size() - 6] == 1 && g_ledSeen[g_ledSeen.size() - 5] == 2 && g_ledSeen[g_ledSeen.size() - 4] == 4 && g_ledSeen[g_ledSeen.size() - 3] == 8 && g_ledSeen[g_ledSeen.size() - 2] == 16 && g_ledSeen[g_ledSeen.size() - 1] == 32, "S1 test sequentiel des six LED : F, R, C, A, H, X");
+  { bool all = false; for (size_t i = 0; i < g_ledSeen.size(); i++) if (g_ledSeen[i] == 63) all = true; CHECK(all, "S1 les six LED s ALLUMENT ENSEMBLE au debut du test (repere)"); }
   CHECK(ledMask() == 0 && has("FFLED test"), "S1 LED eteintes apres le test");
 
   // S2 : téléchargement complet (15 phases) puis redémarrage
@@ -202,7 +211,7 @@ int main() {
   }
   // S5b : en-tête valide mais entrées aléatoires / octets invalides / faux événements : lecture bornée, pas de plantage, ligne <= 255
   for (unsigned seed = 1; seed <= 60; seed++) {
-    reset(); podFfBoot(); unsigned s = seed * 2246822519u; int n = 0; for (int i = 9; i < 1024 && n < 700; i++, n++) { s = s * 1664525u + 1013904223u; uint8_t v = (uint8_t)(s >> 24); if (v == 0xFF) v = 0xFE; if (seed % 3 == 0 && (s & 8)) v = (uint8_t)(((s >> 9) % 7) << 4 | ((((s >> 9) % 7) ^ 0xA) & 0xF)); g_flash[0x1C00 + i] = v; }
+    reset(); podFfBoot(); unsigned s = seed * 2246822519u; int n = 0; for (int i = 9; i < 1024 && n < 700; i++, n++) { s = s * 1664525u + 1013904223u; uint8_t v = (uint8_t)(s >> 24); if (v == 0xFF) v = 0xFE; if (seed % 3 == 0 && (s & 8)) v = (uint8_t)(((s >> 9) % 9) << 4 | ((((s >> 9) % 9) ^ 0xA) & 0xF)); g_flash[0x1C00 + i] = v; }
     g_log.clear(); podFfBoot();
     CHECK(has("FFLOG demarrage precedent") && has("FFLOG arme"), "S5b entrees aleatoires");
     CHECK(g_outsideWrites == 0, "S5b etancheite");
@@ -259,9 +268,9 @@ int main() {
   { reset(); podFfBoot(); phasesTo9(); g_auto = 0; FfSSL c; headerLoop(c, 41, 2); POD_FF_MARK(10, "x");
     const std::string d = dump();
     CHECK(g_rdCalls == 41 && g_cnCalls == 41, "E1 le faux client est appele a chaque tour");
-    CHECK(d.find("0123456789 R") != std::string::npos, "E1 les evenements suivent la marque 9");
+    CHECK(d.find("0123456789 M180 V59 R") != std::string::npos, "E1 les mesures du tas (M libre, V sommet vierge, x32 o) PRECEDENT l entree du premier read");
     int ev = 0; for (size_t i = 0; i < d.size(); i++) if (d[i] >= 'A' && d[i] <= 'Z') ev++;
-    CHECK(ev == 28, "E1 7 appels echantillonnes x 2 (entree, sortie) x 2 (read, connected)");
+    CHECK(ev == 42, "E1 7 appels echantillonnes : (2 mesures du tas + entree + sortie) pour read, (entree + sortie) pour connected");
     CHECK(d.find(" R0 Z0") != std::string::npos || d.find(" R0 D0") != std::string::npos, "E1 entree puis sortie du premier read, temps 0");
     CHECK(d.find(" T") == std::string::npos, "E1 aucune seconde ecoulee : aucun evenement T");
     CHECK(d.rfind("a") != std::string::npos && d.find("a") > d.find("R") && ledMask() == (1u << 3 | 1u << 4), "E1 phase 10 apres les evenements, LED A + H allumees");
@@ -269,9 +278,9 @@ int main() {
     CHECK(g_outsideWrites == 0 && g_nonBlankWrites == 0, "E1 etancheite"); }
   // E2 : plafond d'événements : 60 s de boucle (30 000 tours de 2 ms) : au plus 80 événements, 30 ticks, journal borné
   { reset(); podFfBoot(); phasesTo9(); g_auto = 0; FfSSL c; headerLoop(c, 30000, 2); POD_FF_MARK(10, "x");
-    CHECK(g_podFfNE == 64, "E2 le plafond de 64 evenements est ATTEINT et tenu");
+    CHECK(g_podFfNE == 96, "E2 le plafond de 96 evenements est ATTEINT et tenu");
     CHECK(g_podFfPos <= 0x400 && g_outsideWrites == 0, "E2 journal borne");
-    const std::string d = dump(); CHECK(d.find(" T1") != std::string::npos && d.find(" T20") != std::string::npos && d.find(" T29") == std::string::npos, "E2 ticks des premieres secondes ; le plafond coupe le journal");
+    const std::string d = dump(); CHECK(d.find(" T1") != std::string::npos && d.find(" T20") != std::string::npos && d.find(" T43") == std::string::npos, "E2 ticks des premieres secondes ; le plafond coupe le journal");
     CHECK(g_baseReads == 30000 && g_baseConns == 30000, "E2 AUCUN appel du vrai client n'est perdu ou ajoute"); }
   // E3 : read #4 (echantillonne) ne rend jamais la main : LED A + R, derniere entree = R sans sortie
   { reset(); podFfBoot(); phasesTo9(); g_auto = 0; g_stallReadAt = 4; FfSSL c; bool stalled = false; try { headerLoop(c, 50, 2); } catch (const Stall&) { stalled = true; }
@@ -317,6 +326,36 @@ int main() {
     const std::string s = seqLine(); const std::string exp = tailTokens(dmp12, 16);
     CHECK(s == exp && s.size() >= 3 && s.find(" R") != std::string::npos, "E12 la sequence rapportee contient l'entree de read");
     CHECK(s.substr(s.rfind(' ') + 1, 1) == "R", "E12 le DERNIER element est l'entree de read (aucune sortie)"); }
+
+  // ── AUDIT5 : abort() et mesures du tas ─────────────────────────────────────────────────────────────────────────────────
+  // E13 : un operator new qui échoue appelle abort() au milieu d'un read (le 6e, non échantillonné) : LED A + R + X, signature 0xAB = DERNIER octet du journal, mesures du tas rapportées, « abort() : OUI »
+  { reset(); podFfBoot(); phasesTo9(); g_auto = 0; g_mallDec = 160; g_abortInRead = 6; g_abortHook = []() { podFfDie(0xAB); };
+    FfSSL c; bool stalled = false; try { headerLoop(c, 50, 2); } catch (const Stall&) { stalled = true; }
+    CHECK(stalled && ledMask() == (1u << 3 | 1u << 1 | 1u << 5), "E13 abort() dans read : LED A + R + X");
+    const std::string d = dump(); CHECK(!d.empty() && d.back() == '#', "E13 la signature 0xAB est le DERNIER octet du journal");
+    g_abortHook = nullptr; g_abortInRead = 0; g_mallDec = 0; g_auto = 1; g_log.clear(); podFfBoot();
+    CHECK(has("abort() : OUI"), "E13 le rapport au demarrage suivant annonce abort() : OUI");
+    CHECK(has("tas avant read : libre 5760 o puis 5280 o ; sommet vierge 1888 o puis 1888 o"), "E13 mesures du tas : premiere et derniere"); }
+  // E14 : abort() hors des appels du client : LED A + X ; AUCUNE sortie (ni logf ni série) dans abort()
+  { reset(); podFfBoot(); phasesTo9(); g_auto = 0; g_log.clear(); Serial.out.clear(); bool t = false; try { podFfDie(0xAB); } catch (const Stall&) { t = true; }
+    CHECK(t && ledMask() == (1u << 3 | 1u << 5), "E14 abort() hors des appels : LED A + X");
+    CHECK(g_log.empty() && Serial.out.empty(), "E14 abort() n'imprime RIEN (ni logf ni serie)");
+    CHECK(at(9 + 9) == 0xAB && at(9 + 10) == 0xFF, "E14 UN SEUL octet de signature, apres la phase 9"); }
+  // E15 : aucun abort : mesures du tas stables rapportées, « abort() : non »
+  { reset(); podFfBoot(); phasesTo9(); g_auto = 0; FfSSL c; headerLoop(c, 41, 2); POD_FF_MARK(10, "x"); g_auto = 1; g_log.clear(); podFfBoot();
+    CHECK(has("abort() : non") && has("tas avant read : libre 5760 o puis 5760 o ; sommet vierge 1888 o puis 1888 o"), "E15 aucun abort : mesures du tas stables rapportees"); }
+  // E16 : journal sans aucune mesure du tas
+  { reset(); podFfBoot(); run(5); g_log.clear(); podFfBoot();
+    CHECK(has("tas avant read : aucune mesure ; abort() : non"), "E16 aucune mesure du tas"); }
+  // E17 : valeurs hors plage : plafonnées à 254 x 32 = 8128 o (jamais 0xFF = vierge)
+  { reset(); podFfBoot(); phasesTo9(); g_auto = 0; g_mallFree = 100000; g_virgin = 100000; FfSSL c; headerLoop(c, 5, 2); POD_FF_MARK(10, "x"); g_auto = 1; g_log.clear(); podFfBoot();
+    CHECK(has("libre 8128 o puis 8128 o ; sommet vierge 8128 o puis 8128 o"), "E17 mesures plafonnees a 254 x 32 o"); g_mallFree = 5760; g_virgin = 1900; }
+  // E18 : abort() sur un journal non armé : LED X seule, aucune écriture flash
+  { reset(); bool t = false; try { podFfDie(0xAB); } catch (const Stall&) { t = true; }
+    CHECK(t && ledMask() == (1u << 5) && g_programs == 0, "E18 abort() sur un journal non arme : LED X seule, aucune ecriture"); }
+  // E19 : journal plein : abort() n'écrit pas au-delà du bloc 7, LED X allumée quand même
+  { reset(); podFfBoot(); phasesTo9(); for (int i = 0; i < 200; i++) run(15); g_podFfPhase = 9; bool t = false; try { podFfDie(0xAB); } catch (const Stall&) { t = true; }
+    CHECK(t && (ledMask() & (1u << 5)) != 0 && g_outsideWrites == 0 && g_podFfPos <= 0x400, "E19 journal plein : LED X, aucune ecriture hors du bloc 7"); }
 
   if (g_failed != 0) { std::printf("FAIL %d/%d\n", g_failed, g_checks); return 1; }
   std::printf("PASS %d\n", g_checks);

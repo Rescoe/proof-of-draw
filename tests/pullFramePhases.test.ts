@@ -1,7 +1,8 @@
-// PULLFRAME-PHASE-AUDIT1 (10/10/2026), AUDIT2, AUDIT3 puis AUDIT4 — marques de phase du canari autour de doFetchFrame (e-ink 2,9″ seulement), production inchangée.
+// PULLFRAME-PHASE-AUDIT1 (10/10/2026), AUDIT2, AUDIT3, AUDIT4 puis AUDIT5 — marques de phase du canari autour de doFetchFrame (e-ink 2,9″ seulement), production inchangée.
 // Contexte matériel (canaris 7df39b6, 3628b3d, AUDIT2, AUDIT3) : « [PULL] nouvelle frame … (personal) » puis plus rien. AUDIT1 (logf) : aucune ligne FF ; AUDIT2 (RAM .noinit + jeton de 7 o) : inexploitable ;
 // AUDIT3 (journal en flash de données, bloc 7, ajout seul) : dernière phase 9 sur deux démarrages consécutifs = client.print est revenu, la phase 10 (retour de readHeaders) n'est jamais écrite.
 // AUDIT4 : ajoute (1) un client TLS « espion » (FfSSL) qui inscrit en flash, entre la marque 9 et la marque 10 seulement, les premiers appels de read() et connected() avec le temps écoulé (64 événements au plus),
+// AUDIT5 : mesures du tas (tas libre, sommet vierge) avant chaque read échantillonné, abort() redéfinie en canari (LED X + signature 0xAB dans le journal, aucune allocation / sortie / verrou), sixième LED ; pas de set_new_handler (il détournerait les new(nothrow)).
 // (2) cinq LED de la matrice pilotées en statique (F = écriture flash, R = dans read, C = dans connected, A = trace active, H = en-têtes lus) comme témoin indépendant de la flash.
 // (1) règles statiques + contrôles négatifs ; (2) exécution HÔTE du code réel contre une flash simulée (programmation = ET binaire, effacement par bloc, pannes, étanchéité du bloc 7), un faux client TLS qui ne rend jamais la main et de fausses LED.
 import test from "node:test";
@@ -24,7 +25,8 @@ const APPEND_HEAD = "static void __attribute__((noinline)) podFfAppend(uint8_t e
 const BOOT_HEAD = "static void __attribute__((noinline)) podFfBoot()";
 const LED_HEAD = "static void __attribute__((noinline)) podFfLedSet(uint8_t m)";
 const EV_HEAD = "static void __attribute__((noinline)) podFfEv(uint8_t id)";
-const BLOCK_START = "#if POD_RENDER_V1 && POD_CANARY\n// PULLFRAME-PHASE-AUDIT4";
+const EVD_HEAD = "static void __attribute__((noinline)) podFfEvD(uint8_t id, uint8_t data)";
+const BLOCK_START = "#if POD_RENDER_V1 && POD_CANARY\n// PULLFRAME-PHASE-AUDIT5";
 const BLOCK_END = "#define POD_FF_STOP() do { g_podFfPhase = 0; } while (0)\n#endif\n";
 
 /** Corps (accolades équilibrées, hors littéraux) de la fonction/structure dont la tête contient `head`. */
@@ -57,18 +59,18 @@ export function pullFrameViolations(src: string): string[] {
     ["static volatile uint8_t g_podFfNR = 0;", "g_podFfNR"], ["static volatile uint8_t g_podFfNC = 0;", "g_podFfNC"], ["static volatile uint8_t g_podFfNE = 0;", "g_podFfNE"], ["static volatile uint8_t g_podFfTk = 0;", "g_podFfTk"], ["static volatile uint8_t g_podFfLed = 0;", "g_podFfLed"],
   ] as const) if ((src.split("\n" + decl + "\n").length - 1) !== 1) v.push(`exactement un statique ${why}`);
   if (/g_podFfRec|g_podFfDrop|\.noinit|kFfTok|PodFfRec/.test(stripLine(src))) v.push("l'enregistrement RAM .noinit d'AUDIT2 n'existe plus");
-  for (const d of ["#define POD_FFL_BASE 0x1C00u\n", "#define POD_FFL_SIZE 0x400u\n", "#define POD_FFL_HDR 8u\n", "#define POD_FF_EVMAX 64u\n"]) if (!src.includes(d)) v.push(`constante attendue : ${d.trim()} (bloc 7 = dernier bloc de 1 Ko de la flash de données de 8 Ko ; les clés sont dans le bloc 0 ; 64 événements au plus)`);
+  for (const d of ["#define POD_FFL_BASE 0x1C00u\n", "#define POD_FFL_SIZE 0x400u\n", "#define POD_FFL_HDR 8u\n", "#define POD_FF_EVMAX 96u\n"]) if (!src.includes(d)) v.push(`constante attendue : ${d.trim()} (bloc 7 = dernier bloc de 1 Ko de la flash de données de 8 Ko ; les clés sont dans le bloc 0 ; 64 événements au plus)`);
   if (!src.includes(MACRO + "\n")) v.push("macro POD_FF_MARK : texte exact attendu (garde g_podFfPhase != 0, appel de podFfNote seulement)");
   if (!src.includes("#define POD_FF_START(txt) do { g_podFfPhase = 1; POD_FF_MARK(1, txt); } while (0)\n#define POD_FF_STOP() do { g_podFfPhase = 0; } while (0)\n")) v.push("POD_FF_START / POD_FF_STOP : texte exact attendu");
   if (!src.includes("static uint8_t podFfEntry(uint8_t n) { return (uint8_t)((n << 4) | ((~n) & 0x0F)); }\n")) v.push("podFfEntry : numéro de phase (4 bits) + son COMPLÉMENT (4 bits)");
   if (!src.includes("static bool podFfEntryOk(uint8_t b) { return (uint8_t)(b >> 4) == (uint8_t)((~b) & 0x0F); }\n")) v.push("podFfEntryOk : validation par le complément");
-  if (!src.includes("static bool podFfIsEv(uint8_t b) { return (uint8_t)((b >> 4) ^ (b & 0x0F)) == 0x0A && (b >> 4) < 7; }\n")) v.push("podFfIsEv : un événement = identifiant (4 bits) + (identifiant XOR 0x0A) ; sept identifiants");
+  if (!src.includes("static bool podFfIsEv(uint8_t b) { return (uint8_t)((b >> 4) ^ (b & 0x0F)) == 0x0A && (b >> 4) < 9; }\n")) v.push("podFfIsEv : un événement = identifiant (4 bits) + (identifiant XOR 0x0A) ; sept identifiants");
   const i0 = src.indexOf(BLOCK_START);
   const blk = i0 < 0 ? null : src.slice(i0, src.indexOf(BLOCK_END, i0) + BLOCK_END.length);
-  if (!blk) v.push("bloc PULLFRAME-PHASE-AUDIT4 introuvable");
+  if (!blk) v.push("bloc PULLFRAME-PHASE-AUDIT5 introuvable");
   else {
     const code = stripLine(blk);
-    if (/Serial\.(print|println)|malloc|new |String\b|mallinfo|delay|httpCall|WiFi(?!SSLClient)|EEPROM\.|\bsprintf|snprintf/.test(code)) v.push("le bloc des marques ne doit contenir ni Serial.print, ni allocation, ni String, ni réseau (hors la classe cliente), ni EEPROM.xxx (EEPROM.update alloue une page de 1 Ko au tas), ni formatage");
+    if (/Serial\.(print|println)|malloc|new |String\b|delay|httpCall|WiFi(?!SSLClient)|EEPROM\.|\bsprintf|snprintf/.test(code)) v.push("le bloc des marques ne doit contenir ni Serial.print, ni allocation, ni String, ni réseau (hors la classe cliente), ni EEPROM.xxx (EEPROM.update alloue une page de 1 Ko au tas), ni formatage");
     if (/LED_BUILTIN|digitalWrite|pinMode|FspTimer|attachInterrupt|analogWrite|Arduino_LED_Matrix|ArduinoLEDMatrix/.test(code)) v.push("les LED de la matrice sont pilotées en STATIQUE par les registres : ni LED_BUILTIN (D13 est l'horloge SPI de l'e-ink), ni pinMode/digitalWrite, ni minuteur, ni la bibliothèque de la matrice (interruption à 10 kHz)");
     for (const m of code.matchAll(/logf\("((?:[^"\\]|\\.)*)"/g)) if (m[1].length > 235) v.push(`un format logf de ${m[1].length} caractères : logf tronque à 255 (ligne « arme » coupée au dernier essai)`);
   }
@@ -105,15 +107,20 @@ export function pullFrameViolations(src: string): string[] {
     if (!led.includes("g_pin_cfg[28 + 7].pin") || !led.includes("g_pin_cfg[28 + kFfCath[i]].pin")) v.push("podFfLedSet : anode = broche 7, cathodes = kFfCath (indice de base 28)");
     if (!led.includes("IOPORT_CFG_PORT_DIRECTION_OUTPUT | IOPORT_CFG_PORT_OUTPUT_HIGH") || !led.includes("IOPORT_CFG_PORT_DIRECTION_OUTPUT | IOPORT_CFG_PORT_OUTPUT_LOW")) v.push("podFfLedSet : anode en sortie HAUTE, cathodes en sortie BASSE");
     if (!led.includes("if (m == 0) return;")) v.push("podFfLedSet : masque 0 = tout éteint");
+    if (!led.includes("for (uint8_t i = 0; i < 6; i++) {")) v.push("podFfLedSet : six cathodes (F, R, C, A, H, X)");
   }
-  if (!src.includes("static const uint8_t kFfCath[5] = { 3, 4, 8, 0, 6 };\n")) v.push("kFfCath : cinq cathodes de l'anode 7 (LED d'indice 0, 2, 6, 12, 20 de la matrice)");
+  if (!src.includes("static const uint8_t kFfCath[6] = { 3, 4, 8, 0, 6, 5 };\n")) v.push("kFfCath : six cathodes de l'anode 7 (LED d'indice 0, 2, 6, 12, 20 de la matrice)");
   // 1d. événements : plafond, échantillonnage, temps, fenêtre 9 -> 10 seulement
   const ev = body(code, EV_HEAD);
   if (!ev) v.push("podFfEv introuvable");
   else {
-    if (!ev.includes("if (g_podFfNE >= POD_FF_EVMAX) return;")) v.push("podFfEv : plafond de 64 événements");
-    if (!ev.includes("const uint32_t u = id == 6 ? d / 1000UL : d >> 3;") || !ev.includes("(uint8_t)(u > 254UL ? 254UL : u)")) v.push("podFfEv : temps en unités de 8 ms (secondes pour le tick), plafonné à 254 (0xFF = vierge)");
-    if ((ev.match(/podFfAppend\(/g) ?? []).length !== 2) v.push("podFfEv : DEUX octets (événement + temps)");
+    if (!ev.includes("const uint32_t u = id == 6 ? d / 1000UL : d >> 3;") || !ev.includes("podFfEvD(id, (uint8_t)(u > 254UL ? 254UL : u));")) v.push("podFfEv : temps en unités de 8 ms (secondes pour le tick), plafonné à 254 (0xFF = vierge)");
+  }
+  const evd = body(code, EVD_HEAD);
+  if (!evd) v.push("podFfEvD introuvable");
+  else {
+    if (!evd.includes("if (g_podFfNE >= POD_FF_EVMAX) return;")) v.push("podFfEvD : plafond de 96 événements");
+    if ((evd.match(/podFfAppend\(/g) ?? []).length !== 2) v.push("podFfEvD : DEUX octets (événement + donnée)");
   }
   if (!code.includes("static bool __attribute__((noinline)) podFfPick(uint8_t k) { return k <= 3 || (k & (uint8_t)(k - 1)) == 0; }")) v.push("podFfPick : appels 1 à 3 puis puissances de 2");
   const tick = body(code, "static void __attribute__((noinline)) podFfTick()");
@@ -133,20 +140,39 @@ export function pullFrameViolations(src: string): string[] {
   }
   if ((src.match(/^#define WiFiSSLClient FfSSL$/gm) ?? []).length !== 1) v.push("exactement un « #define WiFiSSLClient FfSSL », après la définition de FfSSL");
   else if (src.indexOf("#define WiFiSSLClient FfSSL") < src.indexOf("struct FfSSL : public WiFiSSLClient") || src.indexOf("#define WiFiSSLClient FfSSL") > iConn) v.push("#define WiFiSSLClient FfSSL : après FfSSL et avant struct Conn");
+  // 1g. AUDIT5 : mesures du tas AVANT chaque read échantillonné ; abort() redéfinie, minimale, uniquement en canari ; pas de set_new_handler
+  const heap = body(code, "static void __attribute__((noinline)) podFfHeap()");
+  if (!heap) v.push("podFfHeap introuvable");
+  else {
+    if (!heap.includes("mallinfo()") || !heap.includes("sbrk(0)") || !heap.includes("podFfEvD(7, (uint8_t)(fr > 254UL ? 254UL : fr));") || !heap.includes("podFfEvD(8, (uint8_t)(top > 254UL ? 254UL : top));") || !heap.includes("/ 32UL")) v.push("podFfHeap : tas libre (mallinfo) et sommet vierge (sbrk(0) jusqu'à __StackLimit), unités de 32 o, plafonnés à 254");
+    if (/malloc|new |free\(|String|logf|Serial|delay|probe/.test(heap)) v.push("podFfHeap : aucune allocation (pas de sonde malloc), aucun journal, aucune E/S série");
+  }
+  const spyRead = spy ? spy.slice(spy.indexOf("int read("), spy.indexOf("uint8_t connected()")) : "";
+  if (!spyRead.includes("if (ev) { podFfHeap(); podFfEv(0); }")) v.push("FfSSL::read : les mesures du tas PRÉCÈDENT l'événement d'entrée du read échantillonné");
+  const die = body(code, "static void __attribute__((noinline, noreturn)) podFfDie(uint8_t sig)");
+  if (!die) v.push("podFfDie introuvable");
+  else {
+    if (die.replace(/\s+/g, " ").trim() !== "{ podFfLedOn(5); podFfAppend(sig); POD_FF_HALT(); }") v.push("podFfDie : EXACTEMENT « LED X ; une signature dans le journal ; boucle » (aucune allocation, aucun String, ni logf ni Serial, aucune exception, aucun verrou du tas, pas de mallinfo)");
+    if (/mallinfo|malloc|new |String|logf|Serial|throw|delay|printf/.test(die)) v.push("podFfDie : rien qui alloue, imprime, lève ou prenne un verrou");
+  }
+  if (!src.includes('extern "C" void abort(void) { podFfDie(0xAB); }\n') || (code.match(/extern "C" void abort\(/g) ?? []).length !== 1) v.push("abort() redéfinie UNE fois : « extern \"C\" void abort(void) { podFfDie(0xAB); } »");
+  if (!src.includes("#define POD_FF_HALT() for (;;) { }\n") || (code.match(/#define POD_FF_HALT/g) ?? []).length !== 1) v.push("POD_FF_HALT : boucle infinie explicite (for (;;) { })");
+  if (/set_new_handler|get_new_handler/.test(code)) v.push("PAS de set_new_handler : operator new(nothrow) l'appellerait et détournerait les chemins « échec = rejet » des décodeurs");
+  if (/extern "C" void abort|POD_FF_HALT|podFfDie/.test(noCanary(src))) v.push("abort() n'est redéfinie qu'en canari");
   // 1e. démarrage : empreinte du build, lecture protégée du journal précédent, effacement unique du bloc 7, armement avec relecture, test des LED
   const boot = body(code, BOOT_HEAD);
   if (!boot) v.push("podFfBoot introuvable");
   else {
-    if (!boot.includes("BUILD PULLFRAME-PHASE-AUDIT4") || !boot.includes("__DATE__, __TIME__") || !boot.includes("base 2cdfe54")) v.push("podFfBoot : empreinte du build (lot, commit de base, date et heure de compilation)");
+    if (!boot.includes("BUILD PULLFRAME-PHASE-AUDIT5") || !boot.includes("__DATE__, __TIME__") || !boot.includes("base fd8b1dc")) v.push("podFfBoot : empreinte du build (lot, commit de base, date et heure de compilation)");
     if (!boot.includes("h[0] == 'F' && h[1] == 'F' && h[2] == 'L' && h[3] == '3' && (uint8_t)(h[4] ^ h[5]) == 0xFF")) v.push("podFfBoot : en-tête validé par sa magie ET le complément de la génération");
     if ((boot.match(/\.erase\(/g) ?? []).length !== 1 || !boot.includes("rc = df.erase(POD_FFL_BASE, POD_FFL_SIZE);")) v.push("podFfBoot : UN SEUL effacement, du bloc 7 entier");
     if (!boot.includes("if (hdrOk && (n == 0 || (n == 1 && lastPh == 0))) {")) v.push("podFfBoot : aucun effacement quand le journal précédent est vide (usure)");
     if (!boot.includes("const bool back = rc == 0 && rb == podFfEntry(0);") || !boot.includes("g_podFfPos = back ? pos : (uint16_t)POD_FFL_SIZE;")) v.push("podFfBoot : armement seulement après écriture ET relecture réussies");
     if (!boot.includes("if (b == 0xFF) { end = true; break; }")) v.push("podFfBoot : la lecture s'arrête au premier octet vierge");
-    if (!boot.includes("if (wantT) { rt[(uint16_t)(n - 1) % 16] = b; wantT = false; continue; }")) v.push("podFfBoot : l'octet qui suit un événement est son temps, jamais une entrée");
+    if (!boot.includes("if (wantT) {\n          rt[(uint16_t)(n - 1) % 16] = b; wantT = false;") || !boot.includes("          continue;\n        }")) v.push("podFfBoot : l'octet qui suit un événement est son temps, jamais une entrée");
     if ((boot.match(/df\.program\(/g) ?? []).length !== 2) v.push("podFfBoot : deux programmations (en-tête, marqueur d'armement)");
     if (!boot.includes("au plus UN effacement par demarrage")) v.push("podFfBoot : l'usure maximale est rapportée");
-    if (!boot.includes("for (uint8_t i = 0; i < 5; i++) { podFfLedSet((uint8_t)(1u << i)); podFfWait(250UL); }") || !boot.includes("podFfLedSet(0);")) v.push("podFfBoot : test séquentiel des cinq LED (F, R, C, A, H) puis extinction");
+    if (!boot.includes("podFfLedSet(0x3F); podFfWait(500UL); podFfLedSet(0); podFfWait(300UL);") || !boot.includes("for (uint8_t i = 0; i < 6; i++) { podFfLedSet((uint8_t)(1u << i)); podFfWait(400UL); }") || !boot.includes("podFfLedSet(0);")) v.push("podFfBoot : test des six LED (toutes ensemble, puis F, R, C, A, H, X une à une) puis extinction");
   }
   if ((src.match(/^  podFfBoot\(\);\n  podCanaryCheck\("1c apres FFBOOT/gm) ?? []).length !== 1) v.push("podFfBoot appelé une fois dans setup, suivi du contrôle de pile 1c");
   // 1f. DataFlashBlockDevice / flash / client espion : seulement dans ce bloc de canari
@@ -184,7 +210,7 @@ export function pullFrameViolations(src: string): string[] {
   return v;
 }
 
-test("PULLFRAME-PHASE-AUDIT4 : quinze marques de phase (journal en flash, bloc 7, ajout seul) + client TLS espion borné + cinq LED de la matrice en statique ; chaque marque seule dans son bloc gardé et dans l'ordre ; rien en production ; CONTRÔLES NÉGATIFS", () => {
+test("PULLFRAME-PHASE-AUDIT5 : quinze marques de phase (journal en flash, bloc 7, ajout seul) + client TLS espion borné + cinq LED de la matrice en statique ; chaque marque seule dans son bloc gardé et dans l'ordre ; rien en production ; CONTRÔLES NÉGATIFS", () => {
   const src = read(INO);
   assert.deepEqual(pullFrameViolations(src), []);
   const rm = (n: number): [string, RegExp] => [`marque ${n} supprimée`, n === 1 ? /#if POD_RENDER_V1 && POD_CANARY\n  POD_FF_START\("[^"\n]*"\);\n#endif\n/ : n === 10 ? /#if POD_RENDER_V1 && POD_CANARY\n    \{ const int rcHdr[^\n]*\n#endif\n/ : new RegExp(`#if POD_RENDER_V1 && POD_CANARY\\n\\s+POD_FF_MARK\\(${n}, "[^"\\n]*"\\);( POD_FF_STOP\\(\\);)?\\n#endif\\n`)];
@@ -221,11 +247,24 @@ test("PULLFRAME-PHASE-AUDIT4 : quinze marques de phase (journal en flash, bloc 7
     ["effacement à chaque démarrage (usure)", "if (hdrOk && (n == 0 || (n == 1 && lastPh == 0))) {", "if (false) {"],
     ["en-tête sans complément", " && (uint8_t)(h[4] ^ h[5]) == 0xFF", ""],
     ["armement sans relecture", "const bool back = rc == 0 && rb == podFfEntry(0);", "const bool back = true;"],
-    ["l'octet de temps lu comme une entrée", "if (wantT) { rt[(uint16_t)(n - 1) % 16] = b; wantT = false; continue; }", ""],
-    ["test des LED au démarrage supprimé", "for (uint8_t i = 0; i < 5; i++) { podFfLedSet((uint8_t)(1u << i)); podFfWait(250UL); }", ""],
-    ["empreinte du build supprimée", "BUILD PULLFRAME-PHASE-AUDIT4", "BUILD"],
+    ["l'octet de temps lu comme une entrée", "        if (wantT) {\n", "        if (false) {\n"],
+    ["test des LED au démarrage supprimé", "for (uint8_t i = 0; i < 6; i++) { podFfLedSet((uint8_t)(1u << i)); podFfWait(400UL); }", ""],
+    ["repère « toutes les LED ensemble » supprimé", "podFfLedSet(0x3F); podFfWait(500UL); podFfLedSet(0); podFfWait(300UL);", ""],
+    ["empreinte du build supprimée", "BUILD PULLFRAME-PHASE-AUDIT5", "BUILD"],
     ["podFfBoot jamais appelé", "  podFfBoot();\n", ""],
     ["arrêt du traçage supprimé", " POD_FF_STOP();\n#endif", "\n#endif"],
+    ["abort() non redéfinie", 'extern "C" void abort(void) { podFfDie(0xAB); }', ""],
+    ["abort() imprime", "  podFfLedOn(5);\n  podFfAppend(sig);", '  logf("abort");\n  podFfLedOn(5);\n  podFfAppend(sig);'],
+    ["abort() appelle mallinfo (verrou du tas)", "  podFfLedOn(5);\n  podFfAppend(sig);", "  (void)mallinfo();\n  podFfLedOn(5);\n  podFfAppend(sig);"],
+    ["abort() sans LED X", "  podFfLedOn(5);\n  podFfAppend(sig);", "  podFfAppend(sig);"],
+    ["abort() sans signature", "  podFfAppend(sig);\n  POD_FF_HALT();", "  POD_FF_HALT();"],
+    ["abort() sans boucle explicite", "#define POD_FF_HALT() for (;;) { }", "#define POD_FF_HALT() return"],
+    ["set_new_handler installé (détourne les new(nothrow))", "  DataFlashBlockDevice& df = DataFlashBlockDevice::getInstance();\n  uint8_t h[POD_FFL_HDR]", "  DataFlashBlockDevice& df = DataFlashBlockDevice::getInstance();\n  std::set_new_handler(nullptr);\n  uint8_t h[POD_FFL_HDR]"],
+    ["mesures du tas APRÈS l'entrée du read", "if (ev) { podFfHeap(); podFfEv(0); }", "if (ev) { podFfEv(0); podFfHeap(); }"],
+    ["sonde malloc pour le plus grand bloc", "  const struct mallinfo mi = mallinfo();", "  void* probe = malloc(1024); free(probe);\n  const struct mallinfo mi = mallinfo();"],
+    ["mesure du sommet vierge absente", "  podFfEvD(8, (uint8_t)(top > 254UL ? 254UL : top));\n", ""],
+    ["mesures du tas non plafonnées", "podFfEvD(7, (uint8_t)(fr > 254UL ? 254UL : fr));", "podFfEvD(7, (uint8_t)fr);"],
+    ["sixième LED retirée de la boucle", "  for (uint8_t i = 0; i < 6; i++) {\n    if (m & (1u << i)) {", "  for (uint8_t i = 0; i < 5; i++) {\n    if (m & (1u << i)) {"],
     ["marque 3 déplacée après podNetRun", '  POD_FF_MARK(3, "avant podNetRun (pile reseau dediee)");\n#endif\n  const bool ran = podNetRun(tx, &ni);', '#endif\n  const bool ran = podNetRun(tx, &ni);\n#if POD_RENDER_V1 && POD_CANARY\n  POD_FF_MARK(3, "avant podNetRun (pile reseau dediee)");'],
     ["marques 6 et 7 permutées", 'POD_FF_MARK(6, "avant client.connect");', 'POD_FF_MARK(7, "avant client.connect");'],
     ["marque dans la production", "  const bool ran = podNetRun(tx, &ni);\n", "  const bool ran = podNetRun(tx, &ni); POD_FF_MARK(3, \"x\");\n"],
@@ -236,7 +275,7 @@ test("PULLFRAME-PHASE-AUDIT4 : quinze marques de phase (journal en flash, bloc 7
   }
 });
 
-test("PULLFRAME-PHASE-AUDIT4 : carte de l'EEPROM — les clés, le dernier bloc et l'état du firmware tiennent dans le bloc 0 (452 premiers octets) ; la zone du journal (bloc 7) ne chevauche aucune donnée de AUCUN firmware R4", () => {
+test("PULLFRAME-PHASE-AUDIT5 : carte de l'EEPROM — les clés, le dernier bloc et l'état du firmware tiennent dans le bloc 0 (452 premiers octets) ; la zone du journal (bloc 7) ne chevauche aucune donnée de AUCUN firmware R4", () => {
   const num = (src: string, name: string): number => {
     const m = new RegExp(`^#define ${name}\\s+(\\d+)`, "m").exec(src);
     assert.ok(m, `${name} introuvable`);
@@ -272,8 +311,14 @@ const exeName = process.platform === "win32" ? "ffl_harness.exe" : "ffl_harness"
 function extractBlock(): string {
   const src = read(INO);
   const a = src.indexOf(BLOCK_START), b = src.indexOf(BLOCK_END, a);
-  assert.ok(a > 0 && b > a, "bloc AUDIT4 introuvable");
-  return src.slice(a + "#if POD_RENDER_V1 && POD_CANARY\n".length, b + BLOCK_END.length - "#endif\n".length);
+  assert.ok(a > 0 && b > a, "bloc AUDIT5 introuvable");
+  const text = src.slice(a + "#if POD_RENDER_V1 && POD_CANARY\n".length, b + BLOCK_END.length - "#endif\n".length);
+  // Deux SEULES substitutions pour l'hôte (le texte réel est vérifié tel quel par le test statique) : la boucle finale lève Stall au lieu de tourner sans fin, et abort() n'est pas installée (elle écraserait celle de la bibliothèque C du harnais) ;
+  // le test appelle podFfDie directement. Chaque ligne remplacée doit exister EXACTEMENT une fois.
+  const HALT = "#define POD_FF_HALT() for (;;) { }\n", ABORT = 'extern "C" void abort(void) { podFfDie(0xAB); }\n';
+  assert.equal(text.split(HALT).length, 2, "POD_FF_HALT introuvable");
+  assert.equal(text.split(ABORT).length, 2, "abort() introuvable");
+  return text.replace(HALT, () => "#define POD_FF_HALT() throw Stall{}\n").replace(ABORT, () => "");
 }
 function build(mutate: (s: string) => string = (s) => s, lenient = false): string {
   const dir = fs.mkdtempSync(path.join(tmp, "b-"));
@@ -283,13 +328,13 @@ function build(mutate: (s: string) => string = (s) => s, lenient = false): strin
   return out;
 }
 
-test("PULLFRAME-PHASE-AUDIT4 (HÔTE) : le code RÉEL contre une flash, un client TLS et des LED simulés — armement, 15 phases, rapport, valeurs aléatoires, écritures interrompues, pannes, journal plein, usure, étanchéité du bloc 7 ; événements bornés et échantillonnés ; appel de read / connected / écriture flash qui ne revient pas = bonne LED allumée", { skip: skipHost }, () => {
+test("PULLFRAME-PHASE-AUDIT5 (HÔTE) : le code RÉEL contre une flash, un client TLS et des LED simulés — armement, 15 phases, rapport, valeurs aléatoires, écritures interrompues, pannes, journal plein, usure, étanchéité du bloc 7 ; événements bornés et échantillonnés ; appel de read / connected / écriture flash qui ne revient pas = bonne LED allumée", { skip: skipHost }, () => {
   const r = runProcess(build(), [], 60000);
   assert.equal(r.status, 0, r.stdout + r.stderr);
   assert.match(r.stdout.trim(), /^PASS \d+$/);
 });
 
-test("PULLFRAME-PHASE-AUDIT4 (HÔTE) : CONTRÔLES NÉGATIFS — bloc 0, complément absent, effacement à chaque démarrage, armement sans relecture, journal qui déborde, jeton sans place, LED mal câblées, événements hors fenêtre ou sans plafond : le harnais les REFUSE", { skip: skipHost }, () => {
+test("PULLFRAME-PHASE-AUDIT5 (HÔTE) : CONTRÔLES NÉGATIFS — bloc 0, complément absent, effacement à chaque démarrage, armement sans relecture, journal qui déborde, jeton sans place, LED mal câblées, événements hors fenêtre ou sans plafond : le harnais les REFUSE", { skip: skipHost }, () => {
   const mutants: Array<[string, string, string]> = [
     ["effacement du bloc 0 (les clés)", "rc = df.erase(POD_FFL_BASE, POD_FFL_SIZE);", "rc = df.erase(0, POD_FFL_SIZE);"],
     ["programmation hors du bloc 7", "program(&e, POD_FFL_BASE + p, 1)", "program(&e, p, 1)"],
@@ -317,8 +362,17 @@ test("PULLFRAME-PHASE-AUDIT4 (HÔTE) : CONTRÔLES NÉGATIFS — bloc 0, complém
     ["échantillonnage retiré", "return k <= 3 || (k & (uint8_t)(k - 1)) == 0;", "return true;"],
     ["temps non plafonné", "(uint8_t)(u > 254UL ? 254UL : u)", "(uint8_t)u"],
     ["événement de sortie perdu", "    if (ev) podFfEv(r > 0 ? 1 : 2);\n", ""],
-    ["l'octet de temps lu comme une entrée", "if (wantT) { rt[(uint16_t)(n - 1) % 16] = b; wantT = false; continue; }", ""],
+    ["l'octet de temps lu comme une entrée", "        if (wantT) {\n", "        if (false) {\n"],
     ["le vrai client n'est plus appelé", "const int r = WiFiSSLClient::read(b, n);", "const int r = 0;"],
+    ["abort() sans signature", "  podFfAppend(sig);\n  POD_FF_HALT();", "  (void)sig;\n  POD_FF_HALT();"],
+    ["abort() sans LED X", "  podFfLedOn(5);\n  podFfAppend(sig);", "  podFfAppend(sig);"],
+    ["mesures du tas APRÈS l'entrée du read", "if (ev) { podFfHeap(); podFfEv(0); }", "if (ev) { podFfEv(0); podFfHeap(); }"],
+    ["mesure du sommet vierge absente", "  podFfEvD(8, (uint8_t)(top > 254UL ? 254UL : top));\n", ""],
+    ["mesures du tas non plafonnées", "podFfEvD(7, (uint8_t)(fr > 254UL ? 254UL : fr));", "podFfEvD(7, (uint8_t)fr);"],
+    ["décodeur : signature abort non reconnue", "if (b == 0xAB) sawAbort = true; ", ""],
+    ["décodeur : mesures du tas non rapportées", "if (evId == 7) { if (hm[0] == 0xFF) hm[0] = b; hm[2] = b; }", "if (evId == 7) { }"],
+    ["sixième LED retirée de la boucle", "  for (uint8_t i = 0; i < 6; i++) {\n    if (m & (1u << i)) {", "  for (uint8_t i = 0; i < 5; i++) {\n    if (m & (1u << i)) {"],
+    ["plafond d'événements à 64 (le journal des mesures du tas serait coupé)", "#define POD_FF_EVMAX 96u", "#define POD_FF_EVMAX 40u"],
   ];
   for (const [name, a, b] of mutants) {
     const base = extractBlock();
@@ -328,7 +382,7 @@ test("PULLFRAME-PHASE-AUDIT4 (HÔTE) : CONTRÔLES NÉGATIFS — bloc 0, complém
   }
 });
 
-test("PULLFRAME-PHASE-AUDIT4 : les quatre autres firmwares R4 et la production ne portent aucune marque ; statiques de canari : huit, hors enregistrement .noinit", () => {
+test("PULLFRAME-PHASE-AUDIT5 : les quatre autres firmwares R4 et la production ne portent aucune marque ; statiques de canari : huit, hors enregistrement .noinit", () => {
   for (const sk of OTHERS) assert.doesNotMatch(read(`arduino_uno_r4/${sk}/${sk}.ino`), /POD_FF|g_podFf|podFf|FfSSL|DataFlashBlockDevice/, sk);
   const src = read(INO);
   assert.equal((src.match(/^static volatile (?:uint8_t|uint16_t|uint32_t) g_podFf\w+ = 0;$/gm) ?? []).length, 8);

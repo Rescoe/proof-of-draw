@@ -1,0 +1,1936 @@
+// pod_uno_r4_eink29.ino
+// Proof-of-Draw — Firmware UNO R4 WiFi + écran e-ink Waveshare 2.9" module B (noir / blanc / rouge, 296×128)
+//
+// Même protocole et même type d'écran serveur (« eink29bwr ») que esp8266/esp_eink_2.9BWR :
+//   register → pull (métadonnées ~300 o) → pull-frame?fmt=bin (9472 o : noir 4736 + rouge 4736) → affichage → ACK,
+//   validation distribuée (validate-candidate → vote signé Ed25519 → validation-result), ré-validation (obs-confirm), blocs possédés.
+// Le serveur ne change pas : cet appareil est un écran eink29bwr comme les autres.
+//
+// Différences avec l'ESP8266 (toutes voulues) :
+//   • Wi-Fi/TLS sur le coprocesseur ESP32-S3 (WiFiSSLClient) : plus de BearSSL dans la RAM → pas de free()/malloc() des buffers autour
+//     des connexions ; les deux plans pixel (2 × 4736 o) sont des tampons STATIQUES ;
+//   • lecture du flux par pod_http.h (lecture « readFull » sur réponse fragmentée, chunked accepté), identique au firmware TFT ;
+//   • pile principale de 1 Ko seulement sur la R4 (cœur Arduino) : aucun gros tableau local, tout est statique ;
+//   • la dernière image reste affichée (e-ink) ET son frameId est mémorisé en EEPROM : un redémarrage ne ré-affiche pas (et ne re-ACK pas)
+//     une œuvre déjà à l'écran. Le frameId est effacé dès qu'un écran d'appairage remplace l'œuvre ;
+//   • le cartel est dessiné dans le repère de l'IMAGE du serveur (haut = haut), voir setPix() ;
+//   • pas de seconde connexion pendant un rafraîchissement : l'écran e-ink bloque ~15 s, le réseau n'est pas touché pendant ce temps.
+//
+// Câblage (module 8 fils → UNO R4 WiFi) : VCC→3.3V · GND→GND · DIN→D11 · CLK→D13 · CS→D10 · DC→D9 · RST→D8 · BUSY→D7
+// Bibliothèques : ArduinoJson (≥ 6, testé 7.x), QRCode (ricmoo), Crypto (rweather), WiFiS3 / SPI / EEPROM (fournies avec le cœur R4).
+// Carte : « Arduino UNO R4 WiFi ». Moniteur série : 115200.
+// Wi-Fi : copier secrets.h.example en secrets.h (ignoré par git) puis renseigner SSID / mot de passe (2,4 GHz).
+//
+// ⚠ TLS : le coprocesseur vérifie le certificat avec son lot de certificats racine. Si « connexion TLS impossible » s'affiche,
+//   mettre à jour le firmware du module Wi-Fi (IDE → Outils → Updater le firmware).
+
+#include <Arduino.h>
+#include <malloc.h>
+#include <stdarg.h>
+#include <WiFiS3.h>
+#include <SPI.h>
+#include <EEPROM.h>
+#include <ArduinoJson.h>
+#include <qrcode.h>
+#include <Ed25519.h>
+#include "podEdStack.h"   // POD_ED_STACK : Ed25519 sur PILE DÉDIÉE (la pile principale de la R4 n'a que 1 024 o) — docs/LOT_8B2B2_PILE_ED25519_R4_2026_10_08.md
+#include <SHA256.h>
+#include "pod_http.h"
+#include "epd29b.h"
+#include "pod_vote_r4.h"       // validation réelle (vote v2) : SHA-256 + métriques entières en flux — ⚠ NON TESTÉ sur la carte
+
+// POD_RENDER_V1_BEGIN
+// ─── Rendu v1 EN FLUX (lot 8B-2A) — INACTIF PAR DÉFAUT ────────────────────────────────────────────────────────────────────────────────────────────
+// 0 (défaut) : comportement d'avant, octet pour octet (cartel gravé par burnCartel dans blackBuf, epd.display des plans complets).
+// 1 : l'image reçue (blackBuf / redBuf, JAMAIS modifiés) est rendue par le noyau gelé consensus-pod/src/podRenderStream.h (layoutVersion 1 : cartel, fit) et remise au pilote PAR MORCEAUX de 32 octets
+//     (Epd29b::displayStream) ; frameHash (octets reçus) et renderHash (octets remis) sont CALCULÉS et seulement journalisés — l'ACK, les routes et le rapport de rendu ne sont PAS modifiés.
+// ⚠ NON ESSAYÉ SUR LA CARTE. Ne pas activer sans le lot 8B-2B (canari) : docs/LOT_8B2A_INTEGRATION_CANARIS_2026_10_08.md.
+#ifndef POD_RENDER_V1
+#define POD_RENDER_V1 0
+#endif
+#ifndef POD_RENDER_MODE_DEFAULT
+#define POD_RENDER_MODE_DEFAULT POD_R_FIT   // constante de compilation : le réglage cartelMode n'est PAS exposé (pas d'interface, pas de réglage serveur)
+#endif
+#ifndef POD_CANARY
+#define POD_CANARY 0   // 1 = BUILD LOCAL TEMPORAIRE de CANARI (journal [CANARY] : pile réelle, mémoire, métadonnées) ; sans effet si POD_RENDER_V1 = 0 — docs/CANARY_R4_EINK29_RENDU_V1_2026_10_08.md
+#endif
+#if POD_RENDER_V1
+#include "podRenderStream.h"
+#include "crypto_uno_r4.h"
+#include <new>
+#endif
+// POD_RENDER_V1_END
+#if POD_RENDER_V1 && POD_CANARY
+extern char __StackLimit;   // NETSTACK-FIX3 : sonde de phase de PodNet — lit UN mot (le marqueur du canari) et mémorise la PREMIÈRE phase où il est détruit ; aucune E/S, aucune profondeur ajoutée
+static inline void podNetProbe(uint8_t* slot, uint8_t phase) { if (*slot == 0 && *(volatile uint32_t*)&__StackLimit != 0x434E5259UL) *slot = phase; }
+#define POD_NET_PROBE(I, n) podNetProbe((I)->pad, (n))
+// DOPULL-PHASE-AUDIT1 (canari seulement, +16 o de RAM statique mesurés (22 768 -> 22 784 : marge 528 -> 512 o)) : longueur peinte INITIALE (écrite par podCanaryPaint) pour la comparer EXACTEMENT, sans test de plage ; et la PREMIÈRE phase de doPull
+// où le marqueur ou la longueur diffère exactement (0 = aucune). La sonde ne fait que lire deux mots de la pile et un octet : aucune E/S, allocation, String, appel.
+static volatile uint32_t g_podPaintLen = 0;
+static volatile uint8_t g_podDpPhase = 0;
+#define POD_DP_PROBE(n) do { if (g_podDpPhase == 0 && (*(volatile uint32_t*)&__StackLimit != 0x434E5259UL || *((volatile uint32_t*)&__StackLimit + 1) != g_podPaintLen)) g_podDpPhase = (n); } while (0)
+#endif
+#include "podNetStack.h"   // POD_NET_STACK : transactions réseau/TLS ET journal sur PILE DÉDIÉE (connect() déborde de 456 o sous __StackLimit) — docs/LOT_8B2B2_NETSTACK_FIX1_2026_10_09.md, docs/LOT_8B2B2_NETSTACK_FIX2_2026_10_09.md
+
+// ─── CONFIG ────────────────────────────────────────────────────────────────
+#if __has_include("secrets.h")
+  #include "secrets.h"
+  const char* WIFI_SSID     = SECRET_WIFI_SSID;
+  const char* WIFI_PASSWORD = SECRET_WIFI_PASSWORD;
+#else
+  const char* WIFI_SSID     = "";            // ← renseigner (ou créer secrets.h)
+  const char* WIFI_PASSWORD = "";
+#endif
+
+#define SERVER_HOST         "proof-of-draw.vercel.app"
+#define SCREEN_TYPE         "eink29bwr"            // profil serveur 296×128 noir/blanc/rouge (lib/screenProfiles.ts)
+#define FIRMWARE_VERSION    "r4eink29-1.1"
+#define PULL_INTERVAL       60000UL                // 1 min
+#define VALIDATE_INTERVAL   30000UL                // 30 s : candidat en attente
+#define HTTP_TIMEOUT_MS     20000UL
+#define EINK_MIN_REFRESH_MS 10000UL                // jamais deux rafraîchissements à moins de 10 s (durée de vie du panneau)
+#define CLEAR_BEFORE_IMAGE  1                      // page blanche avant chaque nouvelle œuvre (comme l'ESP) : limite les rémanences, +15 s
+
+// ─── GÉOMÉTRIE ─────────────────────────────────────────────────────────────
+#define IMG_W    296                               // image du serveur (paysage)
+#define IMG_H    128
+#define BUF_SIZE EPD_BUF_SIZE                      // 4736 = 16 octets × 296 lignes
+#define FRAME_BYTES (BUF_SIZE * 2)                 // 9472
+
+// ─── EEPROM (flash de données de la R4, pas de commit) — même carte mémoire que les firmwares ESP ─────────────
+#define EEPROM_PRIVKEY_OFF     0
+#define EEPROM_BLOCKHASH_OFF   32
+#define EEPROM_FLAG_OFF        64
+#define EEPROM_PUBKEY_OFF      65
+#define KEY_GENERATED_FLAG     0xED
+#define EEPROM_ONBOARDING_OFF  97
+#define ONBOARDING_SHOWN_FLAG  0x01
+#define EEPROM_OWNED_HEAD_OFF  98
+#define EEPROM_OWNED_COUNT_OFF 99
+#define EEPROM_OWNED_SLOTS_OFF 100
+#define OWNED_SLOTS_MAX        10
+#define OWNED_HASH_LEN         32
+#define EEPROM_FRAMEID_OFF     420                 // 32 caractères : début du frameId affiché (zone « réservée » des ESP)
+#define FRAMEID_LEN            32
+
+#if ARDUINOJSON_VERSION_MAJOR >= 7
+  #define JSON_DOC(name, cap) JsonDocument name
+#else
+  #define JSON_DOC(name, cap) DynamicJsonDocument name(cap)
+#endif
+
+// ─── OBJETS / ÉTAT ─────────────────────────────────────────────────────────
+Epd29b epd;
+static uint8_t blackBuf[BUF_SIZE];                 // 0 = noir
+static uint8_t redBuf[BUF_SIZE];                   // 0 = rouge
+unsigned long lastRefreshMs = 0;
+bool hasRefreshed = false;
+bool onboardingDrawn = false;                      // écran d'appairage déjà dessiné depuis ce démarrage
+
+String deviceId, pairCode;
+bool   registered = false, paired = false;
+String lastFrameId = "";
+bool   lastFrameWasConsensus = false;
+
+uint8_t privateKey[32], publicKey[32];
+bool    keysLoaded = false;
+
+String currentBlockHash = "";
+int    currentBlockIndex = -1;
+String pendingCandidateId = "";
+unsigned long lastPullMs = 0, lastValidateMs = 0, nextPullIntervalMs = PULL_INTERVAL;
+
+String pendingWorkTitle = "", pendingArtistName = "", pendingDisplayTs = "";
+String pendingObsHashes = "", pendingObsTarget = "";
+
+static char g_body[3072];                          // corps JSON des réponses
+
+// ─── LOG ───────────────────────────────────────────────────────────────────
+// POD_LOG_STACK (NETSTACK-FIX2) : le formatage (vsnprintf) et l'écriture USB (Serial) descendent d'environ 450 o sous leur appelant ; appelés depuis setup → doRegister → httpCall (608 o de cadres) ils dépassent
+// les 1 024 o de la pile principale (canari du 09/10/2026 : 24 o sous __StackLimit). Sur la pile PRINCIPALE, logf s'exécute donc sur une petite pile dédiée (POD_LOG_STACK_TOTAL) ; sur une pile dédiée (dans une
+// transaction réseau), directement. Échec (malloc, garde, marge) : la ligne est ABANDONNÉE — un journal ne doit jamais arrêter le firmware.
+// NETSTACK-FIX3 : GUARD = la garde de la pile de journal a été écrasée → le voisin au tas est corrompu : faute persistante, ARRÊT SÛR SILENCIEUX (aucun pull, vote, ACK ni affichage ; la carte se tait), jamais « une ligne perdue ».
+// MARGIN (garde intacte, marge < 128 o) : fatal dans le build de canari seulement ; en production la ligne a été écrite et on continue (NOMEM : ligne abandonnée).
+static void __attribute__((noinline, noreturn)) logfSafeStop() {
+  for (;;) { __asm volatile("nop"); }              // NETSTACK-FIX3-R1 : AUCUNE E/S, AUCUNE allocation, AUCUN retour (appelée depuis un cadre quelconque de la pile principale : un Serial.println ici peut lui-même la déborder)
+}
+struct LogJob { const char* fmt; va_list* ap; };
+static void logfEmit(void* p) {
+  static char b[256];                              // statique : la pile du cœur R4 ne fait que 1 Ko
+  LogJob* j = static_cast<LogJob*>(p);
+  vsnprintf(b, sizeof(b), j->fmt, *j->ap);
+  Serial.println(b);
+}
+static void logf(const char* fmt, ...) {
+  va_list ap; va_start(ap, fmt);
+  LogJob j = { fmt, &ap };
+  if (podNetOnMainStack()) {
+    PodNetInfo li;
+    PodNet::runSized(logfEmit, &j, POD_LOG_STACK_TOTAL, &li);
+    if (li.err == POD_NET_GUARD
+#if POD_RENDER_V1 && POD_CANARY
+        || li.err == POD_NET_MARGIN
+#endif
+       ) logfSafeStop();
+  } else logfEmit(&j);
+  va_end(ap);
+}
+
+// ─── MÉMOIRE (cf. pod_uno_r4.ino : pile principale de 1 Ko, protection désactivée) ─────────
+extern "C" char* sbrk(int incr);
+extern char __HeapLimit;
+static const uint32_t STACK_PAINT_BYTES = 2048;
+static uint32_t freeHeapBytes() {
+  struct mallinfo mi = mallinfo();
+  return (uint32_t)mi.fordblks + (uint32_t)(&__HeapLimit - (char*)sbrk(0));
+}
+static void paintStack() { for (volatile uint8_t* p = (volatile uint8_t*)&__HeapLimit - STACK_PAINT_BYTES; p < (volatile uint8_t*)&__HeapLimit; p++) *p = 0xA5; }
+static uint32_t stackDepthBytes() {
+  const uint8_t* lo = (const uint8_t*)&__HeapLimit - STACK_PAINT_BYTES;
+  const uint8_t* p = lo;
+  while (p < (const uint8_t*)&__HeapLimit && *p == 0xA5) p++;
+  return 1024 + (uint32_t)((const uint8_t*)&__HeapLimit - p);
+}
+#if POD_RENDER_V1 && POD_CANARY
+// ─── CANARI : pile RÉELLE de la pile principale (1 024 o) — aucune variable globale ───────────────────────────────────────────────────────────────────────────────
+// Le cœur R4 exécute setup() et loop() directement dans main(), donc sur la pile principale [__StackLimit, __StackTop] (symboles du script d'édition de liens, déjà utilisés par paintStack() via __HeapLimit == __StackLimit).
+// podCanaryPaint() peint la zone LIBRE sous le cadre courant (moins 192 o de sécurité) avec 0x5A et écrit au fond un marqueur « CNRY » + le nombre d'octets peints ; podCanaryReport() cherche le plus bas octet
+// modifié : usage maximal observé = __StackTop − cet octet. Marqueur de fond détruit = la pile a touché son extrémité basse (arrêt). La peinture n'est pas concurrente d'une interruption (monoprocesseur : une ISR
+// s'exécute entre deux octets peints, puis rend la main).
+extern char __StackLimit, __StackTop, __HeapBase;
+static const uint8_t CANARY_PAINT = 0x5A;
+static const uint32_t CANARY_MAGIC = 0x434E5259UL;   // « CNRY »
+static void podCanaryPaint() {
+  volatile uint8_t* lo = (volatile uint8_t*)&__StackLimit;
+  volatile uint8_t* hi = (volatile uint8_t*)__builtin_frame_address(0) - 192;
+  if (hi <= lo + 16) return;
+  for (volatile uint8_t* p = lo + 8; p < hi; p++) *p = CANARY_PAINT;
+  *(volatile uint32_t*)lo = CANARY_MAGIC;
+  *(volatile uint32_t*)(lo + 4) = (uint32_t)(hi - lo);
+  g_podPaintLen = (uint32_t)(hi - lo);
+}
+// ── LOT 8B-2B-2 BOOT-FIX2 ── points de contrôle CUMULATIFS, NON destructifs (aucun repeint entre deux points : on garde le maximum et on isole le PREMIER passage destructeur) ──────────────────────────
+// Sortie par Serial.print (cadres minces) et JAMAIS par logf/vsnprintf : l'instrument ne doit pas creuser lui-même la pile qu'il mesure. Un point « silencieux » (verbose = false) n'imprime rien tant que tout va bien.
+// Toute ANOMALIE (marqueur ou longueur détruits, marge PRINCIPALE < 128 o, SP hors de la pile — PAS la zone 0xA5 peinte sous __StackLimit, qui n'est plus qu'un indicateur depuis WIFI-CALLS-FIX2) imprime un diagnostic complet puis POSE UN VERROU FATAL : boucle sans fin, plus aucun appel réseau,
+// pull, vote, ACK ni affichage ne peut s'exécuter (le verrou n'existe que dans ce build POD_CANARY = 1 ; aucune variable globale).
+static void podCanaryHex(uint32_t v) { Serial.print(F("0x")); for (int s = 28; s >= 0; s -= 4) Serial.print((unsigned)((v >> s) & 15), HEX); }
+static void podCanaryNum(const __FlashStringHelper* label, unsigned long v) { Serial.print(label); Serial.print(v); }
+// NETSTACK-FIX2 : TOUTE sortie de l'instrument passe par la pile de journal dédiée quand l'appelant est sur la pile principale (les E/S USB descendent d'environ 450 o ; imprimées depuis un cadre à 620 o elles
+// dépassaient la limite : 24 o sous __StackLimit le 09/10/2026). Déjà sur une pile dédiée : direct. Échec d'allocation : rien n'est imprimé (le verrou éventuel reste posé, en silence).
+static void podCanaryEmit(void (*fn)(void*), void* ctx) {
+  if (podNetOnMainStack()) PodNet::runSized(fn, ctx, POD_LOG_STACK_TOTAL);
+  else fn(ctx);
+}
+// VERROU FATAL : aucune sortie de cette fonction ; aucun delay(), aucun appel réseau, aucune écriture EEPROM
+static void __attribute__((noinline, noreturn)) podCanaryHalt(const char* tag) {
+  unsigned long t = millis() - 10000UL;
+  for (;;) if (millis() - t >= 10000UL) { t = millis(); Serial.print(F("[CANARY] ARRET FATAL (verrou) apres '")); Serial.print(tag); Serial.println(F("' : plus aucun pull, vote, ACK ni affichage. Debrancher la carte, reflasher le firmware stable.")); }
+}
+struct PodCanaryCtx { const char* tag; uint32_t magic, painted, used, sp, below, pAddr, pOff; long margin; bool noMod, alert, magicOk, paintedOk, spOk; uint32_t paintInit; };
+static void podCanaryPrint(void* v) {
+  const PodCanaryCtx& c = *static_cast<const PodCanaryCtx*>(v);
+  volatile uint8_t* lo = (volatile uint8_t*)&__StackLimit;
+  const uint32_t brk = (uint32_t)(uintptr_t)sbrk(0), lim = (uint32_t)(uintptr_t)&__HeapLimit;
+  Serial.print(F("[CANARY] ")); Serial.print(c.tag); Serial.print(c.alert ? F(" : ALERTE PILE utilisee au plus ") : F(" : pile utilisee au plus "));
+  Serial.print(c.used); podCanaryNum(F(" o / 1024 (marge "), (unsigned long)(c.margin < 0 ? 0 : c.margin)); Serial.print(c.margin < 0 ? F(" o, NEGATIVE) | SP=") : (c.margin < 256 && !c.alert) ? F(" o, SOUS L'OBJECTIF 256) | SP=") : F(" o) | SP=")); podCanaryHex(c.sp);
+  podCanaryNum(F(" | tas libre "), freeHeapBytes()); podCanaryNum(F(" | sbrk->limite "), (lim > brk ? lim - brk : 0)); Serial.println();
+  if (!c.alert) return;
+  struct mallinfo mi = mallinfo();
+  Serial.print(F("[CANARY]   marqueur=")); podCanaryHex(c.magic); Serial.print(c.magicOk ? F(" (OK)") : F(" (DETRUIT, attendu 0x434E5259)")); Serial.print(F(" longueur peinte=")); podCanaryHex(c.painted); if (c.paintedOk) Serial.print(F(" (OK : identique a l'initiale)")); else { Serial.print(F(" (INCOHERENTE : initiale ")); podCanaryHex(c.paintInit); Serial.print(F(")")); }
+  Serial.print(F(" | plus bas octet modifie au-dessus du marqueur : ")); if (c.noMod) Serial.print(F("AUCUN (la peinture est intacte : ecriture isolee ou venue d'ailleurs que de la pile)")); else { podCanaryHex(c.pAddr); podCanaryNum(F(" = marqueur+"), (unsigned long)c.pOff); }
+  Serial.println();
+  Serial.print(F("[CANARY]   __StackLimit=")); podCanaryHex((uint32_t)(uintptr_t)&__StackLimit); Serial.print(F(" __StackTop=")); podCanaryHex((uint32_t)(uintptr_t)&__StackTop); Serial.print(F(" __HeapBase=")); podCanaryHex((uint32_t)(uintptr_t)&__HeapBase);
+  Serial.print(F(" sbrk(0)=")); podCanaryHex(brk); Serial.print(F(" SP")); Serial.println(c.spOk ? F(" dans la pile") : F(" HORS de la pile"));
+  podCanaryNum(F("[CANARY]   mallinfo : arene="), (unsigned long)mi.arena); podCanaryNum(F(" utilise="), (unsigned long)mi.uordblks); podCanaryNum(F(" libre="), (unsigned long)mi.fordblks); Serial.println();
+  Serial.print(F("[CANARY]   octets [__StackLimit-8, +24[ : "));
+  for (int i = -8; i < 24; i++) { const uint8_t b = lo[i]; if (b < 16) Serial.print('0'); Serial.print((unsigned)b, HEX); Serial.print(i == -1 ? F(" | ") : F(" ")); }
+  Serial.println();
+  Serial.print(F("[CANARY]   zone 0xA5 sous la limite (INDICATIF seulement, NON fiable depuis les piles temporaires allouees dans le tas) : ")); Serial.print(c.below); Serial.println();
+  podCanaryHalt(c.tag);
+}
+static void __attribute__((noinline)) podCanaryCheck(const char* tag, bool verbose) {
+  volatile uint8_t* lo = (volatile uint8_t*)&__StackLimit;
+  const uint32_t magic = *(volatile uint32_t*)lo, painted = *(volatile uint32_t*)(lo + 4);
+  const bool magicOk = (magic == CANARY_MAGIC), paintedOk = (painted >= 16 && painted <= 1024 && painted == g_podPaintLen);   // DOPULL-PHASE-AUDIT1 : EXACTEMENT la valeur initiale (une plage jugeait 0x1A1 « OK » alors que le boot avait écrit 0x250)
+  volatile uint8_t* end = lo + (paintedOk ? painted : 512);                       // zone peinte (repli 512 o si la longueur enregistrée est elle-même détruite)
+  volatile uint8_t* p = lo + 8; while (p < end && *p == CANARY_PAINT) p++;       // plus bas octet modifié AU-DESSUS du marqueur
+  const uint32_t used = (uint32_t)((uint8_t*)&__StackTop - (uint8_t*)p);
+  const long margin = 1024L - (long)used;
+  const uint32_t sp = (uint32_t)(uintptr_t)__builtin_frame_address(0);
+  const bool spOk = sp > (uint32_t)(uintptr_t)&__StackLimit && sp <= (uint32_t)(uintptr_t)&__StackTop;
+  // NETSTACK-WIFI-CALLS-FIX2 : critères FATALS = marqueur ou longueur invalides, SP hors pile, marge principale < 128 o. La zone 0xA5 peinte SOUS __StackLimit n'est PLUS un critère : depuis les piles temporaires allouées dans le tas
+  // (PodEd, PodNet, Wi-Fi, journal) elle est légitimement écrasée (faux positif « pile max 3072 » du canari NETSTACK-WIFI-CALLS-FIX1).
+  const bool alert = !magicOk || !paintedOk || margin < 128 || !spOk;
+  if (!alert && !verbose) return;                                                  // point silencieux : aucun appel de bibliothèque tant que tout va bien
+  const uint32_t below = stackDepthBytes();                                        // INDICATIF seulement (diagnostic d'alerte) : NON fiable après la première pile temporaire
+  PodCanaryCtx c = { tag, magic, painted, used, sp, below, (uint32_t)(uintptr_t)p, (uint32_t)(p - lo), margin, p == end, alert, magicOk, paintedOk, spOk, g_podPaintLen };
+  podCanaryEmit(podCanaryPrint, &c);
+  if (alert) for (;;) { __asm volatile("nop"); }                                   // l'impression a échoué (mémoire) : verrou SILENCIEUX
+}
+// NETSTACK-FIX3 : première phase de PodNet où le marqueur a été trouvé détruit (PodNetInfo::pad[0], sonde sans E/S) : 1 entrée de runSized · 2 après malloc + peinture · 3 après le trampoline · 4 après le scan garde/filigrane ·
+// 5 après le calcul de marge · 6 après l'effacement · 7 après free · 8 retour de podNetRun. 0 = aucune. Une phase non nulle imprime le diagnostic puis pose le verrou.
+struct PodCanaryPhaseCtx { uint8_t phase; };
+static void podCanaryPrintPhase(void* v) {
+  const PodCanaryPhaseCtx& c = *static_cast<const PodCanaryPhaseCtx*>(v);
+  Serial.print(F("[CANARY] PodNet : PREMIERE phase fautive = ")); Serial.print((unsigned)c.phase);
+  Serial.println(F(" (1 entree de runSized, 2 apres malloc+peinture, 3 apres le trampoline, 4 apres le scan garde/filigrane, 5 apres la marge, 6 apres l'effacement, 7 apres free, 8 retour de podNetRun) : le marqueur est detruit a CETTE phase ou avant"));
+  podCanaryHalt("phase PodNet");
+}
+static void __attribute__((noinline)) podCanaryPhase(uint8_t phase) {
+  if (phase == 0) return;
+  PodCanaryPhaseCtx c = { phase };
+  podCanaryEmit(podCanaryPrintPhase, &c);
+  for (;;) { __asm volatile("nop"); }
+}
+// NETSTACK-FIX3-R1 : première sous-phase de macString() où le marqueur a été trouvé détruit (inscrite « !n » dans le String retourné, voir macString) ; rapport APRÈS le retour, sur la pile de journal, puis verrou.
+struct PodCanaryMacCtx { uint8_t phase; };
+static void podCanaryPrintMac(void* v) {
+  const PodCanaryMacCtx& c = *static_cast<const PodCanaryMacCtx*>(v);
+  Serial.print(F("[CANARY] macString : PREMIERE sous-phase fautive = ")); Serial.print((unsigned)c.phase);
+  Serial.println(F(" (1 juste apres l'appel au module pour l'adresse MAC, 2 apres l'encodage hexadecimal, 3 apres la construction du String retourne) : le marqueur est detruit a CETTE sous-phase ou avant"));
+  podCanaryHalt("macString sous-phase");
+}
+static void __attribute__((noinline)) podCanaryMacPhase(const String& mac) {
+  if (mac.length() < 2 || mac.charAt(0) != '!') return;
+  PodCanaryMacCtx c = { (uint8_t)(mac.charAt(1) - '0') };
+  podCanaryEmit(podCanaryPrintMac, &c);
+  for (;;) { __asm volatile("nop"); }
+}
+// NETSTACK-WIFI-CALLS-FIX1 : un appel au module Wi-Fi exécuté sur la pile dédiée — utilisé / marge / erreur / tas libre ; la phase de PodNet (pad[0]) est contrôlée comme pour une transaction réseau ; une erreur de la pile
+// (NOMEM, NESTED, GUARD, MARGIN) pose le verrou fatal ; la pile PRINCIPALE est vérifiée juste après (silencieux) : le marqueur doit rester intact.
+struct PodCanaryWifiCtx { const char* tag; const PodNetInfo* ni; bool ran; };
+static void podCanaryPrintWifi(void* v) {
+  const PodCanaryWifiCtx& c = *static_cast<const PodCanaryWifiCtx*>(v);
+  const PodNetInfo& ni = *c.ni;
+  Serial.print(F("[CANARY] wifi ")); Serial.print(c.tag); Serial.print(F(" : pile Wi-Fi dediee utilisee ")); Serial.print((unsigned)ni.used); podCanaryNum(F(" o, marge "), ni.margin);
+  Serial.print(ni.low ? F(" o (objectif >= 256 : SOUS L'OBJECTIF)") : F(" o (objectif >= 256 : OK)")); podCanaryNum(F(", erreur "), ni.err); podCanaryNum(F(" | tas libre "), freeHeapBytes()); Serial.println();
+  if (!c.ran || ni.err != POD_NET_OK) { Serial.print(F("[CANARY] wifi ")); Serial.print(c.tag); Serial.println(F(" : ECHEC de la pile Wi-Fi dediee (ALERTE)")); podCanaryHalt(c.tag); }
+}
+static void __attribute__((noinline)) podCanaryWifi(const char* tag, const PodNetInfo& ni, bool ran, bool verbose) {
+  podCanaryPhase(ni.pad[0]);
+  if (verbose || !ran || ni.err != POD_NET_OK) {
+    PodCanaryWifiCtx c = { tag, &ni, ran };
+    podCanaryEmit(podCanaryPrintWifi, &c);
+    if (!ran || ni.err != POD_NET_OK) for (;;) { __asm volatile("nop"); }            // l'impression a échoué (mémoire) : verrou SILENCIEUX
+  }
+  podCanaryCheck(tag, false);                                                       // la pile principale doit rester saine après l'appel
+}
+// DOPULL-PHASE-AUDIT1 : première phase de doPull où le marqueur ou la longueur peinte a été trouvé(e) différent(e) EXACTEMENT (g_podDpPhase, 0 = aucune) ; rapport APRÈS le retour de doPull, sur la pile de journal,
+// puis verrou fatal. Phase n = la destruction a eu lieu entre la phase n-1 (saine) et la phase n.
+struct PodCanaryDpCtx { uint8_t phase; };
+static void podCanaryPrintDp(void* v) {
+  const PodCanaryDpCtx& c = *static_cast<const PodCanaryDpCtx*>(v);
+  Serial.print(F("[CANARY] doPull : PREMIERE phase fautive = ")); Serial.print((unsigned)c.phase);
+  Serial.println(F(" (1 entree · 2 apres l'appel HTTP · 3 apres le retour de l'analyse sur la pile de travail · 4 apres l'etat du cartel et son journal · 5 apres l'observation · 6 apres ownedBlock (memoire non volatile) · 7 apres la mise a jour du bloc (memoire non volatile) et du candidat · 8 retour de l'etage reseau+analyse dans doPull · 9 apres 'aucune frame', avant le retour) : la destruction est survenue ENTRE la phase precedente (saine) et celle-ci"));
+  podCanaryHalt("doPull phase");
+}
+static void __attribute__((noinline)) podCanaryDoPull() {
+  const uint8_t ph = g_podDpPhase;
+  if (ph == 0) return;
+  PodCanaryDpCtx c = { ph };
+  podCanaryEmit(podCanaryPrintDp, &c);
+  for (;;) { __asm volatile("nop"); }
+}
+// NETSTACK-FIX1/2 : une ligne par transaction réseau (pile dédiée : utilisée / marge / erreur, tas libre) ; un échec de la pile dédiée (malloc, garde, marge < 128 o, imbrication) pose le verrou fatal.
+struct PodCanaryNetCtx { const char* tag; const PodNetInfo* ni; bool ran; };
+static void podCanaryPrintNet(void* v) {
+  const PodCanaryNetCtx& c = *static_cast<const PodCanaryNetCtx*>(v);
+  const PodNetInfo& ni = *c.ni;
+  Serial.print(F("[CANARY] net ")); Serial.print(c.tag); Serial.print(F(" : pile reseau dediee utilisee ")); Serial.print((unsigned)ni.used); podCanaryNum(F(" o, marge "), ni.margin);
+  Serial.print(ni.low ? F(" o (objectif >= 256 : SOUS L'OBJECTIF)") : F(" o (objectif >= 256 : OK)")); podCanaryNum(F(", erreur "), ni.err); podCanaryNum(F(" | tas libre "), freeHeapBytes()); Serial.println();
+  if (!c.ran || ni.err != POD_NET_OK) { Serial.print(F("[CANARY] net ")); Serial.print(c.tag); Serial.println(F(" : ECHEC de la pile reseau dediee (ALERTE)")); podCanaryHalt(c.tag); }
+}
+static void __attribute__((noinline)) podCanaryNet(const char* tag, const PodNetInfo& ni, bool ran) {
+  podCanaryPhase(ni.pad[0]);
+  PodCanaryNetCtx c = { tag, &ni, ran };
+  podCanaryEmit(podCanaryPrintNet, &c);
+  if (!ran || ni.err != POD_NET_OK) for (;;) { __asm volatile("nop"); }            // l'impression a échoué (mémoire) : verrou SILENCIEUX
+  // NETSTACK-WIFI-CALLS-FIX3 : AUCUN podCanaryCheck ici. Le contrôle « B » mesurait depuis l'intérieur de cette fonction (cadre encore vivant : +20 o, marge principale 144 -> 124 o) : il est appelé par chaque appelant
+  // (httpCall, lecture de l'image, lecture du candidat) immédiatement APRÈS le retour complet de podCanaryNet.
+}
+// NETSTACK-FIX2 : sonde de la pile de JOURNAL — une ligne de 250 caractères (pire cas du tampon de 256 o, USB saturé) exécutée sur la pile de journal avec mesure ; imprime l'utilisation réelle et la marge.
+struct PodCanaryLogCtx { PodNetInfo li; bool ok; };
+static void podCanaryPrintLog(void* v) {
+  const PodCanaryLogCtx& c = *static_cast<const PodCanaryLogCtx*>(v);
+  Serial.print(F("[CANARY] pile de journal (ligne de 250 caracteres) : utilisee ")); Serial.print((unsigned)c.li.used); podCanaryNum(F(" o, marge "), c.li.margin); podCanaryNum(F(" o, erreur "), c.li.err);
+  Serial.println(c.ok && c.li.margin >= POD_NET_MARGIN_GOAL ? F(" (OK)") : F(" (SOUS L'OBJECTIF OU ECHEC)"));
+  if (c.li.err == POD_NET_GUARD || c.li.err == POD_NET_MARGIN) podCanaryHalt("sonde de la pile de journal");   // GUARD/MARGIN : continuer n'est pas sûr
+}
+static void __attribute__((noinline)) podCanaryLogProbeV(const char* fmt, ...) {
+  va_list ap; va_start(ap, fmt);
+  LogJob j = { fmt, &ap };
+  PodCanaryLogCtx c; c.ok = PodNet::runSized(logfEmit, &j, POD_LOG_STACK_TOTAL, &c.li);
+  va_end(ap);
+  podCanaryEmit(podCanaryPrintLog, &c);
+  if (c.li.err == POD_NET_GUARD || c.li.err == POD_NET_MARGIN) for (;;) { __asm volatile("nop"); }   // impression impossible : verrou silencieux
+}
+static void podCanaryLogProbe() {
+  podCanaryLogProbeV("%s%s%s%s%s", "[CANARY] sonde journal: 1234567890123456789012345", "1234567890123456789012345678901234567890123456", "1234567890123456789012345678901234567890123456", "1234567890123456789012345678901234567890123456", "12345678901234567890123456789012345678901234567890");
+}
+#endif
+static void reportMem(const char* tag) { logf("[MEM] %s: tas libre %lu o, zone 0xA5 sous la pile %lu o (INDICATIF : NON fiable des la 1re pile temporaire)", tag, (unsigned long)freeHeapBytes(), (unsigned long)stackDepthBytes()); }
+
+// ─── Texte : ASCII seulement (police 5×7, majuscules) — replie les accents UTF-8 ─────────────────
+static String asciiFold(const String& in) {
+  static const char* L1 = "AAAAAAACEEEEIIIIDNOOOOO*OUUUUYTsaaaaaaaceeeeiiiidnooooo/ouuuuyty";   // U+00C0..U+00FF
+  String out; out.reserve(in.length());
+  for (unsigned i = 0; i < in.length(); i++) {
+    const uint8_t c = (uint8_t)in[i];
+    if (c < 0x80) { out += (char)(c >= 32 && c < 127 ? c : ' '); continue; }
+    if (c == 0xC3 && i + 1 < in.length()) { const uint8_t d = (uint8_t)in[++i]; out += (d >= 0x80 && d < 0xC0) ? L1[d - 0x80] : '?'; continue; }
+    if (c >= 0xC0) { out += '?'; while (i + 1 < in.length() && ((uint8_t)in[i + 1] & 0xC0) == 0x80) i++; }
+  }
+  return out;
+}
+
+// ─── EEPROM ────────────────────────────────────────────────────────────────
+static String bytesToHex(const uint8_t* buf, size_t len) {
+  String hex; hex.reserve(len * 2);
+  for (size_t i = 0; i < len; i++) { if (buf[i] < 16) hex += "0"; hex += String(buf[i], HEX); }
+  return hex;
+}
+static bool keysAlreadyGenerated()   { return EEPROM.read(EEPROM_FLAG_OFF) == KEY_GENERATED_FLAG; }
+static bool onboardingAlreadyShown() { return EEPROM.read(EEPROM_ONBOARDING_OFF) == ONBOARDING_SHOWN_FLAG; }
+static void setOnboardingShown()     { EEPROM.update(EEPROM_ONBOARDING_OFF, ONBOARDING_SHOWN_FLAG); }
+
+static void saveKeysToEEPROM() {
+  for (int i = 0; i < 32; i++) EEPROM.update(EEPROM_PRIVKEY_OFF + i, privateKey[i]);
+  for (int i = 0; i < 32; i++) EEPROM.update(EEPROM_PUBKEY_OFF + i, publicKey[i]);
+  EEPROM.update(EEPROM_FLAG_OFF, KEY_GENERATED_FLAG);
+}
+static void loadKeysFromEEPROM() {
+  for (int i = 0; i < 32; i++) privateKey[i] = EEPROM.read(EEPROM_PRIVKEY_OFF + i);
+  for (int i = 0; i < 32; i++) publicKey[i]  = EEPROM.read(EEPROM_PUBKEY_OFF + i);
+  uint8_t derived[32];
+  if (!PodEd::derivePublicKey(derived, privateKey)) logf("[KEYS] cohérence NON vérifiée : calcul Ed25519 impossible (pile dédiée) — clé publique de l'EEPROM conservée");   // POD_ED_STACK
+  else if (memcmp(derived, publicKey, 32) != 0) {       // écriture interrompue entre clé privée et publique
+    logf("[KEYS] Clé publique incohérente -> recalcul depuis la clé privée");
+    memcpy(publicKey, derived, 32);
+    for (int i = 0; i < 32; i++) EEPROM.update(EEPROM_PUBKEY_OFF + i, publicKey[i]);
+  }
+  keysLoaded = true;
+}
+static void saveBlockHashToEEPROM(const String& hash) {
+  String h = hash.length() >= 32 ? hash.substring(0, 32) : hash;
+  while (h.length() < 32) h += ' ';
+  for (int i = 0; i < 32; i++) EEPROM.update(EEPROM_BLOCKHASH_OFF + i, (uint8_t)h[i]);
+}
+static String loadBlockHashFromEEPROM() {
+  String hash = "";
+  for (int i = 0; i < 32; i++) { char c = (char)EEPROM.read(EEPROM_BLOCKHASH_OFF + i); if (c == ' ' || c == '\0') break; hash += c; }
+  return hash;
+}
+
+// frameId affiché : on n'en garde que le début (32 car.), suffisant pour reconnaître une œuvre déjà à l'écran
+static String frameKey(const String& id) { return id.length() > FRAMEID_LEN ? id.substring(0, FRAMEID_LEN) : id; }
+static void persistFrameId(const String& id) {
+  const String k = frameKey(id);
+  for (int i = 0; i < FRAMEID_LEN; i++) EEPROM.update(EEPROM_FRAMEID_OFF + i, i < (int)k.length() ? (uint8_t)k[i] : (uint8_t)' ');
+}
+static String loadFrameId() {
+  String s = "";
+  for (int i = 0; i < FRAMEID_LEN; i++) {
+    const uint8_t c = EEPROM.read(EEPROM_FRAMEID_OFF + i);
+    if (c == ' ' || c < 33 || c > 126) break;       // EEPROM vierge (0xFF) ou fin de chaîne -> chaîne vide
+    s += (char)c;
+  }
+  return s;
+}
+
+// Anneau des blocs possédés (10 × 32 caractères), identique aux autres firmwares
+static void saveOwnedBlockHash(const String& fullHash) {
+  if (fullHash.length() < 16) return;
+  String h = fullHash.length() >= OWNED_HASH_LEN ? fullHash.substring(0, OWNED_HASH_LEN) : fullHash;
+  while ((int)h.length() < OWNED_HASH_LEN) h += ' ';
+  uint8_t head = EEPROM.read(EEPROM_OWNED_HEAD_OFF), count = EEPROM.read(EEPROM_OWNED_COUNT_OFF);
+  if (head >= OWNED_SLOTS_MAX) head = 0;
+  if (count > OWNED_SLOTS_MAX) count = 0;
+  for (uint8_t i = 0; i < count; i++) {
+    const uint8_t slot = (head - count + i + OWNED_SLOTS_MAX) % OWNED_SLOTS_MAX;
+    const int off = EEPROM_OWNED_SLOTS_OFF + slot * OWNED_HASH_LEN;
+    bool match = true;
+    for (int j = 0; j < OWNED_HASH_LEN && match; j++) if ((char)EEPROM.read(off + j) != h[j]) match = false;
+    if (match) { logf("[OWNED] déjà présent"); return; }
+  }
+  const int slotOff = EEPROM_OWNED_SLOTS_OFF + head * OWNED_HASH_LEN;
+  for (int i = 0; i < OWNED_HASH_LEN; i++) EEPROM.update(slotOff + i, (uint8_t)h[i]);
+  head = (head + 1) % OWNED_SLOTS_MAX;
+  count = (count + 1 > OWNED_SLOTS_MAX) ? OWNED_SLOTS_MAX : count + 1;
+  EEPROM.update(EEPROM_OWNED_HEAD_OFF, head);
+  EEPROM.update(EEPROM_OWNED_COUNT_OFF, count);
+  logf("[OWNED] %s... (%u/%u)", h.substring(0, 8).c_str(), count, OWNED_SLOTS_MAX);
+}
+static String loadOwnedHashesJson() {
+  uint8_t head = EEPROM.read(EEPROM_OWNED_HEAD_OFF), count = EEPROM.read(EEPROM_OWNED_COUNT_OFF);
+  if (head >= OWNED_SLOTS_MAX) head = 0;
+  if (count > OWNED_SLOTS_MAX) count = 0;
+  if (count == 0) return "[]";
+  String json = "["; bool first = true;
+  for (uint8_t i = 0; i < count; i++) {
+    const uint8_t slot = (head - 1 - i + OWNED_SLOTS_MAX) % OWNED_SLOTS_MAX;
+    const int off = EEPROM_OWNED_SLOTS_OFF + slot * OWNED_HASH_LEN;
+    String h = "";
+    for (int j = 0; j < OWNED_HASH_LEN; j++) { char c = (char)EEPROM.read(off + j); if (c == ' ' || c == '\0') break; h += c; }
+    if (h.length() >= 8) { if (!first) json += ","; json += "\"" + h + "\""; first = false; }
+  }
+  return json + "]";
+}
+
+// ─── MODULE Wi-Fi sur PILE DÉDIÉE (NETSTACK-WIFI-CALLS-FIX1, 09/10/2026) ──────────────────────────────────
+// Canari FIX3-R1 (matériel) : WiFi.macAddress() appelé depuis doRegister détruit le marqueur de pile (24 o sous __StackLimit) : chaque appel au module (ModemClass → vsnprintf) pose une feuille de 400 – 600 o sur le cadre
+// de l'appelant. TOUT appel direct au module hors transaction PodNet passe donc par ces fonctions : il s'exécute sur POD_WIFI_STACK_TOTAL o pris un instant au tas (garde 64 o, filigrane, marge >= 128 o, objectif 256 o).
+// Résultats chez l'APPELANT (variables captées par référence) ; jamais imbriqué (NESTED : un appel déjà sur une pile dédiée n'est pas ré-enveloppé) ; ÉCHEC FERMÉ : valeur « inconnue », chaîne vide ou false — jamais un résultat
+// partiel (NOMEM, NESTED, GUARD, MARGIN). Les appels faits PAR une transaction PodNet (WiFiSSLClient dans podNetRun) restent sur la pile réseau.
+#define POD_WIFI_UNKNOWN 0xFEu                         // état Wi-Fi inconnu (appel en échec) : ni WL_CONNECTED ni WL_NO_MODULE
+static void __attribute__((noinline)) wifiFailed(const char* what, const PodNetInfo& ni) {   // attribut : le générateur de prototypes de l IDE placerait sinon le prototype AVANT la définition de PodNetInfo
+  if (ni.err == POD_NET_GUARD) logfSafeStop();             // garde écrasée : le voisin au tas est corrompu — arrêt sûr silencieux, AVANT tout journal (logf alloue au tas)
+  logf("[WIFI] %s : pile Wi-Fi dédiée : %s (erreur %u, marge %u o) — résultat IGNORÉ", what, podNetWhy(ni), (unsigned)ni.err, (unsigned)ni.margin);
+}
+static uint8_t __attribute__((noinline)) wifiStatusT(const char* tag) {
+  uint8_t st = POD_WIFI_UNKNOWN; PodNetInfo ni; (void)tag;           // tag : seulement pour le relevé du canari
+  auto wx = [&]() { st = (uint8_t)WiFi.status(); };
+  const bool ran = podWifiRun(wx, &ni);
+#if POD_RENDER_V1 && POD_CANARY
+  podCanaryWifi(tag ? tag : "status", ni, ran, tag != nullptr);
+#endif
+  if (!ran) { wifiFailed("status", ni); return POD_WIFI_UNKNOWN; }
+  return st;
+}
+static uint8_t wifiStatus() { return wifiStatusT(nullptr); }
+static String __attribute__((noinline)) wifiFirmware() {
+  String fw; PodNetInfo ni;
+  auto wx = [&]() { fw = String(WiFi.firmwareVersion()); };
+  const bool ran = podWifiRun(wx, &ni);
+#if POD_RENDER_V1 && POD_CANARY
+  podCanaryWifi("firmwareVersion", ni, ran, true);
+#endif
+  if (!ran) { wifiFailed("firmwareVersion", ni); return String("?"); }
+  return fw;
+}
+static void __attribute__((noinline)) wifiBegin() {
+  PodNetInfo ni;
+  auto wx = [&]() { WiFi.begin(WIFI_SSID, WIFI_PASSWORD); };
+  const bool ran = podWifiRun(wx, &ni);
+#if POD_RENDER_V1 && POD_CANARY
+  podCanaryWifi("begin", ni, ran, true);
+#endif
+  if (!ran) wifiFailed("begin", ni);
+}
+static bool __attribute__((noinline)) wifiMac(uint8_t m[6]) {
+  PodNetInfo ni;
+  auto wx = [&]() { WiFi.macAddress(m); };
+  const bool ran = podWifiRun(wx, &ni);
+#if POD_RENDER_V1 && POD_CANARY
+  podCanaryWifi("macAddress", ni, ran, true);
+#endif
+  if (!ran) { memset(m, 0, 6); wifiFailed("macAddress", ni); return false; }
+  return true;
+}
+static bool __attribute__((noinline)) wifiRssi(int32_t& rssi) {
+  PodNetInfo ni; int32_t r = 0;
+  auto wx = [&]() { r = (int32_t)WiFi.RSSI(); };
+  const bool ran = podWifiRun(wx, &ni);
+#if POD_RENDER_V1 && POD_CANARY
+  podCanaryWifi("RSSI", ni, ran, true);
+#endif
+  if (!ran) { rssi = 0; wifiFailed("RSSI", ni); return false; }
+  rssi = r;
+  return true;
+}
+static String __attribute__((noinline)) wifiIpString() {
+  String ip; PodNetInfo ni;                  // la chaîne « a.b.c.d » est formée SUR la pile dédiée (IPAddress::toString → sniprintf : jamais sur la pile principale)
+  auto wx = [&]() { ip = WiFi.localIP().toString(); };
+  const bool ran = podWifiRun(wx, &ni);
+#if POD_RENDER_V1 && POD_CANARY
+  podCanaryWifi("localIP", ni, ran, true);
+#endif
+  if (!ran) { wifiFailed("localIP", ni); return String("?"); }
+  return ip;
+}
+
+// ─── Clés Ed25519 ──────────────────────────────────────────────────────────
+// Entropie : bruit des entrées analogiques flottantes + gigue d'horloge + MAC + RSSI, condensés par SHA-256.
+// (Même niveau que les firmwares ESP : suffisant pour identifier un écran, PAS un générateur certifié.)
+static bool gatherEntropy(uint8_t out[32]) {
+  SHA256 h; h.reset();
+  uint8_t mac[6] = {0}; int32_t rssi = 0;
+  if (!wifiMac(mac) || !wifiRssi(rssi)) { memset(out, 0, 32); return false; }   // NETSTACK-WIFI-CALLS-FIX1 : échec fermé — aucune entropie partielle
+  h.update(mac, 6);
+  h.update(&rssi, sizeof(rssi));
+  for (int i = 0; i < 384; i++) {
+    const uint16_t v = (uint16_t)analogRead(A0 + (i % 6));
+    const uint32_t m = micros();
+    h.update(&v, sizeof(v)); h.update(&m, sizeof(m));
+    delayMicroseconds(29 + (v & 15));
+  }
+  h.finalize(out, 32);
+  return true;
+}
+static void generateKeys() {
+  logf("[KEYS] Génération de la paire Ed25519...");
+  if (!gatherEntropy(privateKey)) { logf("[KEYS] génération ANNULÉE : module Wi-Fi indisponible (pile dédiée) — aucune clé enregistrée"); memset(privateKey, 0, 32); return; }
+  if (!PodEd::derivePublicKey(publicKey, privateKey)) { logf("[KEYS] génération ANNULÉE : calcul Ed25519 impossible (pile dédiée) — aucune clé enregistrée"); memset(privateKey, 0, 32); return; }   // POD_ED_STACK
+  keysLoaded = true;
+  saveKeysToEEPROM();
+  logf("[KEYS] PubKey: %s", bytesToHex(publicKey, 32).c_str());
+}
+static String signED25519(const String& candidateId, float score) {
+  const int m = (int)(score * 1000.0f + 0.5f);     // « 0.543 » : 3 décimales, comme toFixed(3) côté serveur
+  char scoreStr[12]; snprintf(scoreStr, sizeof(scoreStr), "%d.%03d", m / 1000, m % 1000);
+  const String message = deviceId + ":" + candidateId + ":" + scoreStr;
+  uint8_t sig[64];
+  if (!PodEd::sign(sig, privateKey, publicKey, (const uint8_t*)message.c_str(), message.length())) { logf("[VOTE] signature impossible (pile Ed25519 dédiée) — vote NON envoyé"); return String(); }   // POD_ED_STACK
+  return bytesToHex(sig, 64);
+}
+
+// ─── HTTP (WiFiSSLClient + pod_http.h) ─────────────────────────────────────
+#if POD_RENDER_V1 && POD_CANARY
+// PULLFRAME-PHASE-AUDIT4 (canari seulement) : le journal en flash d'AUDIT3 a LOCALISÉ le blocage sur 2 démarrages consécutifs : dernière phase 9 (client.print est revenu), la phase 10 (retour de readHeaders) n'est jamais écrite.
+// Il reste à savoir QUEL appel ne rend pas la main (read, connected, une boucle, ou l'écriture flash de la phase 10 elle-même). Trois ajouts, tous bornés et sans effet sur le téléchargement :
+// (1) client TLS « espion » (FfSSL, dérivé du vrai client ; le nom WiFiSSLClient lui est redirigé plus bas) : entre la marque 9 et la marque 10 SEULEMENT, il inscrit en flash l'entrée et la sortie des premiers appels de read() et connected() (appels 1 à 3 puis les puissances de 2),
+//     avec le temps écoulé (unités de 8 ms) et un événement par seconde écoulée ; au plus 64 événements de 2 octets. Un appel qui ne revient pas laisse une entrée sans sortie.
+// (2) cinq LED de la matrice de la carte, pilotées EN STATIQUE (aucun minuteur, aucune interruption, aucune broche d'en-tête : D13 est aussi l'horloge SPI de l'e-ink) : F = écriture flash en cours, R = dans read(), C = dans connected(), A = trace active, H = readHeaders est revenue (allumée AVANT l'écriture de la phase 10).
+//     Elles restent allumées si le firmware se fige : c'est le témoin indépendant de la flash. Test séquentiel au démarrage.
+// (3) lecture du journal au démarrage suivant : phases et événements.
+// Format : octet de phase = (n << 4) | (~n & 0x0F) ; octet d'événement = (id << 4) | ((id ^ 0x0A) & 0x0F) SUIVI d'un octet de temps (0..254) ; 0xBD = pile principale détruite ; 0xFF = vierge. Bloc 7 de la flash de données, ajout seul, un effacement par démarrage au plus (aucun si le journal précédent est vide).
+// g_podFfPhase = 0 : traçage inactif ; g_podFfPos = 0 : journal non armé. ⚠ Le cœur R4 (SerialUSB::write) BOUCLE SANS LIMITE quand le tampon USB est plein : n'écrire que si la place existe.
+static volatile uint8_t g_podFfPhase = 0;
+static volatile uint16_t g_podFfPos = 0;
+static volatile uint32_t g_podFfT0 = 0;
+static volatile uint8_t g_podFfNR = 0;
+static volatile uint8_t g_podFfNC = 0;
+static volatile uint8_t g_podFfNE = 0;
+static volatile uint8_t g_podFfTk = 0;
+static volatile uint8_t g_podFfLed = 0;
+#define POD_FFL_BASE 0x1C00u
+#define POD_FFL_SIZE 0x400u
+#define POD_FFL_HDR 8u
+#define POD_FF_EVMAX 64u
+static const uint8_t kFfCath[5] = { 3, 4, 8, 0, 6 };
+static uint8_t podFfEntry(uint8_t n) { return (uint8_t)((n << 4) | ((~n) & 0x0F)); }
+static bool podFfEntryOk(uint8_t b) { return (uint8_t)(b >> 4) == (uint8_t)((~b) & 0x0F); }
+static bool podFfIsEv(uint8_t b) { return (uint8_t)((b >> 4) ^ (b & 0x0F)) == 0x0A && (b >> 4) < 7; }
+static char podFfEvChar(uint8_t id) { static const char t[8] = "RDZCKXT"; return id < 7 ? t[id] : '?'; }
+static char podFfGlyph(uint8_t b) {
+  if (b == 0xBD) return '!';
+  if (!podFfEntryOk(b)) return '?';
+  const uint8_t n = (uint8_t)(b >> 4);
+  return (char)(n < 10 ? '0' + n : 'a' + (n - 10));
+}
+static uint8_t podFfPutNum(char* o, uint8_t v) {
+  uint8_t k = 0;
+  if (v >= 100) o[k++] = (char)('0' + v / 100);
+  if (v >= 10) o[k++] = (char)('0' + (v / 10) % 10);
+  o[k++] = (char)('0' + v % 10);
+  return k;
+}
+static void podFfWait(unsigned long ms) { const unsigned long t = millis(); while (millis() - t < ms) { } }
+static void __attribute__((noinline)) podFfLedSet(uint8_t m) {
+  g_podFfLed = m;
+  R_PORT0->PCNTR1 &= ~((uint32_t)((1 << 3) | (1 << 4) | (1 << 11) | (1 << 12) | (1 << 13) | (1 << 15)));
+  R_PORT2->PCNTR1 &= ~((uint32_t)((1 << 4) | (1 << 5) | (1 << 6) | (1 << 12) | (1 << 13)));
+  if (m == 0) return;
+  const bsp_io_port_pin_t a = g_pin_cfg[28 + 7].pin;
+  R_PFS->PORT[a >> 8].PIN[a & 0xFF].PmnPFS = IOPORT_CFG_PORT_DIRECTION_OUTPUT | IOPORT_CFG_PORT_OUTPUT_HIGH;
+  for (uint8_t i = 0; i < 5; i++) {
+    if (m & (1u << i)) {
+      const bsp_io_port_pin_t c = g_pin_cfg[28 + kFfCath[i]].pin;
+      R_PFS->PORT[c >> 8].PIN[c & 0xFF].PmnPFS = IOPORT_CFG_PORT_DIRECTION_OUTPUT | IOPORT_CFG_PORT_OUTPUT_LOW;
+    }
+  }
+}
+static void podFfLedOn(uint8_t bit) { podFfLedSet((uint8_t)(g_podFfLed | (1u << bit))); }
+static void podFfLedOff(uint8_t bit) { podFfLedSet((uint8_t)(g_podFfLed & ~(1u << bit))); }
+static void __attribute__((noinline)) podFfAppend(uint8_t e) {
+  const uint16_t p = g_podFfPos;
+  if (p < POD_FFL_HDR || p >= POD_FFL_SIZE) return;
+  podFfLedOn(0);
+  const int rc = DataFlashBlockDevice::getInstance().program(&e, POD_FFL_BASE + p, 1);
+  podFfLedOff(0);
+  if (rc == 0) g_podFfPos = (uint16_t)(p + 1); else g_podFfPos = POD_FFL_SIZE;
+}
+static void __attribute__((noinline)) podFfNote(uint8_t n) {
+  g_podFfPhase = n;
+  if (n == 1) podFfLedSet(1u << 3);
+  if (n == 9) { g_podFfT0 = millis(); g_podFfNR = 0; g_podFfNC = 0; g_podFfNE = 0; g_podFfTk = 0; }
+  if (n == 10) podFfLedOn(4);
+  podFfAppend(podFfEntry(n));
+  if (*(volatile uint32_t*)&__StackLimit != 0x434E5259UL || *((volatile uint32_t*)&__StackLimit + 1) != g_podPaintLen) podFfAppend(0xBD);
+  if (n >= 4 && n <= 14 && Serial.availableForWrite() >= 1) Serial.write((uint8_t)('A' + n - 1));
+  if (n == 15) podFfLedSet(0);
+}
+static bool __attribute__((noinline)) podFfPick(uint8_t k) { return k <= 3 || (k & (uint8_t)(k - 1)) == 0; }
+static void __attribute__((noinline)) podFfEv(uint8_t id) {
+  if (g_podFfNE >= POD_FF_EVMAX) return;
+  g_podFfNE = (uint8_t)(g_podFfNE + 1);
+  const uint32_t d = millis() - g_podFfT0;
+  const uint32_t u = id == 6 ? d / 1000UL : d >> 3;
+  podFfAppend((uint8_t)((id << 4) | ((id ^ 0x0A) & 0x0F)));
+  podFfAppend((uint8_t)(u > 254UL ? 254UL : u));
+}
+static void __attribute__((noinline)) podFfTick() {
+  const uint32_t s = (millis() - g_podFfT0) / 1000UL;
+  if (s > g_podFfTk) { g_podFfTk = (uint8_t)(s > 250UL ? 250UL : s); podFfEv(6); }
+}
+struct FfSSL : public WiFiSSLClient {
+  using WiFiSSLClient::read;
+  int read(uint8_t* b, size_t n) override {
+    if (g_podFfPhase != 9) return WiFiSSLClient::read(b, n);
+    if (g_podFfNR < 255) g_podFfNR = (uint8_t)(g_podFfNR + 1);
+    const bool ev = podFfPick(g_podFfNR);
+    podFfTick();
+    if (ev) podFfEv(0);
+    podFfLedOn(1);
+    const int r = WiFiSSLClient::read(b, n);
+    podFfLedOff(1);
+    if (ev) podFfEv(r > 0 ? 1 : 2);
+    return r;
+  }
+  uint8_t connected() override {
+    if (g_podFfPhase != 9) return WiFiSSLClient::connected();
+    if (g_podFfNC < 255) g_podFfNC = (uint8_t)(g_podFfNC + 1);
+    const bool ev = podFfPick(g_podFfNC);
+    podFfTick();
+    if (ev) podFfEv(3);
+    podFfLedOn(2);
+    const uint8_t r = WiFiSSLClient::connected();
+    podFfLedOff(2);
+    if (ev) podFfEv(r ? 4 : 5);
+    return r;
+  }
+};
+#define WiFiSSLClient FfSSL
+static const char* podFfName(uint8_t n) {
+  static const char* const t[] = { "aucune (avant la premiere marque)", "avant doFetchFrame (doPull)", "entree de doFetchFrame", "avant podNetRun", "entree de la transaction (pile reseau)", "client TLS construit", "avant client.connect", "apres client.connect",
+    "requete construite (avant print)", "apres client.print", "apres les en-tetes", "plan noir lu", "plan rouge lu", "avant stop", "apres stop", "retour de podNetRun" };
+  return n < 16 ? t[n] : "?";
+}
+static void __attribute__((noinline)) podFfBoot() {
+  logf("[CANARY] BUILD PULLFRAME-PHASE-AUDIT4 | base 2cdfe54 | journal flash bloc 7 (0x%04x) + evenements du client TLS + LED de la matrice | compile %s %s", (unsigned)POD_FFL_BASE, __DATE__, __TIME__);
+  DataFlashBlockDevice& df = DataFlashBlockDevice::getInstance();
+  uint8_t h[POD_FFL_HDR] = { 0 };
+  df.read(h, POD_FFL_BASE, POD_FFL_HDR);
+  const bool hdrOk = h[0] == 'F' && h[1] == 'F' && h[2] == 'L' && h[3] == '3' && (uint8_t)(h[4] ^ h[5]) == 0xFF;
+  uint16_t n = 0;
+  uint8_t lastPh = 0xFF;
+  char ring[16] = { 0 };
+  uint8_t rt[16] = { 0 };
+  if (hdrOk) {
+    uint8_t c[16];
+    bool end = false, wantT = false;
+    for (uint16_t off = POD_FFL_HDR; off < POD_FFL_SIZE && !end; off = (uint16_t)(off + 16)) {
+      const uint16_t len = (uint16_t)(POD_FFL_SIZE - off < 16 ? POD_FFL_SIZE - off : 16);
+      df.read(c, POD_FFL_BASE + off, len);
+      for (uint16_t i = 0; i < len; i++) {
+        const uint8_t b = c[i];
+        if (b == 0xFF) { end = true; break; }
+        if (wantT) { rt[(uint16_t)(n - 1) % 16] = b; wantT = false; continue; }
+        rt[n % 16] = 0xFF;
+        if (podFfIsEv(b)) { ring[n % 16] = podFfEvChar((uint8_t)(b >> 4)); wantT = true; }
+        else { ring[n % 16] = podFfGlyph(b); if (podFfEntryOk(b)) lastPh = (uint8_t)(b >> 4); }
+        n++;
+      }
+    }
+  }
+  char seq[96];
+  uint8_t k = 0;
+  const uint16_t m = n < 16 ? n : 16;
+  for (uint16_t i = 0; i < m && k < 88; i++) {
+    const uint16_t j = (uint16_t)(n - m + i) % 16;
+    if (ring[j] >= 'A' && ring[j] <= 'Z') { seq[k++] = ' '; seq[k++] = ring[j]; if (rt[j] != 0xFF) k = (uint8_t)(k + podFfPutNum(seq + k, rt[j])); }
+    else seq[k++] = ring[j];
+  }
+  seq[k] = 0;
+  if (!hdrOk) logf("[CANARY] FFLOG demarrage precedent : AUCUN journal valide (premier lancement de ce canari, bloc 7 vierge ou illisible)");
+  else if (lastPh == 0xFF || lastPh == 0) logf("[CANARY] FFLOG demarrage precedent : gen=%u, AUCUNE phase atteinte (jamais la marque 1) ; elements=%u", (unsigned)h[4], (unsigned)n);
+  else logf("[CANARY] FFLOG demarrage precedent : gen=%u ; %u elements ; DERNIERE PHASE %u (%s)", (unsigned)h[4], (unsigned)n, (unsigned)lastPh, podFfName(lastPh));
+  if (hdrOk && n > 1) {
+    logf("[CANARY] FFLOG sequence (%u derniers elements) : %s", (unsigned)m, seq);
+    logf("[CANARY] FFLOG legende : phases 0=armement 1-9 a-f=10-15 ; !=pile detruite ?=octet invalide ; R,D,Z=read entree,sortie avec donnees,sortie 0 ; C,K,X=connected entree,vrai,faux ; T<n>=n s ; autre nombre=temps x8 ms");
+  }
+  uint16_t pos = POD_FFL_HDR;
+  uint8_t gen = 1;
+  int rc = 0;
+  if (hdrOk && (n == 0 || (n == 1 && lastPh == 0))) { pos = (uint16_t)(POD_FFL_HDR + n); gen = h[4]; }
+  else {
+    gen = hdrOk ? (uint8_t)(h[4] + 1) : (uint8_t)1;
+    rc = df.erase(POD_FFL_BASE, POD_FFL_SIZE);
+    if (rc == 0) { const uint8_t nh[6] = { 'F', 'F', 'L', '3', gen, (uint8_t)~gen }; rc = df.program(nh, POD_FFL_BASE, 6); }
+  }
+  if (rc == 0 && pos == POD_FFL_HDR) { const uint8_t e0 = podFfEntry(0); rc = df.program(&e0, POD_FFL_BASE + pos, 1); if (rc == 0) pos++; }
+  uint8_t rb = 0xFF;
+  df.read(&rb, POD_FFL_BASE + pos - 1, 1);
+  const bool back = rc == 0 && rb == podFfEntry(0);
+  g_podFfPos = back ? pos : (uint16_t)POD_FFL_SIZE;
+  const bool tok = Serial.availableForWrite() >= 1;
+  if (tok) Serial.write((uint8_t)'Z');
+  logf("[CANARY] FFLOG %s : gen=%u ; ecriture + relecture %s (code flash %d) ; prochaine ecriture a l'octet %u ; jeton serie Z %s", back ? "arme" : "DESACTIVE", (unsigned)gen, back ? "OK" : "ECHEC", rc, (unsigned)g_podFfPos, tok ? "ecrit" : "perdu (tampon USB plein)");
+  logf("[CANARY] FFLOG usure : au plus UN effacement par demarrage (aucun si le journal precedent est vide), au plus %u octets programmes par demarrage, evenements du client TLS : %u au plus", (unsigned)(POD_FFL_SIZE - POD_FFL_HDR), (unsigned)POD_FF_EVMAX);
+  logf("[CANARY] FFLED test : 5 LED de la matrice allumees une a une (F ecriture flash, R dans read, C dans connected, A trace active, H en-tetes lus), 0,25 s chacune");
+  for (uint8_t i = 0; i < 5; i++) { podFfLedSet((uint8_t)(1u << i)); podFfWait(250UL); }
+  podFfLedSet(0);
+}
+#define POD_FF_MARK(n, txt) do { if (g_podFfPhase != 0) podFfNote((n)); } while (0)
+#define POD_FF_START(txt) do { g_podFfPhase = 1; POD_FF_MARK(1, txt); } while (0)
+#define POD_FF_STOP() do { g_podFfPhase = 0; } while (0)
+#endif
+struct Conn {
+  WiFiSSLClient client;
+  podhttp::Reader<WiFiSSLClient> rd;
+  explicit Conn(uint32_t timeoutMs) : rd(client, timeoutMs) {}
+  /** Connecte, envoie la requête, lit les en-têtes. Retourne le code HTTP, -2 = connexion TLS impossible, -1 = réponse illisible. */
+  int request(const char* method, const String& path, const String* body) {
+#if POD_RENDER_V1 && POD_CANARY
+    POD_FF_MARK(6, "avant client.connect");
+#endif
+    if (!client.connect(SERVER_HOST, 443)) return -2;
+#if POD_RENDER_V1 && POD_CANARY
+    POD_FF_MARK(7, "apres client.connect : connecte");
+#endif
+    String req = String(method) + " " + path + " HTTP/1.1\r\nHost: " SERVER_HOST "\r\nUser-Agent: pod-r4/" FIRMWARE_VERSION "\r\nAccept: */*\r\nConnection: close\r\n";
+    if (body) req += "Content-Type: application/json\r\nContent-Length: " + String(body->length()) + "\r\n";
+    req += "\r\n";
+    if (body) req += *body;
+#if POD_RENDER_V1 && POD_CANARY
+    POD_FF_MARK(8, "requete construite, avant client.print");
+#endif
+    client.print(req);
+#if POD_RENDER_V1 && POD_CANARY
+    POD_FF_MARK(9, "apres client.print, avant la lecture des en-tetes");
+#endif
+#if POD_RENDER_V1 && POD_CANARY
+    { const int rcHdr = rd.readHeaders(); POD_FF_MARK(10, "apres la lecture des en-tetes"); return rcHdr; }
+#endif
+    return rd.readHeaders();
+  }
+};
+
+/** POD_NET_STACK : la transaction TLS COMPLÈTE (connect, requête, en-têtes, corps, stop) dans une fonction à part (noinline) : sa fermeture, son PodNetInfo et son cadre ont DISPARU avant le journal et le traitement
+ *  de la réponse. Résultats dans les variables de l'APPELANT ; client.stop() est TOUJOURS appelé, même si request() échoue après l'ouverture du client. */
+static bool __attribute__((noinline)) netHttpRaw(const char* method, const String& path, const String* body, int& code, bool& complete, PodNetInfo& ni) {
+  auto tx = [&]() {
+    Conn c(HTTP_TIMEOUT_MS);
+    code = c.request(method, path, body);
+    if (code >= 0) { size_t len = 0; complete = c.rd.readBodyString(g_body, sizeof(g_body), &len); }
+    c.client.stop();
+  };
+  return podNetRun(tx, &ni);
+}
+
+/** Appel JSON : retourne le code HTTP (>0) et le corps dans resp ; <0 = échec réseau/lecture/corps incomplet ; -4 = pile dédiée indisponible, transaction NON exécutée ; -5 = transaction EXÉCUTÉE mais résultat local REJETÉ (garde/marge). */
+static int httpCall(const char* method, const String& path, const String* body, String& resp) {
+  resp = "";
+  int code = -4; bool complete = false; PodNetInfo ni;
+  const bool ran = netHttpRaw(method, path, body, code, complete, ni);
+#if POD_RENDER_V1 && POD_CANARY
+  podCanaryPhase(ni.pad[0]);
+#endif
+#if POD_RENDER_V1 && POD_CANARY
+  podCanaryCheck("  A: apres la transaction (silencieux)", false);
+#endif
+#if POD_RENDER_V1 && POD_CANARY
+  podCanaryNet("http", ni, ran);
+#endif
+#if POD_RENDER_V1 && POD_CANARY
+  podCanaryCheck("  B: apres le rapport PodNet (silencieux)", false);
+#endif
+  if (!ran) { logf("[HTTP %s] pile réseau dédiée : %s (erreur %u, marge %u o)%s", method, podNetWhy(ni), (unsigned)ni.err, (unsigned)ni.margin, podNetExecuted(ni) ? " — la requête a PU atteindre le serveur (POST, vote ou ACK possibles)" : ""); return podNetExecuted(ni) ? -5 : -4; }
+  logf("[HTTP %s] %s -> %d", method, path.length() > 60 ? (path.substring(0, 60) + "...").c_str() : path.c_str(), code);
+#if POD_RENDER_V1 && POD_CANARY
+  podCanaryCheck("  C: apres le journal HTTP (silencieux)", false);
+#endif
+  if (code < 0) { if (code == -2) logf("[HTTP] connexion TLS impossible (voir l'en-tête du sketch)"); return code; }
+  if (!complete) { logf("[HTTP] corps incomplet ou > %u octets", (unsigned)sizeof(g_body) - 1); return -3; }
+  resp = String(g_body);
+  return code;
+}
+
+// ─── DESSIN dans les plans e-ink ───────────────────────────────────────────
+// Repère = celui de l'IMAGE du serveur (lib/canvasToScreen.ts, eink29bwr) : x 0..295 vers la droite, y 0..127 vers le bas.
+//   bufRow = x          bufCol = 127 - y          octet = bufRow*16 + bufCol/8          bit = 7 - bufCol%8
+// Un bit à 0 = pixel actif (noir dans blackBuf, rouge dans redBuf).
+static inline void setPix(uint8_t* buf, int x, int y) {
+  if ((unsigned)x >= IMG_W || (unsigned)y >= IMG_H) return;
+  const int bufCol = (IMG_H - 1) - y;
+  buf[x * EPD_BYTES_PER_ROW + (bufCol >> 3)] &= (uint8_t)~(0x80 >> (bufCol & 7));
+}
+static inline void clearPix(uint8_t* buf, int x, int y) {
+  if ((unsigned)x >= IMG_W || (unsigned)y >= IMG_H) return;
+  const int bufCol = (IMG_H - 1) - y;
+  buf[x * EPD_BYTES_PER_ROW + (bufCol >> 3)] |= (uint8_t)(0x80 >> (bufCol & 7));
+}
+static void clearBothPlanes() { memset(blackBuf, 0xFF, BUF_SIZE); memset(redBuf, 0xFF, BUF_SIZE); }
+/** Lignes y0..y1 de l'image remises à blanc (noir ET rouge). */
+#if !POD_RENDER_V1   // utilisé seulement par burnCartel
+static void whiteRows(int y0, int y1) {
+  for (int x = 0; x < IMG_W; x++) for (int y = y0; y <= y1; y++) { clearPix(blackBuf, x, y); clearPix(redBuf, x, y); }
+}
+#endif
+static void hLine(uint8_t* buf, int y, int x0 = 0, int x1 = IMG_W - 1) { for (int x = x0; x <= x1; x++) setPix(buf, x, y); }
+
+// Police 5×7 : une colonne = un octet, bit 0 = ligne du HAUT (police classique). Chiffres, A-Z, « : . - / # », espace.
+static const uint8_t FONT_5x7[][5] = {
+  {0x3E,0x51,0x49,0x45,0x3E},{0x00,0x42,0x7F,0x40,0x00},{0x42,0x61,0x51,0x49,0x46},
+  {0x21,0x41,0x45,0x4B,0x31},{0x18,0x14,0x12,0x7F,0x10},{0x27,0x45,0x45,0x45,0x39},
+  {0x3C,0x4A,0x49,0x49,0x30},{0x01,0x71,0x09,0x05,0x03},{0x36,0x49,0x49,0x49,0x36},
+  {0x06,0x49,0x49,0x29,0x1E},{0x7C,0x12,0x11,0x12,0x7C},{0x7F,0x49,0x49,0x49,0x36},
+  {0x3E,0x41,0x41,0x41,0x22},{0x7F,0x41,0x41,0x22,0x1C},{0x7F,0x49,0x49,0x49,0x41},
+  {0x7F,0x09,0x09,0x09,0x01},{0x3E,0x41,0x49,0x49,0x7A},{0x7F,0x08,0x08,0x08,0x7F},
+  {0x00,0x41,0x7F,0x41,0x00},{0x20,0x40,0x41,0x3F,0x01},{0x7F,0x08,0x14,0x22,0x41},
+  {0x7F,0x40,0x40,0x40,0x40},{0x7F,0x02,0x0C,0x02,0x7F},{0x7F,0x04,0x08,0x10,0x7F},
+  {0x3E,0x41,0x41,0x41,0x3E},{0x7F,0x09,0x09,0x09,0x06},{0x3E,0x41,0x51,0x21,0x5E},
+  {0x7F,0x09,0x19,0x29,0x46},{0x46,0x49,0x49,0x49,0x31},{0x01,0x01,0x7F,0x01,0x01},
+  {0x3F,0x40,0x40,0x40,0x3F},{0x1F,0x20,0x40,0x20,0x1F},{0x3F,0x40,0x38,0x40,0x3F},
+  {0x63,0x14,0x08,0x14,0x63},{0x07,0x08,0x70,0x08,0x07},{0x61,0x51,0x49,0x45,0x43},
+  {0x00,0x36,0x36,0x00,0x00},{0x00,0x60,0x60,0x00,0x00},{0x08,0x08,0x08,0x08,0x08},
+  {0x02,0x01,0x02,0x04,0x02},{0x00,0x00,0x00,0x00,0x00},{0x14,0x7F,0x14,0x7F,0x14},
+};
+static int charIndex(char c) {
+  if (c >= '0' && c <= '9') return c - '0';
+  if (c >= 'A' && c <= 'Z') return c - 'A' + 10;
+  if (c >= 'a' && c <= 'z') return c - 'a' + 10;     // minuscules rendues en majuscules
+  if (c == ':') return 36; if (c == '.') return 37;
+  if (c == '-') return 38; if (c == '/') return 39;
+  if (c == '#') return 41;
+  return 40;                                          // espace / inconnu
+}
+static void drawChar(uint8_t* buf, int x, int y, char c, int scale) {
+  const int idx = charIndex(c);
+  for (int col = 0; col < 5; col++) {
+    const uint8_t bits = FONT_5x7[idx][col];
+    for (int row = 0; row < 7; row++) {
+      if (!(bits & (1 << row))) continue;
+      for (int dy = 0; dy < scale; dy++) for (int dx = 0; dx < scale; dx++) setPix(buf, x + col * scale + dx, y + row * scale + dy);
+    }
+  }
+}
+static void drawText(uint8_t* buf, int x, int y, const String& text, int scale = 1) {
+  for (unsigned i = 0; i < text.length(); i++) { drawChar(buf, x, y, text[i], scale); x += 6 * scale; }
+}
+static int textWidth(const String& t, int scale = 1) { return (int)t.length() * 6 * scale; }
+static int centerX(const String& t, int scale = 1) { const int w = (IMG_W - textWidth(t, scale)) / 2; return w < 0 ? 0 : w; }
+
+#if !POD_RENDER_V1   // le cartel gravé en place n'existe pas avec le rendu v1 (cartel calculé par le noyau)
+/** Cartel PAR-DESSUS l'œuvre : bande haute (date · #bloc), bande basse (artiste - titre), 13 px chacune, texte noir sur blanc. */
+static void burnCartel(const String& workTitle, const String& artistName, const String& ts, int blockIndex) {
+  const int BAND = 13;
+  whiteRows(0, BAND - 1);
+  hLine(blackBuf, BAND);
+  String top = ts.length() > 0 ? asciiFold(ts) : String("PROOF-OF-DRAW");
+  if (blockIndex >= 0) top += " #" + String(blockIndex);
+  top.toUpperCase();
+  while (top.length() > 0 && textWidth(top) > IMG_W - 4) top.remove(top.length() - 1);
+  drawText(blackBuf, centerX(top), 3, top);
+
+  const int sep = IMG_H - BAND - 1;                  // 114
+  whiteRows(sep + 1, IMG_H - 1);
+  hLine(blackBuf, sep);
+  const String t = asciiFold(workTitle), a = asciiFold(artistName);
+  String bot = (a.length() && t.length()) ? a + " - " + t : (a.length() ? a : t);
+  if (bot.length() == 0) bot = "Proof-of-Draw";
+  bot.toUpperCase();
+  while (bot.length() > 0 && textWidth(bot) > IMG_W - 4) bot.remove(bot.length() - 1);
+  drawText(blackBuf, centerX(bot), sep + 3, bot);
+}
+
+#endif
+
+// ─── Écran e-ink ───────────────────────────────────────────────────────────
+static void waitMinRefreshGap() {
+  if (!hasRefreshed) return;
+  const unsigned long elapsed = millis() - lastRefreshMs;
+  if (elapsed < EINK_MIN_REFRESH_MS) { logf("[EINK] attente %lu ms (écart minimal entre rafraîchissements)", EINK_MIN_REFRESH_MS - elapsed); delay(EINK_MIN_REFRESH_MS - elapsed); }
+}
+/** Réveille, envoie blackBuf/redBuf (ou page blanche), met en veille. true = rafraîchissement terminé. */
+static bool refreshPanel(bool white) {
+  waitMinRefreshGap();
+  const unsigned long t0 = millis();
+  if (!epd.init()) { logf("[EINK] init échoué"); lastRefreshMs = millis(); hasRefreshed = true; return false; }
+  const bool ok = white ? epd.displayWhite() : epd.display(blackBuf, redBuf);
+  epd.sleep();
+  lastRefreshMs = millis(); hasRefreshed = true;
+  logf("[EINK] %s %s en %lu ms", white ? "page blanche" : "image", ok ? "affichée" : "ECHEC", millis() - t0);
+  return ok;
+}
+
+#if POD_RENDER_V1
+// ─── Rendu v1 en flux : calcul ET remise au pilote ───────────────────────────────────────────────────────────────────────────────────────────────
+// Mémoire (UNO R4, pile principale ≈ 1 Ko : AUCUN objet sur la pile, et AUCUNE nouvelle variable globale) : le renderer (PodEinkRenderer) et son hash (65 o) vivent dans g_podScratch[600], qui REMPLACE le tableau
+// `static uint8_t qrData[600]` de displayOnboardingQR (désormais une référence sur la MÊME zone) : le QR d'appairage et le rendu d'une image ne sont jamais vivants en même temps (appairage avant le premier pull de
+// frame ; chaque rendu reconstruit son objet par new placé — la zone contient peut-être un QR périmé). Bilan statique : 0 o de plus qu'avant (le chemin v1 ne consomme que ce que qrData consommait déjà).
+// Retour : 0 = échec AVANT la fin de la remise · 1 = TOUTES les données ET la commande de rafraîchissement ont été envoyées, mais la FIN PHYSIQUE du rafraîchissement n'est pas confirmée (BUSY expiré : l'image peut être affichée
+// ou en cours d'affichage) · 2 = remis et rafraîchissement confirmé. Seul 2 est un succès (sinon AUCUN ACK, le serveur réessaiera). ⚠ État de l'écran après un échec : NON garanti inchangé
+// — la page blanche CLEAR_BEFORE_IMAGE peut venir d'être affichée ; une production interrompue laisse la RAM du panneau partiellement écrite sans lancer le rafraîchissement.
+struct PodScratch { PodEinkRenderer<PodSha256Rw> r; char hex[65]; };
+static_assert(sizeof(PodScratch) <= 600, "PodScratch doit tenir dans g_podScratch (la zone de qrData)");
+alignas(PodScratch) static uint8_t g_podScratch[600];   // alignement GARANTI par le type (SHA256 de la bibliothèque Crypto : destructeur non trivial, alignement possible de 8 o)
+static uint32_t podRenderProduce(void* ctx, uint8_t* out, uint32_t cap) { return static_cast<PodEinkRenderer<PodSha256Rw>*>(ctx)->read(out, cap); }
+
+// ⚠ Paramètre `void*` et non `PodScratch*` : le préprocesseur Arduino génère les prototypes EN TÊTE de fichier, avant la déclaration de PodScratch.
+static uint8_t podRenderRun(void* scratch) {   // plusieurs sorties : l'objet est construit et DÉTRUIT par podRenderAndShow() (sortie unique)
+  PodScratch* S = static_cast<PodScratch*>(scratch);
+  const PodRenderSpec spec = pod_render_spec(POD_R_EINK29);
+  const PodRenderMeta meta = { (const uint8_t*)pendingDisplayTs.c_str(), (size_t)pendingDisplayTs.length(), (int32_t)currentBlockIndex,
+                               (const uint8_t*)pendingArtistName.c_str(), (size_t)pendingArtistName.length(), (const uint8_t*)pendingWorkTitle.c_str(), (size_t)pendingWorkTitle.length() };
+#if POD_RENDER_V1 && POD_CANARY
+  logf("[CANARY] meta ts=\"%.40s\" artist=\"%.60s\" title=\"%.60s\" bloc=%d mode=%u", pendingDisplayTs.c_str(), pendingArtistName.c_str(), pendingWorkTitle.c_str(), (int)currentBlockIndex, (unsigned)POD_RENDER_MODE_DEFAULT);
+#endif
+  if (!S->r.frameHash(spec, blackBuf, redBuf, BUF_SIZE, S->hex)) { logf("[RENDER] frameHash impossible — abandon"); return 0; }
+  logf("[RENDER] frameHash=%s", S->hex);
+  if (!S->r.begin(spec, POD_RENDER_MODE_DEFAULT, meta, blackBuf, redBuf, BUF_SIZE)) { logf("[RENDER] paramètres refusés — abandon"); return 0; }
+  waitMinRefreshGap();
+  const unsigned long t0 = millis();
+  if (!epd.init()) { logf("[RENDER] panneau non initialisé — abandon, aucune donnée envoyée (l'écran peut être resté blanc)"); lastRefreshMs = millis(); hasRefreshed = true; return 0; }
+  const int8_t sent = epd.displayStream(podRenderProduce, &S->r);
+  epd.sleep();
+  lastRefreshMs = millis(); hasRefreshed = true;
+  if (sent == -1) { logf("[RENDER] production interrompue — rafraîchissement NON lancé (RAM du panneau partiellement écrite ; l'écran garde son état physique, éventuellement blanc)"); return 0; }
+  if (!S->r.finish(S->hex)) { logf("[RENDER] renderHash incomplet — abandon"); return 0; }
+  if (sent != 0) { logf("[RENDER] rendu CALCULÉ (renderHash=%s), données ET commande de rafraîchissement ENVOYÉES, mais fin physique du rafraîchissement NON confirmée (BUSY expiré) — pas d'ACK", S->hex); return 1; }
+  logf("[RENDER] calculé ET remis au pilote en %lu ms — mode=%u renderHash=%s", millis() - t0, (unsigned)POD_RENDER_MODE_DEFAULT, S->hex);
+  return 2;
+}
+
+// Point d'entrée UNIQUE du rendu v1 : construit l'objet par new PLACÉ dans g_podScratch (aucune allocation dynamique), exécute, puis le DÉTRUIT explicitement — sur tous les chemins, car podRenderRun() est
+// la seule fonction qui a plusieurs sorties et ce wrapper n'en a qu'une. La zone est donc réellement libre (durée de vie terminée, SHA256::~SHA256() a effacé son état) avant toute réutilisation par le QR d'appairage.
+static uint8_t podRenderAndShow() {
+  PodScratch* S = new (g_podScratch) PodScratch();
+  const uint8_t code = podRenderRun(S);
+  S->~PodScratch();
+  return code;
+}
+#endif
+
+// ─── Onboarding ────────────────────────────────────────────────────────────
+static void displayKeyMaterialOnce() {
+  const String pubHex = bytesToHex(publicKey, 32), privHex = bytesToHex(privateKey, 32);
+  logf("[KEYS] PubKey: %s", pubHex.c_str());         // la clé privée n'est JAMAIS écrite au Serial
+  clearBothPlanes();
+  const String title = "PROOF-OF-DRAW KEYS";
+  drawText(blackBuf, centerX(title), 3, title);
+  hLine(blackBuf, 13, 10, IMG_W - 11);
+  drawText(blackBuf, 4, 20, "PUB:");
+  drawText(redBuf, 4, 66, "PRIV:");
+  for (int l = 0; l < 4; l++) {
+    drawText(blackBuf, 34, 20 + l * 10, pubHex.substring(l * 16, l * 16 + 16));
+    drawText(redBuf, 34, 66 + l * 10, privHex.substring(l * 16, l * 16 + 16));
+  }
+  hLine(blackBuf, 109, 10, IMG_W - 11);
+  const String w1 = "SAVE THESE KEYS NOW", w2 = "PRIVATE KEY SHOWN ONCE";
+  drawText(redBuf, centerX(w1), 112, w1);
+  drawText(redBuf, centerX(w2), 120, w2);
+  persistFrameId("");                                // l'œuvre précédente n'est plus à l'écran
+  lastFrameId = "";
+  refreshPanel(false);
+  logf("[KEYS] Clés affichées — 60 s pour les noter");
+  delay(60000UL);
+}
+
+static void displayOnboardingQR(const String& onboardUrl, const String& code, const String& mac) {
+  static QRCode qr;
+#if POD_RENDER_V1
+  uint8_t (&qrData)[600] = g_podScratch;             // zone PARTAGÉE avec le renderer (jamais vivants en même temps) : net 0 o de RAM statique — voir g_podScratch
+#else
+  static uint8_t qrData[600];                        // qrcode_getBufferSize(5) tient largement dedans (vérifié ci-dessous)
+#endif
+  if (qrcode_getBufferSize(5) > sizeof(qrData)) { logf("[QR] tampon trop petit"); return; }
+  memset(qrData, 0, sizeof(qrData));
+  int res = qrcode_initText(&qr, qrData, 4, ECC_MEDIUM, onboardUrl.c_str());
+  if (res < 0) res = qrcode_initText(&qr, qrData, 5, ECC_MEDIUM, onboardUrl.c_str());
+  if (res < 0) { logf("[QR] URL trop longue pour le QR"); return; }
+
+  clearBothPlanes();
+  const String title = "PROOF-OF-DRAW", sub = "SCAN TO PAIR";
+  String m = mac; m.replace(":", ""); m.toUpperCase();
+  const String macLine = "MAC:" + m, codeLine = "CODE:" + code;
+
+  const int quiet = 2, topPad = 4, sidePad = 6, bottomPad = 4, titleH = 16, infoH = 17, gap = 6;
+  const int total = qr.size + quiet * 2;
+  const int usableW = IMG_W - sidePad * 2;
+  const int usableH = IMG_H - topPad - titleH - gap - gap - infoH - bottomPad;
+  int scale = min(usableW / total, usableH / total); if (scale < 1) scale = 1;
+  const int qrPx = total * scale;
+  const int qrX0 = (IMG_W - qrPx) / 2, qrY0 = topPad + titleH + gap;
+  const int textY1 = qrY0 + qrPx + gap;
+
+  drawText(blackBuf, centerX(title), topPad, title);
+  drawText(blackBuf, centerX(sub), topPad + 9, sub);
+  for (int my = 0; my < qr.size; my++)
+    for (int mx = 0; mx < qr.size; mx++) {
+      if (!qrcode_getModule(&qr, mx, my)) continue;
+      for (int dy = 0; dy < scale; dy++) for (int dx = 0; dx < scale; dx++)
+        setPix(blackBuf, qrX0 + (mx + quiet) * scale + dx, qrY0 + (my + quiet) * scale + dy);
+    }
+  drawText(blackBuf, centerX(macLine), textY1, macLine);
+  drawText(redBuf, centerX(codeLine), textY1 + 10, codeLine);   // code d'appairage en rouge
+  persistFrameId("");
+  lastFrameId = "";
+  refreshPanel(false);
+}
+
+// ─── ACK / image ───────────────────────────────────────────────────────────
+static bool ackFrame(const String& frameId) {
+  if (frameId.length() == 0) return false;
+  const String body = "{\"deviceId\":\"" + deviceId + "\",\"frameId\":\"" + frameId + "\"}";
+  String resp;
+  const bool ok = httpCall("POST", "/api/ack-frame", &body, resp) == 200;
+  logf("[ACK] %s -> %s", frameId.c_str(), ok ? "OK" : "FAIL");
+  return ok;
+}
+
+static bool doFetchFrame(const String& frameId, const String& frameSource) {
+  const unsigned long t0 = millis();
+  bool got = false, noFrame = false;
+#if POD_RENDER_V1 && POD_CANARY
+  POD_FF_MARK(2, "entree de doFetchFrame");
+#endif
+  PodNetInfo ni;                                     // POD_NET_STACK : la transaction tourne sur la pile réseau dédiée
+  auto tx = [&]() {
+#if POD_RENDER_V1 && POD_CANARY
+    POD_FF_MARK(4, "transaction : entree sur la pile reseau dediee");
+#endif
+    Conn c(HTTP_TIMEOUT_MS);
+#if POD_RENDER_V1 && POD_CANARY
+    POD_FF_MARK(5, "connexion TLS construite (client cree), avant la requete");
+#endif
+    const int code = c.request("GET", "/api/pull-frame?deviceId=" + deviceId + "&screen=" SCREEN_TYPE "&fmt=bin", nullptr);
+    logf("[HTTP GET] /api/pull-frame -> %d (contenu %ld)", code, c.rd.contentLength());
+    if (code == 404) noFrame = true;
+    else if (code == 200 && (c.rd.contentLength() < 0 || c.rd.contentLength() == FRAME_BYTES)) {
+      // Lecture complète garantie par pod_http.h (boucle jusqu'au compte exact ou au timeout) : jamais d'image hachée
+      const size_t b = c.rd.readBody(blackBuf, BUF_SIZE);
+#if POD_RENDER_V1 && POD_CANARY
+      POD_FF_MARK(11, "plan noir lu");
+#endif
+      const size_t r = (b == BUF_SIZE) ? c.rd.readBody(redBuf, BUF_SIZE) : 0;
+#if POD_RENDER_V1 && POD_CANARY
+      POD_FF_MARK(12, "plan rouge lu");
+#endif
+      logf("[FRAME] lu noir=%u rouge=%u attendu=%u", (unsigned)b, (unsigned)r, (unsigned)BUF_SIZE);
+      got = (b == BUF_SIZE && r == BUF_SIZE);
+    } else if (code == 200) {
+      logf("[FRAME] taille annoncée %ld != %d (le serveur sert-il bien eink29bwr ?)", c.rd.contentLength(), FRAME_BYTES);
+    }
+#if POD_RENDER_V1 && POD_CANARY
+    POD_FF_MARK(13, "avant stop");
+#endif
+    c.client.stop();
+#if POD_RENDER_V1 && POD_CANARY
+    POD_FF_MARK(14, "apres stop");
+#endif
+  };
+#if POD_RENDER_V1 && POD_CANARY
+  POD_FF_MARK(3, "avant podNetRun (pile reseau dediee)");
+#endif
+  const bool ran = podNetRun(tx, &ni);
+#if POD_RENDER_V1 && POD_CANARY
+  POD_FF_MARK(15, "retour de podNetRun"); POD_FF_STOP();
+#endif
+#if POD_RENDER_V1 && POD_CANARY
+  podCanaryNet("pull-frame", ni, ran);
+#endif
+#if POD_RENDER_V1 && POD_CANARY
+  podCanaryCheck("  B (pull-frame): apres le rapport PodNet (silencieux)", false);
+#endif
+  if (!ran) { got = false; noFrame = false; logf("[FRAME] pile réseau dédiée : %s (erreur %u, marge %u o) — image NON présentée, pas d'ACK", podNetWhy(ni), (unsigned)ni.err, (unsigned)ni.margin); }
+  if (noFrame) { logf("[FRAME] pas de frame disponible"); return true; }
+  if (!got) { logf("[FRAME] image incomplète — pas d'ACK, nouvel essai au prochain pull"); return false; }
+
+#if !POD_RENDER_V1
+  burnCartel(pendingWorkTitle, pendingArtistName, pendingDisplayTs, currentBlockIndex);
+#endif
+
+  persistFrameId("");                                // pendant le rafraîchissement l'écran est dans un état incertain
+#if CLEAR_BEFORE_IMAGE
+  if (hasRefreshed || lastFrameId.length() > 0) refreshPanel(true);
+#endif
+#if POD_RENDER_V1
+  if (podRenderAndShow() != 2) { logf("[FRAME] affichage échoué — frame conservée côté serveur"); return false; }   // 2 = rendu calculé ET remis au pilote
+#else
+  if (!refreshPanel(false)) { logf("[FRAME] affichage échoué — frame conservée côté serveur"); return false; }
+#endif
+
+  lastFrameId = frameKey(frameId);
+  persistFrameId(frameId);
+  lastFrameWasConsensus = (frameSource == "consensus");
+  pendingCandidateId = "";
+  logf("[FRAME] OK en %lu ms (frameId=%s source=%s)", millis() - t0, frameId.c_str(), frameSource.c_str());
+#if POD_RENDER_V1 && POD_CANARY
+  podCanaryCheck("apres affichage", true);
+#endif
+  ackFrame(frameId);
+#if POD_RENDER_V1 && POD_CANARY
+  podCanaryCheck("apres ACK", true);
+#endif
+  return true;
+}
+
+// ─── OBS-CONFIRM ───────────────────────────────────────────────────────────
+static bool doObsConfirm() {
+  if (pendingObsHashes.length() == 0) return true;
+  String body = "{\"deviceId\":\"" + deviceId + "\",\"blockHashes\":" + pendingObsHashes;
+  if (pendingObsTarget.length() == 64) body += ",\"targetBlockHash\":\"" + pendingObsTarget + "\"";
+  body += "}";
+  String resp;
+  const bool ok = httpCall("POST", "/api/obs-confirm", &body, resp) == 200;
+  logf("[OBS-CONFIRM] ok=%d", ok);
+  pendingObsHashes = ""; pendingObsTarget = "";
+  return ok;
+}
+
+// ─── REGISTER ──────────────────────────────────────────────────────────────
+// NETSTACK-WIFI-CALLS-FIX1 : chiffre hexadécimal minuscule (MAC « aa:bb:cc:dd:ee:ff » dans un char[18], sans snprintf)
+static char macHexDigit(uint8_t v) { return (char)(v < 10 ? '0' + v : 'a' + (v - 10)); }
+// L'adresse MAC vient du module Wi-Fi (pile dédiée, wifiMac) ; échec → chaîne VIDE : doRegister n'inscrit pas.
+static String macString() {
+  uint8_t m[6] = {0};
+  if (!wifiMac(m)) return String();
+#if POD_RENDER_V1 && POD_CANARY
+  // NETSTACK-FIX3-R1 (canari seulement) : trois sous-phases SILENCIEUSES — lecture d'un mot (le marqueur) et d'un octet local, aucune E/S, aucune allocation de plus ; la PREMIÈRE sous-phase où le marqueur est
+  // détruit est inscrite dans le String retourné (« !n »), lue et rapportée par doRegister APRÈS le retour, sur la pile de journal : 1 juste après l'appel au module (désormais sur pile dédiée) · 2 après l'encodage hexadécimal · 3 après la construction du String.
+  uint8_t macPh = 0; if (*(volatile uint32_t*)&__StackLimit != 0x434E5259UL) macPh = 1;
+#endif
+  char b[18];
+  for (uint8_t i = 0; i < 6; i++) { b[3 * i] = macHexDigit(m[i] >> 4); b[3 * i + 1] = macHexDigit(m[i] & 15); b[3 * i + 2] = (i < 5) ? ':' : '\0'; }
+#if POD_RENDER_V1 && POD_CANARY
+  if (macPh == 0 && *(volatile uint32_t*)&__StackLimit != 0x434E5259UL) macPh = 2;
+#endif
+#if POD_RENDER_V1 && POD_CANARY
+  { String s(b); if (macPh == 0 && *(volatile uint32_t*)&__StackLimit != 0x434E5259UL) macPh = 3; if (macPh) { s.setCharAt(0, '!'); s.setCharAt(1, (char)('0' + macPh)); } return s; }
+#endif
+  return String(b);
+}
+
+// REGISTER-JSON-STACK-FIX1 : la réponse de /api/register est décodée sur la pile de TRAVAIL dédiée (podWorkRun, la même que celle du pull : 2 048 o au tas, garde 64 o, marge >= 128 o, échec fermé), APRÈS le retour
+// complet de httpCall (TLS fermé, jamais imbriquée avec PodNet). Canari c19efb8 (10/10/2026) : JsonDocument + deserializeJson + deviceId.as<String>() + pairCode.as<String>() exécutés sur la pile principale juste après
+// le retour HTTP portaient doRegister à 948 / 1 024 o (marge 76 o < 128 o, marqueur intact : arrêt préventif). Sortie : RegisterParsed, structure BORNÉE (28 o) allouée au TAS ; AUCUN changement de deviceId, pairCode, paired,
+// registered avant un résultat COMPLET et VALIDE. CONTRAT du serveur (lib/deviceStore.ts, lib/podProtocolV3.ts) : deviceId = « dev_ » + 8 caractères [A-Z0-9] ; pairCode = 8 caractères de l'alphabet
+// ABCDEFGHJKLMNPQRSTUVWXYZ23456789 (obligatoire si l'appareil n'est pas appairé, facultatif sinon) ; toute autre valeur (absente, trop courte, trop longue, caractère hors alphabet, type inattendu) est REFUSÉE — jamais tronquée.
+// paired absent ou non booléen => false (comme avant). Échec (NOMEM, NESTED, GUARD, MARGIN, JSON invalide, valeur refusée) : doRegister retourne false, rien n'est inscrit.
+#include <new>
+enum RegisterStatus : uint8_t { REG_P_NONE = 0, REG_P_OK = 1, REG_P_JSON = 2, REG_P_INVALID = 3 };
+struct RegisterParsed {
+  uint8_t status;                  // RegisterStatus : exploitable seulement pour REG_P_OK
+  bool paired;
+  const char* jsonErr;             // texte statique de DeserializationError (REG_P_JSON)
+  char deviceId[13];               // 12 caractères + NUL
+  char pairCode[9];                // 8 caractères + NUL, ou vide (appairé, code absent)
+  RegisterParsed() : status(REG_P_NONE), paired(false), jsonErr(nullptr) { deviceId[0] = 0; pairCode[0] = 0; }
+};
+static bool __attribute__((noinline)) regDeviceIdOk(const char* s) {
+  if (strlen(s) != 12 || s[0] != 'd' || s[1] != 'e' || s[2] != 'v' || s[3] != '_') return false;
+  for (uint8_t i = 4; i < 12; i++) if (!((s[i] >= 'A' && s[i] <= 'Z') || (s[i] >= '0' && s[i] <= '9'))) return false;
+  return true;
+}
+static bool __attribute__((noinline)) regPairCodeOk(const char* s) {
+  static const char* const ALPHA = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+  if (strlen(s) != 8) return false;
+  for (uint8_t i = 0; i < 8; i++) if (strchr(ALPHA, s[i]) == nullptr) return false;
+  return true;
+}
+// Exécutée SUR LA PILE DE TRAVAIL (voir registerParseOnWorkStack). Ne touche à AUCUN état global : tout va dans r.
+static void __attribute__((noinline)) registerParseWork(const String& resp, RegisterParsed& r) {
+  JSON_DOC(doc, 768);
+  const DeserializationError err = deserializeJson(doc, resp, DeserializationOption::NestingLimit(POD_WORK_JSON_NESTING));
+  if (err) { r.jsonErr = err.c_str(); r.status = REG_P_JSON; return; }
+  const char* id = doc["deviceId"] | "";
+  const char* pc = doc["pairCode"] | "";
+  const bool isPaired = doc["paired"] | false;
+  if (!regDeviceIdOk(id)) { r.status = REG_P_INVALID; return; }
+  if (pc[0] != '\0' ? !regPairCodeOk(pc) : !isPaired) { r.status = REG_P_INVALID; return; }
+  memcpy(r.deviceId, id, 12); r.deviceId[12] = '\0';
+  if (pc[0] != '\0') { memcpy(r.pairCode, pc, 8); r.pairCode[8] = '\0'; }
+  r.paired = isPaired;
+  r.status = REG_P_OK;
+}
+static bool __attribute__((noinline)) registerParseOnWorkStack(const String& resp, RegisterParsed& r, PodNetInfo& ni) {
+  auto rk = [&]() { registerParseWork(resp, r); };
+  return podWorkRun(rk, &ni);
+}
+// Échec de la pile de travail : rien n'est inscrit. GUARD => le tas voisin peut être corrompu (logf alloue) : arrêt sûr silencieux AVANT tout journal.
+static void __attribute__((noinline)) registerWorkFailed(const PodNetInfo& ni) {
+  if (ni.err == POD_NET_GUARD) logfSafeStop();
+  logf("[REGISTER] analyse JSON sur la pile de travail ECHOUEE (err %u) : %s ; inscription rejetée, rien n'est inscrit", (unsigned)ni.err, podNetWhy(ni));
+}
+#if POD_RENDER_V1 && POD_CANARY
+// REGISTER-JSON-STACK-FIX1 (canari seulement) : une ligne par décodage du register — pile de travail utilisée / marge / erreur / statut, tas libre AVANT et APRÈS ; la phase de PodNet (pad[0]) est contrôlée ; toute erreur de pile
+// ou tout statut autre que OK pose le verrou fatal. Aucun podCanaryCheck dans cette fonction : le contrôle de la pile principale suit son retour, chez l'appelant (règle A/B/C).
+struct PodCanaryRegCtx { const PodNetInfo* ni; bool ran; uint8_t status; uint32_t heapB; };
+static bool __attribute__((noinline)) podCanaryRegBad(const PodNetInfo& ni, bool ran, uint8_t status) { return !ran || ni.err != POD_NET_OK || status != REG_P_OK; }
+static void podCanaryHeapRun(void* p) { *static_cast<uint32_t*>(p) = freeHeapBytes(); }
+static uint32_t __attribute__((noinline)) podCanaryHeapMark() { uint32_t v = 0; podCanaryEmit(podCanaryHeapRun, &v); return v; }
+static void podCanaryPrintReg(void* v) {
+  const PodCanaryRegCtx& c = *static_cast<const PodCanaryRegCtx*>(v);
+  const PodNetInfo& ni = *c.ni;
+  Serial.print(F("[CANARY] register JSON : pile de travail dediee utilisee ")); Serial.print((unsigned)ni.used); podCanaryNum(F(" o, marge "), ni.margin);
+  Serial.print(ni.low ? F(" o (objectif >= 256 : SOUS L'OBJECTIF)") : F(" o (objectif >= 256 : OK)")); podCanaryNum(F(", erreur "), ni.err); podCanaryNum(F(", statut "), c.status);
+  podCanaryNum(F(" | tas libre avant "), c.heapB); podCanaryNum(F(" apres "), freeHeapBytes()); Serial.println();
+  if (podCanaryRegBad(ni, c.ran, c.status)) { Serial.println(F("[CANARY] register JSON : ECHEC du decodage sur la pile de travail (ALERTE)")); podCanaryHalt("register JSON"); }
+}
+static void __attribute__((noinline)) podCanaryRegister(const PodNetInfo& ni, bool ran, uint8_t status, uint32_t heapB) {
+  podCanaryPhase(ni.pad[0]);
+  PodCanaryRegCtx c = { &ni, ran, status, heapB };
+  podCanaryEmit(podCanaryPrintReg, &c);
+  if (podCanaryRegBad(ni, ran, status)) for (;;) { __asm volatile("nop"); }        // l'impression a échoué (mémoire) : verrou SILENCIEUX
+}
+#endif
+// Décodage + inscription de l'état, dans cet ordre, APRÈS le retour de httpCall. Retour : true = réponse complète et valide, état inscrit ; false = rien n'a changé.
+static bool __attribute__((noinline)) doRegisterDecode(const String& resp) {
+  RegisterParsed* const r = new (std::nothrow) RegisterParsed();
+  if (!r) { logf("[REGISTER] réponse rejetée : mémoire insuffisante"); return false; }
+  PodNetInfo ni;
+#if POD_RENDER_V1 && POD_CANARY
+  const uint32_t heapB = podCanaryHeapMark();
+#endif
+  const bool ran = registerParseOnWorkStack(resp, *r, ni);
+#if POD_RENDER_V1 && POD_CANARY
+  podCanaryRegister(ni, ran, r->status, heapB);
+#endif
+#if POD_RENDER_V1 && POD_CANARY
+  podCanaryCheck("  Q: apres le decodage du register (silencieux)", false);
+#endif
+  bool ok = false;
+  if (!ran) registerWorkFailed(ni);
+  else if (r->status == REG_P_JSON) logf("[REGISTER] JSON illisible: %s", r->jsonErr);
+  else if (r->status != REG_P_OK) logf("[REGISTER] réponse rejetée : deviceId ou code d'appairage absent, trop court, trop long ou invalide");
+  else { deviceId = r->deviceId; pairCode = r->pairCode; paired = r->paired; registered = true; ok = true; }
+  delete r;
+  return ok;
+}
+
+static bool doRegister() {
+#if POD_RENDER_V1 && POD_CANARY
+  podCanaryCheck("  R0: entree de doRegister (silencieux)", false);
+#endif
+  const String mac = macString();
+  if (mac.length() == 0) { logf("[REGISTER] adresse MAC indisponible (module Wi-Fi, pile dédiée) : inscription ANNULÉE"); return false; }
+#if POD_RENDER_V1 && POD_CANARY
+  podCanaryMacPhase(mac);
+#endif
+#if POD_RENDER_V1 && POD_CANARY
+  podCanaryCheck("  R1: apres macString (silencieux ; ne prouve PAS a lui seul le module Wi-Fi : voir les sous-phases)", false);
+#endif
+  const String body = "{\"mac\":\"" + mac + "\",\"screens\":[\"" SCREEN_TYPE "\"],"
+                      "\"firmware\":\"" FIRMWARE_VERSION "\","
+                      "\"publicKey\":\"" + (keysLoaded ? bytesToHex(publicKey, 32) : String("")) + "\","
+                      "\"ownedHashes\":" + loadOwnedHashesJson() + "}";
+#if POD_RENDER_V1 && POD_CANARY
+  podCanaryCheck("  R2: avant httpCall, corps construit (silencieux)", false);
+#endif
+  String resp;
+  if (httpCall("POST", "/api/register", &body, resp) != 200) { logf("[REGISTER] échec — nouvel essai dans 5 s"); return false; }
+  if (!doRegisterDecode(resp)) return false;
+  logf("[REGISTER] deviceId=%s paired=%s", deviceId.c_str(), paired ? "oui" : "non");
+
+  if (!paired && !onboardingDrawn) {
+    const String url = String("https://" SERVER_HOST "/onboard?code=") + pairCode;
+    if (!onboardingAlreadyShown()) {
+      displayKeyMaterialOnce();                      // clés (une seule fois dans la vie de l'appareil), puis QR
+      displayOnboardingQR(url, pairCode, mac);
+      setOnboardingShown();
+    } else {
+      displayOnboardingQR(url, pairCode, mac);       // boots suivants non appairés : QR seul
+    }
+    onboardingDrawn = true;                          // pas de re-rafraîchissement toutes les minutes pendant l'attente
+  } else if (paired) {
+    logf("[REGISTER] appairé");
+  }
+  return true;
+}
+
+// ─── PULL ──────────────────────────────────────────────────────────────────
+// DOPULL-JSON-STACK-FIX1 : TOUT le décodage de la réponse /api/pull s'exécute sur une pile de TRAVAIL dédiée (podWorkRun : POD_WORK_STACK_TOTAL o pris au tas, garde 64 o, marge >= 128 o, objectif 256 o, échec fermé),
+// APRÈS la fermeture de la transaction TLS (httpCall est revenu : la connexion est stop()ée). Cause MESURÉE sur la carte (canari b03c0b4, 10/10/2026) : phases 1 à 3 de doPull saines, marqueur de la pile principale détruit
+// PENDANT deserializeJson(doc, resp) (récursion d'ArduinoJson posée sur les 536 o de cadres setup -> doPull). Vivent ensemble sur la pile de travail : le document JSON, deserializeJson, toutes les lectures et conversions
+// JsonVariant -> String, la branche pendingObservation (sérialisation en String) et ownedBlock ; le document est DÉTRUIT avant le retour sur la pile principale. Le JSON n'est JAMAIS traité pendant que TLS est vivant.
+// Sortie : PullParsed, structure BORNÉE appartenant à l'appelant ; AUCUN effet de bord (état global, EEPROM, affichage, vote, ACK) avant un retour VALIDE (PULL_P_OK ou PULL_P_RATE, pile saine).
+// BORNES (contrat écrit) : identifiants et empreintes <= 64 car., source de frame <= 16 car., observation <= 8 empreintes : trop long ou trop nombreux => REFUSÉ (pull rejeté, RIEN n'est appliqué, aucune frame, aucun vote ni ACK).
+// Les trois textes du cartel (titre <= 255 o, artiste <= 127 o, horodatage <= 63 o ; le serveur n'en envoie jamais plus : 80 / 40 car.) sont TRONQUÉS à une frontière de caractère UTF-8 ; aucune autre troncature.
+// Échec fermé : NOMEM, NESTED, GUARD, MARGIN (pile), JSON invalide, champ hors bornes, mémoire insuffisante pour une chaîne => doPull retourne false sans rien appliquer.
+#define PULL_ID_MAX     64
+#define PULL_SRC_MAX    16
+#define PULL_TITLE_MAX  255
+#define PULL_ARTIST_MAX 127
+#define PULL_TS_MAX     63
+#define PULL_OBS_MAX    8
+#include <new>
+enum PullStatus : uint8_t { PULL_P_NONE = 0, PULL_P_OK = 1, PULL_P_RATE = 2, PULL_P_JSON = 3, PULL_P_BOUNDS = 4, PULL_P_HEAP = 5 };
+struct PullParsed {
+  uint8_t status;                  // PullStatus : le résultat n'est exploitable que pour PULL_P_OK et PULL_P_RATE
+  bool hasCartel, hasObs;
+  int blockIndex, retryAfter, cartelBlockIndex, rateRetrySec;
+  const char* jsonErr;             // texte statique de DeserializationError (PULL_P_JSON)
+  String blockHash, candId, frameSource, frameId, workTitle, artistName, displayTs, obsHashes, obsTarget, owned;
+  PullParsed() : status(PULL_P_NONE), hasCartel(false), hasObs(false), blockIndex(-1), retryAfter(60), cartelBlockIndex(-1), rateRetrySec(60), jsonErr(nullptr) {}
+};
+// copie bornée d'un identifiant : au-delà de max => PULL_P_BOUNDS ; copie incomplète (tas) => PULL_P_HEAP
+static bool __attribute__((noinline)) pullSetId(String& dst, const char* src, size_t max, PullParsed& r) {
+  const size_t n = strlen(src);
+  if (n > max) { r.status = PULL_P_BOUNDS; return false; }
+  dst = "";
+  if (n > 0 && !dst.concat(src, (unsigned int)n)) { r.status = PULL_P_HEAP; return false; }
+  if (dst.length() != n) { r.status = PULL_P_HEAP; return false; }
+  return true;
+}
+// copie d'un texte de cartel, TRONQUÉE à une frontière de caractère UTF-8 au-delà de max
+static bool __attribute__((noinline)) pullSetText(String& dst, const char* src, size_t max, PullParsed& r) {
+  size_t n = strlen(src);
+  if (n > max) { n = max; while (n > 0 && (((uint8_t)src[n]) & 0xC0) == 0x80) n--; }
+  dst = "";
+  if (n > 0 && !dst.concat(src, (unsigned int)n)) { r.status = PULL_P_HEAP; return false; }
+  if (dst.length() != n) { r.status = PULL_P_HEAP; return false; }
+  return true;
+}
+// Exécutée SUR LA PILE DE TRAVAIL (voir pullParseOnWorkStack). Ne touche à AUCUN état global : tout va dans r.
+static void __attribute__((noinline)) pullParseWork(const String& resp, int code, PullParsed& r) {
+  if (code == 429) {
+    JSON_DOC(rate, 256);
+    r.rateRetrySec = 60;
+    if (deserializeJson(rate, resp, DeserializationOption::NestingLimit(POD_WORK_JSON_NESTING)) == DeserializationError::Ok) r.rateRetrySec = max(1, (int)(rate["retryAfter"] | 60));
+    r.status = PULL_P_RATE;
+    return;
+  }
+  JSON_DOC(doc, 2048);
+  const DeserializationError err = deserializeJson(doc, resp, DeserializationOption::NestingLimit(POD_WORK_JSON_NESTING));
+  if (err) { r.jsonErr = err.c_str(); r.status = PULL_P_JSON; return; }
+
+  JsonObject chain = doc["chain"];
+  if (!chain.isNull()) { if (!pullSetId(r.blockHash, chain["blockHash"] | "", PULL_ID_MAX, r)) return; r.blockIndex = chain["blockIndex"] | -1; }
+  JsonObject pend = doc["pendingValidation"];
+  if (!pend.isNull() && !pullSetId(r.candId, pend["candidateId"] | "", PULL_ID_MAX, r)) return;
+
+  if (!pullSetId(r.frameSource, doc["frameSource"] | "none", PULL_SRC_MAX, r)) return;
+  if (!pullSetId(r.frameId, doc["frameId"] | "", PULL_ID_MAX, r)) return;
+  r.retryAfter = doc["retryAfter"] | 60;
+  if (r.retryAfter <= 0) r.retryAfter = 60;
+  if (r.frameId.length() == 0) { JsonObject fo = doc["frame"]; if (!fo.isNull() && !pullSetId(r.frameId, fo["frameId"] | "", PULL_ID_MAX, r)) return; }
+
+  JsonObject cm = doc["cartelMeta"];
+  if (!cm.isNull()) {
+    r.hasCartel = true;
+    if (!pullSetText(r.workTitle, cm["workTitle"] | "", PULL_TITLE_MAX, r)) return;
+    if (!pullSetText(r.artistName, cm["drawArtistName"] | "", PULL_ARTIST_MAX, r)) return;
+    if (!pullSetText(r.displayTs, cm["displayTs"] | "", PULL_TS_MAX, r)) return;
+    r.cartelBlockIndex = cm["blockIndex"] | r.cartelBlockIndex;
+  }
+  JsonObject obs = doc["pendingObservation"];
+  if (!obs.isNull()) {
+    JsonArray hArr = obs["blockHashes"].as<JsonArray>();
+    if (hArr.size() > 0) {
+      if (hArr.size() > PULL_OBS_MAX) { r.status = PULL_P_BOUNDS; return; }
+      String arr = "[";
+      size_t want = 1;
+      for (size_t i = 0; i < hArr.size(); i++) {
+        const String h = hArr[i].as<String>();                 // conversion JsonVariant -> String : la chaîne la plus profonde (584 o), sur la pile de travail
+        if (h.length() > PULL_ID_MAX) { r.status = PULL_P_BOUNDS; return; }
+        if (i) { arr += ","; want += 1; }
+        arr += "\""; arr += h; arr += "\"";
+        want += h.length() + 2;
+      }
+      arr += "]"; want += 1;
+      if (arr.length() != want) { r.status = PULL_P_HEAP; return; }
+      r.obsHashes = arr;
+      if (r.obsHashes.length() != want) { r.status = PULL_P_HEAP; return; }
+      if (!pullSetId(r.obsTarget, obs["targetBlockHash"] | "", PULL_ID_MAX, r)) return;
+      r.hasObs = true;
+    }
+  }
+  if (!pullSetId(r.owned, doc["ownedBlock"] | "", PULL_ID_MAX, r)) return;
+  r.status = PULL_P_OK;
+}
+// Lanceur : la fermeture et son PodNetInfo ne vivent que le temps de l'appel (noinline : cadre rendu avant la suite de doPull)
+static bool __attribute__((noinline)) pullParseOnWorkStack(const String& resp, int code, PullParsed& r, PodNetInfo& ni) {
+  auto wk = [&]() { pullParseWork(resp, code, r); };
+  return podWorkRun(wk, &ni);
+}
+// Échec de la pile de travail (NOMEM, NESTED, GUARD, MARGIN) : rien n'est appliqué. GUARD = garde écrasée => le tas voisin peut être corrompu (logf alloue) : arrêt sûr silencieux AVANT tout journal.
+static void __attribute__((noinline)) pullWorkFailed(const PodNetInfo& ni) {
+  if (ni.err == POD_NET_GUARD) logfSafeStop();
+  logf("[PULL] analyse JSON sur la pile de travail ECHOUEE (err %u) : %s ; pull rejeté, rien n'est appliqué", (unsigned)ni.err, podNetWhy(ni));
+}
+#if POD_RENDER_V1 && POD_CANARY
+// DOPULL-JSON-STACK-FIX1 (canari seulement) : une ligne par analyse du pull — pile de travail utilisée / marge / erreur / statut, tas libre AVANT et APRÈS ; la phase de PodNet (pad[0]) est contrôlée ; toute erreur de la pile
+// ou tout statut autre que OK / 429 pose le verrou fatal. Aucun podCanaryCheck dans cette fonction : le contrôle de la pile principale suit son retour, chez l'appelant (règle A/B/C).
+struct PodCanaryPullCtx { const PodNetInfo* ni; bool ran; uint8_t status; uint32_t heapB; };
+static bool __attribute__((noinline)) podCanaryPullBad(const PodNetInfo& ni, bool ran, uint8_t status) { return !ran || ni.err != POD_NET_OK || (status != PULL_P_OK && status != PULL_P_RATE); }
+static void podCanaryPrintPull(void* v) {
+  const PodCanaryPullCtx& c = *static_cast<const PodCanaryPullCtx*>(v);
+  const PodNetInfo& ni = *c.ni;
+  Serial.print(F("[CANARY] pull JSON : pile de travail dediee utilisee ")); Serial.print((unsigned)ni.used); podCanaryNum(F(" o, marge "), ni.margin);
+  Serial.print(ni.low ? F(" o (objectif >= 256 : SOUS L'OBJECTIF)") : F(" o (objectif >= 256 : OK)")); podCanaryNum(F(", erreur "), ni.err); podCanaryNum(F(", statut "), c.status);
+  podCanaryNum(F(" | tas libre avant "), c.heapB); podCanaryNum(F(" apres "), freeHeapBytes()); Serial.println();
+  if (podCanaryPullBad(ni, c.ran, c.status)) { Serial.println(F("[CANARY] pull JSON : ECHEC de l'analyse sur la pile de travail (ALERTE)")); podCanaryHalt("pull JSON"); }
+}
+static void __attribute__((noinline)) podCanaryPull(const PodNetInfo& ni, bool ran, uint8_t status, uint32_t heapB) {
+  podCanaryPhase(ni.pad[0]);
+  PodCanaryPullCtx c = { &ni, ran, status, heapB };
+  podCanaryEmit(podCanaryPrintPull, &c);
+  if (podCanaryPullBad(ni, ran, status)) for (;;) { __asm volatile("nop"); }       // l'impression a échoué (mémoire) : verrou SILENCIEUX
+}
+#endif
+
+// Analyse + application, dans cet ordre (la réponse est DÉJÀ reçue, TLS fermé). Retour : 0 = pull ÉCHOUÉ (rien d'appliqué) ; 1 = pull appliqué, décision de frame à prendre ; 2 = terminé (429, rien d'autre à faire).
+static int __attribute__((noinline)) doPullApply(PullParsed& r, const String& resp, int code, String& frameId, String& frameSource) {
+  r.cartelBlockIndex = currentBlockIndex;
+  PodNetInfo ni;
+#if POD_RENDER_V1 && POD_CANARY
+  const uint32_t heapB = podCanaryHeapMark();
+#endif
+  const bool ran = pullParseOnWorkStack(resp, code, r, ni);
+#if POD_RENDER_V1 && POD_CANARY
+  POD_DP_PROBE(3);
+#endif
+#if POD_RENDER_V1 && POD_CANARY
+  podCanaryPull(ni, ran, r.status, heapB);
+#endif
+#if POD_RENDER_V1 && POD_CANARY
+  podCanaryCheck("  P: apres l'analyse du pull (silencieux)", false);
+#endif
+  if (!ran) { pullWorkFailed(ni); return 0; }
+  if (r.status == PULL_P_RATE) {
+    unsigned long retryMs = (unsigned long)r.rateRetrySec * 1000UL;
+    if (retryMs > PULL_INTERVAL) retryMs = PULL_INTERVAL;
+    lastPullMs = millis() - (PULL_INTERVAL - retryMs);
+    logf("[PULL] 429 retryAfter=%ds", r.rateRetrySec);
+    return 2;
+  }
+  if (r.status == PULL_P_JSON) { logf("[PULL] JSON: %s", r.jsonErr); return 0; }
+  if (r.status != PULL_P_OK) { logf("[PULL] réponse rejetée : %s", r.status == PULL_P_BOUNDS ? "champ hors bornes" : "mémoire insuffisante"); return 0; }
+
+  if (r.hasCartel) {
+    pendingWorkTitle = r.workTitle; pendingArtistName = r.artistName; pendingDisplayTs = r.displayTs; currentBlockIndex = r.cartelBlockIndex;
+    logf("[PULL] cartel: %s / %s (bloc %d)", asciiFold(pendingWorkTitle).c_str(), asciiFold(pendingArtistName).c_str(), currentBlockIndex);
+  }
+#if POD_RENDER_V1 && POD_CANARY
+  POD_DP_PROBE(4);
+#endif
+  if (r.hasObs) { pendingObsHashes = r.obsHashes; pendingObsTarget = r.obsTarget; }
+#if POD_RENDER_V1 && POD_CANARY
+  POD_DP_PROBE(5);
+#endif
+  if (r.owned.length() >= 16) saveOwnedBlockHash(r.owned);
+#if POD_RENDER_V1 && POD_CANARY
+  POD_DP_PROBE(6);
+#endif
+
+  nextPullIntervalMs = (r.frameSource == "none" && r.candId.length() == 0) ? (unsigned long)r.retryAfter * 1000UL : PULL_INTERVAL;
+  if (r.blockHash.length() > 0 && r.blockHash != currentBlockHash) {
+    currentBlockHash = r.blockHash; currentBlockIndex = r.blockIndex;
+    saveBlockHashToEEPROM(currentBlockHash);
+    logf("[PULL] nouveau bloc #%d", currentBlockIndex);
+  }
+  if (r.candId.length() > 0) pendingCandidateId = r.candId;
+#if POD_RENDER_V1 && POD_CANARY
+  POD_DP_PROBE(7);
+#endif
+  frameId = r.frameId; frameSource = r.frameSource;
+  return 1;
+}
+// La grosse structure PullParsed vit au TAS (pile principale : 1 024 o), le temps d'un pull ; échec de l'allocation => pull rejeté. Aucune structure volumineuse dans les cadres de doPull ni de doFetchFrame.
+static int __attribute__((noinline)) doPullStage(const String& resp, int code, String& frameId, String& frameSource) {
+  PullParsed* const r = new (std::nothrow) PullParsed();
+  if (!r) { logf("[PULL] réponse rejetée : mémoire insuffisante"); return 0; }
+  const int rc = doPullApply(*r, resp, code, frameId, frameSource);
+  delete r;
+  return rc;
+}
+
+static bool doPull() {
+#if POD_RENDER_V1 && POD_CANARY
+  g_podDpPhase = 0; POD_DP_PROBE(1);
+#endif
+  String newFrameId = "", newFrameSource = "none";
+  int st = 0;
+  {
+    String resp;
+    const int code = httpCall("GET", "/api/pull?deviceId=" + deviceId, nullptr, resp);
+#if POD_RENDER_V1 && POD_CANARY
+  POD_DP_PROBE(2);
+#endif
+    if (code != 429 && code != 200) { logf("[PULL] erreur HTTP %d", code); return false; }
+    st = doPullStage(resp, code, newFrameId, newFrameSource);
+  }                                                  // resp libérée ici, avant toute image
+#if POD_RENDER_V1 && POD_CANARY
+  POD_DP_PROBE(8);
+#endif
+  if (st == 0) return false;
+  if (st == 2) return true;
+
+  if (newFrameSource == "none" || newFrameId.length() == 0) { logf("[PULL] aucune frame");
+#if POD_RENDER_V1 && POD_CANARY
+  POD_DP_PROBE(9);
+#endif
+  return true; }
+  if (frameKey(newFrameId) == lastFrameId) { logf("[PULL] frame déjà affichée"); return true; }
+  logf("[PULL] nouvelle frame %s (%s)", newFrameId.c_str(), newFrameSource.c_str());
+
+#if POD_RENDER_V1 && POD_CANARY
+  POD_FF_START("avant l'appel de doFetchFrame (depuis doPull)");
+#endif
+  doFetchFrame(newFrameId, newFrameSource);          // échec : on retourne quand même true (pas de boucle pull→échec→pull)
+  reportMem("après pull");
+#if POD_RENDER_V1 && POD_CANARY
+  podCanaryCheck("apres pull (fin de doPull)", true);
+#endif
+  return true;
+}
+
+// ─── VALIDATION RÉELLE (vote v2) ───────────────────────────────────────────
+// ⚠ NON TESTÉ sur la carte (docs/CANARI_R4_EINK29.md). Le serveur annonce le candidat (écran, taille, SHA-256) ; ici la R4 lit le contenu BRUT en flux, recalcule
+// le hash et les métriques entières, décide d'un verdict objectif, le signe (Ed25519) et vote. Aucune image n'est gardée : blackBuf sert de tampon « noir » pendant
+// la lecture (il est ré-écrit en entier avant le prochain affichage) ; le morceau de lecture est statique (la pile de la R4 est petite).
+// Un appareil relit un candidat de N'IMPORTE QUEL écran (le serveur ne l'oblige pas à voter pour son type) : blackBuf (≥ 4 736 o) sert de tampon pour l'OLED et l'e-ink 2,9".
+static uint8_t g_voteChunk[256];
+
+// POD_NET_STACK : lecture du candidat sur la pile réseau dédiée. Fonction à part (noinline) : ses variables ne vivent que pendant la transaction, FERMÉE avant la signature (jamais imbriquée dans PodEd),
+// et ne gonflent pas le cadre de doValidate, qui porte ensuite l'appel de signature. Échec de la pile dédiée : chk remis à zéro (chk.ok = false) → « calcul impossible », pas de vote.
+static void __attribute__((noinline)) netReadCandidate(const String& candidateId, PodScreenKind kind, size_t bytes, PodCheck& chk) {
+  PodNetInfo ni;
+  auto tx = [&]() {
+    Conn c(HTTP_TIMEOUT_MS);
+    const int code = c.request("GET", String("/api/candidate-frame?candidateId=") + candidateId, nullptr);
+    chk.http = code;
+    logf("[HTTP GET] /api/candidate-frame -> %d", code);
+    if (code == 200) podCheckStream(c.rd, kind, bytes, blackBuf, BUF_SIZE, g_voteChunk, sizeof(g_voteChunk), &chk);
+    c.client.stop();
+  };
+  const bool ran = podNetRun(tx, &ni);
+#if POD_RENDER_V1 && POD_CANARY
+  podCanaryNet("candidate-frame", ni, ran);
+#endif
+#if POD_RENDER_V1 && POD_CANARY
+  podCanaryCheck("  B (candidate-frame): apres le rapport PodNet (silencieux)", false);
+#endif
+  if (!ran) { memset(&chk, 0, sizeof(chk)); logf("[VALIDATE2] pile réseau dédiée : %s (erreur %u, marge %u o) — pas de vote", podNetWhy(ni), (unsigned)ni.err, (unsigned)ni.margin); }
+}
+
+static bool doValidateV2(const String& candidateId, const String& screenName, size_t bytes, const String& announcedHash) {
+  PodScreenKind kind;
+  if (!podKindFromName(screenName.c_str(), &kind)) { logf("[VALIDATE2] écran inconnu: %s", screenName.c_str()); return false; }
+  reportMem("VALIDATE2-avant");
+
+  PodCheck chk;
+  memset(&chk, 0, sizeof(chk));
+  netReadCandidate(candidateId, kind, bytes, chk);
+  if (!chk.ok) {
+    logf("[VALIDATE2] lecture/calcul impossible (http=%d, %u/%u octets)", chk.http, (unsigned)chk.bytes, (unsigned)bytes);
+    return false;
+  }
+
+  bool accept = false;
+  const char* reason = podVerdict(chk, announcedHash, &accept);
+  logf("[VALIDATE2] %s %u o en %lu ms | e=%lu t=%lu r=%lu s=%lu | verdict=%s %s", screenName.c_str(), (unsigned)chk.bytes, (unsigned long)chk.ms,
+       (unsigned long)chk.m.e, (unsigned long)chk.m.t, (unsigned long)chk.m.r, (unsigned long)chk.m.s, accept ? "accept" : "reject", reason);
+  logf("[VALIDATE2] hash=%s", chk.hash);
+
+  const String msg = podVoteMessage(deviceId, candidateId, chk.hash, chk.m, accept);
+  uint8_t sig[64];
+  unsigned long ts = millis();
+  if (!PodEd::sign(sig, privateKey, publicKey, (const uint8_t*)msg.c_str(), msg.length())) { logf("[VALIDATE2] signature impossible (pile Ed25519 dédiée) — vote NON envoyé"); return false; }   // POD_ED_STACK
+  logf("[VALIDATE2] signature en %lu ms", millis() - ts);
+
+  const String body = String("{\"v\":2,\"deviceId\":\"") + deviceId + "\",\"candidateId\":\"" + candidateId + "\",\"rawHash\":\"" + chk.hash + "\","
+                      "\"e\":" + String((unsigned long)chk.m.e) + ",\"t\":" + String((unsigned long)chk.m.t) + ",\"r\":" + String((unsigned long)chk.m.r) + ","
+                      "\"verdict\":\"" + (accept ? "accept" : "reject") + "\"" + (accept ? String("") : String(",\"reason\":\"") + reason + "\"") +
+                      ",\"signature\":\"" + bytesToHex(sig, 64) + "\"}";
+  String vResp;
+  const int vCode = httpCall("POST", "/api/validation-result", &body, vResp);
+  bool mined = false;
+  if (vCode == 200) {
+    logf("[VALIDATE2] Vote OK");
+    if (vResp.indexOf("\"blockMined\":true") >= 0) { logf("[VALIDATE2] BLOC MINÉ"); mined = true; }
+    if (vResp.indexOf("\"rejectObserved\":true") >= 0) logf("[VALIDATE2] refus enregistré par le serveur (non bloquant)");
+  } else {
+    logf("[VALIDATE2] Echec vote (%d) : 403 = signature, 422 = hash/métriques différents du serveur — %s", vCode, vResp.c_str());
+    if (vResp.indexOf("Signature") >= 0) { logf("[VALIDATE2] resynchronisation de la clé publique (re-register)"); doRegister(); }
+  }
+  reportMem("VALIDATE2-après");
+  return mined;
+}
+
+// ─── VALIDATION ────────────────────────────────────────────────────────────
+// DOVALIDATE-JSON-STACK-FIX1 : la réponse de /api/validate-candidate est décodée sur la pile de TRAVAIL dédiée (podWorkRun : la même que le pull et le register — 2 048 o au tas, garde 64 o, marge >= 128 o, échec fermé),
+// APRÈS le retour complet de httpCall (TLS fermé, jamais imbriquée avec PodNet ni PodEd), et AVANT la lecture du candidat, la signature et le vote. C'était le DERNIER parseur ArduinoJson de la voie vote sur la pile principale
+// (cadre de doValidate 520 o + chaînes ArduinoJson : analyse statique sous les 128 o de marge). Sortie : ValidateParsed, structure BORNÉE (≈ 170 o) allouée au TAS ; les paramètres de sortie de doValidateDecode (identifiant,
+// écran, hash, taille, score) ne sont écrits qu'avec un résultat COMPLET et VALIDE ; sinon rien n'est voté (doValidate efface le candidat, comme avant). CONTRAT (serveur : app/api/validate-candidate/route.ts) :
+// candidateId = 8 à 64 caractères [0-9A-Za-z-] (UUID) ; écran = 1 à 16 caractères [a-z0-9_] ; hash annoncé = EXACTEMENT 64 caractères hexadécimaux (SHA-256) ; taille = 1 à 262 144 ; score_server absent = 0,5.
+// Toute autre valeur est REFUSÉE — jamais tronquée, et un identifiant n'entre jamais dans une URL ou un corps JSON sans avoir été validé. « Déjà voté » ou « pas de candidat » : rien à faire, silencieux (comme avant).
+enum ValidateStatus : uint8_t { VAL_P_NONE = 0, VAL_P_OK = 1, VAL_P_JSON = 2, VAL_P_INVALID = 3 };
+struct ValidateParsed {
+  uint8_t status;                  // ValidateStatus : exploitable seulement pour VAL_P_OK
+  bool skip, hasV2;                // skip = déjà voté / pas de candidat / identifiant vide (rien à faire)
+  int bytes;
+  float score;
+  const char* jsonErr;             // texte statique de DeserializationError (VAL_P_JSON)
+  char candidateId[65];
+  char screen[17];
+  char hash[65];
+  ValidateParsed() : status(VAL_P_NONE), skip(false), hasV2(false), bytes(0), score(0.5f), jsonErr(nullptr) { candidateId[0] = 0; screen[0] = 0; hash[0] = 0; }
+};
+static bool __attribute__((noinline)) valCharsOk(const char* s, size_t minLen, size_t maxLen, const char* alphabetKind) {
+  const size_t n = strlen(s);
+  if (n < minLen || n > maxLen) return false;
+  for (size_t i = 0; i < n; i++) {
+    const char c = s[i];
+    const bool digit = (c >= '0' && c <= '9'), lower = (c >= 'a' && c <= 'z'), upper = (c >= 'A' && c <= 'Z');
+    switch (alphabetKind[0]) {
+      case 'i': if (!(digit || lower || upper || c == '-')) return false; break;      // identifiant : [0-9A-Za-z-]
+      case 'e': if (!(digit || lower || c == '_')) return false; break;               // écran : [a-z0-9_]
+      default:  if (!(digit || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F'))) return false; break;   // hexadécimal
+    }
+  }
+  return true;
+}
+// Exécutée SUR LA PILE DE TRAVAIL (voir validateParseOnWorkStack). Ne touche à AUCUN état global : tout va dans r.
+static void __attribute__((noinline)) validateParseWork(const String& resp, ValidateParsed& r) {
+  JSON_DOC(doc, 768);   // 512 avant la validation réelle : la réponse porte aussi { v2: écran, taille, hash } (≈ 110 o)
+  const DeserializationError err = deserializeJson(doc, resp, DeserializationOption::NestingLimit(POD_WORK_JSON_NESTING));
+  if (err) { r.jsonErr = err.c_str(); r.status = VAL_P_JSON; return; }
+  if ((doc["alreadyVoted"] | false) || doc["candidate"].isNull()) { r.skip = true; r.status = VAL_P_OK; return; }
+  JsonObject cand = doc["candidate"];
+  const char* cid = cand["candidateId"] | "";
+  if (cid[0] == '\0') { r.skip = true; r.status = VAL_P_OK; return; }
+  if (!valCharsOk(cid, 8, 64, "i")) { r.status = VAL_P_INVALID; return; }
+  if (!cand["v2"].isNull()) {
+    const char* sc = cand["v2"]["screen"] | "";
+    const int b = cand["v2"]["bytes"] | 0;
+    const char* h = cand["v2"]["hash"] | "";
+    if (!valCharsOk(sc, 1, 16, "e") || !valCharsOk(h, 64, 64, "h") || b < 1 || b > 262144) { r.status = VAL_P_INVALID; return; }
+    memcpy(r.screen, sc, strlen(sc) + 1); memcpy(r.hash, h, 65); r.bytes = b; r.hasV2 = true;
+  } else {
+    r.score = cand["score_server"] | 0.5f;
+  }
+  memcpy(r.candidateId, cid, strlen(cid) + 1);
+  r.status = VAL_P_OK;
+}
+static bool __attribute__((noinline)) validateParseOnWorkStack(const String& resp, ValidateParsed& r, PodNetInfo& ni) {
+  auto vk = [&]() { validateParseWork(resp, r); };
+  return podWorkRun(vk, &ni);
+}
+// Échec de la pile de travail : aucun vote. GUARD => le tas voisin peut être corrompu (logf alloue) : arrêt sûr silencieux AVANT tout journal.
+static void __attribute__((noinline)) validateWorkFailed(const PodNetInfo& ni) {
+  if (ni.err == POD_NET_GUARD) logfSafeStop();
+  logf("[VALIDATE] analyse JSON sur la pile de travail ECHOUEE (err %u) : %s ; aucun vote", (unsigned)ni.err, podNetWhy(ni));
+}
+#if POD_RENDER_V1 && POD_CANARY
+// DOVALIDATE-JSON-STACK-FIX1 (canari seulement) : une ligne par décodage — pile de travail utilisée / marge / erreur / statut, tas libre AVANT et APRÈS ; phase de PodNet (pad[0]) contrôlée ; toute erreur de pile ou tout
+// statut autre que OK pose le verrou fatal (un candidat refusé pour une valeur invalide est donc une ALERTE du canari). Aucun podCanaryCheck dans cette fonction : le contrôle suit son retour (règle A/B/C).
+struct PodCanaryValCtx { const PodNetInfo* ni; bool ran; uint8_t status; uint32_t heapB; };
+static bool __attribute__((noinline)) podCanaryValBad(const PodNetInfo& ni, bool ran, uint8_t status) { return !ran || ni.err != POD_NET_OK || status != VAL_P_OK; }
+static void podCanaryPrintVal(void* v) {
+  const PodCanaryValCtx& c = *static_cast<const PodCanaryValCtx*>(v);
+  const PodNetInfo& ni = *c.ni;
+  Serial.print(F("[CANARY] validate JSON : pile de travail dediee utilisee ")); Serial.print((unsigned)ni.used); podCanaryNum(F(" o, marge "), ni.margin);
+  Serial.print(ni.low ? F(" o (objectif >= 256 : SOUS L'OBJECTIF)") : F(" o (objectif >= 256 : OK)")); podCanaryNum(F(", erreur "), ni.err); podCanaryNum(F(", statut "), c.status);
+  podCanaryNum(F(" | tas libre avant "), c.heapB); podCanaryNum(F(" apres "), freeHeapBytes()); Serial.println();
+  if (podCanaryValBad(ni, c.ran, c.status)) { Serial.println(F("[CANARY] validate JSON : ECHEC du decodage sur la pile de travail (ALERTE)")); podCanaryHalt("validate JSON"); }
+}
+static void __attribute__((noinline)) podCanaryValidate(const PodNetInfo& ni, bool ran, uint8_t status, uint32_t heapB) {
+  podCanaryPhase(ni.pad[0]);
+  PodCanaryValCtx c = { &ni, ran, status, heapB };
+  podCanaryEmit(podCanaryPrintVal, &c);
+  if (podCanaryValBad(ni, ran, status)) for (;;) { __asm volatile("nop"); }        // l'impression a échoué (mémoire) : verrou SILENCIEUX
+}
+#endif
+// Décodage de la réponse, APRÈS le retour de httpCall. Retour : 0 = rien à voter (déjà voté, pas de candidat, réponse refusée, échec de pile) ; 1 = validation RÉELLE (v2) ; 2 = ancien chemin (v1, score du serveur).
+// Les paramètres de sortie ne sont écrits QUE dans les deux branches valides.
+static int __attribute__((noinline)) doValidateDecode(const String& resp, String& candidateId, String& v2screen, size_t& v2bytes, String& v2hash, float& score) {
+  ValidateParsed* const r = new (std::nothrow) ValidateParsed();
+  if (!r) { logf("[VALIDATE] réponse rejetée : mémoire insuffisante"); return 0; }
+  PodNetInfo ni;
+#if POD_RENDER_V1 && POD_CANARY
+  const uint32_t heapB = podCanaryHeapMark();
+#endif
+  const bool ran = validateParseOnWorkStack(resp, *r, ni);
+#if POD_RENDER_V1 && POD_CANARY
+  podCanaryValidate(ni, ran, r->status, heapB);
+#endif
+#if POD_RENDER_V1 && POD_CANARY
+  podCanaryCheck("  V: apres le decodage du validate (silencieux)", false);
+#endif
+  int mode = 0;
+  if (!ran) validateWorkFailed(ni);
+  else if (r->status == VAL_P_JSON) logf("[VALIDATE] JSON illisible: %s", r->jsonErr);
+  else if (r->status != VAL_P_OK) logf("[VALIDATE] réponse rejetée : identifiant, écran, hash ou taille absent, hors bornes ou invalide");
+  else if (r->skip) mode = 0;
+  else if (r->hasV2) { candidateId = r->candidateId; v2screen = r->screen; v2hash = r->hash; v2bytes = (size_t)r->bytes; mode = 1; }
+  else { candidateId = r->candidateId; score = r->score; mode = 2; }
+  delete r;
+  return mode;
+}
+
+static bool doValidate() {
+  if (pendingCandidateId.length() == 0) return false;
+  String candidateId, v2screen, v2hash;
+  size_t v2bytes = 0;
+  float score = 0.5f;
+  int mode = 0;
+  {
+    String resp;
+    if (httpCall("GET", "/api/validate-candidate?deviceId=" + deviceId, nullptr, resp) != 200 || resp.length() == 0) { pendingCandidateId = ""; return false; }
+    mode = doValidateDecode(resp, candidateId, v2screen, v2bytes, v2hash, score);
+  }                                                  // resp libérée ici, avant la lecture du candidat, la signature et le vote
+  if (mode == 0) { pendingCandidateId = ""; return false; }
+  // Validation RÉELLE : si le serveur annonce { v2 }, on revérifie le contenu au lieu de recopier son score (anciens serveurs / animations : chemin v1 ci-dessous).
+  if (mode == 1) { pendingCandidateId = ""; return doValidateV2(candidateId, v2screen, v2bytes, v2hash); }
+
+  const String signature = signED25519(candidateId, score);
+  if (signature.length() == 0) { pendingCandidateId = ""; return false; }   // POD_ED_STACK : signature impossible → pas de vote
+  const int m = (int)(score * 1000.0f + 0.5f);
+  char sc[12]; snprintf(sc, sizeof(sc), "%d.%03d", m / 1000, m % 1000);
+  const String body = String("{\"deviceId\":\"") + deviceId + "\",\"candidateId\":\"" + candidateId + "\","
+                      "\"entropy\":" + sc + ",\"transitions\":" + sc + ",\"rle\":" + sc + ",\"score\":" + sc + ","
+                      "\"signature\":\"" + signature + "\"}";
+  pendingCandidateId = "";
+
+  String vResp;
+  const int vCode = httpCall("POST", "/api/validation-result", &body, vResp);
+  bool blockMined = false;
+  if (vCode == 200) {
+    logf("[VALIDATE] vote OK (score %s)", sc);
+    if (vResp.indexOf("\"blockMined\":true") >= 0) { logf("[VALIDATE] BLOC MINÉ"); blockMined = true; }
+  } else {
+    logf("[VALIDATE] vote refusé (%d)", vCode);
+    if (vResp.indexOf("Signature") >= 0) { logf("[VALIDATE] resynchronisation de la clé publique (re-register)"); doRegister(); }
+  }
+  return blockMined;
+}
+
+// ─── AUTO-TEST Ed25519 (au boot) ───────────────────────────────────────────
+static void selfTestEd25519() {
+  static const char msg[] = "pod-r4-selftest";
+  uint8_t sig[64];
+  unsigned long t = millis();
+  PodEdInfo infoS, infoV; memset(&infoV, 0, sizeof(infoV));   // POD_ED_STACK
+  const bool signedOk = PodEd::sign(sig, privateKey, publicKey, msg, strlen(msg), &infoS);
+  const unsigned long tSign = millis() - t;
+  t = millis();
+  const bool ok = signedOk && PodEd::verify(sig, publicKey, msg, strlen(msg), &infoV);   // POD_ED_STACK
+  logf("[SELFTEST] Ed25519 signature %lu ms, vérification %lu ms -> %s", tSign, millis() - t, ok ? "OK" : "ECHEC");
+  reportMem("après Ed25519");
+  logf("[ED25519] pile dédiée (utilisé/marge, o) : sign %u/%u, verify %u/%u ; erreurs sign=%u verify=%u (0 = aucune) ; alloué %u o (garde %u o, marge minimale exigée %u o)", (unsigned)infoS.used, (unsigned)infoS.margin, (unsigned)infoV.used, (unsigned)infoV.margin, (unsigned)infoS.err, (unsigned)infoV.err, (unsigned)POD_ED_STACK_TOTAL, (unsigned)POD_ED_GUARD_BYTES, (unsigned)POD_ED_MARGIN_MIN);   // POD_ED_STACK
+}
+
+// ─── SETUP / LOOP ──────────────────────────────────────────────────────────
+void setup() {
+  paintStack();
+  Serial.begin(115200);
+  while (!Serial && millis() < 2500) {}
+  logf("\n[BOOT] Proof-of-Draw UNO R4 WiFi + e-ink 2.9\" BWR — %s", FIRMWARE_VERSION);
+  reportMem("boot");
+#if POD_RENDER_V1 && POD_CANARY
+  logf("[CANARY] ===== BUILD LOCAL TEMPORAIRE DE CANARI — rendu v1 ACTIF (POD_RENDER_V1=1, mode=%u) — NE PAS DÉPLOYER, NE PAS COMMITER LE BINAIRE =====", (unsigned)POD_RENDER_MODE_DEFAULT);
+  logf("[CANARY] firmware annoncé au serveur : %s (inchangé) ; pile principale [0x%08lx, 0x%08lx] ; SP=0x%08lx", FIRMWARE_VERSION, (unsigned long)&__StackLimit, (unsigned long)&__StackTop, (unsigned long)__builtin_frame_address(0));
+  podCanaryPaint();
+  podCanaryCheck("1 boot (apres peinture)", true);
+  podCanaryCheck("1b calibration : meme profondeur, juste apres un rapport (cout de l'instrument)", true);
+  podCanaryLogProbe();
+  podFfBoot();
+  podCanaryCheck("1c apres FFBOOT (cout du journal en flash et du jeton de controle, pile principale)", true);
+#endif
+
+  epd.begin();
+  clearBothPlanes();
+#if POD_RENDER_V1 && POD_CANARY
+  podCanaryCheck("2 e-ink (begin + clearBothPlanes)", true);
+#endif
+
+  if (wifiStatusT("status (module present ?)") == WL_NO_MODULE) { logf("[WIFI] module absent"); while (true) delay(1000); }
+  logf("[WIFI] firmware du module: %s", wifiFirmware().c_str());
+  if (strlen(WIFI_SSID) == 0) logf("[WIFI] SSID vide : créer secrets.h (voir secrets.h.example)");
+  int tries = 0;
+  while (wifiStatus() != WL_CONNECTED && tries++ < 4) {
+    wifiBegin();
+    for (int i = 0; i < 20 && wifiStatus() != WL_CONNECTED; i++) delay(500);
+  }
+  if (wifiStatus() != WL_CONNECTED) { logf("[WIFI] échec — redémarrage"); delay(3000); NVIC_SystemReset(); }
+  logf("[WIFI] IP: %s", wifiIpString().c_str());
+#if POD_RENDER_V1 && POD_CANARY
+  podCanaryCheck("3 wifi connecte", true);
+#endif
+
+  if (!keysAlreadyGenerated()) generateKeys();
+  else { loadKeysFromEEPROM(); logf("[KEYS] clés chargées: %s", bytesToHex(publicKey, 32).c_str()); }
+#if POD_RENDER_V1 && POD_CANARY
+  podCanaryCheck("4 cles chargees", true);
+#endif
+  selfTestEd25519();
+#if POD_RENDER_V1 && POD_CANARY
+  podCanaryCheck("5 selfTestEd25519", true);
+#endif
+
+  currentBlockHash = loadBlockHashFromEEPROM();
+  {
+    bool ok = currentBlockHash.length() >= 8;
+    for (unsigned i = 0; i < currentBlockHash.length() && ok; i++) { const char c = currentBlockHash[i]; ok = (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F'); }
+    if (!ok) currentBlockHash = "";
+  }
+  lastFrameId = loadFrameId();                       // œuvre déjà à l'écran avant le redémarrage (l'e-ink la conserve)
+  if (lastFrameId.length() > 0) logf("[BOOT] œuvre déjà affichée : %s", lastFrameId.c_str());
+
+#if POD_RENDER_V1 && POD_CANARY
+  podCanaryCheck("6a avant doRegister", true);
+#endif
+  while (!registered) { if (doRegister()) break; delay(5000); }
+#if POD_RENDER_V1 && POD_CANARY
+  podCanaryCheck("6b apres doRegister", true);
+#endif
+  if (paired) {
+    logf("[BOOT] premier pull immédiat");
+#if POD_RENDER_V1 && POD_CANARY
+  podCanaryCheck("7a avant doPull", true);
+#endif
+    doPull();
+#if POD_RENDER_V1 && POD_CANARY
+  podCanaryDoPull();
+#endif
+#if POD_RENDER_V1 && POD_CANARY
+  podCanaryCheck("7b apres doPull", true);
+  podCanaryLogProbe();
+#endif
+  }
+  lastPullMs = millis(); lastValidateMs = millis();
+  logf("[BOOT] prêt — pull toutes les %lu s", PULL_INTERVAL / 1000UL);
+#if POD_RENDER_V1 && POD_CANARY
+  podCanaryCheck("8 pret", true);
+#endif
+}
+
+void loop() {
+#if POD_RENDER_V1 && POD_CANARY
+  podCanaryCheck("loop", false);
+#endif
+  const unsigned long now = millis();
+
+  if (!registered) { if (!doRegister()) { delay(5000); return; } }
+
+  if (!paired) {
+    if (now - lastPullMs >= 60000UL) {
+      const bool wasPaired = paired;
+      doRegister();
+      lastPullMs = millis();
+      if (!wasPaired && paired) { logf("[PAIRING] appairé -> redémarrage"); delay(1000); NVIC_SystemReset(); }
+    }
+    delay(250);
+    return;
+  }
+
+  if (now - lastPullMs >= nextPullIntervalMs) {
+    const String prevCand = pendingCandidateId;
+    doPull();
+#if POD_RENDER_V1 && POD_CANARY
+  podCanaryDoPull();
+#endif
+    lastPullMs = millis();
+    if (pendingCandidateId.length() > 0 && pendingCandidateId != prevCand) lastValidateMs = millis();
+  }
+
+  if (pendingObsHashes.length() > 0) doObsConfirm();
+
+  if (pendingCandidateId.length() > 0 && millis() - lastValidateMs >= VALIDATE_INTERVAL) {
+    const bool mined = doValidate();
+    lastValidateMs = millis();
+    if (mined) { delay(2000); doPull(); lastPullMs = millis(); }
+  }
+  delay(100);
+}

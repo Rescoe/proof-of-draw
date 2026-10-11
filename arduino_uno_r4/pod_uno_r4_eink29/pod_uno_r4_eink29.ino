@@ -585,7 +585,11 @@ static String signED25519(const String& candidateId, float score) {
 
 // ─── HTTP (WiFiSSLClient + pod_http.h) ─────────────────────────────────────
 #if POD_RENDER_V1 && POD_CANARY
-// PULLFRAME-PHASE-AUDIT4 (canari seulement) : le journal en flash d'AUDIT3 a LOCALISÉ le blocage sur 2 démarrages consécutifs : dernière phase 9 (client.print est revenu), la phase 10 (retour de readHeaders) n'est jamais écrite.
+// PULLFRAME-PHASE-AUDIT5 (canari seulement) : AUDIT4 a montré (journal du démarrage précédent) que les seize premiers read() reviennent avec 0 octet et connected() avec « vrai » pendant ≈ 224 ms, puis plus rien avant la 1re seconde : le gel commence au moment où la réponse du serveur
+// arrive. Hypothèse (NON démontrée) : le module accumule le bloc reçu dans une std::string (data_res += c) ; si le tas ne fournit pas le bloc demandé, operator new appelle abort(), puis _exit = « b . » : boucle vide, interruptions actives, ni message ni reset.
+// AUDIT5 ajoute, SANS rien corriger : (a) abort() REDÉFINIE (canari seulement) : allume la LED X, inscrit UNE signature fixe (0xAB) dans le journal flash puis boucle ; aucune allocation, aucun String, ni logf ni Serial, aucune exception, aucun verrou du tas, pas de mallinfo ;
+// (b) avant chaque read() échantillonné, deux mesures du tas dans le journal (événements M = tas libre, V = sommet vierge, unités de 32 o) ; (c) une sixième LED X. PAS de set_new_handler : operator new(nothrow) l'appellerait et détournerait les chemins « échec = rejet » de nos décodeurs.
+// PULLFRAME-PHASE-AUDIT4 : le journal en flash d'AUDIT3 a LOCALISÉ le blocage sur 2 démarrages consécutifs : dernière phase 9 (client.print est revenu), la phase 10 (retour de readHeaders) n'est jamais écrite.
 // Il reste à savoir QUEL appel ne rend pas la main (read, connected, une boucle, ou l'écriture flash de la phase 10 elle-même). Trois ajouts, tous bornés et sans effet sur le téléchargement :
 // (1) client TLS « espion » (FfSSL, dérivé du vrai client ; le nom WiFiSSLClient lui est redirigé plus bas) : entre la marque 9 et la marque 10 SEULEMENT, il inscrit en flash l'entrée et la sortie des premiers appels de read() et connected() (appels 1 à 3 puis les puissances de 2),
 //     avec le temps écoulé (unités de 8 ms) et un événement par seconde écoulée ; au plus 64 événements de 2 octets. Un appel qui ne revient pas laisse une entrée sans sortie.
@@ -605,14 +609,16 @@ static volatile uint8_t g_podFfLed = 0;
 #define POD_FFL_BASE 0x1C00u
 #define POD_FFL_SIZE 0x400u
 #define POD_FFL_HDR 8u
-#define POD_FF_EVMAX 64u
-static const uint8_t kFfCath[5] = { 3, 4, 8, 0, 6 };
+#define POD_FF_EVMAX 96u
+#define POD_FF_HALT() for (;;) { }
+static const uint8_t kFfCath[6] = { 3, 4, 8, 0, 6, 5 };
 static uint8_t podFfEntry(uint8_t n) { return (uint8_t)((n << 4) | ((~n) & 0x0F)); }
 static bool podFfEntryOk(uint8_t b) { return (uint8_t)(b >> 4) == (uint8_t)((~b) & 0x0F); }
-static bool podFfIsEv(uint8_t b) { return (uint8_t)((b >> 4) ^ (b & 0x0F)) == 0x0A && (b >> 4) < 7; }
-static char podFfEvChar(uint8_t id) { static const char t[8] = "RDZCKXT"; return id < 7 ? t[id] : '?'; }
+static bool podFfIsEv(uint8_t b) { return (uint8_t)((b >> 4) ^ (b & 0x0F)) == 0x0A && (b >> 4) < 9; }
+static char podFfEvChar(uint8_t id) { static const char t[10] = "RDZCKXTMV"; return id < 9 ? t[id] : '?'; }
 static char podFfGlyph(uint8_t b) {
   if (b == 0xBD) return '!';
+  if (b == 0xAB) return '#';
   if (!podFfEntryOk(b)) return '?';
   const uint8_t n = (uint8_t)(b >> 4);
   return (char)(n < 10 ? '0' + n : 'a' + (n - 10));
@@ -632,7 +638,7 @@ static void __attribute__((noinline)) podFfLedSet(uint8_t m) {
   if (m == 0) return;
   const bsp_io_port_pin_t a = g_pin_cfg[28 + 7].pin;
   R_PFS->PORT[a >> 8].PIN[a & 0xFF].PmnPFS = IOPORT_CFG_PORT_DIRECTION_OUTPUT | IOPORT_CFG_PORT_OUTPUT_HIGH;
-  for (uint8_t i = 0; i < 5; i++) {
+  for (uint8_t i = 0; i < 6; i++) {
     if (m & (1u << i)) {
       const bsp_io_port_pin_t c = g_pin_cfg[28 + kFfCath[i]].pin;
       R_PFS->PORT[c >> 8].PIN[c & 0xFF].PmnPFS = IOPORT_CFG_PORT_DIRECTION_OUTPUT | IOPORT_CFG_PORT_OUTPUT_LOW;
@@ -660,14 +666,30 @@ static void __attribute__((noinline)) podFfNote(uint8_t n) {
   if (n == 15) podFfLedSet(0);
 }
 static bool __attribute__((noinline)) podFfPick(uint8_t k) { return k <= 3 || (k & (uint8_t)(k - 1)) == 0; }
-static void __attribute__((noinline)) podFfEv(uint8_t id) {
+static void __attribute__((noinline)) podFfEvD(uint8_t id, uint8_t data) {
   if (g_podFfNE >= POD_FF_EVMAX) return;
   g_podFfNE = (uint8_t)(g_podFfNE + 1);
+  podFfAppend((uint8_t)((id << 4) | ((id ^ 0x0A) & 0x0F)));
+  podFfAppend(data);
+}
+static void __attribute__((noinline)) podFfEv(uint8_t id) {
   const uint32_t d = millis() - g_podFfT0;
   const uint32_t u = id == 6 ? d / 1000UL : d >> 3;
-  podFfAppend((uint8_t)((id << 4) | ((id ^ 0x0A) & 0x0F)));
-  podFfAppend((uint8_t)(u > 254UL ? 254UL : u));
+  podFfEvD(id, (uint8_t)(u > 254UL ? 254UL : u));
 }
+static void __attribute__((noinline)) podFfHeap() {
+  const struct mallinfo mi = mallinfo();
+  const uint32_t fr = (uint32_t)mi.fordblks / 32UL;
+  const uint32_t top = (uint32_t)((uintptr_t)&__StackLimit - (uintptr_t)sbrk(0)) / 32UL;
+  podFfEvD(7, (uint8_t)(fr > 254UL ? 254UL : fr));
+  podFfEvD(8, (uint8_t)(top > 254UL ? 254UL : top));
+}
+static void __attribute__((noinline, noreturn)) podFfDie(uint8_t sig) {
+  podFfLedOn(5);
+  podFfAppend(sig);
+  POD_FF_HALT();
+}
+extern "C" void abort(void) { podFfDie(0xAB); }
 static void __attribute__((noinline)) podFfTick() {
   const uint32_t s = (millis() - g_podFfT0) / 1000UL;
   if (s > g_podFfTk) { g_podFfTk = (uint8_t)(s > 250UL ? 250UL : s); podFfEv(6); }
@@ -679,7 +701,7 @@ struct FfSSL : public WiFiSSLClient {
     if (g_podFfNR < 255) g_podFfNR = (uint8_t)(g_podFfNR + 1);
     const bool ev = podFfPick(g_podFfNR);
     podFfTick();
-    if (ev) podFfEv(0);
+    if (ev) { podFfHeap(); podFfEv(0); }
     podFfLedOn(1);
     const int r = WiFiSSLClient::read(b, n);
     podFfLedOff(1);
@@ -706,13 +728,16 @@ static const char* podFfName(uint8_t n) {
   return n < 16 ? t[n] : "?";
 }
 static void __attribute__((noinline)) podFfBoot() {
-  logf("[CANARY] BUILD PULLFRAME-PHASE-AUDIT4 | base 2cdfe54 | journal flash bloc 7 (0x%04x) + evenements du client TLS + LED de la matrice | compile %s %s", (unsigned)POD_FFL_BASE, __DATE__, __TIME__);
+  logf("[CANARY] BUILD PULLFRAME-PHASE-AUDIT5 | base fd8b1dc | journal flash bloc 7 (0x%04x) + evenements du client TLS + mesures du tas + abort() + 6 LED | compile %s %s", (unsigned)POD_FFL_BASE, __DATE__, __TIME__);
   DataFlashBlockDevice& df = DataFlashBlockDevice::getInstance();
   uint8_t h[POD_FFL_HDR] = { 0 };
   df.read(h, POD_FFL_BASE, POD_FFL_HDR);
   const bool hdrOk = h[0] == 'F' && h[1] == 'F' && h[2] == 'L' && h[3] == '3' && (uint8_t)(h[4] ^ h[5]) == 0xFF;
   uint16_t n = 0;
   uint8_t lastPh = 0xFF;
+  uint8_t evId = 0;
+  uint8_t hm[4] = { 0xFF, 0xFF, 0xFF, 0xFF };
+  bool sawAbort = false;
   char ring[16] = { 0 };
   uint8_t rt[16] = { 0 };
   if (hdrOk) {
@@ -724,10 +749,15 @@ static void __attribute__((noinline)) podFfBoot() {
       for (uint16_t i = 0; i < len; i++) {
         const uint8_t b = c[i];
         if (b == 0xFF) { end = true; break; }
-        if (wantT) { rt[(uint16_t)(n - 1) % 16] = b; wantT = false; continue; }
+        if (wantT) {
+          rt[(uint16_t)(n - 1) % 16] = b; wantT = false;
+          if (evId == 7) { if (hm[0] == 0xFF) hm[0] = b; hm[2] = b; }
+          else if (evId == 8) { if (hm[1] == 0xFF) hm[1] = b; hm[3] = b; }
+          continue;
+        }
         rt[n % 16] = 0xFF;
-        if (podFfIsEv(b)) { ring[n % 16] = podFfEvChar((uint8_t)(b >> 4)); wantT = true; }
-        else { ring[n % 16] = podFfGlyph(b); if (podFfEntryOk(b)) lastPh = (uint8_t)(b >> 4); }
+        if (podFfIsEv(b)) { evId = (uint8_t)(b >> 4); ring[n % 16] = podFfEvChar(evId); wantT = true; }
+        else { ring[n % 16] = podFfGlyph(b); if (b == 0xAB) sawAbort = true; if (podFfEntryOk(b)) lastPh = (uint8_t)(b >> 4); }
         n++;
       }
     }
@@ -746,7 +776,9 @@ static void __attribute__((noinline)) podFfBoot() {
   else logf("[CANARY] FFLOG demarrage precedent : gen=%u ; %u elements ; DERNIERE PHASE %u (%s)", (unsigned)h[4], (unsigned)n, (unsigned)lastPh, podFfName(lastPh));
   if (hdrOk && n > 1) {
     logf("[CANARY] FFLOG sequence (%u derniers elements) : %s", (unsigned)m, seq);
-    logf("[CANARY] FFLOG legende : phases 0=armement 1-9 a-f=10-15 ; !=pile detruite ?=octet invalide ; R,D,Z=read entree,sortie avec donnees,sortie 0 ; C,K,X=connected entree,vrai,faux ; T<n>=n s ; autre nombre=temps x8 ms");
+    logf("[CANARY] FFLOG legende : phases 0=armement 1-9 a-f=10-15 ; !=pile detruite ; #=abort() ; ?=invalide ; R,D,Z=read entree,sortie>0,sortie 0 ; C,K,X=connected entree,vrai,faux ; T<n>=n s ; M,V=tas libre,sommet vierge x32 o ; autre=ms/8");
+    if (hm[0] != 0xFF) logf("[CANARY] FFLOG tas avant read : libre %u o puis %u o ; sommet vierge %u o puis %u o ; abort() : %s", (unsigned)hm[0] * 32u, (unsigned)hm[2] * 32u, (unsigned)hm[1] * 32u, (unsigned)hm[3] * 32u, sawAbort ? "OUI" : "non");
+    else logf("[CANARY] FFLOG tas avant read : aucune mesure ; abort() : %s", sawAbort ? "OUI" : "non");
   }
   uint16_t pos = POD_FFL_HDR;
   uint8_t gen = 1;
@@ -766,8 +798,9 @@ static void __attribute__((noinline)) podFfBoot() {
   if (tok) Serial.write((uint8_t)'Z');
   logf("[CANARY] FFLOG %s : gen=%u ; ecriture + relecture %s (code flash %d) ; prochaine ecriture a l'octet %u ; jeton serie Z %s", back ? "arme" : "DESACTIVE", (unsigned)gen, back ? "OK" : "ECHEC", rc, (unsigned)g_podFfPos, tok ? "ecrit" : "perdu (tampon USB plein)");
   logf("[CANARY] FFLOG usure : au plus UN effacement par demarrage (aucun si le journal precedent est vide), au plus %u octets programmes par demarrage, evenements du client TLS : %u au plus", (unsigned)(POD_FFL_SIZE - POD_FFL_HDR), (unsigned)POD_FF_EVMAX);
-  logf("[CANARY] FFLED test : 5 LED de la matrice allumees une a une (F ecriture flash, R dans read, C dans connected, A trace active, H en-tetes lus), 0,25 s chacune");
-  for (uint8_t i = 0; i < 5; i++) { podFfLedSet((uint8_t)(1u << i)); podFfWait(250UL); }
+  logf("[CANARY] FFLED test : les 6 LED de la matrice s'allument ENSEMBLE 0,5 s puis une a une (0,4 s) : F ecriture flash, R dans read, C dans connected, A trace active, H en-tetes lus, X abort() appelee");
+  podFfLedSet(0x3F); podFfWait(500UL); podFfLedSet(0); podFfWait(300UL);
+  for (uint8_t i = 0; i < 6; i++) { podFfLedSet((uint8_t)(1u << i)); podFfWait(400UL); }
   podFfLedSet(0);
 }
 #define POD_FF_MARK(n, txt) do { if (g_podFfPhase != 0) podFfNote((n)); } while (0)
