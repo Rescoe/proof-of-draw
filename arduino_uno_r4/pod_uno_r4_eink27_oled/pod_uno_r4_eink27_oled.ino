@@ -336,13 +336,14 @@ static String loadOwnedHashesJson() {
 //  • ARRÊT FATAL (boucle silencieuse, plus aucun réseau, vote, ACK ni affichage) si : marqueur de fond détruit, marge principale < 128 o, pile dédiée en erreur (GUARD, MARGIN, NOMEM, NESTED) ou marge dédiée < 128 o ; < 256 o = « SOUS L'OBJECTIF » (sans arrêt) ;
 //  • abort() redéfinie : une signature d'UN seul appel d'écriture USB non bloquant (jamais d'allocation, ni logf), puis boucle. Ne JAMAIS installer de new_handler.
 // Ed25519 : relevé de production au démarrage (« [ED25519] pile dédiée … ») ; mêmes pile et fonctions que le vote. Statiques du canari seulement : 4 tableaux de 8 entrées (relevés des piles dédiées, 40 o).
-extern char __StackLimit, __StackTop;
+// __StackLimit / __StackTop (déclarés `char` par podNetStack.h, partagé) sont des ADRESSES de l'éditeur de liens, pas des objets d'1 octet : l'adresse est rendue opaque au compilateur (asm vide), sinon gcc signale -Warray-bounds sur les accès au fond de pile. Correction locale, aucun -Wno-*.
+static inline volatile uint8_t* podLinkerAddr(const char* sym) { uintptr_t a = (uintptr_t)sym; __asm__ __volatile__("" : "+r"(a)); return (volatile uint8_t*)a; }
 static const uint8_t CANARY_PAINT = 0x5A;
 static const uint32_t CANARY_MAGIC = 0x434E5259UL;   // « CNRY »
 enum PodCanaryKind : uint8_t { PCK_WIFI = 0, PCK_HTTP, PCK_FRAME, PCK_FRAME_OLED, PCK_CANDIDATE, PCK_REG_JSON, PCK_PULL_JSON, PCK_VAL_JSON, PCK_COUNT };
 static void __attribute__((noinline)) podCanaryHalt(const char* why) { logf("[CANARY] ARRET FATAL : %s", why); logfSafeStop(); }
 static void __attribute__((noinline)) podCanaryPaint() {
-  volatile uint8_t* lo = (volatile uint8_t*)&__StackLimit;
+  volatile uint8_t* lo = podLinkerAddr(&__StackLimit);
   volatile uint8_t* hi = (volatile uint8_t*)__builtin_frame_address(0) - 192;
   if (hi <= lo + 16) return;
   for (volatile uint8_t* p = lo + 8; p < hi; p++) *p = CANARY_PAINT;
@@ -350,14 +351,14 @@ static void __attribute__((noinline)) podCanaryPaint() {
   *(volatile uint32_t*)(lo + 4) = (uint32_t)(hi - lo);
 }
 static void __attribute__((noinline)) podCanaryMain(const char* where) {
-  volatile uint8_t* lo = (volatile uint8_t*)&__StackLimit;
+  volatile uint8_t* lo = podLinkerAddr(&__StackLimit);
   const uint32_t len = *(volatile uint32_t*)(lo + 4);
   if (*(volatile uint32_t*)lo != CANARY_MAGIC || len < 32 || len > 1024) podCanaryHalt("marqueur de fond de pile principale detruit (ou jamais peint)");
   volatile uint8_t* top = lo + len;
   volatile uint8_t* p = lo + 8;
   while (p < top && *p == CANARY_PAINT) p++;
-  const uint32_t margin = (uint32_t)(p - lo), used = (uint32_t)((const uint8_t*)&__StackTop - (const uint8_t*)p);
-  logf("[CANARY] pile principale apres %s : marge >= %u o (utilisee <= %u o sur %u)%s", where, (unsigned)margin, (unsigned)used, (unsigned)((const uint8_t*)&__StackTop - (const uint8_t*)&__StackLimit), margin < 128 ? " — ALERTE" : (margin < 256 ? " (SOUS L'OBJECTIF 256)" : " (OK)"));
+  const uint32_t margin = (uint32_t)(p - lo), used = (uint32_t)(podLinkerAddr(&__StackTop) - (const uint8_t*)p);
+  logf("[CANARY] pile principale apres %s : marge >= %u o (utilisee <= %u o sur %u)%s", where, (unsigned)margin, (unsigned)used, (unsigned)(podLinkerAddr(&__StackTop) - podLinkerAddr(&__StackLimit)), margin < 128 ? " — ALERTE" : (margin < 256 ? " (SOUS L'OBJECTIF 256)" : " (OK)"));
   if (margin < 128) podCanaryHalt("marge de la pile principale < 128 o");
 }
 // Relevé SANS appel (feuille, cadre minimal) : appelé juste après le retour d'une exécution sur pile dédiée ; AUCUNE sortie ici (un relevé profond ne doit pas creuser la pile principale que l'on mesure).
@@ -1355,6 +1356,12 @@ static bool doValidate() {
   PodCanaryScope canaryScope("validate");
 #endif
   if (pendingCandidateId.length() == 0) return false;
+#if POD_RENDER_V1 && POD_CANARY
+  // FIX2-CANARY-SAFETY : le canari valide register -> pulls -> frame personnelle -> rendu -> ACK, JAMAIS le consensus : aucun appel réseau, aucune lecture de candidat, aucune signature, aucun validation-result, aucun re-register.
+  logf("[CANARY] candidat annonce : AUCUN vote en build canari — candidat oublie localement (le canari ne teste pas le consensus)");
+  pendingCandidateId = "";
+  return false;
+#endif
   String candidateId, v2screen, v2hash;
   size_t v2bytes = 0;
   float score = 0.5f;

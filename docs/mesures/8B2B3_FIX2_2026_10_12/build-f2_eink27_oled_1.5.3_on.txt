@@ -1,0 +1,8 @@
+tag: f2_eink27_oled_1.5.3_on
+Sketch uses 149768 bytes (57%) of program storage space. Maximum is 262144 bytes.
+Global variables use 21748 bytes (66%) of dynamic memory, leaving 11020 bytes for local variables. Maximum is 32768 bytes.
+avertissements du projet (sketch + en-têtes copiés) : 0
+validation-result dans l'ELF : 1
+validate / vote (toutes branches)                          depuis loop   1048 o  marge   -24 o  SOUS 128 !  doValidatev(400) > doRegisterv(168) > displayOnboardingQRRKN7a > qrcode_initText(32) > qrcode_initBytes(144) > drawFinderPattern(56) > setFunctionModule(16)
+validate / vote (hors affichage d'appairage)               depuis loop    896 o  marge   128 o  sous 256  doValidatev(400) > doRegisterv(168) > httpCallPKcRKN7arduino6S > K7arduino6String9substri > arduino6StringC1EPKc(16) > arduino6String4copyEPKcj > arduino6String7reserveEj
+=> pire marge hors branche d'appairage : 128 o (validate / vote (hors affichage d'appairage) depuis loop)

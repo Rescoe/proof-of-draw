@@ -1,0 +1,8 @@
+tag: f2_eink27_1.6.0_on
+Sketch uses 135052 bytes (51%) of program storage space. Maximum is 262144 bytes.
+Global variables use 19376 bytes (59%) of dynamic memory, leaving 13392 bytes for local variables. Maximum is 32768 bytes.
+avertissements du projet (sketch + en-têtes copiés) : 0
+validation-result dans l'ELF : 1
+validate / vote (toutes branches)                          depuis loop   1040 o  marge   -16 o  SOUS 128 !  doValidatev(392) > doRegisterv(168) > displayOnboardingQRRKN7a > qrcode_initText(32) > qrcode_initBytes(144) > drawFinderPattern(56) > setFunctionModule(16)
+validate / vote (hors affichage d'appairage)               depuis loop    888 o  marge   136 o  sous 256  doValidatev(392) > doRegisterv(168) > httpCallPKcRKN7arduino6S > K7arduino6String9substri > arduino6StringC1EPKc(16) > arduino6String4copyEPKcj > arduino6String7reserveEj
+=> pire marge hors branche d'appairage : 136 o (validate / vote (hors affichage d'appairage) depuis loop)

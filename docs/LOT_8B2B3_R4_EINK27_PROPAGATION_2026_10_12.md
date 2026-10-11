@@ -174,3 +174,22 @@ Build local (dossier ignoré par git) : `-DPOD_RENDER_V1=1 -DPOD_CANARY=1`. **A 
 * Mesures réelles de pile (canari) et chiffres avec la toolchain officielle gcc 7.
 * Vote → re-register à 128–136 o (2,9″ : 112 o) : lot séparé avant tout candidat réel.
 * TFT 2,8″, TFT 1,8″, ESP8266 : inchangés, hors lot.
+
+## 11. FIX2-CANARY-SAFETY (12/10/2026)
+
+Audit GPT/Codex de `b7ea573` : lot fonctionnel accepté sous réserve ; deux corrections seulement.
+
+1. **Aucun vote dans un build canari.** Avec `POD_RENDER_V1=1 && POD_CANARY=1`, `doValidate()` retourne juste après le contrôle `pendingCandidateId.length() == 0` : UNE ligne `[CANARY] candidat annonce : AUCUN vote en build canari … (le canari ne teste pas le consensus)`, `pendingCandidateId = ""` (le serveur ré-annonce le candidat au pull suivant s'il est toujours en attente : « oublié localement » est le comportement le plus sûr, identique aux échecs de lecture de la production), `return false`. Avant tout appel réseau : ni `/api/validate-candidate`, ni lecture du candidat, ni signature, ni `/api/validation-result`, ni `doRegister()`. Aucun ACK, aucun état de frame/bloc touché. Le canari ne teste que : register → pulls sans frame → frame personnelle → rendu → ACK. **Preuve binaire** : les ELF de canari ne contiennent plus les chaînes `validation-result` ni `validate-candidate` (le build OFF les contient) ; flash canari 124 740 o (solo) / 139 576 o (+ OLED), RAM 18 736 / 21 108 o (code de vote éliminé par le compilateur). Production (`POD_CANARY=0`) : texte inchangé (comparaison à la sauvegarde, tests « hors régions du lot »).
+2. **Zéro avertissement du projet dans les trois configurations.** `__StackLimit` / `__StackTop` sont déclarés `char` par `podNetStack.h` (partagé) ; les adresses sont maintenant obtenues par `podLinkerAddr()` (asm vide : adresse opaque pour le compilateur) — correction locale, aucun `-Wno-array-bounds`, aucun autre avertissement masqué, aucun en-tête partagé modifié (une re-déclaration en tableau est refusée par le compilateur : conflit avec `podNetStack.h`).
+
+Compilations (gcc 13.2, cœurs 1.5.3 et 1.6.0, résultats identiques) — `docs/mesures/8B2B3_FIX2_2026_10_12/build-*.txt` :
+
+| Config | solo flash / RAM | + OLED flash / RAM | avertissements du projet |
+|---|---|---|---|
+| OFF | 132 500 / 19 368 | 147 216 / 21 740 | 0 |
+| `POD_RENDER_V1=1` | 135 052 / 19 376 | 149 768 / 21 748 | 0 |
+| canari 1/1 | 124 740 / 18 736 | 139 576 / 21 108 | 0 (5 avant FIX2) |
+
+Production vs FIX1 : RAM identique ; flash +8 o (132 492 → 132 500 en OFF) **expliqué** : le désassemblage des instructions est identique (comparaison normalisée) ; seul diffère le chemin de construction (`/tmp/…/build/src.ino`) gravé en chaîne dans le binaire, de longueur différente selon le nom du dossier de build. Marge du pire chemin (canari + OLED, hors vote) : 224 o.
+
+Tests : 785 / 785, aucun ignoré (ArduinoJson 7.4.3 + Crypto fournis), `tsc` et `git diff --check` propres, drapeaux 0/0. Nouveaux tests (`tests/r4Eink27Propagation.test.ts`) : voie atteignable du canari sans réseau / signature / vote / re-register / ACK / état de frame ; production inchangée ; symboles de l'éditeur de liens via `podLinkerAddr`, aucun `-Wno-array-bounds`. **Non traité (lot séparé après les canaris de frame)** : chaîne vote → re-register à 136 / 128 o.

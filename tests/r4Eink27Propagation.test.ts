@@ -321,3 +321,44 @@ test("OLED : défaut collant du client borné ⇒ doFetchFrameOLED ne peut attei
   const before = propBackup("pod_uno_r4_eink27_oled").replace(/\r\n/g, "\n");
   for (const f of ["saveOledFrame", "restoreOledFrame", "oledStatus", "displayOnboardingOLED", "doFetchFrameOLED"]) assert.equal(fnText(o, f), fnText(before, f), `${f} inchangée`);
 });
+
+// ── FIX2-CANARY-SAFETY : aucun vote dans un build canari ; symboles de l'éditeur de liens sans -Warray-bounds ─────────────────────────────────────────────────────────
+for (const sk of PROP_SKETCHES) {
+  test(`${sk} : build canari — doValidate() ne lit pas de candidat, ne signe pas, n'envoie pas validation-result, ne rappelle pas doRegister ; la production est inchangée`, () => {
+    const raw = inoRaw(sk);
+    const fnRaw = fnText(raw, "doValidate");
+    // vue « canari actif » : directives retirées, contenu gardé ; le code atteignable s'arrête au premier « return false; » qui suit le journal du canari
+    const canaryView = fnRaw.replace(/^#if POD_RENDER_V1 && POD_CANARY\n/gm, "").replace(/^#endif\n/gm, "");
+    const start = canaryView.indexOf('logf("[CANARY] candidat annonce : AUCUN vote');
+    assert.ok(start > 0, "journal du canari absent");
+    const reachable = canaryView.slice(0, canaryView.indexOf("return false;", start) + "return false;".length);
+    assert.equal((reachable.match(/logf\(/g) ?? []).length, 1, "une seule ligne de journal");
+    assert.doesNotMatch(stripLine(reachable), /httpCall|doRegister|doValidateV2|doValidateDecode|netReadCandidate|signED25519|PodEd|podNetRun|podWorkRun|validation-result|validate-candidate|ackFrame|blockMined|Conn\b/, "voie atteignable du canari : aucun réseau, aucune signature, aucun vote");
+    assert.match(reachable, /pendingCandidateId = "";\n  return false;$/, "candidat oublié localement, retour sans vote");
+    // l'état n'est pas menti : rien d'autre n'est modifié dans ce chemin (ni frame, ni ACK, ni bloc)
+    assert.doesNotMatch(stripLine(reachable), /lastFrame|currentBlock|persistFrameId|saveBlockHash|pendingObs|registered|paired/);
+    // le bloc est gardé par POD_RENDER_V1 && POD_CANARY et précède tout le travail de vote
+    assert.ok(fnRaw.indexOf("#if POD_RENDER_V1 && POD_CANARY\n  // FIX2-CANARY-SAFETY") > 0);
+    assert.ok(fnRaw.indexOf("FIX2-CANARY-SAFETY") < fnRaw.indexOf("String candidateId, v2screen, v2hash;"));
+    // production (blocs de canari retirés) : le chemin de vote est intact
+    const prod = fnText(ino(sk), "doValidate");
+    assert.match(prod, /httpCall\("GET", "\/api\/validate-candidate\?deviceId=" \+ deviceId/);
+    assert.match(prod, /doValidateV2\(candidateId, v2screen, v2bytes, v2hash\)/);
+    assert.match(prod, /\/api\/validation-result/);
+    assert.doesNotMatch(prod, /CANARY|AUCUN vote/);
+    // le sketch de production reste identique à la sauvegarde d'avant le lot hors régions déjà prouvées (test « hors régions du lot ») ; aucune route ni version modifiée
+    assert.equal(stripLine(ino(sk)).split("/api/validation-result").length, stripLine(propBackup(sk)).split("/api/validation-result").length);
+  });
+
+  test(`${sk} : __StackLimit / __StackTop — adresses de l'éditeur de liens rendues opaques (aucun -Warray-bounds à masquer), pas de -Wno-array-bounds`, () => {
+    const raw = inoRaw(sk), code = stripLine(raw);
+    assert.doesNotMatch(code, /\(\w[\w\s]*\*\)\s*&__Stack(Limit|Top)/, "plus de conversion directe de &__StackLimit en pointeur d'octets");
+    assert.match(code, /static inline volatile uint8_t\* podLinkerAddr\(const char\* sym\) \{ uintptr_t a = \(uintptr_t\)sym; __asm__ __volatile__\(""[^}]*\}/);
+    assert.ok((code.match(/podLinkerAddr\(&__Stack(Limit|Top)\)/g) ?? []).length >= 4);
+    assert.doesNotMatch(raw, /Wno-array-bounds|-Wno-error=array-bounds|diagnostic ignored/);
+  });
+}
+
+test("aucun script / test du lot ne désactive -Warray-bounds", () => {
+  for (const f of ["scripts/r4-eink27-measure.sh", "scripts/r4-eink27-chains.js", "docs/mesures/8B2B3_FIX1_2026_10_12/cloud-build.sh"]) assert.doesNotMatch(read(f), /Wno-array-bounds/, f);
+});
