@@ -11,6 +11,7 @@ import {
 } from "@/lib/rateLimit";
 import { redis } from "@/lib/redis";
 import { parseSceneCapability } from "@/lib/scene/delivery";
+import { isSensorScreens } from "@/lib/sensorData";
 
 // TTL du Set de pool = durée de vie max d'un device inactif
 // Si un device ne se re-register pas pendant 48h son entrée device: expire,
@@ -78,6 +79,10 @@ export async function POST(req: NextRequest) {
     const poolOps: Promise<unknown>[] = [];
 
     // Retirer des anciennes pools si les screens ont changé
+    // Un capteur (screens = ["sensor"]) n'est pas un écran : aucune pool, aucun SADD (ni devices:all, voir registerDevice), aucune invalidation de la vue réseau.
+    const sensor = isSensorScreens(screens);
+    if (sensor) { removedScreens.length = 0; addedScreens.length = 0; unchangedScreens.length = 0; }
+
     for (const screenId of removedScreens) {
       poolOps.push(redis.srem(`pool:screen:${screenId}`, device.deviceId));
     }
@@ -118,7 +123,7 @@ export async function POST(req: NextRequest) {
     const primaryScreen = screens[0];
     // Nouvel appareil seulement : un ESP non appairé se ré-enregistre chaque minute — invalider à chaque fois ferait reconstruire la vue en boucle
     // (≈ 8 commandes par reconstruction). Un firmware mis à jour se voit au plus tard après le TTL de repli (300 s).
-    if (isNew) invalidateNetworkSnapshot();
+    if (isNew && !sensor) invalidateNetworkSnapshot();
 
     return NextResponse.json({
       deviceId:   device.deviceId,

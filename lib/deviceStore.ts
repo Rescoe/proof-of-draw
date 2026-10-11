@@ -7,6 +7,7 @@ import { redis } from "@/lib/redis";
 import { decrementDeviceCount, incrementDeviceCount } from "@/lib/rateLimit";
 import type { SceneCapability } from "@/lib/scene/spec";
 import { generateLinkCode, type LinkCodeStatus } from "@/lib/linkCode";
+import { isSensorScreens } from "@/lib/sensorData";
 
 export interface Device {
   deviceId:   string;
@@ -268,8 +269,8 @@ export async function registerDevice(
     existing.sceneCapability = sceneCapability;   // absent = firmware sans scene-v1 (efface une déclaration périmée)
     existing.lastSeen = Date.now();
     await saveDevice(existing);
-    // S'assurer que l'index global contient bien ce device (idempotent)
-    await redis.sadd("devices:all", existing.deviceId);
+    // S'assurer que l'index global contient bien ce device (idempotent) — JAMAIS un capteur : il gonflerait le quorum de validation (getGlobalActiveCount / getPoolSnapshot)
+    if (!isSensorScreens(screens)) await redis.sadd("devices:all", existing.deviceId);
     return { device: existing, isNew: false };
   }
 
@@ -294,7 +295,7 @@ export async function registerDevice(
   };
 
   await saveDevice(device);
-  await redis.sadd("devices:all", device.deviceId);
+  if (!isSensorScreens(screens)) await redis.sadd("devices:all", device.deviceId);   // jamais un capteur (voir plus haut)
   if (!revivedId) await incrementDeviceCount();
   console.log(`[deviceStore] ${revivedId ? "REVIVED" : "NEW"} ${device.deviceId} (mac: ${mac})`);
   return { device, isNew: !revivedId };

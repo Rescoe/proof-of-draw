@@ -16,13 +16,15 @@ import { BENCH_SCREENS } from "@/lib/bench/screens";
 import { animCapable, ANIM_POINTER_FIRMWARE } from "@/lib/anim/pointer";
 import { InlineEdit } from "./InlineEdit";
 import { GiveDeviceModal } from "./GiveDeviceModal";
+import { SensorButton } from "./SensorPanel";
+import { isSensorScreens } from "@/lib/sensorData";
 
 // ── Utilitaires ──────────────────────────────────────────────────────────────
 
 type ManageTab = "settings" | "access" | "blocks" | "danger";
 interface ArtistLite { artistId: string; displayName: string }
 
-const screenName = (sid: string) => (SCREEN_PROFILES as Record<string, { name: string }>)[sid]?.name ?? sid;
+const screenName = (sid: string) => sid === "sensor" ? "Capteur température" : (SCREEN_PROFILES as Record<string, { name: string }>)[sid]?.name ?? sid;
 const screenDims = (sid: string) => {
   const p = (SCREEN_PROFILES as Record<string, { width: number; height: number }>)[sid];
   return p ? `${p.width}×${p.height}` : "";
@@ -284,7 +286,11 @@ function ManagePanel({ d, devices, profile, tab, setTab, onReload, onGive, onAsk
       </div>
       {err && <p role="alert" style={{ ...muted, color: "#f87171", margin: "0.3rem 0" }}>{err}</p>}
 
-      {tab === "settings" && (
+      {tab === "settings" && isSensorScreens(d.screens) && (
+        <p style={muted}>Capteur de température : aucun réglage d&apos;affichage. Il envoie une mesure par heure ; l&apos;historique est dans « 🌡 Températures ».</p>
+      )}
+
+      {tab === "settings" && !isSensorScreens(d.screens) && (
         <div>
           <SettingRow
             title="Prêt public"
@@ -467,8 +473,7 @@ function DeviceCard({ d, open, onToggle, onRenamed, profile, children }: {
           </div>
         </div>
         <div className="dev-actions" style={{ display: "flex", gap: "0.4rem", flexShrink: 0 }}>
-          <DrawMenu d={d} />
-          <DrawMenu d={d} mode="animate" />
+          {isSensorScreens(d.screens) ? <SensorButton d={d} /> : (<><DrawMenu d={d} /><DrawMenu d={d} mode="animate" /></>)}
           <button
             type="button" onClick={onToggle} aria-expanded={open}
             style={{ ...ghostBtn, fontWeight: 600, borderColor: open ? "var(--accent)" : "var(--border)", color: open ? "var(--accent)" : "var(--text2)" }}
@@ -484,7 +489,7 @@ function DeviceCard({ d, open, onToggle, onRenamed, profile, children }: {
             {screenName(sid)} <span style={{ color: "var(--text3)", fontFamily: "JetBrains Mono, monospace", fontSize: "0.64rem" }}>{screenDims(sid)}</span>
           </span>
         ))}
-        <span style={{ ...pill, color: d.publicMode ? "#4ade80" : "var(--text3)" }}>{d.publicMode ? "🌐 Public" : "🔒 Privé"}</span>
+        {!isSensorScreens(d.screens) && <span style={{ ...pill, color: d.publicMode ? "#4ade80" : "var(--text3)" }}>{d.publicMode ? "🌐 Public" : "🔒 Privé"}</span>}
         {d.acceptsAnaArt && <span style={{ ...pill, color: "#7c6bff" }}>🤖 ANA</span>}
         {convCount > 0 && <span style={{ ...pill, color: "#7c6bff" }}>⇄ Conversion {convCount}/{d.screens.length}</span>}
         {!mine && <span style={{ ...pill, color: "#fb923c" }}>Artiste à part</span>}

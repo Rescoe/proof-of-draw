@@ -1,5 +1,6 @@
 // app/api/onboard/route.ts
 import { NextRequest, NextResponse } from "next/server";
+import { isSensorScreens } from "@/lib/sensorData";
 import { getArtist, getDeviceByMac, getDeviceByPairCode, setArtistName } from "@/lib/deviceStore";
 import { getSession, setSession } from "@/lib/session";
 import { ensureSessionProfile, resolveSessionArtist } from "@/lib/artistDirectory";
@@ -71,7 +72,7 @@ export async function POST(req: NextRequest) {
     }
 
     const primaryScreen = device.screens[0];
-    const canvasUrl = `/draw/${device.deviceId}/${primaryScreen}`;
+    const canvasUrl = isSensorScreens(device.screens) ? "/profile" : `/draw/${device.deviceId}/${primaryScreen}`;   // un capteur n'a pas de page de dessin
 
     const res = NextResponse.json({
       ok: true,
