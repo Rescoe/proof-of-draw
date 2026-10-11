@@ -6,7 +6,7 @@
 #include <Arduino.h>
 #include <malloc.h>
 #include "consensusPoD.h"            // en premier : résout la bibliothèque ConsensusPoD (dossier src) pour l'include relatif suivant
-#include "adapters/podEdStack.h"
+#include "podEdStack.h"
 
 extern "C" char* sbrk(int incr);
 extern char __StackLimit, __StackTop, __HeapLimit;   // symboles du script d'édition de liens du cœur R4 (__HeapLimit == __StackLimit)
