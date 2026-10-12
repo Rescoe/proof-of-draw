@@ -16,10 +16,16 @@ static inline volatile uint8_t* harnessFrame() { return (volatile uint8_t*)g_fak
 #define __builtin_frame_address(x) harnessFrame()
 template <class T> static inline T max(T a, T b) { return a > b ? a : b; }
 // LOT8B2E : toute allocation malloc() du sketch est mesurée ; g_mallocLimit simule un tas FRAGMENTÉ (plus grand bloc contigu limité : ≈ 4 884 o sur la carte, FIX2)
-static size_t g_maxMalloc = 0, g_mallocLimit = (size_t)-1; static int g_failWork2048 = 0;   // g_failWork2048 : refuse les N prochaines allocations de 2 048 o (le tampon de travail de l'animation)
-namespace std { inline void* harness_malloc(size_t n) { if (n > g_maxMalloc) g_maxMalloc = n; if (n > g_mallocLimit) return nullptr; if (n == 2048 && g_failWork2048 > 0) { g_failWork2048--; return nullptr; } return ::malloc(n); } }   // std:: : les en-têtes inclus après la macro écrivent std::malloc
+static size_t g_maxMalloc = 0, g_mallocLimit = (size_t)-1; static int g_failWork2048 = 0;
+// FIX2 : g_inPodAlloc = « la prochaine malloc() est celle d'une pile dédiée de PodNet » (armé à la sonde 1, consommé par harness_malloc) ; g_workLive = tampon de 2 048 o du SKETCH (validation / lecture de l'animation) vivant ;
+// g_workLiveDuringNet = nombre de requêtes réseau émises PENDANT que ce tampon était vivant (doit rester 0 : pic de tas du téléchargement).
+static void* g_workLive = nullptr; static bool g_inPodAlloc = false; static int g_workLiveDuringNet = 0;   // g_failWork2048 : refuse les N prochaines allocations de 2 048 o (le tampon de travail de l'animation)
+namespace std { inline void* harness_malloc(size_t n) { const bool pod = g_inPodAlloc; g_inPodAlloc = false; if (n > g_maxMalloc) g_maxMalloc = n; if (n > g_mallocLimit) return nullptr; if (n == 2048 && !pod && g_failWork2048 > 0) { g_failWork2048--; return nullptr; } void* p = ::malloc(n); if (n == 2048 && !pod) g_workLive = p; return p; }
+  inline void harness_free(void* p) { if (p && p == g_workLive) g_workLive = nullptr; ::free(p); } }   // std:: : les en-têtes inclus après la macro écrivent std::malloc
 using std::harness_malloc;
+using std::harness_free;
 #define malloc harness_malloc
+#define free harness_free
 #define setup tft28_setup
 #define loop tft28_loop
 #include "sketch_body.inc"
@@ -31,6 +37,7 @@ static void harnessProbe(int n) {
   if (n == 1 && !g_failWhenLog.empty() && Serial.log.find(g_failWhenLog) != std::string::npos) { podNetTestFailAlloc = 1; g_failWhenLog.clear(); }
   else if (n == 1) { if (g_failSkip > 0) { g_failSkip--; podNetTestFailAlloc = 0; } else { podNetTestFailAlloc = (g_failSticky || g_failNext > 0) ? 1 : 0; if (g_failNext > 0) g_failNext--; } }
   else if (n == 2) podNetTestNested++; else if (n == 3) podNetTestNested--;
+  if (n == 1) g_inPodAlloc = (podNetTestFailAlloc == 0 && podNetTestNested == 0);
 }
 
 // ─── cadre de test ───────────────────────────────────────────────────────────────────────────────────────────
@@ -59,6 +66,7 @@ static NetScript frameOk(int seed) { NetScript s; K.seed = seed; s.response = ht
 static size_t hdrLen(const NetScript& s) { return s.response.size() - IMG; }
 static NetScript route(const NetRequest& r) {
   NetScript s;
+  if (g_workLive) g_workLiveDuringNet++;   // FIX2 : le tampon de travail de l'animation ne doit JAMAIS être vivant pendant une transaction réseau
   if (r.path.rfind("/api/pull-frame", 0) == 0) { s = K.frame; if (K.failStacksAfterFrame) g_failSticky = 1; return s; }
   if (r.path.rfind("/api/ack-frame", 0) == 0) { if (!K.ackConnect) { s.connectOk = false; return s; } s.response = http(K.ackCode, "{\"ok\":true}"); return s; }
   if (r.path.rfind("/api/pull?", 0) == 0) { s.response = http(200, K.pullJson); return s; }
@@ -292,6 +300,22 @@ int main(int argc, char** argv) {
       resetWorld(); initSD(); std::string bad = clip; bad[bad.size() - 1] ^= 0x55; K.clip = bad; CHECK(!fetchAnimToSd(String(hash.c_str()), clip.size()) && !sdHas("/pod/anim.bin"), "15 clip corrompu (CRC) : refusé");
       resetWorld(); initSD(); g_sd.writeBudget = 50; K.clip = clip; CHECK(!fetchAnimToSd(String(hash.c_str()), clip.size()) && !animOn && !sdHas("/pod/anim.bin") && !sdHas("/pod/anim.txt"), "15 carte pleine : clip supprimé, jamais de marqueur, animation inactive");
       resetWorld(false); K.clip = clip; CHECK(!fetchAnimToSd(String(hash.c_str()), clip.size()) && !animOn, "15 sans carte : animation non lue (l'affiche reste)"); }
+    // FIX2 : le tampon de validation (2 048 o) n'existe JAMAIS pendant la transaction réseau, sur tout le chemin nominal et les chemins d'échec
+    { resetWorld(); initSD(); K.clip = clip; const int before = g_workLiveDuringNet; const bool ok = fetchAnimToSd(String(hash.c_str()), clip.size());
+      CHECK(ok && g_workLiveDuringNet == before && g_workLive == nullptr && countReq("/api/block-clip") == 1, "15 FIX2 nominal : aucun tampon de travail vivant pendant la requête du clip, tampon libéré ensuite");
+      resetWorld(); initSD(); K.clip = clip.substr(0, clip.size() - 3); const int b2 = g_workLiveDuringNet; (void)fetchAnimToSd(String(hash.c_str()), clip.size());
+      CHECK(g_workLiveDuringNet == b2 && g_workLive == nullptr, "15 FIX2 téléchargement incomplet : aucun tampon alloué du tout (validation jamais atteinte)"); }
+    // FIX2 : ÉCHEC DE LA PILE SD injecté — l'opération n'est PAS présentée comme faite (mutant « onSd retourne true » refusé)
+    if (!CAN) {   // canari : une pile dédiée indisponible provoque l'ARRÊT SÛR (le processus se fige : scénarios halt:*) ; le contrôle de production ci-dessous prouve l'échec fermé
+      resetWorld(); initSD(); g_sd.files["/pod/anim.bin"] = std::vector<uint8_t>(clip.begin(), clip.end()); animOn = true; g_tft.busBytes = 0; touchOk = false; g_requests.clear();
+      g_failNext = 1; const AnimEnd e = runResidentAnim(500); g_failNext = 0;
+      CHECK(e == AE_ERROR, "15 FIX2 pile SD indisponible pendant la lecture : AE_ERROR (opération NON exécutée), jamais AE_TIME ni AE_TOUCH");
+      CHECK(g_tft.busBytes == 0 && !cartelVisible && g_requests.empty() && has(Serial.log, "[SD] pile dédiée (animPlay)") && g_workLive == nullptr, "15 FIX2 pile SD indisponible : rien envoyé à l'écran, aucune requête / ACK, cause journalisée, tampon libéré"); }
+    if (!CAN) {   // production : la cible de l'échec est l'allocation SUIVANT la requête du clip, c'est-à-dire celle de la validation (en canari, des lignes de mesure s'intercalent)
+      resetWorld(); initSD(); K.clip = clip; g_failWhenLog = "[HTTP GET] /api/block-clip"; const bool ok = fetchAnimToSd(String(hash.c_str()), clip.size()); g_failWhenLog.clear();
+      CHECK(!ok && !animOn && !sdHas("/pod/anim.txt") && !sdHas("/pod/anim.bin") && has(Serial.log, "[SD] pile dédiée (animValidate)") && has(Serial.log, "validation du clip NON faite") && !has(Serial.log, "rangé sur la carte") && g_workLive == nullptr,
+            "15 FIX2 pile SD indisponible pendant la VALIDATION : clip non validé, aucun marqueur, clip supprimé, animation inactive, aucun faux succès");
+    }
     // marqueur de la carte : correspond à l'œuvre ou ignoré
     { resetWorld(); initSD(); g_sd.files["/pod/anim.bin"] = std::vector<uint8_t>(clip.begin(), clip.end()); std::string m = std::string(64, 'c') + "\nautre\n"; g_sd.files["/pod/anim.txt"] = std::vector<uint8_t>(m.begin(), m.end()); lastFrameId = "x";
       animLoadMarker(); CHECK(!animOn && has(Serial.log, "ne correspond pas"), "15 marqueur d'une autre œuvre : ignoré");
@@ -315,7 +339,9 @@ int main(int argc, char** argv) {
       g_mallocLimit = (size_t)-1; }
     // mémoire vraiment insuffisante : échec fermé, rien d'inscrit, fichiers existants conservés
     { resetWorld(); initSD(); K.clip = big; g_failWork2048 = 1; const bool ok = fetchAnimToSd(String(hash.c_str()), big.size());
-      CHECK(!ok && !animOn && !sdHas("/pod/anim.bin") && !sdHas("/pod/anim.txt") && g_requests.empty() && has(Serial.log, "mémoire insuffisante"), "15b tampon de travail (2 048 o) refusé : téléchargement NON lancé, rien d'inscrit");
+      CHECK(!ok && !animOn && !sdHas("/pod/anim.bin") && !sdHas("/pod/anim.txt") && g_requests.size() == 1 && has(Serial.log, "mémoire insuffisante") && has(Serial.log, "après le téléchargement") && !has(Serial.log, "rangé sur la carte"),
+            "15b FIX2 tampon de travail (2 048 o) refusé APRÈS le téléchargement : clip et marqueur supprimés, animation NON activée, journal explicite, aucun faux succès");
+      CHECK(g_workLive == nullptr, "15b FIX2 aucun tampon de travail resté alloué");
       g_sd.files["/pod/anim.bin"] = std::vector<uint8_t>(big.begin(), big.end()); animOn = true; animHash = hash.c_str();
       g_failWork2048 = 1; const AnimEnd e = runResidentAnim(500); g_failWork2048 = 0;
       CHECK(e == AE_ERROR && has(Serial.log, "mémoire insuffisante pour la lecture"), "15b tampon de travail refusé : lecture abandonnée proprement (AE_ERROR)"); }
@@ -410,6 +436,7 @@ int main(int argc, char** argv) {
   // ═══ 18. le journal ne contient jamais la clé privée ═══
   { resetWorld(); CHECK(Serial.log.find("010203") == std::string::npos, "18 (placeholder)"); }
 
+  CHECK(g_workLiveDuringNet == 0, "FIX2 bilan : le tampon de travail de l'animation n'a JAMAIS été vivant pendant une requête réseau");
   if (!g_fail.empty()) { for (auto& f : g_fail) std::printf("ECART : %s\n", f.c_str()); std::printf("journal série (début) :\n%s\n", Serial.log.substr(0, 1200).c_str()); return 1; }
   std::printf("PASS %d\n", g_checks);
   return 0;

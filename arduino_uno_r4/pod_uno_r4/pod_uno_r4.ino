@@ -1777,17 +1777,18 @@ static bool __attribute__((noinline)) animValidateAndMark(const String& hash, si
 static bool fetchAnimToSd(const String& hash, size_t announced) {
   if (!sdOk) { logf("[ANIM] pas de carte SD : animation non lue (l'affiche reste à l'écran)"); return false; }
   if (announced < (size_t)(BENCH_HDR + 5 + BENCH_FRAME) || announced > BENCH_MAX_CLIP) { logf("[ANIM] taille refusée (%u)", (unsigned)announced); return false; }
-  uint8_t* work = (uint8_t*)malloc(ANIM_WORK_BYTES);
-  if (!work) { logf("[ANIM] mémoire insuffisante (%u o de travail)", (unsigned)ANIM_WORK_BYTES); return false; }
   const unsigned long t0 = millis();
   animRemoveFiles();                                          // marqueur d'abord : un arrêt en cours d'écriture ne laisse jamais un clip à moitié « actif »
   bool writeFailed = false;
-  const bool got = netGetBlockClipToSd(hash, announced, writeFailed);
+  const bool got = netGetBlockClipToSd(hash, announced, writeFailed);   // ANIM-STREAM-FIX2 : le retour complet = client TLS détruit ET pile réseau libérée ; AUCUN tampon de validation n'existe avant ce point
   uint16_t frames = 0;
   bool ok = false;
   if (!got) logf("[ANIM] clip refusé (%s)", writeFailed ? "écriture sur la carte impossible" : "téléchargement incomplet");
-  else ok = animValidateAndMark(hash, announced, work, frames);
-  free(work);
+  else {
+    uint8_t* work = (uint8_t*)malloc(ANIM_WORK_BYTES);        // alloué SEULEMENT après le téléchargement (pic de tas : jamais tampon de travail + pile réseau ensemble)
+    if (!work) logf("[ANIM] mémoire insuffisante (%u o de travail) après le téléchargement : clip supprimé, animation non activée", (unsigned)ANIM_WORK_BYTES);
+    else { ok = animValidateAndMark(hash, announced, work, frames); free(work); }
+  }
   if (!ok) { animRemoveFiles(); return false; }
   animOn = true; animPaused = false; animHash = hash;
   logf("[ANIM] clip reçu en %lu ms, %u images, rangé sur la carte (%u o) : lecture en boucle", millis() - t0, (unsigned)frames, (unsigned)announced);

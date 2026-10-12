@@ -37,12 +37,18 @@ function violations(ino: string, hdr: string): string[] {
   // 5. ordre : marqueurs supprimés -> réseau -> validation -> marqueur ; échec = tout supprimer
   const iRm = fa.indexOf("animRemoveFiles();"), iNet = fa.indexOf("netGetBlockClipToSd(hash, announced, writeFailed)"), iVal = fa.indexOf("animValidateAndMark(hash, announced, work, frames)");
   if (!(iRm >= 0 && iRm < iNet && iNet < iVal)) v.push("fetchAnimToSd : ordre attendu suppression -> téléchargement -> validation");
+  // FIX2 : le tampon de validation n'est alloué qu'APRÈS le retour complet du téléchargement (client TLS détruit, pile réseau libérée), jamais avant
+  const iAlloc = fa.indexOf("malloc(ANIM_WORK_BYTES)");
+  if (fa.split("malloc(ANIM_WORK_BYTES)").length !== 2 || !(iAlloc > iNet && iAlloc < iVal)) v.push("fetchAnimToSd : le tampon de travail doit être alloué UNE fois, APRÈS netGetBlockClipToSd et AVANT la validation");
+  if (!/if \(!work\) logf\([^;]*après le téléchargement[^;]*\);\s*else \{ ok = animValidateAndMark\(hash, announced, work, frames\); free\(work\); \}/.test(fa)) v.push("fetchAnimToSd : échec d'allocation après le téléchargement = journal explicite, jamais de validation sans tampon, tampon libéré");
+  if (fa.split("netGetBlockClipToSd(").length !== 2) v.push("fetchAnimToSd : un seul téléchargement");
+  if (fa.split("animValidateAndMark(").length !== 2) v.push("fetchAnimToSd : une seule validation, derrière le tampon alloué");
   if (!/if \(!ok\) \{ animRemoveFiles\(\); return false; \}/.test(fa)) v.push("fetchAnimToSd : un échec doit supprimer clip et marqueur");
-  if (!/if \(!got\) logf\(/.test(fa) || !/else ok = animValidateAndMark\(/.test(fa)) v.push("fetchAnimToSd : la validation ne doit suivre qu'un téléchargement complet");
+  if (!/if \(!got\) logf\(/.test(fa) || !/\belse \{\s*uint8_t\* work = /.test(fa)) v.push("fetchAnimToSd : la validation ne doit suivre qu'un téléchargement complet");
   const iValid = va.indexOf("podbench::validateStream("), iOk = va.indexOf("if (e != podbench::OK) return;"), iMark = va.indexOf("SD.open(SD_ANIM_META, FILE_WRITE)");
   if (!(iValid > 0 && iOk > iValid && iMark > iOk)) v.push("animValidateAndMark : le marqueur doit suivre une validation réussie");
   if (!/src\.f\.size\(\) != announced/.test(va)) v.push("animValidateAndMark : taille rangée == taille annoncée");
-  if (!/free\(work\);\s*if \(!ok\)/.test(fa)) v.push("fetchAnimToSd : le tampon de travail doit être libéré sur tous les chemins");
+  if (!/free\(work\); \}\s*\}\s*if \(!ok\)/.test(fa)) v.push("fetchAnimToSd : le tampon de travail doit être libéré sur tous les chemins");
   // 6. lecture : un tampon de travail, UNE pile dédiée, validation avant tout dessin, aucun accès SD hors pile dédiée
   if (!/onSd\("animPlay", play\)/.test(ra)) v.push("runResidentAnim : lecture hors pile dédiée");
   const iPv = ra.indexOf("podbench::validateStream("), iPf = ra.indexOf("tft.fillScreen(si.bg)"), iPl = ra.indexOf("podbench::playStream(");
@@ -67,7 +73,11 @@ test("ANIM-STREAM-FIX1 : MUTANTS — chaque régression est REFUSÉE", () => {
     ["marqueur écrit avant la validation", "    podbench::StreamInfo si;\n    const podbench::Err e = podbench::validateStream(src, announced, si, work, work + BENCH_FRAME);", "    File mm = SD.open(SD_ANIM_META, FILE_WRITE); if (mm) { mm.println(hash); mm.close(); }\n    podbench::StreamInfo si;\n    const podbench::Err e = podbench::validateStream(src, announced, si, work, work + BENCH_FRAME);"],
     ["validation ignorée (marqueur même si refusé)", "    if (e != podbench::OK) return;\n", ""],
     ["échec sans suppression du clip", "if (!ok) { animRemoveFiles(); return false; }", "if (!ok) return false;"],
-    ["téléchargement incomplet validé quand même", "  else ok = animValidateAndMark(hash, announced, work, frames);", "  ok = animValidateAndMark(hash, announced, work, frames);"],
+    ["téléchargement incomplet validé quand même", "  else {\n    uint8_t* work = (uint8_t*)malloc(ANIM_WORK_BYTES);", "  {\n    uint8_t* work = (uint8_t*)malloc(ANIM_WORK_BYTES);"],
+    ["FIX2 : tampon alloué AVANT le téléchargement (pic de tas)", "  const bool got = netGetBlockClipToSd(hash, announced, writeFailed);", "  uint8_t* early = (uint8_t*)malloc(ANIM_WORK_BYTES); const bool got = netGetBlockClipToSd(hash, announced, writeFailed); free(early);"],
+    ["FIX2 : tampon de validation jamais libéré", "ok = animValidateAndMark(hash, announced, work, frames); free(work); }", "ok = animValidateAndMark(hash, announced, work, frames); }"],
+    ["FIX2 : validation sans tampon (échec d'allocation ignoré)", "    if (!work) logf(", "    if (!work) { ok = animValidateAndMark(hash, announced, work, frames); } if (!work) logf("],
+    ["FIX2 : échec d'allocation silencieux", "après le téléchargement : clip supprimé, animation non activée", "clip supprimé"],
     ["écriture sur la carte non vérifiée", "if (f.write(raw, k) != k) { ok = false; writeFailed = true; break; }", "f.write(raw, k);"],
     ["défaut collant du client TLS ignoré", "got = ok && c.rd.complete() && c.client.fault() == 0;", "got = ok;"],
     ["taille rangée non comparée à la taille annoncée", "if (src.f.size() != announced) { err = 0xFD; src.f.close(); return; }", ""],

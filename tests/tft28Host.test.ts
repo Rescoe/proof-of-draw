@@ -104,7 +104,7 @@ function buildFull(canary: boolean, mutate: (s: string) => string = (s) => s, mu
   const dir = fs.mkdtempSync(path.join(tmp, `full-${nBuild++}-`));
   const sk = path.join(dir, "sk"); fs.mkdirSync(sk);
   for (const f of ["podEdStack.h", "podNetStack.h", "pod_http.h", "pod_bench.h", "pod_bench_stream.h", "pod_vote_r4.h", "pod_metrics.h", "pod_metrics_table.h"]) fs.copyFileSync(path.join(SKETCH_DIR, f), path.join(sk, f));
-  fs.writeFileSync(path.join(sk, "pod_sd_stack.h"), mutateHdr(fs.readFileSync(path.join(SKETCH_DIR, "pod_sd_stack.h"), "utf8")));   // gabarits onSd / onSdDirect (hors du .ino)
+  fs.writeFileSync(path.join(sk, "pod_sd_stack.h"), mutateHdr(fs.readFileSync(path.join(SKETCH_DIR, "pod_sd_stack.h"), "utf8").replace(/\r\n/g, "\n")));   // gabarits onSd / onSdDirect (hors du .ino)
   fs.copyFileSync(path.join(MOCK, "pod_ssl_bounded.h"), path.join(sk, "pod_ssl_bounded.h"));   // le client TLS SIMULÉ (le vrai est testé contre le vrai Modem.cpp par boundedSsl.test.ts)
   fs.writeFileSync(path.join(sk, "sketch_body.inc"), mutate(src));
   const out = path.join(dir, "tft28_harness");
@@ -162,12 +162,14 @@ test("HÔTE firmware complet : CONTRÔLES NÉGATIFS — ACK avant l'affichage, d
     ["CANARI : candidat retenu", true, "#define POD_CANARY_CANDIDATE(candId) do { if ((candId).length() > 0) logf(\"[CANARY] candidat annonce : AUCUN vote en build canari (oublie localement)\"); } while (0)", "#define POD_CANARY_CANDIDATE(candId) do { if ((candId).length() > 0) pendingCandidateId = (candId); } while (0)"],
     ["CANARI : confirmation d'observation atteignable", true, "  pendingObsHashes = \"\"; pendingObsTarget = \"\";\n  logf(\"[CANARY] observation annoncee", "  { String r; httpCall(\"POST\", \"/api/obs-confirm\", nullptr, r); }\n  pendingObsHashes = \"\"; pendingObsTarget = \"\";\n  logf(\"[CANARY] observation annoncee"],
     ["CANARI : banc d'essai non ignoré", true, "#define POD_CANARY_NO_BENCH(flag) do { if (flag) { logf(\"[CANARY] banc d'essai annonce par le serveur : IGNORE en canari\"); flag = false; } } while (0)", "#define POD_CANARY_NO_BENCH(flag) ((void)0)"],
+    ["FIX2 : tampon de travail de l'animation alloué AVANT le téléchargement (pic de tas)", false, "const bool got = netGetBlockClipToSd(hash, announced, writeFailed);", "uint8_t* early = (uint8_t*)malloc(2048); const bool got = netGetBlockClipToSd(hash, announced, writeFailed); free(early);"],
+    ["FIX2 : échec d'allocation du tampon après le téléchargement ignoré (validation sans tampon)", false, "    if (!work) logf(", "    if (!work) { ok = animValidateAndMark(hash, announced, work, frames); } if (!work) logf("],
     ["pile SD : échec ignoré (opération présentée comme faite)", false, "  if (!ran) sdStackFailed(what, ni);\n  return ran;", "  if (!ran) sdStackFailed(what, ni);\n  return true;"],
     ["pile SD : exécution directe même sur la pile principale", false, "  if (!podNetOnMainStack()) { onSdDirect(f); return true; }", "  { onSdDirect(f); return true; }"],
   ];
   for (const [name, canary, a, b, a2, b2] of muts) {
     const inHdr = name.startsWith("pile SD");   // ces mutants portent sur pod_sd_stack.h
-    const hdrText = fs.readFileSync(path.join(SKETCH_DIR, "pod_sd_stack.h"), "utf8");
+    const hdrText = fs.readFileSync(path.join(SKETCH_DIR, "pod_sd_stack.h"), "utf8").replace(/\r\n/g, "\n");
     for (const x of [a, a2]) if (x) assert.equal((inHdr ? hdrText : src).split(x).length, 2, `mutation « ${name} » : motif introuvable ou multiple`);
     const mut = (s: string) => { let o = s.split(a).join(b); if (a2) o = o.split(a2).join(b2!); return o; };
     const r = passFull(inHdr ? buildFull(canary, (s) => s, mut) : buildFull(canary, mut));

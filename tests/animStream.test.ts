@@ -138,7 +138,7 @@ test("VALIDATION DIFFÉRENTIELLE : sur ~3 000 clips mutés (CRC re-signé ou non
   lines.push("", "00", "5042433100", Buffer.from(bases[0]).toString("hex"));
   const f = path.join(tmp, "batch.txt");
   fs.writeFileSync(f, lines.join("\n") + "\n");
-  const out = execFileSync(exe, ["validate_batch", f], { encoding: "utf8", maxBuffer: 64 * 1024 * 1024 }).trim().split("\n");
+  const out = execFileSync(exe, ["validate_batch", f], { encoding: "utf8", maxBuffer: 64 * 1024 * 1024 }).trim().split(/\r?\n/);
   assert.equal(out.length, lines.length);
   const kinds = new Set<string>();
   let ok = 0;
@@ -164,7 +164,7 @@ test("ÉQUIVALENCE TS : le lecteur en flux accepte exactement les clips que deco
     expected.push(okTs);
   }
   const f = path.join(tmp, "batch2.txt"); fs.writeFileSync(f, lines.join("\n") + "\n");
-  const out = execFileSync(exe, ["validate_batch", f], { encoding: "utf8", maxBuffer: 64 * 1024 * 1024 }).trim().split("\n");
+  const out = execFileSync(exe, ["validate_batch", f], { encoding: "utf8", maxBuffer: 64 * 1024 * 1024 }).trim().split(/\r?\n/);
   for (let i = 0; i < out.length; i++) assert.equal(out[i].split(" ")[1] === "OK", expected[i], `clip muté n°${i} : ${out[i]}`);
 });
 

@@ -14,6 +14,11 @@
 #include <functional>
 #include <algorithm>
 #include <malloc.h>
+#if defined(_WIN32) && !defined(__GLIBC__)
+// MinGW : <malloc.h> n'a ni struct mallinfo ni mallinfo() (glibc seulement). Simulation de test pour freeHeapBytes() du sketch (l'hôte ne s'en sert que pour des journaux).
+struct mallinfo { int arena, ordblks, smblks, hblks, hblkhd, usmblks, fsmblks, uordblks, fordblks, keepcost; };
+static inline struct mallinfo mallinfo() { struct mallinfo m = {}; m.arena = 8000; m.fordblks = 8000; return m; }
+#endif
 
 #define HEX 16
 #define DEC 10
