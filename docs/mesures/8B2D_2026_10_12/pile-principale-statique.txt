@@ -1,0 +1,192 @@
+# LOT8B2D — pile PRINCIPALE (1 024 o) : analyse STATIQUE par chaînes d'appels directs (scripts/tft28-stack-report.js). Les lambdas passées à podNetRun / podWifiRun / podWorkRun / onSd / logf / PodEd s'exécutent sur leur pile dédiée (barrière).
+# ⚠ statique et pessimiste : pas d'interruptions, pas d'appels indirects ; ne remplace pas la mesure du canari.
+
+## base — cœur 1.5.3
+# frames : hal_entry 8 + arduino_main 16 ; setup 296 ; loop 280
+| étape | cadre | pire chaîne sous l'étape | cumul depuis setup | marge (setup) | cumul depuis loop | marge (loop) | indirects |
+|---|---|---|---|---|---|---|---|
+| doRegister | 192 | 792 | 1112 | -88 | 1096 | -72 | 60 |
+| doPull | 312 | 1072 | 1392 | -368 | 1376 | -352 | 48 |
+| httpCall | 72 | 248 | 568 | 456 | 552 | 472 | 23 |
+| doValidate | 504 | 1296 | 1616 | -592 | 1600 | -576 | 61 |
+| benchPollOnce | 144 | 460 | 780 | 244 | 764 | 260 | 33 |
+| drawCartel | 64 | 264 | 584 | 440 | 568 | 456 | 5 |
+| restoreRows | 64 | 696 | 1016 | 8 | 1000 | 24 | 7 |
+| displayOnboardingTFT | 112 | 368 | 688 | 336 | 672 | 352 | 7 |
+
+## base — cœur 1.6.0
+# frames : hal_entry 8 + arduino_main 16 ; setup 296 ; loop 280
+| étape | cadre | pire chaîne sous l'étape | cumul depuis setup | marge (setup) | cumul depuis loop | marge (loop) | indirects |
+|---|---|---|---|---|---|---|---|
+| doRegister | 192 | 792 | 1112 | -88 | 1096 | -72 | 60 |
+| doPull | 312 | 1072 | 1392 | -368 | 1376 | -352 | 48 |
+| httpCall | 72 | 248 | 568 | 456 | 552 | 472 | 23 |
+| doValidate | 504 | 1296 | 1616 | -592 | 1600 | -576 | 61 |
+| benchPollOnce | 144 | 460 | 780 | 244 | 764 | 260 | 33 |
+| drawCartel | 64 | 264 | 584 | 440 | 568 | 456 | 5 |
+| restoreRows | 64 | 696 | 1016 | 8 | 1000 | 24 | 7 |
+| displayOnboardingTFT | 112 | 368 | 688 | 336 | 672 | 352 | 7 |
+
+## off — cœur 1.5.3
+# frames : hal_entry 8 + arduino_main 16 ; setup 224 ; loop 280
+| étape | cadre | pire chaîne sous l'étape | cumul depuis setup | marge (setup) | cumul depuis loop | marge (loop) | indirects |
+|---|---|---|---|---|---|---|---|
+| doRegister | 144 | 512 | 760 | 264 | 816 | 208 | 50 |
+| doRegisterDecode | 24 | 176 | 424 | 600 | 480 | 544 | 25 |
+| doPull | 112 | 456 | 704 | 320 | 760 | 264 | 38 |
+| doPullStage | 80 | 344 | 592 | 432 | 648 | 376 | 32 |
+| httpCall | 72 | 248 | 496 | 528 | 552 | 472 | 23 |
+| doValidateV2 | 352 | 600 | 848 | 176 | 904 | 120 | 24 |
+| doValidateDecode | 40 | 192 | 440 | 584 | 496 | 528 | 25 |
+| benchPollOnce | 48 | 296 | 544 | 480 | 600 | 424 | 25 |
+| drawCartel | 64 | 264 | 512 | 512 | 568 | 456 | 5 |
+| restoreRows | 40 | 80 | 328 | 696 | 384 | 640 | 30 |
+| displayOnboardingTFT | 112 | 368 | 616 | 408 | 672 | 352 | 7 |
+
+## off — cœur 1.6.0
+# frames : hal_entry 8 + arduino_main 16 ; setup 224 ; loop 280
+| étape | cadre | pire chaîne sous l'étape | cumul depuis setup | marge (setup) | cumul depuis loop | marge (loop) | indirects |
+|---|---|---|---|---|---|---|---|
+| doRegister | 144 | 512 | 760 | 264 | 816 | 208 | 50 |
+| doRegisterDecode | 24 | 176 | 424 | 600 | 480 | 544 | 25 |
+| doPull | 112 | 456 | 704 | 320 | 760 | 264 | 38 |
+| doPullStage | 80 | 344 | 592 | 432 | 648 | 376 | 32 |
+| httpCall | 72 | 248 | 496 | 528 | 552 | 472 | 23 |
+| doValidateV2 | 352 | 600 | 848 | 176 | 904 | 120 | 24 |
+| doValidateDecode | 40 | 192 | 440 | 584 | 496 | 528 | 25 |
+| benchPollOnce | 48 | 296 | 544 | 480 | 600 | 424 | 25 |
+| drawCartel | 64 | 264 | 512 | 512 | 568 | 456 | 5 |
+| restoreRows | 40 | 80 | 328 | 696 | 384 | 640 | 30 |
+| displayOnboardingTFT | 112 | 368 | 616 | 408 | 672 | 352 | 7 |
+
+## can — cœur 1.5.3
+# frames : hal_entry 8 + arduino_main 16 ; setup 224 ; loop 280
+| étape | cadre | pire chaîne sous l'étape | cumul depuis setup | marge (setup) | cumul depuis loop | marge (loop) | indirects |
+|---|---|---|---|---|---|---|---|
+| doRegister | 144 | 512 | 760 | 264 | 816 | 208 | 50 |
+| doRegisterDecode | 40 | 192 | 440 | 584 | 496 | 528 | 25 |
+| doPull | 88 | 448 | 696 | 328 | 752 | 272 | 38 |
+| doPullStage | 80 | 360 | 608 | 416 | 664 | 360 | 32 |
+| httpCall | 88 | 264 | 512 | 512 | 568 | 456 | 23 |
+| benchPollOnce | 48 | 312 | 560 | 464 | 616 | 408 | 25 |
+| drawCartel | 64 | 264 | 512 | 512 | 568 | 456 | 5 |
+| restoreRows | 64 | 104 | 352 | 672 | 408 | 616 | 30 |
+| displayOnboardingTFT | 112 | 368 | 616 | 408 | 672 | 352 | 7 |
+
+## can — cœur 1.6.0
+# frames : hal_entry 8 + arduino_main 16 ; setup 224 ; loop 280
+| étape | cadre | pire chaîne sous l'étape | cumul depuis setup | marge (setup) | cumul depuis loop | marge (loop) | indirects |
+|---|---|---|---|---|---|---|---|
+| doRegister | 144 | 512 | 760 | 264 | 816 | 208 | 50 |
+| doRegisterDecode | 40 | 192 | 440 | 584 | 496 | 528 | 25 |
+| doPull | 88 | 448 | 696 | 328 | 752 | 272 | 38 |
+| doPullStage | 80 | 360 | 608 | 416 | 664 | 360 | 32 |
+| httpCall | 88 | 264 | 512 | 512 | 568 | 456 | 23 |
+| benchPollOnce | 48 | 312 | 560 | 464 | 616 | 408 | 25 |
+| drawCartel | 64 | 264 | 512 | 512 | 568 | 456 | 5 |
+| restoreRows | 64 | 104 | 352 | 672 | 408 | 616 | 30 |
+| displayOnboardingTFT | 112 | 368 | 616 | 408 | 672 | 352 | 7 |
+
+## chaîne la plus profonde sous loop — base (1.5.3)
+# chaîne la plus profonde sous loop (1576 o) :
+  loop(280)
+  > _ZL10doValidatev(504)
+  > _ZL10doRegisterv(192)
+  > _ZNK11ArduinoJson8V743PB226detail14VariantRefBaseINS1_11MemberProxyIRNS0_12JsonDocumentENS1_9RamStringEEEE2asIN7arduino6StringEEET_v(24)
+  > _ZN11ArduinoJson8V743PB2215convertFromJsonENS0_16JsonVariantConstERN7arduino6StringE(256)
+  > _ZNK11ArduinoJson8V743PB226detail11VariantData6acceptINS1_14JsonSerializerINS1_6WriterIN7arduino6StringEvEEEEEENT_11result_typeERSA_PKNS1_15ResourceManagerE.isra.0(40)
+  > _ZN11ArduinoJson8V743PB226detail13TextFormatterINS1_6WriterIN7arduino6StringEvEEE10writeFloatEda(64)
+  > _ZN11ArduinoJson8V743PB226detail13TextFormatterINS1_6WriterIN7arduino6StringEvEEE8writeRawEPKc(16)
+  > _ZN11ArduinoJson8V743PB226detail17CountingDecoratorINS1_6WriterIN7arduino6StringEvEEE5writeEPKhj(24)
+  > _ZN11ArduinoJson8V743PB226detail6WriterIN7arduino6StringEvE5writeEh(16)
+  > _ZN11ArduinoJson8V743PB226detail6WriterIN7arduino6StringEvE5flushEv(16)
+  > _ZN7arduino6String6concatEPKc(tail)
+  > _ZN7arduino6String6concatEPKc.part.0(tail)
+  > _ZN7arduino6String6concatEPKcj(24)
+  > _ZN7arduino6String7reserveEj(8)
+  > _ZN7arduino6String12changeBufferEj(16)
+  > realloc(tail)
+  > _realloc_r(24)
+  > _malloc_r(32)
+  > sbrk_aligned(16)
+  > _sbrk_r(16)
+  > _sbrk(8)
+## chaîne la plus profonde sous setup — base (1.5.3)
+# chaîne la plus profonde sous setup (1368 o) :
+  setup(296)
+  > _ZL6doPullv.isra.0(312)
+  > _ZL14maybeFetchAnimRKN7arduino6StringE(128)
+  > _ZN5SDLib7SDClass4openEPKch(152)
+  > _ZN5SDLib7SDClass12getParentDirEPKcPi(144)
+  > _ZN6SdFile4openEPS_PKch(48)
+  > _ZN6SdFile13addDirClusterEv(16)
+  > _ZN6SdFile10addClusterEv(8)
+  > _ZN8SdVolume15allocContiguousEmPm(48)
+  > _ZN8SdVolume6fatPutEmm(24)
+  > _ZN8SdVolume13cacheRawBlockEmh(16)
+  > _ZN8SdVolume10cacheFlushEh(16)
+  > _ZN8SdVolume21cacheMirrorBlockFlushEh(8)
+  > _ZN7Sd2Card10writeBlockEmPKhh(24)
+  > _ZN7Sd2Card11cardCommandEhm(24)
+  > _ZN7Sd2Card13chipSelectLowEv(8)
+  > _ZN7arduino10ArduinoSPI16beginTransactionENS_11SPISettingsE(24)
+  > _ZN7arduino10ArduinoSPI17configSpiSettingsERKNS_11SPISettingsE(tail)
+  > _ZN7arduino10ArduinoSPI12configSpiSciERKNS_11SPISettingsE(24)
+  > R_SCI_SPI_CalculateBitrate(16)
+  > __aeabi_ldivmod(0)
+  > __udivmoddi4(32)
+
+## chaîne la plus profonde sous loop — off (1.5.3)
+# chaîne la plus profonde sous loop (880 o) :
+  loop(280)
+  > _ZL12doValidateV2RKN7arduino6StringES2_jS2_(352)
+  > _ZL8httpCallPKcRKN7arduino6StringEPS3_RS2_(72)
+  > _ZNK7arduino6String9substringEjj(24)
+  > _ZN7arduino6StringC1EPKc(16)
+  > _ZN7arduino6String4copyEPKcj(16)
+  > _ZN7arduino6String7reserveEj(8)
+  > _ZN7arduino6String12changeBufferEj(16)
+  > realloc(tail)
+  > _realloc_r(24)
+  > _malloc_r(32)
+  > sbrk_aligned(16)
+  > _sbrk_r(16)
+  > _sbrk(8)
+## chaîne la plus profonde sous setup — off (1.5.3)
+# chaîne la plus profonde sous setup (736 o) :
+  setup(224)
+  > _ZL10doRegisterv(144)
+  > _ZL20displayOnboardingTFTRKN7arduino6StringES2_S2_.constprop.0(112)
+  > qrcode_initText(32)
+  > qrcode_initBytes(144)
+  > drawFinderPattern(56)
+  > setFunctionModule(16)
+  > bb_setBit(8)
+
+## chaîne la plus profonde sous loop — can (1.5.3)
+# chaîne la plus profonde sous loop (792 o) :
+  loop(280)
+  > _ZL10doRegisterv(144)
+  > _ZL20displayOnboardingTFTRKN7arduino6StringES2_S2_.constprop.0(112)
+  > qrcode_initText(32)
+  > qrcode_initBytes(144)
+  > drawFinderPattern(56)
+  > setFunctionModule(16)
+  > bb_setBit(8)
+## chaîne la plus profonde sous setup — can (1.5.3)
+# chaîne la plus profonde sous setup (736 o) :
+  setup(224)
+  > _ZL10doRegisterv(144)
+  > _ZL20displayOnboardingTFTRKN7arduino6StringES2_S2_.constprop.0(112)
+  > qrcode_initText(32)
+  > qrcode_initBytes(144)
+  > drawFinderPattern(56)
+  > setFunctionModule(16)
+  > bb_setBit(8)
+
+# ── piles DÉDIÉES (analyse statique, cœur 1.5.3, appels directs y compris le journal exécuté directement sur la pile dédiée ; branche flottante de printf exclue) ──
+# pile SD / TFT (onSd, 1 536 o = garde 64 + 1 472 utilisables ; on retranche le cadre d'exception 104 o) — pire chaîne et marge statique restante :
+#   production : restoreLastFrameImpl 848 o (marge 520) · toggleCartelImpl 800 (568) · onAnimTouchImpl 752 (616) · animLoadMarkerImpl / fetchAnimToSd (λ rangement) 712 (656) · restoreRows (λ) 704 (664) · runResidentAnim (λ lecture) 680 (688)
+#   canari     : restoreLastFrameImpl 896 o (marge 472) · toggleCartelImpl 824 (544) · onAnimTouchImpl 776 (592) · autres identiques
+# pile RÉSEAU (2 048 o) : transaction d'image 1 072 o (hors printf flottant, jamais exécuté ; 1 432 o avec) => marge statique 2 048 − 64 − 104 − 1 072 = 808 o (528 o dans le pire cas flottant)
+# pile de TRAVAIL (2 048 o) : chaîne la plus profonde mesurée sur l'ELF du e-ink 2,9″ : POD_WORK_DEEPEST_CALL = 1 536 o (en-tête partagé, static_assert) ; le pull TFT utilise les mêmes bibliothèques

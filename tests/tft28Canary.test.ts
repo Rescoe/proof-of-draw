@@ -235,3 +235,27 @@ test("aucun secret, binaire ni bibliothèque installée dans le dossier du sketc
     for (const f of fs.readdirSync(d)) if (/\.(ino)$/.test(f)) assert.doesNotMatch(fs.readFileSync(path.join(d, f), "utf8"), /onSd\(|LOT8B2D|POD_SD_STACK_TOTAL/, `${other}: aucune propagation`);
   }
 });
+
+// ── 7. inventaire formel (scripts/tft28-inventory.js) ───────────────────────────────────────────────────────────────────
+test("INVENTAIRE FORMEL : WiFi.* (6, tous dans une enveloppe podWifiRun), Conn (5 en production, 4 en canari, tous dans un « auto tx » de podNetRun), deserializeJson (5 / 4, tous sur la pile de travail), Ed25519 (via PodEd), routes", () => {
+  const inv = JSON.parse(execFileSync("node", [path.join(ROOT, "scripts", "tft28-inventory.js"), "--json"], { encoding: "utf8" })) as Record<"production" | "canari", Record<string, string[]>>;
+  const fns = (a: string[]) => a.map((x) => x.split(" → ")[0]).sort();
+  const count = (a: string[]) => a.reduce((n, x) => n + (/×(\d+)$/.exec(x) ? Number(/×(\d+)$/.exec(x)![1]) : 1), 0);
+  for (const k of ["production", "canari"] as const) {
+    assert.deepEqual(fns(inv[k].wifi), ["wifiBegin/λwx", "wifiFirmware/λwx", "wifiIpString/λwx", "wifiMac/λwx", "wifiRssi/λwx", "wifiStatusT/λwx"], `${k} : WiFi.*`);
+    for (const c of inv[k].conn) assert.match(c, /\/λtx → Conn c$/, `${k} : Conn hors d'un auto tx : ${c}`);
+    for (const j of inv[k].json) assert.match(j, /^(registerParseWork|pullParseWork|validateParseWork|benchPollParseWork) → deserializeJson/, `${k} : JSON hors pile de travail : ${j}`);
+    for (const e of inv[k].ed25519) assert.match(e, /→ PodEd::/, `${k} : Ed25519 direct : ${e}`);
+  }
+  assert.deepEqual(fns(inv.production.conn), ["doFetchFrame/λtx", "netGetBenchClip/λtx", "netGetBlockClip/λtx", "netHttpRaw/λtx", "netReadCandidate/λtx"]);
+  assert.deepEqual(fns(inv.canari.conn), ["doFetchFrame/λtx", "netGetBenchClip/λtx", "netGetBlockClip/λtx", "netHttpRaw/λtx"]);
+  assert.equal(count(inv.production.json), 5, "production : 5 décodages");
+  assert.equal(count(inv.canari.json), 4, "canari : 4 décodages (pas de candidat)");
+  assert.deepEqual(inv.canari.ed25519.sort(), ["generateKeys → PodEd::derivePublicKey", "loadKeysFromEEPROM → PodEd::derivePublicKey", "selfTestEd25519 → PodEd::sign", "selfTestEd25519 → PodEd::verify"].sort());
+  for (const r of inv.canari.routes) assert.doesNotMatch(r, /validate|validation|candidate-frame|obs-confirm/, `route de vote atteignable en canari : ${r}`);
+  for (const r of ["/api/validate-candidate?device", "/api/validation-result", "/api/candidate-frame?candidate", "/api/obs-confirm"]) assert.ok(inv.production.routes.includes(r), `production : ${r}`);
+  for (const r of ["/api/register", "/api/pull?device", "/api/pull-frame?device", "/api/ack-frame", "/api/block-clip?hash"]) assert.ok(inv.canari.routes.includes(r), `canari : ${r}`);
+  // chaque lanceur de pile (réseau / Wi-Fi / travail / SD) existe pour chaque site profond : pas de lanceur imbriqué dans un autre
+  const launchers = inv.canari.launchers.filter((l) => !/^(logf|onSd) → /.test(l));
+  assert.ok(launchers.length >= 15);
+});

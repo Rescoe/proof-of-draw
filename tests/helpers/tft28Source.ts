@@ -30,7 +30,9 @@ export function effective(src: string, canary: boolean): string {
 
 /** Retire les instructions-crochets du canari (macros sans effet en production) : POD_CANARY_XXX(...); */
 export function stripHooks(src: string): string {
-  return src.replace(/^[ \t]*POD_CANARY_[A-Z_]+\([^;\n]*\);[ \t]*\n/gm, "").replace(/ \|\| POD_CANARY_LOG_FATAL\(li\)/g, "");
+  return src
+    .replace(/^([ \t]*)POD_CANARY_CANDIDATE\(([^;\n]*)\);[ \t]*\n/gm, "$1do { if (($2).length() > 0) pendingCandidateId = ($2); } while (0);\n")   // la SEULE macro dont la définition de production n'est pas vide : on la développe
+    .replace(/^[ \t]*POD_CANARY_[A-Z_]+\([^;\n]*\);[ \t]*\n/gm, "").replace(/ \|\| POD_CANARY_LOG_FATAL\(li\)/g, "");
 }
 
 export const stripLine = (s: string) => s.replace(/("(?:[^"\\\n]|\\.)*")|\/\/.*$/gm, (_m, str?: string) => str ?? "");

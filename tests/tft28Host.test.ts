@@ -57,7 +57,7 @@ for (const canary of [false, true]) {
   });
 }
 test("HÔTE pull : CONTRÔLES NÉGATIFS — cartel appliqué sans nouvelle image, candidat retenu en canari, effets avant le retour valide, échec de pile ignoré, bornes relâchées : le harnais les REFUSE", { skip: skipHost }, () => {
-  const muts: Array<[string, boolean, string, string]> = [
+  const muts: Array<[string, boolean, string, string, string?, string?]> = [
     ["cartel appliqué même pour une image déjà affichée", false, "if (frameSource == \"none\" || frameId.length() == 0 || frameId == lastFrameId) return 1;", "if (false) return 1;"],
     ["cartel jamais appliqué", false, "if (r.hasCartel) {\n    pendingWorkTitle", "if (false) {\n    pendingWorkTitle"],
     ["effet (animation) AVANT le contrôle de la pile", false, "  const bool ran = pullParseOnWorkStack(resp, code, r, ni);", "  pendingAnimHash = \"x\";\n  const bool ran = pullParseOnWorkStack(resp, code, r, ni);"],
@@ -91,5 +91,75 @@ test("HÔTE register / validate : CONTRÔLES NÉGATIFS — validation relâchée
     assert.equal(base.split(a).length, 2, `mutation « ${name} » : motif introuvable ou multiple`);
     const r = runProcess(buildJson(kind, false, (s) => s.split(a).join(b), true), [], 60000);
     assert.ok(!passes(r), `mutation ${kind} « ${name} » NON détectée`);
+  }
+});
+
+// ═══ firmware complet (setup / loop / doFetchFrame / streamFrame / carte SD / cartel / tactile / animations / ACK) contre les bibliothèques simulées ═══
+import { encodeClip, CLIP } from "../lib/bench/clip";
+const MOCK = path.join(HOST, "tft28");
+const SKETCH_DIR = path.join(ROOT, "arduino_uno_r4", "pod_uno_r4");
+let nBuild = 0;
+function buildFull(canary: boolean, mutate: (s: string) => string = (s) => s): string {
+  const dir = fs.mkdtempSync(path.join(tmp, `full-${nBuild++}-`));
+  const sk = path.join(dir, "sk"); fs.mkdirSync(sk);
+  for (const f of ["podEdStack.h", "podNetStack.h", "pod_http.h", "pod_bench.h", "pod_vote_r4.h", "pod_metrics.h", "pod_metrics_table.h"]) fs.copyFileSync(path.join(SKETCH_DIR, f), path.join(sk, f));
+  fs.copyFileSync(path.join(MOCK, "pod_ssl_bounded.h"), path.join(sk, "pod_ssl_bounded.h"));   // le client TLS SIMULÉ (le vrai est testé contre le vrai Modem.cpp par boundedSsl.test.ts)
+  fs.writeFileSync(path.join(sk, "sketch_body.inc"), mutate(src));
+  const out = path.join(dir, "tft28_harness");
+  const r = runProcess(choice.path!, ["-std=gnu++17", "-O1", "-w", "-fno-strict-aliasing", `-DPOD_CANARY=${canary ? 1 : 0}`, `-DPOD_RENDER_V1=${canary ? 1 : 0}`, `-I${sk}`, `-I${MOCK}`, "-isystem", ajDir!, ...AJ_FLAGS, path.join(HOST, "tft28_harness.cpp"), "-o", out], 240000);
+  assert.equal(r.status, 0, `compilation du harnais firmware complet impossible\n${(r.stderr || "").slice(-2500)}`);
+  return out;
+}
+const clipHexFile = (() => {
+  const f1 = Uint8Array.from({ length: CLIP.FRAME_BYTES }, (_, i) => (i * 7) & 0xff), f2 = Uint8Array.from({ length: CLIP.FRAME_BYTES }, (_, i) => (i * 13 + 5) & 0xff);
+  const f = path.join(tmp, "clip.hex"); fs.writeFileSync(f, Buffer.from(encodeClip({ frames: [f1, f2], delaysMs: [50, 50], loops: 0, fg: 0x07e0, bg: 0x0842 })).toString("hex")); return f;
+})();
+const passFull = (exe: string) => { const r = runProcess(exe, ["--clip", clipHexFile], 180000); return { ok: r.status === 0 && /^PASS \d+$/.test(r.stdout.trim()), out: r.stdout + r.stderr }; };
+const exeCache = new Map<string, string>();
+const fullExe = (canary: boolean) => { const k = String(canary); if (!exeCache.has(k)) exeCache.set(k, buildFull(canary)); return exeCache.get(k)!; };
+
+for (const canary of [false, true]) {
+  test(`HÔTE firmware COMPLET (${canary ? "CANARI POD_CANARY=1" : "PRODUCTION POD_CANARY=0"}) : image 240×320 octet par octet, cache SD, cartel / toucher, restauration, animations, pannes (tronqué, silence, taille, SD, défaut TLS), ACK 200 / refusé / impossible, aucun ACK hors affichage complet${canary ? ", AUCUN vote en 10 minutes de boucle" : ", le vote existe (test sensible)"}`, { skip: skipHost }, () => {
+    const r = passFull(fullExe(canary));
+    assert.ok(r.ok, r.out);
+  });
+}
+test("HÔTE canari : arrêt sûr (le processus se FIGE, sans rien faire de plus) sur garde écrasée, erreur ou marge d'une pile dédiée (réseau, SD), mémoire insuffisante, marge de la pile principale < 128 o, marqueur détruit ; la commande de contrôle, elle, se termine", { skip: skipHost }, () => {
+  const exe = fullExe(true);
+  const ctrl = runProcess(exe, ["halt:control"], 20000); assert.equal(ctrl.status, 0, ctrl.stdout + ctrl.stderr); assert.match(ctrl.stdout, /NOHALT/);
+  for (const sc of ["guard-net", "nomem-frame", "ack-stack", "sd-nomem", "margin-net", "main-stack", "marker", "sd-stack-margin"]) {
+    const r = runProcess(exe, [`halt:${sc}`], 3000);
+    assert.ok(r.status !== 0 && !/NOHALT/.test(r.stdout), `${sc} : le canari devait se figer (statut ${r.status}, sortie « ${r.stdout.trim()} »)`);
+  }
+  // production : la garde écrasée fige aussi (arrêt sûr silencieux), mais une simple marge ou un NOMEM ne figent pas
+  const prodExe = fullExe(false);
+  const g = runProcess(prodExe, ["halt:guard-net"], 3000); assert.ok(g.status !== 0 && !/NOHALT/.test(g.stdout), "production : garde écrasée => arrêt sûr");
+  const c0 = runProcess(prodExe, ["halt:control"], 20000); assert.equal(c0.status, 0); assert.match(c0.stdout, /NOHALT/);
+});
+test("HÔTE firmware complet : CONTRÔLES NÉGATIFS — ACK avant l'affichage, défaut collant ignoré, ordre des octets, cache SD, bandes du cartel, ACK ignoré / vote atteignable en canari, pile SD sans échec fermé : le harnais les REFUSE", { skip: skipHost }, () => {
+  const muts: Array<[string, boolean, string, string, string?, string?]> = [
+    ["ACK malgré une image incomplète (production)", false, "  if (!shown) { logf(\"[FRAME] image incomplète — pas d'ACK, nouvel essai au prochain pull\"); sdFrameValid = false; return false; }", "  if (!shown) { logf(\"[FRAME] image incomplète — pas d'ACK, nouvel essai au prochain pull\"); sdFrameValid = false; ackFrame(frameId); return false; }"],
+    ["défaut collant du client TLS ignoré", false, " && c.client.fault() == 0;   // défaut collant du client TLS borné : image refusée (ni affichage annoncé, ni ACK)", ";"],
+    ["octets du bus non permutés (little-endian envoyé tel quel)", false, "    swapRowBytes();                                          // LE serveur -> BE bus SPI\n", ""],
+    ["cache SD non écrit", false, "    if (saving && f.write(raw, ROW_BYTES) != (size_t)ROW_BYTES) {", "    if (false && f.write(raw, ROW_BYTES) != (size_t)ROW_BYTES) {"],
+    ["ligne incomplète non signalée (image tronquée déclarée affichée)", false, "{ logf(\"[FRAME] ligne %d incomplète\", y); ok = false; break; }", "{ logf(\"[FRAME] ligne %d incomplète\", y); break; }"],
+    ["masquage : seule la bande haute restaurée", false, "if (restoreRows(0, BAND_TOP_H) && restoreRows(BAND_BOT_Y, BAND_BOT_H)) {", "if (restoreRows(0, BAND_TOP_H)) {"],
+    ["masquage : dernière ligne de la bande basse non restaurée", false, "restoreRows(BAND_BOT_Y, BAND_BOT_H)", "restoreRows(BAND_BOT_Y, BAND_BOT_H - 1)"],
+    ["cartel qui déborde sur l'œuvre (bande haute trop haute)", false, "  tft.fillRect(0, 0, SCR_W, BAND_TOP_H - 1, C_DARK);\n  tft.drawFastHLine(0, BAND_TOP_H - 1, SCR_W, C_GOLD);\n  tft.setTextSize(2); tft.setTextColor(C_GOLD, C_DARK); tft.setCursor(8, 12);", "  tft.fillRect(0, 0, SCR_W, BAND_TOP_H + 20, C_DARK);\n  tft.drawFastHLine(0, BAND_TOP_H - 1, SCR_W, C_GOLD);\n  tft.setTextSize(2); tft.setTextColor(C_GOLD, C_DARK); tft.setCursor(8, 12);"],
+    ["métadonnées SD écrites même sans image complète sur la carte", false, "  if (sdFrameValid) saveMeta(frameId);\n  logf(\"[FRAME] OK en %lu ms (frameId=%s source=%s, cache SD: %s)\", millis() - t0, frameId.c_str(), frameSource.c_str(), sdFrameValid ? \"oui\" : \"non\");\n  ackFrame(frameId);", "  saveMeta(frameId);\n  logf(\"[FRAME] OK en %lu ms (frameId=%s source=%s, cache SD: %s)\", millis() - t0, frameId.c_str(), frameSource.c_str(), sdFrameValid ? \"oui\" : \"non\");\n  ackFrame(frameId);"],
+    ["CANARI : résultat de l'ACK ignoré", true, "  if (!acked) { logf(\"[CANARY] ECHEC ACK", "  if (false) { logf(\"[CANARY] ECHEC ACK"],
+    ["CANARI : frame marquée acquittée avant l'ACK", true, "  const bool acked = ackFrame(frameId);\n", "  lastFrameId = frameId;\n  const bool acked = ackFrame(frameId);\n"],
+    ["CANARI : une requête de vote ATTEIGNABLE (candidat retenu + doValidate qui interroge le serveur)", true, "static bool doValidate() {\n  pendingCandidateId = \"\";\n  return false;\n}", "static bool doValidate() {\n  String r; httpCall(\"GET\", \"/api/validate-candidate?deviceId=\" + deviceId, nullptr, r);\n  pendingCandidateId = \"\";\n  return false;\n}",
+      "#define POD_CANARY_CANDIDATE(candId) do { if ((candId).length() > 0) logf(\"[CANARY] candidat annonce : AUCUN vote en build canari (oublie localement)\"); } while (0)", "#define POD_CANARY_CANDIDATE(candId) do { if ((candId).length() > 0) pendingCandidateId = (candId); } while (0)"],
+    ["CANARI : candidat retenu", true, "#define POD_CANARY_CANDIDATE(candId) do { if ((candId).length() > 0) logf(\"[CANARY] candidat annonce : AUCUN vote en build canari (oublie localement)\"); } while (0)", "#define POD_CANARY_CANDIDATE(candId) do { if ((candId).length() > 0) pendingCandidateId = (candId); } while (0)"],
+    ["CANARI : confirmation d'observation atteignable", true, "  pendingObsHashes = \"\"; pendingObsTarget = \"\";\n  logf(\"[CANARY] observation annoncee", "  { String r; httpCall(\"POST\", \"/api/obs-confirm\", nullptr, r); }\n  pendingObsHashes = \"\"; pendingObsTarget = \"\";\n  logf(\"[CANARY] observation annoncee"],
+    ["CANARI : banc d'essai non ignoré", true, "#define POD_CANARY_NO_BENCH(flag) do { if (flag) { logf(\"[CANARY] banc d'essai annonce par le serveur : IGNORE en canari\"); flag = false; } } while (0)", "#define POD_CANARY_NO_BENCH(flag) ((void)0)"],
+    ["pile SD : échec ignoré (opération présentée comme faite)", false, "  if (!ran) sdStackFailed(what, ni);\n  return ran;", "  if (!ran) sdStackFailed(what, ni);\n  return true;"],
+    ["pile SD : exécution directe même sur la pile principale", false, "  if (!podNetOnMainStack()) { onSdDirect(f); return true; }", "  { onSdDirect(f); return true; }"],
+  ];
+  for (const [name, canary, a, b, a2, b2] of muts) {
+    for (const x of [a, a2]) if (x) assert.equal(src.split(x).length, 2, `mutation « ${name} » : motif introuvable ou multiple`);
+    const r = passFull(buildFull(canary, (s) => { let o = s.split(a).join(b); if (a2) o = o.split(a2).join(b2!); return o; }));
+    assert.ok(!r.ok, `mutation « ${name} » NON détectée`);
   }
 });

@@ -12,7 +12,6 @@ const root = path.resolve(__dirname, "..");
 const read = (p: string) => fs.readFileSync(path.join(root, p), "utf8").replace(/\r\n/g, "\n");
 const strip = (s: string) => s.replace(/\/\/[^\n]*/g, "");   // commentaires de ligne
 const SKETCHES = ["pod_uno_r4_eink29", "pod_uno_r4_eink27", "pod_uno_r4_eink27_oled", "pod_uno_r4_tft18", "pod_uno_r4"];
-const ino = (sk: string) => `arduino_uno_r4/${sk}/${sk}.ino`;
 const METHODS = ["status", "firmwareVersion", "begin", "macAddress", "RSSI", "localIP"];
 const WRAPPERS = ["wifiStatusT", "wifiStatus", "wifiFirmware", "wifiBegin", "wifiMac", "wifiRssi", "wifiIpString"];
 const BLOCK_START = "// ─── MODULE Wi-Fi sur PILE DÉDIÉE";
