@@ -1,0 +1,32 @@
+Variables and constants in RAM (global, static), used 35052 / 80192 bytes (43%)
+Instruction RAM (IRAM_ATTR, ICACHE_RAM_ATTR), used 60919 / 65536 bytes (92%)
+Code in flash (default, ICACHE_FLASH_ATTR), used 409076 / 1048576 bytes (39%)
+--- avertissements du projet (normalisés : sans chemin ni numéro de ligne)
+      1 AES128.cpp: warning: unused parameter 'input' [-Wunused-parameter]
+      1 AES128.cpp: warning: unused parameter 'output' [-Wunused-parameter]
+      1 AES256.cpp: warning: unused parameter 'input' [-Wunused-parameter]
+      1 AES256.cpp: warning: unused parameter 'output' [-Wunused-parameter]
+      4 esp_eink_2.9BWR.ino: warning: 'DynamicJsonDocument' is deprecated: use JsonDocument instead [-Wdeprecated-declarations]
+      2 qrcode.c: warning: comparison is always false due to limited range of data type [-Wtype-limits]
+--- cadres de pile statiques (octets)
+560 bool doPull()
+448 bool doFetchFrame(const String&, const String&)
+240 bool doRegister()
+128 bool PodEinkRenderer<Sha>::begin(const PodRenderSpec&, PodRenderMode, const PodRenderMeta&, const uint8_t*, const uint8_t*, uint32_t) [with Sha = PodSha256Br]
+80 void setup()
+80 uint8_t PodEinkRenderer<Sha>::byteAt(int, uint32_t) const [with Sha = PodSha256Br]
+80 bool Epd::DisplayStream(Epd::ProduceFn, void*)
+64 void canaryStep(uint8_t, const __FlashStringHelper*)
+64 bool ackFrame(const String&)
+48 unsigned int podRenderProduce(void*, unsigned char*, unsigned int)
+32 void loop()
+32 void canaryStreamReport()
+32 doFetchFrame(const String&, const String&)::<lambda(WiFiClient*, uint8_t*, size_t)>
+32 bool clearDisplayWhite()
+32 bool canaryTlsPreflight(uint8_t, const __FlashStringHelper*, const __FlashStringHelper*)
+16 bool initDisplayForRefresh()
+16 bool doValidate()
+16 bool PodFrameHasher<Sha>::update(const void*, size_t) [with Sha = PodSha256Br]
+0 uint8_t PodEinkRenderer<Sha>::srcPixel(int, int) const [with Sha = PodSha256Br]
+--- désassemblage normalisé (empreinte)
+7fb37ccc07949500

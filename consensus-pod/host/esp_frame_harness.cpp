@@ -59,6 +59,10 @@ void burnEinkCartel_29(uint8_t*, uint8_t*, const String&, const String&, const S
 #include "esp_ack.inc"
 #include "esp_fetch.inc"
 #ifdef HARNESS_VOTE
+static int g_ownedSaves = 0, g_blockSaves = 0;
+void saveOwnedBlockHash(const String&) { g_ownedSaves++; }
+void saveBlockHashToEEPROM(const String&) { g_blockSaves++; }
+#include "esp_pull.inc"
 #include "esp_vote.inc"
 #endif
 #define DisplayStream DisplayStreamReal
@@ -275,7 +279,7 @@ int main() {
     CHECK(Serial.log.find("ECHEC ACK") != std::string::npos && Serial.log.find("ACK recu") == std::string::npos && Serial.log.find("acquittee") != std::string::npos, "S10 CANARI : échec journalisé, jamais « ACK reçu »");
     CHECK(g_pcRtc.phase != PCP_DONE && g_pcRtc.phase == PCP_ACK, "S10 CANARI : aucune phase TERMINE (la dernière phase est ACK)");
     CHECK(g_outstanding == 0 && blackBuf == nullptr && redBuf == nullptr, "S10 CANARI : plans libérés");
-    CHECK(Serial.log.find("flux pilote :") == std::string::npos || true, "S10");
+    { int rep = 0; size_t q = 0; while ((q = Serial.log.find("flux pilote :", q)) != std::string::npos) { rep++; q++; } CHECK(rep == 1, "S10 CANARI : rapport du flux émis UNE fois (après le rendu), pas le rapport de succès final"); }
 #else
     CHECK(r.ret && lastFrameId == "frame-1", "S10 (production) ACK refusé : comportement existant conservé (résultat ignoré)");
 #endif
@@ -357,6 +361,48 @@ int main() {
     CHECK(g_httpGetCalls == 0 && g_httpPostCalls == 0, "C4 aucune requête");
     // reset normal efface le compteur
     resetWorld(); g_rst.reason = 0; g_rtc[0] = PCR_MAGIC; g_rtc[3] = 1; canaryBoot(); CHECK(g_pcRtc.abn == 0, "C4 un reset normal remet le compteur à zéro");
+  }
+#endif
+  // ═══ P : intervalle de pull (FIX2) — le VRAI doPull, réponses /api/pull simulées ═══════════════════════════
+#ifdef HARNESS_VOTE
+  {
+    auto pullWith = [](const char* json, int code, const char* lastId) {
+      resetWorld(); lastFrameId = lastId; pendingCandidateId = ""; frameReady = false; nextPullIntervalMs = 12345UL;
+      g_scn = Scn(); g_scn.code = code; g_scn.body.assign(json, json + std::strlen(json));
+      return doPull();
+    };
+    const unsigned long NOM = PULL_INTERVAL;
+    // P1/P2 : frame identique, sans candidat => retryAfter du serveur
+    CHECK(pullWith("{\"frameSource\":\"personal\",\"frameId\":\"f1\",\"retryAfter\":900,\"chain\":{\"blockHash\":\"h1\",\"blockIndex\":3}}", 200, "f1") && nextPullIntervalMs == 900000UL, "P1 frame identique + retryAfter 900 => prochain pull 900 s");
+    CHECK(g_httpGetCalls == 1 && frameReady && Serial.log.find("Frame déjà affichée") != std::string::npos && evIndex("http_begin https://proof-of-draw.vercel.app/api/pull-frame") < 0, "P1 UN seul GET (/api/pull), aucun téléchargement, frame marquée prête");
+    CHECK(pullWith("{\"frameSource\":\"personal\",\"frameId\":\"f1\",\"retryAfter\":300}", 200, "f1") && nextPullIntervalMs == 300000UL, "P2 frame identique + retryAfter 300 => 300 s");
+    CHECK(pullWith("{\"frameSource\":\"consensus\",\"frameId\":\"f1\",\"retryAfter\":300}", 200, "f1") && nextPullIntervalMs == 300000UL, "P2b frame de consensus identique => 300 s");
+    // P3 : frame NOUVELLE => rythme nominal ET téléchargement
+    CHECK(pullWith("{\"frameSource\":\"personal\",\"frameId\":\"f2\",\"retryAfter\":300}", 200, "f1") && nextPullIntervalMs == NOM, "P3 frame nouvelle => rythme nominal (retryAfter ignoré)");
+    CHECK(Serial.log.find("Nouvelle frame frameId=f2") != std::string::npos && g_httpGetCalls >= 2, "P3 frame nouvelle : récupérée immédiatement (second GET vers /api/pull-frame)");
+    CHECK(pullWith("{\"frameSource\":\"personal\",\"frameId\":\"f2\",\"retryAfter\":300}", 200, "") && nextPullIntervalMs == NOM && Serial.log.find("Nouvelle frame") != std::string::npos, "P3b premier démarrage (lastFrameId vide) : nominal + fetch");
+    // P4 : candidat annoncé => comportement existant (rythme nominal), même si la frame est identique
+    CHECK(pullWith("{\"frameSource\":\"personal\",\"frameId\":\"f1\",\"retryAfter\":900,\"pendingValidation\":{\"candidateId\":\"cand-1\"}}", 200, "f1") && nextPullIntervalMs == NOM && pendingCandidateId == "cand-1", "P4 candidat présent + frame identique => rythme nominal, candidat retenu");
+    CHECK(pullWith("{\"frameSource\":\"none\",\"retryAfter\":900,\"pendingValidation\":{\"candidateId\":\"cand-2\"}}", 200, "f1") && nextPullIntervalMs == NOM, "P4b candidat présent sans frame => rythme nominal (existant)");
+    // P5 : frame absente => retryAfter
+    CHECK(pullWith("{\"frameSource\":\"none\",\"retryAfter\":300}", 200, "f1") && nextPullIntervalMs == 300000UL && Serial.log.find("Aucune frame") != std::string::npos, "P5 frame absente + retryAfter 300 => 300 s");
+    CHECK(pullWith("{\"frameSource\":\"none\",\"retryAfter\":900}", 200, "") && nextPullIntervalMs == 900000UL, "P5b frame absente + retryAfter 900 => 900 s");
+    CHECK(pullWith("{\"frameSource\":\"none\"}", 200, "") && nextPullIntervalMs == 60000UL, "P5c retryAfter absent => 60 s (défaut)");
+    // P6 : frameSource présente mais frameId vide => comportement existant (nominal)
+    CHECK(pullWith("{\"frameSource\":\"personal\",\"retryAfter\":900}", 200, "f1") && nextPullIntervalMs == NOM, "P6 frameSource sans frameId => nominal (inchangé)");
+    // P7 : 429 inchangé
+    {
+      const bool ret = pullWith("{\"retryAfter\":30}", 429, "f1");
+      CHECK(ret && nextPullIntervalMs == 12345UL, "P7 429 : nextPullIntervalMs non touché");
+      CHECK(lastPullMs == millis() - (PULL_INTERVAL - 30000UL) && Serial.log.find("429 rate limit, retryAfter=30") != std::string::npos, "P7 429 : lastPullMs avancé comme avant");
+      CHECK(pullWith("{\"retryAfter\":900}", 429, "f1") && lastPullMs == millis() && nextPullIntervalMs == 12345UL, "P7b 429 retryAfter 900 plafonné à PULL_INTERVAL (inchangé)");
+    }
+    // P8 : erreur HTTP / réseau inchangé
+    CHECK(!pullWith("{}", 500, "f1") && nextPullIntervalMs == 12345UL, "P8 HTTP 500 : false, intervalle non touché");
+    CHECK(!pullWith("{", 200, "f1") && nextPullIntervalMs == 12345UL, "P8b JSON invalide : false, intervalle non touché");
+    { resetWorld(); g_scn = Scn(); g_scn.beginFails = true; nextPullIntervalMs = 12345UL; CHECK(!doPull() && nextPullIntervalMs == 12345UL, "P8c begin() échoue : false, intervalle non touché"); }
+    // P9 : aucune requête de plus qu'avant (un GET par pull, aucun POST)
+    CHECK(pullWith("{\"frameSource\":\"personal\",\"frameId\":\"f1\",\"retryAfter\":900}", 200, "f1") && g_httpGetCalls == 1 && g_httpPostCalls == 0, "P9 frame identique : un GET, zéro POST");
   }
 #endif
   // ═══ V : vote (doValidate / doObsConfirm) ══════════════════════════════════════════════════════════════════════

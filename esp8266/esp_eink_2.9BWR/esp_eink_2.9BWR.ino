@@ -1447,7 +1447,10 @@ bool doPull() {
   }
 
   // Ajuste l'intervalle de pull selon l'activité réseau signalée par le serveur
-  if (newFrameSource == "none" && newCandId.length() == 0) {
+  // Frame déjà affichée (même frameId) sans candidat : rien à faire → retryAfter, comme « aucune frame »
+  // (sinon une frame personnelle acquittée, qui reste dans /api/pull, imposait un pull toutes les 60 s).
+  bool sameFrameIdle = newFrameId.length() > 0 && newFrameId == lastFrameId;
+  if ((newFrameSource == "none" || sameFrameIdle) && newCandId.length() == 0) {
     // Réseau idle → on respecte le retryAfter du serveur (typiquement 300s)
     nextPullIntervalMs = (unsigned long)pullRetryAfter * 1000UL;
   } else {

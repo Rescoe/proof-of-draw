@@ -4,6 +4,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { describeChoice, findCompiler, runProcess } from "./helpers/cppHarness";
+import { undoFix2 } from "./helpers/pullIdleFix";
 
 // LOT8B2C-ESP8266-EINK29-CANARY-1 — canari de l'ESP8266 e-ink 2,9″ BWR (rendu v1, frame personnelle, AUCUN vote).
 // (1) règles statiques : drapeaux 0/0 au dépôt, OFF == firmware d'avant au texte près, tout le canari sous « #if POD_RENDER_V1 && POD_CANARY », rien de R4/WiFiS3 copié ;
@@ -40,7 +41,7 @@ test("dépôt : POD_RENDER_V1 = 0 et POD_CANARY = 0 ; aucun drapeau à 1", () =>
 });
 
 test("OFF : retirer les blocs de canari et le drapeau redonne le firmware d'avant AU TEXTE PRÈS (aucun octet de production n'a bougé)", () => {
-  const now = read(INO), before = read(BACKUP);
+  const now = undoFix2(read(INO)), before = read(BACKUP);   // FIX2 (doPull) annulé : tests/helpers/pullIdleFix.ts
   const s = now.replace(CANARY_RE, "").replace(/#ifndef POD_CANARY\n#define POD_CANARY 0 [^\n]*\n#endif\n/, "");
   assert.equal(s, before);
 });
@@ -98,6 +99,14 @@ test("pas d'accélération du polling : doPull retourne true après un échec de
   assert.equal(s.split("nextPullIntervalMs").length, read(BACKUP).split("nextPullIntervalMs").length);
 });
 
+test("FIX2 : seule modification de production = l'intervalle de pull d'une frame déjà affichée (aucune route, requête, ACK, vote ni constante nouvelle)", () => {
+  const s = read(INO), prev = read("firmware-backups/2026-10-12_avant-fix2-esp8266-eink29/esp_eink_2.9BWR.ino");
+  assert.equal(undoFix2(s), prev, "annuler FIX2 doit redonner exactement le sketch de 6ccb729");
+  assert.equal((s.match(/sameFrameIdle/g) ?? []).length, 2);
+  assert.match(s, /#define PULL_INTERVAL   60000UL/);
+  for (const route of ["/api/pull?", "/api/pull-frame", "/api/ack-frame", "/api/register", "/api/validation-result"]) assert.equal(s.split(route).length, prev.split(route).length, route);
+});
+
 test("modèle mémoire documenté dans le code : BearSSL iobuf 16 384 + 512, pile de poussée 6 200 — les seuils du pré-vol en découlent", () => {
   const s = read(INO);
   assert.match(s, /#define POD_CANARY_TLS_MIN_HEAP  24000UL/);
@@ -124,6 +133,7 @@ function extractAll(mut?: Mut): Record<string, string> {
     "esp_display.inc": m("display", between(ino, "// ─── AFFICHAGE E-INK", "// ─── AFFICHAGE CLÉ PUBLIQUE")),
     "esp_ack.inc": m("ack", fnAtColumn0(ino, "bool ackFrame(const String& frameId) {")),
     "esp_fetch.inc": m("fetch", between(ino, "// ─── DEBUG HEAP", "// ─── PULL LÉGER")),
+    "esp_pull.inc": m("pull", fnAtColumn0(ino, "bool doPull() {")),
     "esp_vote.inc": m("vote", fnAtColumn0(ino, "bool doObsConfirm() {") + "\n" + fnAtColumn0(ino, "bool doValidate() {")),
     "esp_driver.inc": m("driver", between(drv, "// POD_RENDER_V1_BEGIN\nbool Epd::DisplayStream", "// POD_RENDER_V1_END")),
   };
@@ -172,6 +182,9 @@ const MUTANTS: [string, number, number, boolean, string, string, string][] = [
   ["ACK : frame marquée acquittée avant l'ACK", 1, 1, false, "fetch", "  hasDisplayedFrame = true;\n  if (!canaryTlsPreflight(PCP_ACK,", "  hasDisplayedFrame = true; lastFrameId = frameId; frameReady = true;\n  if (!canaryTlsPreflight(PCP_ACK,"],
   ["vote : candidat non oublié en canari", 1, 1, true, "vote", "    pendingCandidateId = \"\";\n  }\n  return true;\n#endif", "  }\n  return true;\n#endif"],
   ["vote : ni oubli ni retour anticipé en canari (le vote s'exécute)", 1, 1, true, "vote", "    pendingCandidateId = \"\";\n  }\n  return true;\n#endif", "  }\n#endif"],
+  ["pull : correctif « frame identique => retryAfter » supprimé", 1, 0, true, "pull", "bool sameFrameIdle = newFrameId.length() > 0 && newFrameId == lastFrameId;", "bool sameFrameIdle = false;"],
+  ["pull : toute frame non vide au rythme retryAfter (frame nouvelle comprise)", 1, 0, true, "pull", "bool sameFrameIdle = newFrameId.length() > 0 && newFrameId == lastFrameId;", "bool sameFrameIdle = newFrameId.length() > 0;"],
+  ["pull : candidat annoncé ignoré (retryAfter malgré le candidat)", 1, 1, true, "pull", "|| sameFrameIdle) && newCandId.length() == 0) {", "|| sameFrameIdle)) {"],
   ["producteur sans yield (pilote)", 1, 0, false, "driver", "yield();", ""],
   ["producteur > 32 octets (pilote)", 1, 0, false, "driver", "unsigned char chunk[32];", "unsigned char chunk[64];"],
   ["abandon du canari sur 2 resets anormaux supprimé", 1, 1, false, "state", "if (g_pcRtc.abn >= 2) {", "if (false) {"],

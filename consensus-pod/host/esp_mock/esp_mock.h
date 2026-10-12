@@ -183,6 +183,8 @@ class HTTPClient {
   void useHTTP10(bool) {}
   int GET() { g_httpGetCalls++; ev("http_get"); cl_->tlsOpen(); cl_->start(); return g_scn.code; }
   WiFiClient* getStreamPtr() { return cl_; }
+  WiFiClient& getStream() { return *cl_; }   // doPull : deserializeJson(doc, http.getStream())
+  String getString() { std::string o; for (int c; (c = cl_->read()) >= 0;) o.push_back((char)c); return String(o.c_str()); }
   int getSize() { return g_scn.contentLength == -2 ? (int)g_scn.body.size() : g_scn.contentLength; }
   void end() { if (cl_) { while (cl_->available() > 0) cl_->read(); g_tlsBytes = 6200; } ev("http_end"); }   // comme HTTPClient::disconnect : vide le tampon puis stop() (libère les iobufs)
  private:

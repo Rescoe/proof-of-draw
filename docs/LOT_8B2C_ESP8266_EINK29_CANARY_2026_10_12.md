@@ -89,7 +89,7 @@ Tout est absent quand `POD_CANARY = 0`. Chaînes en flash (`F()` / `PSTR()`), st
 | image uniforme / quasi uniforme | blanc, noir, rouge, un pixel, noir+rouge partout : **296 appels du producteur de ≤ 32 o, `yield()` à chacun**, `renderHash` cohérent, rouge prioritaire, cartel gravé même sur image blanche |
 | rollback / libération | 20 cycles : occupation constante 9 472 o ; échecs intercalés : tout libéré |
 | RTC, reset, arrêt | phase RTC = TERMINE après succès, = FRAMEHASH après échec du panneau ; reset 3 ⇒ ALERTE ; second reset anormal ⇒ ARRÊT sans requête ; reset normal remet le compteur à zéro |
-| contrôles négatifs | 18 mutants REFUSÉS (ACK avant rendu, résultat de l'ACK ignoré, pré-vol avant l'ACK supprimé, frame marquée acquittée avant l'ACK, rendu pendant TLS, plans non libérés, ACK malgré échec, garde de surplus supprimée, pré-vol supprimé, vote autorisé / non oublié, producteur sans `yield`, > 32 o, arrêt sur resets anormaux supprimé, RTC non écrite…) |
+| contrôles négatifs | 21 mutants REFUSÉS (ACK avant rendu, résultat de l'ACK ignoré, pré-vol avant l'ACK supprimé, frame marquée acquittée avant l'ACK, rendu pendant TLS, plans non libérés, ACK malgré échec, garde de surplus supprimée, pré-vol supprimé, vote autorisé / non oublié, producteur sans `yield`, > 32 o, arrêt sur resets anormaux supprimé, RTC non écrite…) |
 
 **Ce que l'hôte NE prouve PAS** : BearSSL réel, tas réel (fragmentation, taille des contextes), durées réelles, chien de garde matériel, panneau réel, orientation et couleurs à l'écran.
 
@@ -101,6 +101,42 @@ Tests : `npm test` = **790 / 790, aucun ignoré** (ArduinoJson 7.4.3 et Crypto f
 2. **Pré-vol BearSSL avant l'ACK** (étape `pre-vol TLS avant l'ACK`, mêmes seuils que le téléchargement : les deux plans de 9 472 o sont encore vivants). Mémoire insuffisante ⇒ aucun TLS d'ACK, diagnostic `REFUS pre-vol TLS`, même sortie en échec.
 3. Succès seulement après `ACK recu (HTTP 200)` : `PCP_DONE`, `lastFrameId`, `frameReady`.
 4. Tests hôte ajoutés (canari) : ACK 200 ; ACK refusé ; mémoire insuffisante avant l'ACK (zéro POST) ; aucun faux `PCP_DONE` ; frame non acquittée ; une seule tentative réseau par chemin ; trois mutants de plus. RAM statique du canari recalée par le lest (35 052 o contre 35 056 o pour ON) ; OFF inchangé (RAM 34 812, flash 408 108, empreinte de désassemblage `fb40a24f3c64b136`, avertissements identiques).
+
+### 4 ter. FIX2 — canari matériel VALIDÉ (12/10/2026, build `6ccb729`) et pull d'une frame déjà affichée
+
+**Journal série brut** : `docs/mesures/8B2C_2026_10_12/journal-canari-materiel-2026_10_12.txt` (transcrit sans modification). Binaire confirmé par la ligne `BUILD LOT8B2C-ESP8266-EINK29-CANARY-1 … POD_RENDER_V1=1 POD_CANARY=1 … compile Oct 12 2026 09:50:11`.
+
+**Verdict matériel : le chemin principal est VALIDÉ** (frame personnelle de 9 472 o → TLS fermé → rendu v1 en flux → affichage → ACK 200, sans vote, sans reset) :
+
+| mesure | valeur relevée |
+|---|---|
+| tas après Wi-Fi | 43 752 o |
+| plans alloués (2 × 4 736) | tas 42 840 → 33 352 o |
+| **minimum pendant BearSSL** | **4 000 o libres, plus grand bloc 2 776 o** (l'estimation était ≈ 2 Ko : la marge existe, elle est mince) |
+| après destruction du client TLS | **33 352 o, retour exact** (aucune fuite) ; 32 792 o après l'ACK |
+| corps | Content-Length 9 472, noir 4 736 + rouge 4 736, surplus 0 |
+| rendu | 296 appels du producteur, plus long appel 1 047 µs, plus long intervalle 2 896 µs (≪ 500 000 µs), pile cont minimale 992 o |
+| hashes | `frameHash` 32f59527…8e, `renderHash` c5b123cd…a0 produits et journalisés |
+| ACK | HTTP 200 `{"ok":true,"cleared":false}` après l'affichage (`cleared=false` est normal pour une frame personnelle) |
+| cinq pulls ultérieurs | tas 42 968, plus grand bloc 41 568, fragmentation 4 %, pile 672 ; aucun reset, aucune fuite, aucun vote |
+| image | **réellement affichée** (constat visuel du porteur) |
+
+Ce que ce canari NE prouve pas : orientation et couleurs jugées au seul regard du porteur (pas de comparaison mesurée) ; un seul appareil, une seule frame (les images uniformes de l'étape 3 du protocole, le candidat de l'étape 4 et la robustesse sur des centaines de cycles restent à faire) ; le pré-vol (seuils 24 000 / 17 000) n'a pas été déclenché sur la carte, seulement sur l'hôte.
+
+**Réserve matérielle — `e-Paper busy TIMEOUT` ×3 (archivée, NON corrigée).** L'initialisation du panneau a duré **45 408 ms** : trois `ReadBusy()` (les trois de `Epd::Init()` : après le reset, après SWRESET, en fin d'initialisation) ont atteint leur plafond de 15 000 ms (3 × 15 s = 45 s). Le rafraîchissement lui-même (`busy` puis `release`) s'est terminé normalement et l'image est apparue. Comparaison au pilote historique : `epd2in9b_V4.cpp` n'a reçu, depuis `3239d2e`, **que l'ajout** de `Epd::DisplayStream` (gardé par `POD_RENDER_V1`) — `Init()`, `ReadBusy()` (BUSY bas = occupé, plafond 15 s) et `initDisplayForRefresh()` sont **octet pour octet ceux de la production**, appelés par le chemin historique comme par le rendu v1 ; le commentaire du sketch (« jusqu'à ~3 s ») ne correspond pas au plafond réel de 3 × 15 s. Le dépôt ne contient aucun journal historique de cette carte qui dise si ces timeouts y existaient déjà : **pour trancher, le porteur doit relever le même démarrage avec le binaire OFF (`canary-builds/stable`, même frame)**. Si le OFF montre les mêmes timeouts, ils ne viennent pas du rendu v1 (câblage BUSY, tension, panneau) ; sinon, enquête séparée. **Aucune modification du pilote BUSY dans ce lot.** Conséquence opérationnelle : 45 s d'initialisation bloquent la boucle (chien de garde nourri par `delay()` des `DelayMs`, aucun reset observé).
+
+**Défaut découvert par les pulls de stabilité, corrigé par FIX2.** La frame personnelle acquittée reste présente dans `/api/pull`. Le firmware écrivait « Frame déjà affichée » mais gardait `nextInterval=60s` malgré `retryAfter=300` puis `900` : dans `doPull`, toute `frameSource` différente de `none` imposait `PULL_INTERVAL`, avant que `newFrameId == lastFrameId` ne soit testé. Pulls observés toutes les ≈ 61 s. Correctif (production ET canari, un seul fragment, `tests/helpers/pullIdleFix.ts`) :
+
+```cpp
+bool sameFrameIdle = newFrameId.length() > 0 && newFrameId == lastFrameId;
+if ((newFrameSource == "none" || sameFrameIdle) && newCandId.length() == 0) { nextPullIntervalMs = retryAfter × 1000; }   // sinon PULL_INTERVAL
+```
+
+Frame identique **et** aucun candidat ⇒ `retryAfter` du serveur. Candidat annoncé ⇒ rythme nominal (inchangé). Frame nouvelle ⇒ rythme nominal et téléchargement immédiat (inchangé). Frame absente, 429, erreurs HTTP/JSON/`begin()` : inchangés. Aucun changement de serveur, Redis, Neon, protocole, ACK, vote, OTA ni format de frame ; aucune requête ni commande de plus (le correctif en retire).
+
+**Coût Redis évité** (estimation, ordre de grandeur) : un pull au repos coûte ≈ 1,5 commande (CLAUDE.md « Pull d'écran »). Avant : 60 pulls/h ≈ 90 commandes/h pour un appareil gardant une frame acquittée affichée ; après : 12 pulls/h (retryAfter 300) ≈ 18 ou 4 pulls/h (900) ≈ 6 commandes/h, soit **≈ 72 à 84 commandes/h évitées par appareil, ≈ 52 000 à 60 000 par mois** (24 h/24, 720 h) sur un plan de 200 000. Le pull toutes les 60 s dépassait aussi la limite de 2 pulls / 15 min par appareil (429 évités). Mesure réelle à faire côté serveur (non mesurée ici).
+
+**Preuves FIX2** : le VRAI `doPull` est extrait dans le harnais hôte (`esp_pull.inc`, ArduinoJson réel, réponses `/api/pull` simulées) : frame identique + 900 ⇒ 900 s (un seul GET, aucun téléchargement), + 300 ⇒ 300 s, frame de consensus identique, frame nouvelle ⇒ 60 s + téléchargement, premier démarrage, candidat présent (avec ou sans frame), frame absente (300 / 900 / sans retryAfter), `frameSource` sans `frameId`, 429 (lastPullMs et plafond inchangés), HTTP 500, JSON invalide, `begin()` en échec, un GET et zéro POST. Trois mutants de plus REFUSÉS (correctif supprimé, frame nouvelle au rythme retryAfter, candidat ignoré) — 21 au total. Le test « chemin désactivé == firmware d'avant au texte près » annule exactement le fragment FIX2 avant de comparer ; sauvegarde du sketch d'avant : `firmware-backups/2026-10-12_avant-fix2-esp8266-eink29/`. L'assertion tautologique `… || true` du harnais (S10) est remplacée par un contrôle réel (le rapport de flux de succès n'est pas émis après un ACK refusé). Compilation cœur 3.1.2 : OFF RAM 34 812 o inchangée, flash 408 108 → 408 140 o (+32 o, `doPull`), cadre de `doPull` 560 o inchangé, avertissements identiques ; ON 35 056 o / 417 728 o ; canari 35 052 o / 409 076 o (`docs/mesures/8B2C_2026_10_12/build-fix2_*.txt`).
 
 ## 5. Protocole du canari matériel (à exécuter par le porteur, après audit)
 
