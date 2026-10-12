@@ -52,6 +52,7 @@
 #include "pod_ssl_bounded.h"   // PULLFRAME-BOUNDED-SSL-FIX1 (porté au TFT 2,8″ : LOT8B2D) : client TLS dont la commande AT _SSLCLIENTRECEIVE est BORNÉE (240 o) — docs/LOT_8B2B2_PULLFRAME_BOUNDED_SSL_FIX1_2026_10_11.md
 #include <new>
 #include "pod_bench.h"
+#include "pod_bench_stream.h"   // ANIM-STREAM-FIX1 (LOT8B2E) : validation et lecture du clip EN FLUX depuis la carte SD (plus de clip entier en RAM)
 #if !POD_CANARY
 #include "pod_vote_r4.h"       // validation réelle (vote v2) : SHA-256 + métriques entières en flux — ⚠ NON TESTÉ sur la carte
 #endif
@@ -335,7 +336,9 @@ static void __attribute__((noinline)) podCanaryStack(const char* kind, const cha
 }
 #define POD_CANARY_JSON(tag, ni, ran, status, okA, okB) podCanaryStack("travail", tag " JSON", ni, ran, (uint8_t)(status), !((status) == (okA) || (status) == (okB)), true)
 #define POD_CANARY_NET(tag, ni, ran) podCanaryStack("reseau", tag, ni, ran, 0, false, true)
-#define POD_CANARY_SD(tag, ni, ran) podCanaryStack("sd/tft", tag, ni, ran, 0, false, false)
+// ANIM-STREAM-FIX1 : les deux piles SD NOUVELLEMENT chargées (validation et lecture du clip en flux) rapportent leur marge à chaque passage (les autres : seulement en cas d'anomalie)
+static bool podCanarySdVerbose(const char* tag) { return strcmp(tag, "animPlay") == 0 || strcmp(tag, "animValidate") == 0; }
+#define POD_CANARY_SD(tag, ni, ran) podCanaryStack("sd/tft", tag, ni, ran, 0, false, podCanarySdVerbose(tag))
 #define POD_CANARY_WIFI(tag, ni, ran, verbose) podCanaryStack("wifi", tag, ni, ran, 0, false, verbose)
 // PodEdInfo (used / margin / err) → PodNetInfo, pour le même rapport ; marge < 256 = « sous l'objectif »
 static void __attribute__((noinline)) podCanaryEd(const char* tag, const PodEdInfo& ei) {
@@ -1695,57 +1698,99 @@ static void animLoadMarker() {
   onSd("animLoadMarker", w);
 }
 
-/** Télécharge le clip du bloc (TLS fermé ensuite), le valide ENTIÈREMENT, le range sur la carte puis marque l'animation comme active. */
-// POD_NET_STACK : téléchargement du clip sur la pile réseau dédiée (fonction à part, noinline : ses variables ne gonflent pas le cadre de loop(), où ce code est inliné)
-static bool __attribute__((noinline)) netGetBlockClip(const String& hash, uint8_t* clip, size_t announced) {
+// ANIM-STREAM-FIX1 (LOT8B2E) — ANIMATION EN FLUX. Canari matériel FIX2 : `[ANIM] mémoire insuffisante` (tas libre ≈ 8 Ko mais plus grand bloc ≈ 4,9 Ko ; l'ancien code allouait le clip ENTIER, jusqu'à 9 216 o, + 1 024 o).
+// Désormais : (1) le clip est écrit sur la carte AU FIL DE LA RÉCEPTION (blocs de 480 o dans g_row, comme l'image : aucune allocation), (2) il est validé EN FLUX depuis la carte (mêmes règles et mêmes codes
+// que podbench::parse, pod_bench_stream.h), (3) il est joué EN FLUX : seuls 2 048 o de travail sont alloués (image courante 1 024 o + tampon 1 024 o), quelle que soit la taille du clip.
+// Ordre d'écriture inchangé : clip COMPLET et valide d'abord, marqueur ensuite ; tout échec supprime le clip (l'affiche reste). Le bus SPI est partagé : jamais de lecture de la carte pendant une transaction TFT.
+struct SdClipSource {
+  File f;
+  bool read(uint8_t* d, size_t n) { return n == 0 || f.read(d, n) == (int)n; }
+  bool seek(uint32_t p) { return f.seek(p); }
+};
+#define ANIM_WORK_BYTES (BENCH_FRAME + PODBENCH_STREAM_BUF)
+
+/** Reçoit le clip du bloc et l'écrit sur la carte AU FIL DE L'EAU (pile réseau dédiée ; la carte est utilisée dans la transaction, comme le cache d'image). true = `announced` octets reçus ET écrits. */
+static bool __attribute__((noinline)) netGetBlockClipToSd(const String& hash, size_t announced, bool& writeFailed) {
   bool got = false;
   PodNetInfo ni;
   auto tx = [&]() {
     Conn c(HTTP_TIMEOUT_MS);
     const int code = c.request("GET", "/api/block-clip?hash=" + hash, nullptr);
     logf("[HTTP GET] /api/block-clip -> %d (contenu %ld)", code, c.rd.contentLength());
-    if (code == 200 && (c.rd.contentLength() < 0 || (size_t)c.rd.contentLength() == announced))
-      got = c.rd.readBody(clip, announced) == announced && c.rd.complete() && c.client.fault() == 0;
+    if (code == 200 && (c.rd.contentLength() < 0 || (size_t)c.rd.contentLength() == announced)) {
+      File f = SD.open(SD_ANIM, FILE_WRITE);
+      if (!f) writeFailed = true;
+      else {
+        uint8_t* raw = (uint8_t*)g_row;
+        size_t left = announced; bool ok = true;
+        while (left > 0) {
+          const size_t k = left < (size_t)ROW_BYTES ? left : (size_t)ROW_BYTES;
+          if (c.rd.readBody(raw, k) != k) { ok = false; break; }
+          if (f.write(raw, k) != k) { ok = false; writeFailed = true; break; }
+          left -= k;
+        }
+        f.close();
+        got = ok && c.rd.complete() && c.client.fault() == 0;
+      }
+    }
     c.client.stop();
   };
   const bool ran = podNetRun(tx, &ni);
+  POD_CANARY_NET("block-clip (reseau + SD)", ni, ran);
+  POD_CANARY_CHECK("block-clip : retour de la transaction");
   if (!ran) { got = false; logf("[ANIM] pile réseau dédiée : %s (erreur %u, marge %u o) — clip NON retenu", podNetWhy(ni), (unsigned)ni.err, (unsigned)ni.margin); }
   return got;
+}
+
+static void __attribute__((noinline)) animRemoveFiles() {
+  auto rm = [&]() { if (SD.exists(SD_ANIM_META)) SD.remove(SD_ANIM_META); if (SD.exists(SD_ANIM)) SD.remove(SD_ANIM); };
+  onSd("animRemove", rm);
+}
+
+/** Valide le clip rangé (en flux, depuis la carte) puis écrit le marqueur. true = clip valide ET marqueur écrit. work : ANIM_WORK_BYTES. */
+static bool __attribute__((noinline)) animValidateAndMark(const String& hash, size_t announced, uint8_t* work, uint16_t& frames) {
+  uint8_t err = 0xFF;                                         // 0xFF : non exécuté
+  frames = 0;
+  auto chk = [&]() {
+    SdClipSource src;
+    src.f = SD.open(SD_ANIM, FILE_READ);
+    if (!src.f) { err = 0xFE; return; }
+    if (src.f.size() != announced) { err = 0xFD; src.f.close(); return; }
+    podbench::StreamInfo si;
+    const podbench::Err e = podbench::validateStream(src, announced, si, work, work + BENCH_FRAME);
+    src.f.close();
+    err = (uint8_t)e;
+    if (e != podbench::OK) return;
+    frames = si.frames;
+    File m = SD.open(SD_ANIM_META, FILE_WRITE);
+    if (m) { m.println(hash); m.println(lastFrameId); m.close(); } else err = 0xFC;
+  };
+  if (!onSd("animValidate", chk)) { logf("[ANIM] validation du clip NON faite (pile dédiée)"); return false; }
+  if (err == podbench::OK) return true;
+  if (err == 0xFE) logf("[ANIM] clip illisible après écriture");
+  else if (err == 0xFD) logf("[ANIM] taille du clip rangé différente de la taille annoncée");
+  else if (err == 0xFC) logf("[ANIM] écriture du marqueur impossible");
+  else logf("[ANIM] clip refusé (%s)", podbench::errNameStream((podbench::Err)err));
+  return false;
 }
 
 static bool fetchAnimToSd(const String& hash, size_t announced) {
   if (!sdOk) { logf("[ANIM] pas de carte SD : animation non lue (l'affiche reste à l'écran)"); return false; }
   if (announced < (size_t)(BENCH_HDR + 5 + BENCH_FRAME) || announced > BENCH_MAX_CLIP) { logf("[ANIM] taille refusée (%u)", (unsigned)announced); return false; }
-  uint8_t* clip = (uint8_t*)malloc(announced);
-  uint8_t* cur = (uint8_t*)malloc(BENCH_FRAME);
-  if (!clip || !cur) { free(clip); free(cur); logf("[ANIM] mémoire insuffisante"); return false; }
+  uint8_t* work = (uint8_t*)malloc(ANIM_WORK_BYTES);
+  if (!work) { logf("[ANIM] mémoire insuffisante (%u o de travail)", (unsigned)ANIM_WORK_BYTES); return false; }
   const unsigned long t0 = millis();
-  bool got = netGetBlockClip(hash, clip, announced);
-  podbench::Clip pc;
-  const podbench::Err perr = got ? podbench::parse(clip, announced, pc, cur) : podbench::ERR_SIZE;
-  free(cur);
-  if (!got || perr != podbench::OK) {
-    logf("[ANIM] clip refusé (%s)", got ? podbench::errName(perr) : "téléchargement incomplet");
-    free(clip);
-    return false;
-  }
-  // Rangement : clip COMPLET d'abord, marqueur ensuite (un arrêt en cours d'écriture ne laisse jamais un clip à moitié « actif »)
-  bool saved = false;
-  auto store = [&]() {                                        // SD-STACK-FIX1 : tout l'accès à la carte sur la pile dédiée (le réseau, lui, est déjà terminé)
-    if (SD.exists(SD_ANIM_META)) SD.remove(SD_ANIM_META);
-    if (SD.exists(SD_ANIM)) SD.remove(SD_ANIM);
-    File f = SD.open(SD_ANIM, FILE_WRITE);
-    if (f) { saved = f.write(clip, announced) == announced; f.close(); }
-    if (!saved) { logf("[ANIM] écriture du clip sur la carte impossible"); if (SD.exists(SD_ANIM)) SD.remove(SD_ANIM); return; }
-    File m = SD.open(SD_ANIM_META, FILE_WRITE);
-    if (m) { m.println(hash); m.println(lastFrameId); m.close(); }
-  };
-  const bool stored = onSd("animStore", store);
-  free(clip);
-  if (!stored) { logf("[ANIM] écriture du clip sur la carte NON faite (pile dédiée)"); return false; }
-  if (!saved) return false;
+  animRemoveFiles();                                          // marqueur d'abord : un arrêt en cours d'écriture ne laisse jamais un clip à moitié « actif »
+  bool writeFailed = false;
+  const bool got = netGetBlockClipToSd(hash, announced, writeFailed);
+  uint16_t frames = 0;
+  bool ok = false;
+  if (!got) logf("[ANIM] clip refusé (%s)", writeFailed ? "écriture sur la carte impossible" : "téléchargement incomplet");
+  else ok = animValidateAndMark(hash, announced, work, frames);
+  free(work);
+  if (!ok) { animRemoveFiles(); return false; }
   animOn = true; animPaused = false; animHash = hash;
-  logf("[ANIM] clip reçu en %lu ms, %u images, rangé sur la carte (%u o) : lecture en boucle", millis() - t0, (unsigned)pc.frames, (unsigned)announced);
+  logf("[ANIM] clip reçu en %lu ms, %u images, rangé sur la carte (%u o) : lecture en boucle", millis() - t0, (unsigned)frames, (unsigned)announced);
   return true;
 }
 
@@ -1756,40 +1801,48 @@ static void maybeFetchAnim(const String& frameId) {
   fetchAnimToSd(pendingAnimHash, pendingAnimBytes);
 }
 
-/** Joue le clip de la carte EN BOUCLE pendant au plus `budgetMs` (le temps avant la prochaine tâche réseau), puis rend la main. */
-static AnimEnd runResidentAnim(unsigned long budgetMs) {
-  // SD-STACK-FIX1 : ouverture / taille / lecture de la carte sur la pile dédiée (le clip est alloué ENTRE les deux, comme avant, avant la lecture)
-  bool opened = false; size_t n = 0;
-  auto sizeOf = [&]() { File f = SD.open(SD_ANIM, FILE_READ); if (f) { opened = true; n = f.size(); f.close(); } };
-  if (!onSd("animSize", sizeOf) || !opened) { logf("[ANIM] clip illisible"); return AE_ERROR; }
-  if (n < (size_t)(BENCH_HDR + 5 + BENCH_FRAME) || n > BENCH_MAX_CLIP) { logf("[ANIM] taille de clip invalide (%u)", (unsigned)n); return AE_ERROR; }
-  uint8_t* clip = (uint8_t*)malloc(n);
-  uint8_t* cur = (uint8_t*)malloc(BENCH_FRAME);
-  if (!clip || !cur) { free(clip); free(cur); logf("[ANIM] mémoire insuffisante pour la lecture"); return AE_ERROR; }
-  bool rd = false;
-  auto readClip = [&]() { File f = SD.open(SD_ANIM, FILE_READ); if (f) { rd = f.read(clip, n) == (int)n; f.close(); } };
-  if (!onSd("animRead", readClip)) rd = false;
-  podbench::Clip pc;
-  const podbench::Err perr = rd ? podbench::parse(clip, n, pc, cur) : podbench::ERR_SIZE;
-  if (!rd || perr != podbench::OK) { free(clip); free(cur); logf("[ANIM] clip de la carte refusé (%s)", rd ? podbench::errName(perr) : "lecture"); return AE_ERROR; }
-
-  tft.setRotation(0);
-  tft.fillScreen(pc.bg);
-  cartelVisible = false;
-  FastTft ft;
-  const unsigned long tEnd = millis() + budgetMs;
-  unsigned long target = millis(), lastTouchChk = millis();
+/** Joue le clip de la carte EN BOUCLE pendant au plus `budgetMs` (le temps avant la prochaine tâche réseau), puis rend la main. Lecture EN FLUX : 2 048 o de travail, jamais le clip entier. */
+static AnimEnd __attribute__((noinline)) runResidentAnim(unsigned long budgetMs) {
+  uint8_t* work = (uint8_t*)malloc(ANIM_WORK_BYTES);
+  if (!work) { logf("[ANIM] mémoire insuffisante pour la lecture (%u o de travail)", (unsigned)ANIM_WORK_BYTES); return AE_ERROR; }
   AnimEnd why = AE_TIME;
-  podbench::play(pc, cur, ft, g_row, [&](uint32_t, uint16_t delayMs) -> bool {
-    target += delayMs;                                        // horloge ABSOLUE : pas de dérive cumulée
-    while ((long)(millis() - target) < 0) {
-      if (touchOk && millis() - lastTouchChk > 200UL) { lastTouchChk = millis(); if (ts.touched()) { drainTouch(); why = AE_TOUCH; return false; } }
-      if ((long)(millis() - tEnd) >= 0) return false;
-      delay(1);
-    }
-    return (long)(millis() - tEnd) < 0;
-  });
-  free(clip); free(cur);
+  uint8_t st = 0;                                             // 0 lecture faite ; 1 ouverture ; 2 taille ; 3 clip refusé ; 4 lecture de la carte interrompue
+  podbench::Err perr = podbench::OK;
+  // Tout l'accès à la carte ET au TFT se fait sur la pile dédiée (SD-STACK-FIX1) ; le clip est validé en flux (même contrôle qu'avant, 2 passes) puis joué.
+  auto play = [&]() {
+    SdClipSource src;
+    src.f = SD.open(SD_ANIM, FILE_READ);
+    if (!src.f) { st = 1; return; }
+    const size_t n = src.f.size();
+    if (n < (size_t)(BENCH_HDR + 5 + BENCH_FRAME) || n > BENCH_MAX_CLIP) { st = 2; src.f.close(); return; }
+    podbench::StreamInfo si;
+    perr = podbench::validateStream(src, n, si, work, work + BENCH_FRAME);
+    if (perr != podbench::OK) { st = 3; src.f.close(); return; }
+    tft.setRotation(0);
+    tft.fillScreen(si.bg);
+    cartelVisible = false;
+    FastTft ft;
+    const unsigned long tEnd = millis() + budgetMs;
+    unsigned long target = millis(), lastTouchChk = millis();
+    const podbench::PlayEnd pe = podbench::playStream(src, si, work, work + BENCH_FRAME, ft, g_row, [&](uint32_t, uint16_t delayMs) -> bool {
+      target += delayMs;                                      // horloge ABSOLUE : pas de dérive cumulée
+      while ((long)(millis() - target) < 0) {
+        if (touchOk && millis() - lastTouchChk > 200UL) { lastTouchChk = millis(); if (ts.touched()) { drainTouch(); why = AE_TOUCH; return false; } }
+        if ((long)(millis() - tEnd) >= 0) return false;
+        delay(1);
+      }
+      return (long)(millis() - tEnd) < 0;
+    });
+    if (pe == podbench::PLAY_IO) st = 4;
+    src.f.close();
+  };
+  const bool ran = onSd("animPlay", play);
+  free(work);
+  if (!ran) return AE_ERROR;
+  if (st == 1) { logf("[ANIM] clip illisible"); return AE_ERROR; }
+  if (st == 2) { logf("[ANIM] taille de clip invalide"); return AE_ERROR; }
+  if (st == 3) { logf("[ANIM] clip de la carte refusé (%s)", podbench::errNameStream(perr)); return AE_ERROR; }
+  if (st == 4) { logf("[ANIM] lecture de la carte interrompue"); return AE_ERROR; }
   return why;
 }
 

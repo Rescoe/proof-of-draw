@@ -16,7 +16,7 @@
 - doFetchFrame/λtx → Conn c
 - netReadCandidate/λtx → Conn c
 - netGetBenchClip/λtx → Conn c
-- netGetBlockClip/λtx → Conn c
+- netGetBlockClipToSd/λtx → Conn c
 
 ### deserializeJson (doit être sur la pile de travail podWorkRun)
 
@@ -54,17 +54,15 @@
 - animForgetImpl → SD.remove ×2
 - animLoadMarkerImpl → SD.exists ×2
 - animLoadMarkerImpl → SD.open
-- fetchAnimToSd/λstore → SD.exists ×3
-- fetchAnimToSd/λstore → SD.remove ×3
-- fetchAnimToSd/λstore → SD.open ×2
-- runResidentAnim/λsizeOf → SD.open
-- runResidentAnim/λreadClip → SD.open
+- netGetBlockClipToSd/λtx → SD.open
+- animRemoveFiles → SD.exists ×2
+- animRemoveFiles → SD.remove ×2
+- animValidateAndMark → SD.open ×2
+- runResidentAnim → SD.open
 
 ### lanceurs de piles dédiées
 
 - logf → PodNet::runSized
-- onSd → onSd
-- onSd → PodNet::runSized
 - wifiStatusT/λwx → podWifiRun
 - wifiFirmware/λwx → podWifiRun
 - wifiBegin/λwx → podWifiRun
@@ -79,6 +77,8 @@
 - doFetchFrame/λtx → podNetRun
 - toggleCartel/λw → onSd
 - registerParseOnWorkStack/λrk → podWorkRun
+- registerStatusOnDedicatedStack/λw → onSd
+- registerShowConnected/λw → onSd
 - pullParseOnWorkStack/λwk → podWorkRun
 - netReadCandidate/λtx → podNetRun
 - validateParseOnWorkStack/λvk → podWorkRun
@@ -86,10 +86,10 @@
 - netGetBenchClip/λtx → podNetRun
 - animForget/λw → onSd
 - animLoadMarker/λw → onSd
-- netGetBlockClip/λtx → podNetRun
-- fetchAnimToSd/λstore → onSd
-- runResidentAnim/λsizeOf → onSd
-- runResidentAnim/λreadClip → onSd
+- netGetBlockClipToSd/λtx → podNetRun
+- animRemoveFiles → onSd
+- animValidateAndMark → onSd
+- runResidentAnim → onSd
 - onAnimTouch/λw → onSd
 
 ### routes serveur atteignables
@@ -124,7 +124,7 @@
 - netHttpRaw/λtx → Conn c
 - doFetchFrame/λtx → Conn c
 - netGetBenchClip/λtx → Conn c
-- netGetBlockClip/λtx → Conn c
+- netGetBlockClipToSd/λtx → Conn c
 
 ### deserializeJson (doit être sur la pile de travail podWorkRun)
 
@@ -159,18 +159,16 @@
 - animForgetImpl → SD.remove ×2
 - animLoadMarkerImpl → SD.exists ×2
 - animLoadMarkerImpl → SD.open
-- fetchAnimToSd/λstore → SD.exists ×3
-- fetchAnimToSd/λstore → SD.remove ×3
-- fetchAnimToSd/λstore → SD.open ×2
-- runResidentAnim/λsizeOf → SD.open
-- runResidentAnim/λreadClip → SD.open
+- netGetBlockClipToSd/λtx → SD.open
+- animRemoveFiles → SD.exists ×2
+- animRemoveFiles → SD.remove ×2
+- animValidateAndMark → SD.open ×2
+- runResidentAnim → SD.open
 
 ### lanceurs de piles dédiées
 
 - logf → PodNet::runSized
 - podCanaryEmit → PodNet::runSized
-- onSd → onSd
-- onSd → PodNet::runSized
 - wifiStatusT/λwx → podWifiRun
 - wifiFirmware/λwx → podWifiRun
 - wifiBegin/λwx → podWifiRun
@@ -185,15 +183,17 @@
 - doFetchFrame/λtx → podNetRun
 - toggleCartel/λw → onSd
 - registerParseOnWorkStack/λrk → podWorkRun
+- registerStatusOnDedicatedStack/λw → onSd
+- registerShowConnected/λw → onSd
 - pullParseOnWorkStack/λwk → podWorkRun
 - benchPollDecode/λbk → podWorkRun
 - netGetBenchClip/λtx → podNetRun
 - animForget/λw → onSd
 - animLoadMarker/λw → onSd
-- netGetBlockClip/λtx → podNetRun
-- fetchAnimToSd/λstore → onSd
-- runResidentAnim/λsizeOf → onSd
-- runResidentAnim/λreadClip → onSd
+- netGetBlockClipToSd/λtx → podNetRun
+- animRemoveFiles → onSd
+- animValidateAndMark → onSd
+- runResidentAnim → onSd
 - onAnimTouch/λw → onSd
 
 ### routes serveur atteignables

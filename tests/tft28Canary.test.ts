@@ -42,7 +42,7 @@ function removedHunks(a: string, b: string): Array<{ start: number; count: numbe
 /** Fonctions d'ORIGINE autorisées à perdre ou modifier des lignes (chacune a une raison écrite dans docs/LOT_8B2D_R4_TFT28_CANARY_2026_10_12.md § 3). */
 const MAY_CHANGE = new Set([
   "initSD", "restoreRows", "saveMeta", "restoreLastFrame", "toggleCartel", "animForget", "animLoadMarker", "onAnimTouch", "fetchAnimToSd", "runResidentAnim",   // carte SD sur pile dédiée (onSd)
-  "doFetchFrame", "netGetBenchClip", "netGetBlockClip",                                                                                                    // défaut collant du client TLS borné
+  "doFetchFrame", "netGetBenchClip", "netGetBlockClip", "maybeFetchAnim",                                                                                                    // défaut collant du client TLS borné
   "doRegister", "doPull", "doValidate", "benchPollOnce",                                                                                                   // JSON sur la pile de travail
   "doValidateV2",                                                                                                                                          // re-register différé (plus de doRegister imbriqué sous le cadre de 416 o du vote)
 ]);
@@ -141,10 +141,10 @@ test("JSON : « tout ou rien » — doPullApply et doRegisterDecode n'appliquent
 // ── 4. carte SD / TFT sur pile dédiée ────────────────────────────────────────────────────────────────────────────────
 test("SD : tout accès à la carte depuis la pile principale passe par onSd() ; streamFrame (pile réseau dédiée) et les travailleurs seuls l'appellent directement ; jamais d'imbrication", () => {
   const c = code(effective(src, false));
-  const ALLOWED = ["initSDImpl", "restoreRowsImpl", "saveMetaImpl", "restoreLastFrameImpl", "toggleCartelImpl", "animForgetImpl", "animLoadMarkerImpl", "fetchAnimToSd", "runResidentAnim", "streamFrame"];
+  const ALLOWED = ["initSDImpl", "restoreRowsImpl", "saveMetaImpl", "restoreLastFrameImpl", "toggleCartelImpl", "animForgetImpl", "animLoadMarkerImpl", "netGetBlockClipToSd", "animRemoveFiles", "animValidateAndMark", "runResidentAnim", "streamFrame"];
   const heads: Record<string, string> = {
     initSDImpl: "static void initSDImpl(", restoreRowsImpl: "static bool restoreRowsImpl(", saveMetaImpl: "static void saveMetaImpl(", restoreLastFrameImpl: "static void restoreLastFrameImpl(", toggleCartelImpl: "static void toggleCartelImpl(",
-    animForgetImpl: "static void animForgetImpl(", animLoadMarkerImpl: "static void animLoadMarkerImpl(", fetchAnimToSd: "static bool fetchAnimToSd(", runResidentAnim: "static AnimEnd runResidentAnim(", streamFrame: "static bool streamFrame(",
+    animForgetImpl: "static void animForgetImpl(", animLoadMarkerImpl: "static void animLoadMarkerImpl(", netGetBlockClipToSd: "static bool __attribute__((noinline)) netGetBlockClipToSd(", animRemoveFiles: "static void __attribute__((noinline)) animRemoveFiles(", animValidateAndMark: "static bool __attribute__((noinline)) animValidateAndMark(", runResidentAnim: "static AnimEnd __attribute__((noinline)) runResidentAnim(", streamFrame: "static bool streamFrame(",
   };
   const allowedText = ALLOWED.map((n) => fnBody(c, heads[n])).join("\n");
   for (const [n, h] of Object.entries(heads)) assert.ok(fnBody(c, h).includes("SD."), `${n} doit accéder à la carte`);
@@ -155,9 +155,10 @@ test("SD : tout accès à la carte depuis la pile principale passe par onSd() ; 
     const w = fnBody(c, `static ${fn === "restoreRows" ? "bool" : "void"} ${fn}(`);
     assert.match(w, new RegExp(`onSd\\("${tag}", w\\)`), `${fn} : enveloppe onSd attendue`);
   }
-  // fetchAnimToSd : le réseau (pile réseau) est FERMÉ avant le rangement SD (pile dédiée) ; runResidentAnim : taille puis lecture sur pile dédiée, le clip est alloué entre les deux comme avant
-  const fa = fnBody(c, "static bool fetchAnimToSd("); assert.ok(fa.indexOf("netGetBlockClip(hash, clip, announced)") < fa.indexOf('onSd("animStore", store)'));
-  const ra = fnBody(c, "static AnimEnd runResidentAnim("); assert.ok(ra.indexOf('onSd("animSize", sizeOf)') < ra.indexOf("malloc(n)") && ra.indexOf("malloc(n)") < ra.indexOf('onSd("animRead", readClip)'));
+  // ANIM-STREAM-FIX1 : fetchAnimToSd = marqueur supprimé -> clip écrit au fil de l'eau (pile réseau, FERMÉE au retour) -> validation en flux sur la pile SD ; runResidentAnim : tampon de 2 048 o (jamais le clip entier), validation + lecture sur UNE pile dédiée
+  const fa = fnBody(c, "static bool fetchAnimToSd("); assert.ok(fa.indexOf("animRemoveFiles()") > 0 && fa.indexOf("animRemoveFiles()") < fa.indexOf("netGetBlockClipToSd(hash, announced, writeFailed)") && fa.indexOf("netGetBlockClipToSd(") < fa.indexOf("animValidateAndMark("));
+  assert.ok(!/malloc\((announced|n)\)/.test(fa), "fetchAnimToSd n'alloue plus le clip entier");
+  const ra = fnBody(c, "static AnimEnd __attribute__((noinline)) runResidentAnim("); assert.ok(ra.includes("malloc(ANIM_WORK_BYTES)") && ra.indexOf("malloc(ANIM_WORK_BYTES)") < ra.indexOf('onSd("animPlay", play)') && !/malloc\(n\)/.test(ra));
   // onSd : pas d'imbrication (branche directe dans une fonction à part, barrière de l'analyse statique), taille et échec fermé
   const sdHdr = code(readText("arduino_uno_r4/pod_uno_r4/pod_sd_stack.h"));
   assert.ok(!c.includes("template <typename F> static bool onSd("), "les gabarits ne sont plus définis dans le .ino");
@@ -251,8 +252,8 @@ test("INVENTAIRE FORMEL : WiFi.* (6, tous dans une enveloppe podWifiRun), Conn (
     for (const j of inv[k].json) assert.match(j, /^(registerParseWork|pullParseWork|validateParseWork|benchPollParseWork) → deserializeJson/, `${k} : JSON hors pile de travail : ${j}`);
     for (const e of inv[k].ed25519) assert.match(e, /→ PodEd::/, `${k} : Ed25519 direct : ${e}`);
   }
-  assert.deepEqual(fns(inv.production.conn), ["doFetchFrame/λtx", "netGetBenchClip/λtx", "netGetBlockClip/λtx", "netHttpRaw/λtx", "netReadCandidate/λtx"]);
-  assert.deepEqual(fns(inv.canari.conn), ["doFetchFrame/λtx", "netGetBenchClip/λtx", "netGetBlockClip/λtx", "netHttpRaw/λtx"]);
+  assert.deepEqual(fns(inv.production.conn), ["doFetchFrame/λtx", "netGetBenchClip/λtx", "netGetBlockClipToSd/λtx", "netHttpRaw/λtx", "netReadCandidate/λtx"]);
+  assert.deepEqual(fns(inv.canari.conn), ["doFetchFrame/λtx", "netGetBenchClip/λtx", "netGetBlockClipToSd/λtx", "netHttpRaw/λtx"]);
   assert.equal(count(inv.production.json), 5, "production : 5 décodages");
   assert.equal(count(inv.canari.json), 4, "canari : 4 décodages (pas de candidat)");
   assert.deepEqual(inv.canari.ed25519.sort(), ["generateKeys → PodEd::derivePublicKey", "loadKeysFromEEPROM → PodEd::derivePublicKey", "selfTestEd25519 → PodEd::sign", "selfTestEd25519 → PodEd::verify"].sort());

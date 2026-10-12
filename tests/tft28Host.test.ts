@@ -103,7 +103,7 @@ let nBuild = 0;
 function buildFull(canary: boolean, mutate: (s: string) => string = (s) => s, mutateHdr: (s: string) => string = (s) => s): string {
   const dir = fs.mkdtempSync(path.join(tmp, `full-${nBuild++}-`));
   const sk = path.join(dir, "sk"); fs.mkdirSync(sk);
-  for (const f of ["podEdStack.h", "podNetStack.h", "pod_http.h", "pod_bench.h", "pod_vote_r4.h", "pod_metrics.h", "pod_metrics_table.h"]) fs.copyFileSync(path.join(SKETCH_DIR, f), path.join(sk, f));
+  for (const f of ["podEdStack.h", "podNetStack.h", "pod_http.h", "pod_bench.h", "pod_bench_stream.h", "pod_vote_r4.h", "pod_metrics.h", "pod_metrics_table.h"]) fs.copyFileSync(path.join(SKETCH_DIR, f), path.join(sk, f));
   fs.writeFileSync(path.join(sk, "pod_sd_stack.h"), mutateHdr(fs.readFileSync(path.join(SKETCH_DIR, "pod_sd_stack.h"), "utf8")));   // gabarits onSd / onSdDirect (hors du .ino)
   fs.copyFileSync(path.join(MOCK, "pod_ssl_bounded.h"), path.join(sk, "pod_ssl_bounded.h"));   // le client TLS SIMULÉ (le vrai est testé contre le vrai Modem.cpp par boundedSsl.test.ts)
   fs.writeFileSync(path.join(sk, "sketch_body.inc"), mutate(src));
@@ -116,7 +116,13 @@ const clipHexFile = (() => {
   const f1 = Uint8Array.from({ length: CLIP.FRAME_BYTES }, (_, i) => (i * 7) & 0xff), f2 = Uint8Array.from({ length: CLIP.FRAME_BYTES }, (_, i) => (i * 13 + 5) & 0xff);
   const f = path.join(tmp, "clip.hex"); fs.writeFileSync(f, Buffer.from(encodeClip({ frames: [f1, f2], delaysMs: [50, 50], loops: 0, fg: 0x07e0, bg: 0x0842 })).toString("hex")); return f;
 })();
-const passFull = (exe: string) => { const r = runProcess(exe, ["--clip", fwd(clipHexFile)], 180000); return { ok: r.status === 0 && /^PASS \d+$/.test(r.stdout.trim()), out: r.stdout + r.stderr }; };
+const bigClipHexFile = (() => {
+  const r = (() => { let s = 123456789 >>> 0; return () => ((s = (s * 1664525 + 1013904223) >>> 0) / 0x100000000); })();
+  const frames = Array.from({ length: 50 }, () => Uint8Array.from({ length: CLIP.FRAME_BYTES }, () => (r() < 0.02 ? Math.floor(r() * 256) : 0)));
+  const bin = encodeClip({ frames, delaysMs: frames.map(() => 50), loops: 0, fg: 0x07e0, bg: 0x0842 });
+  const f = path.join(tmp, "bigclip.hex"); fs.writeFileSync(f, Buffer.from(bin).toString("hex")); return f;
+})();
+const passFull = (exe: string) => { const r = runProcess(exe, ["--clip", fwd(clipHexFile), "--bigclip", fwd(bigClipHexFile)], 180000); return { ok: r.status === 0 && /^PASS \d+$/.test(r.stdout.trim()), out: r.stdout + r.stderr }; };
 const exeCache = new Map<string, string>();
 const fullExe = (canary: boolean) => { const k = String(canary); if (!exeCache.has(k)) exeCache.set(k, buildFull(canary)); return exeCache.get(k)!; };
 

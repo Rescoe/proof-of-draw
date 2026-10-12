@@ -15,6 +15,11 @@ extern "C" char* harness_sbrk(int) { return g_fakeRam + 1000; }
 static inline volatile uint8_t* harnessFrame() { return (volatile uint8_t*)g_fakeStack + 700; }
 #define __builtin_frame_address(x) harnessFrame()
 template <class T> static inline T max(T a, T b) { return a > b ? a : b; }
+// LOT8B2E : toute allocation malloc() du sketch est mesurée ; g_mallocLimit simule un tas FRAGMENTÉ (plus grand bloc contigu limité : ≈ 4 884 o sur la carte, FIX2)
+static size_t g_maxMalloc = 0, g_mallocLimit = (size_t)-1; static int g_failWork2048 = 0;   // g_failWork2048 : refuse les N prochaines allocations de 2 048 o (le tampon de travail de l'animation)
+namespace std { inline void* harness_malloc(size_t n) { if (n > g_maxMalloc) g_maxMalloc = n; if (n > g_mallocLimit) return nullptr; if (n == 2048 && g_failWork2048 > 0) { g_failWork2048--; return nullptr; } return ::malloc(n); } }   // std:: : les en-têtes inclus après la macro écrivent std::malloc
+using std::harness_malloc;
+#define malloc harness_malloc
 #define setup tft28_setup
 #define loop tft28_loop
 #include "sketch_body.inc"
@@ -86,6 +91,7 @@ static bool sdHas(const char* p) { return g_sd.files.count(p) > 0; }
 
 int main(int argc, char** argv) {
   std::string clipHex; for (int i = 1; i + 1 < argc; i++) if (!std::strcmp(argv[i], "--clip")) { FILE* f = std::fopen(argv[i + 1], "rb"); if (f) { char b[65536]; size_t n; while ((n = std::fread(b, 1, sizeof b, f)) > 0) clipHex.append(b, n); std::fclose(f); } }
+  std::string bigHex; for (int i = 1; i + 1 < argc; i++) if (!std::strcmp(argv[i], "--bigclip")) { FILE* f = std::fopen(argv[i + 1], "rb"); if (f) { char b[65536]; size_t n; while ((n = std::fread(b, 1, sizeof b, f)) > 0) bigHex.append(b, n); std::fclose(f); } }
   auto fromHex = [](const std::string& h) { std::string o; for (size_t i = 0; i + 1 < h.size(); i += 2) o.push_back((char)std::strtol(h.substr(i, 2).c_str(), nullptr, 16)); return o; };
   const bool CAN = POD_CANARY != 0;
   EEPROM.m.assign(8192, 0xFF);
@@ -290,6 +296,39 @@ int main(int argc, char** argv) {
     { resetWorld(); initSD(); g_sd.files["/pod/anim.bin"] = std::vector<uint8_t>(clip.begin(), clip.end()); std::string m = std::string(64, 'c') + "\nautre\n"; g_sd.files["/pod/anim.txt"] = std::vector<uint8_t>(m.begin(), m.end()); lastFrameId = "x";
       animLoadMarker(); CHECK(!animOn && has(Serial.log, "ne correspond pas"), "15 marqueur d'une autre œuvre : ignoré");
       m = std::string(64, 'c') + "\nx\n"; g_sd.files["/pod/anim.txt"] = std::vector<uint8_t>(m.begin(), m.end()); animLoadMarker(); CHECK(animOn && animHash == std::string(64, 'c').c_str(), "15 marqueur de l'œuvre : l'animation reprend"); }
+  }
+
+  // ═══ 15b. LOT8B2E ANIM-STREAM-FIX1 : clip de ≈ 9 Ko sur un tas FRAGMENTÉ (aucune allocation > 2 048 o) ; téléchargement vers la carte, validation et lecture EN FLUX ═══
+  if (!bigHex.empty()) {
+    const std::string big = fromHex(bigHex); const std::string hash(64, 'd');
+    CHECK(big.size() > 6000 && big.size() <= BENCH_MAX_CLIP, "15b clip de test volumineux (> 6 Ko, <= 9 216 o)");
+    { resetWorld(); initSD(); K.frame = frameOk(15); doFetchFrame("anim15b", "consensus"); K.clip = big; g_requests.clear();
+      g_maxMalloc = 0; g_mallocLimit = 2048;                                            // plus grand bloc contigu simulé : 2 048 o (la carte offrait 4 884 o)
+      const bool ok = fetchAnimToSd(String(hash.c_str()), big.size());
+      CHECK(ok && animOn && sdFile("/pod/anim.bin") == big && sdFile("/pod/anim.txt") == hash + "\nanim15b\n", "15b gros clip reçu, rangé sur la carte AU FIL DE L'EAU, validé en flux, marqueur écrit APRÈS le clip");
+      CHECK(!has(Serial.log, "mémoire insuffisante"), "15b aucune erreur de mémoire sur un tas fragmenté");
+      g_tft.busBytes = 0; touchOk = true; g_touchPressedPolls = 0;
+      const AnimEnd e = runResidentAnim(1500);
+      CHECK(e == AE_TIME && g_tft.busBytes > 0 && sdFile("/pod/anim.bin") == big, "15b lecture du gros clip EN FLUX sur le tas fragmenté, clip intact");
+      CHECK(g_maxMalloc <= 2048, "15b plus grosse allocation du chemin animation <= 2 048 o (tampon de travail + piles dédiées)");
+      CHECK(countReq("/api/") == 1 && g_requests.size() == 1, "15b une seule requête (le téléchargement), aucune pendant la lecture");
+      g_mallocLimit = (size_t)-1; }
+    // mémoire vraiment insuffisante : échec fermé, rien d'inscrit, fichiers existants conservés
+    { resetWorld(); initSD(); K.clip = big; g_failWork2048 = 1; const bool ok = fetchAnimToSd(String(hash.c_str()), big.size());
+      CHECK(!ok && !animOn && !sdHas("/pod/anim.bin") && !sdHas("/pod/anim.txt") && g_requests.empty() && has(Serial.log, "mémoire insuffisante"), "15b tampon de travail (2 048 o) refusé : téléchargement NON lancé, rien d'inscrit");
+      g_sd.files["/pod/anim.bin"] = std::vector<uint8_t>(big.begin(), big.end()); animOn = true; animHash = hash.c_str();
+      g_failWork2048 = 1; const AnimEnd e = runResidentAnim(500); g_failWork2048 = 0;
+      CHECK(e == AE_ERROR && has(Serial.log, "mémoire insuffisante pour la lecture"), "15b tampon de travail refusé : lecture abandonnée proprement (AE_ERROR)"); }
+    // lecture de la carte interrompue pendant la lecture, ou carte refusant la lecture
+    { resetWorld(); initSD(); g_sd.files["/pod/anim.bin"] = std::vector<uint8_t>(big.begin(), big.end()); animOn = true;
+      g_sd.readFailAt = (long)big.size() / 2; const AnimEnd e = runResidentAnim(1500); g_sd.readFailAt = -1;
+      CHECK(e == AE_ERROR, "15b carte illisible à mi-clip : refusé à la validation (AE_ERROR), pas de lecture partielle"); }
+    // clip validé à la réception mais ALTÉRÉ sur la carte ensuite : refusé à la lecture
+    { resetWorld(); initSD(); std::string bad = big; bad[bad.size() / 2] ^= 0x01; g_sd.files["/pod/anim.bin"] = std::vector<uint8_t>(bad.begin(), bad.end());
+      const AnimEnd e = runResidentAnim(500); CHECK(e == AE_ERROR && has(Serial.log, "refusé (CRC)"), "15b clip altéré sur la carte : refusé (CRC)"); }
+    // téléchargement coupé en cours de route : le clip partiel est supprimé, aucun marqueur
+    { resetWorld(); initSD(); K.clip = big.substr(0, big.size() - 700); const bool ok = fetchAnimToSd(String(hash.c_str()), big.size());
+      CHECK(!ok && !animOn && !sdHas("/pod/anim.bin") && !sdHas("/pod/anim.txt"), "15b téléchargement tronqué : clip partiel supprimé, aucun marqueur"); }
   }
 
   // ═══ 16. pull -> image -> ACK de bout en bout (chaîne réelle doPull) ═══
