@@ -1,6 +1,6 @@
 # Proof-of-Draw — preuves d'affichage, mesures environnementales et valeur produit
 
-Date : 12 octobre 2026  
+Date : 12 octobre 2026
 Statut : **orientation produit documentée ; hors périmètre d'implémentation des lots 8B en cours**
 
 ## 1. Objet

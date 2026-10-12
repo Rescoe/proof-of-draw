@@ -25,7 +25,7 @@
 [CANARY] pile reseau http : utilisee 1156 o, marge 828 o (objectif >= 256 : OK), erreur 0, statut 0 | tas libre 7860
 [HTTP POST] /api/register -> 200
 [CANARY] pile travail register JSON : utilisee 496 o, marge 1488 o (objectif >= 256 : OK), erreur 0, statut 1 | tas libre 8020
-[REGISTER] deviceId=dev_7B4L17N3 paired=oui 
+[REGISTER] deviceId=dev_7B4L17N3 paired=oui
 [CANARY] register : retour : pile principale utilisee au plus 780 o / 1024 (marge 244 o, SOUS L'OBJECTIF 256) | tas libre 8208
 [CANARY] tas apres le register : libre 8208 o, plus grand bloc 4264 o, fragmentation 49 %
 [SD] dernière œuvre réaffichée en 910 ms (frameId=9599d9ad-d604-4077-bf3f-4483ba96c94c)

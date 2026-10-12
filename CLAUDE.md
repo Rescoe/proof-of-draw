@@ -1,5 +1,7 @@
 # CLAUDE.md
 
+> **Reprise locale propre du 12/10/2026.** Travailler uniquement dans le worktree `C:\Users\thibf\Documents\ChatGPT\ANA\worktrees\proof-of-draw-claude-local-resume`, branche `codex/claude-local-resume-2026-10-12`. Le code courant est le lot TFT 2,8″ `480eacd`, jamais flashé, complété par les notes produit `f8657d8`. `main` reste la production propre `3239d2e`. Lire d'abord `docs/HANDOFF_CLAUDE_LOCAL_2026_10_12.md`, `docs/ETAT_BRANCHES_LOTS_8B_2026_10_12.md` et `docs/AUDIT_GPT_480EACD_ANIM_STREAM_PRELIMINAIRE_2026_10_12.md`. Ne pas fusionner, pousser, déployer, voter ni propager avant le verdict matériel du canari d'animation.
+
 > **Reprise cloud du 11/10/2026.** Le canari matériel AUDIT5 du commit `3387088` a confirmé `abort() : OUI` pendant `WiFiSSLClient::read()` après la phase 9, avec `M93 V59 R54#`, 2 976 o libres et 1 888 o de sommet vierge avant la lecture. AUDIT5 est accepté ; le prochain lot borné est `PULLFRAME-BOUNDED-SSL-FIX1`. Lire `docs/AUDIT_GPT_AUDIT5_PULLFRAME_2026_10_11.md` et `docs/HANDOFF_CLAUDE_CLOUD_PULLFRAME_2026_10_11.md`. La boîte `docs/ORCHESTRATION/` à `FIN` est historique et ne bloque pas cette reprise manuelle. Ne jamais commiter les drapeaux locaux `1/1` ni `secrets.h`.
 
 ## Rôle
