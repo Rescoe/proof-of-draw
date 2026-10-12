@@ -1,3 +1,4 @@
+import { readForHistory, readSketch } from "./helpers/tftLot";
 import test from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
@@ -44,13 +45,13 @@ test("la table couvre les cinq firmwares", () => {
 
 for (const sk of SKETCHES) {
   test(`${sk} : en annulant les modifications EXACTES de la table, on retrouve le sketch d'avant NETSTACK-FIX1 au texte près (hors blocs du canari) ; chaque modification est unique`, () => {
-    const now = undoBoundedSsl(read(`arduino_uno_r4/${sk}/${sk}.ino`)), before = read(`${BACKUP}/${sk}/${sk}.ino`);   // PULLFRAME-BOUNDED-SSL-FIX1 annulé d'abord
+    const now = undoBoundedSsl(readForHistory(root, sk)), before = read(`${BACKUP}/${sk}/${sk}.ino`);   // PULLFRAME-BOUNDED-SSL-FIX1 annulé d'abord ; pod_uno_r4 : sketch gelé d'avant LOT8B2D (tests/helpers/tftLot.ts)
     assert.equal(noCanary(undoNetStack(now, sk)), noCanary(before));
     for (const e of netEditsFor(sk)) assert.equal(now.split(e.neu).length - 1, 1, `${sk} : « ${e.id} »`);
   });
 
   test(`${sk} : plus AUCUNE transaction réseau hors de la pile dédiée — chaque Conn vit dans un « auto tx = [&]() » exécuté par podNetRun, résultat toujours testé, aucun PodEd ni autre transaction à l'intérieur, signature APRÈS la fermeture`, () => {
-    const src = read(`arduino_uno_r4/${sk}/${sk}.ino`), code = stripLine(src);
+    const src = readSketch(root, sk), code = stripLine(src);
     assert.match(src, /#include "podEdStack\.h".*\n(?:[\s\S]*?\n)?#include "podNetStack\.h"/);
     const conns = (code.match(/Conn c\(HTTP_TIMEOUT_MS\);/g) ?? []).length, lambdas = lambdaBodies(code);
     assert.ok(conns >= 3, `${sk} : au moins 3 sites réseau`);
@@ -78,7 +79,7 @@ for (const sk of SKETCHES) {
     assert.doesNotMatch(hc, /auto tx|Conn c\(/, "httpCall ne porte plus la fermeture ni le Conn");
     assert.equal((code.match(/podNetRun\(/g) ?? []).length, conns, "un appel podNetRun par transaction");
     // le vote : la pile réseau est fermée AVANT la signature (jamais imbriquée dans PodEd)
-    const v = code.indexOf("static bool doValidateV2"), end = code.indexOf("\n}\n", v), body = code.slice(v, end);
+    const v = code.search(/static bool (?:__attribute__\(\(noinline\)\) )?doValidateV2/), end = code.indexOf("\n}\n", v), body = code.slice(v, end);
     assert.ok(body.indexOf("netReadCandidate(candidateId, kind, bytes, chk") > 0 && body.indexOf("netReadCandidate(") < body.indexOf("PodEd::sign("), "la lecture du candidat (pile réseau, fonction à part) précède la signature");
     assert.equal(body.includes("podNetRun("), false, "doValidateV2 ne contient plus de transaction : son cadre ne porte que la signature");
   });
@@ -86,7 +87,7 @@ for (const sk of SKETCHES) {
 
 test("échec fermé aux sites : un échec de pile dédiée ne laisse aucun résultat présenté comme réussi, jamais de vote ni d'ACK ; formulations HONNÊTES : NON exécutée (NOMEM/NESTED) ≠ EXÉCUTÉE mais résultat local rejeté (GUARD/MARGIN)", () => {
   for (const sk of SKETCHES) {
-    const code = stripLine(read(`arduino_uno_r4/${sk}/${sk}.ino`));
+    const code = stripLine(readSketch(root, sk));
     // httpCall : code -5 si la transaction a été EXÉCUTÉE (un POST/vote/ACK a pu partir), -4 sinon ; le message le dit
     assert.match(code, /if \(!ran\) \{ logf\("\[HTTP %s\] pile réseau dédiée : %s \(erreur %u, marge %u o\)%s", method, podNetWhy\(ni\), \(unsigned\)ni\.err, \(unsigned\)ni\.margin, podNetExecuted\(ni\) \? " — la requête a PU atteindre le serveur \(POST, vote ou ACK possibles\)" : ""\); return podNetExecuted\(ni\) \? -5 : -4; \}/, `${sk} : httpCall`);
     for (const m of code.matchAll(/if \(!ran\) \{([^\n]*)\}\n/g)) {
@@ -112,7 +113,7 @@ test("échec fermé aux sites : un échec de pile dédiée ne laisse aucun résu
     }
   }
   // aucune formulation « NON présentée » ne subsiste dans les sketches TFT
-  for (const sk of ["pod_uno_r4_tft18", "pod_uno_r4"]) assert.doesNotMatch(read(`arduino_uno_r4/${sk}/${sk}.ino`), /image NON présentée/);
+  for (const sk of ["pod_uno_r4_tft18", "pod_uno_r4"]) assert.doesNotMatch(readSketch(root, sk), /image NON présentée/);
 });
 
 /** NETSTACK-FIX3-R1 : le corps de logfSafeStop() doit être EXACTEMENT une boucle sans fin silencieuse. Retourne les violations (liste vide = conforme). */
@@ -128,7 +129,7 @@ function silentStopViolations(src: string): string[] {
 }
 
 test("logfSafeStop (NETSTACK-FIX3-R1) : arrêt fatal SILENCIEUX immédiat dans les cinq firmwares — aucune E/S, allocation ni retour ; un correctif qui imprime, alloue ou retourne est REFUSÉ", () => {
-  for (const sk of SKETCHES) assert.deepEqual(silentStopViolations(read(`arduino_uno_r4/${sk}/${sk}.ino`)), [], sk);
+  for (const sk of SKETCHES) assert.deepEqual(silentStopViolations(readSketch(root, sk)), [], sk);
   const base = read("arduino_uno_r4/pod_uno_r4_eink29/pod_uno_r4_eink29.ino");
   const stop = /static void __attribute__\(\(noinline, noreturn\)\) logfSafeStop\(\) \{[\s\S]*?\n\}\n/.exec(base)![0];
   const mutants: Array<[string, string]> = [
@@ -145,7 +146,7 @@ test("logfSafeStop (NETSTACK-FIX3-R1) : arrêt fatal SILENCIEUX immédiat dans l
 
 test("journal sur pile dédiée (NETSTACK-FIX2) : logf s'exécute sur la pile de journal quand l'appelant est sur la pile principale, directement sur une pile dédiée ; tampon statique unique ; abandon silencieux de la ligne en cas d'échec", () => {
   for (const sk of SKETCHES) {
-    const src = read(`arduino_uno_r4/${sk}/${sk}.ino`), code = stripLine(src);
+    const src = readSketch(root, sk), code = stripLine(src);
     const fn = /static void logf\(const char\* fmt, \.\.\.\) \{[\s\S]*?\n\}\n/.exec(code)![0];
     const tail = sk === "pod_uno_r4_eink29" ? String.raw`if \(li\.err == POD_NET_GUARD\s*#if POD_RENDER_V1 && POD_CANARY\s*\|\| li\.err == POD_NET_MARGIN\s*#endif\s*\) logfSafeStop\(\);` : String.raw`if \(li\.err == POD_NET_GUARD\) logfSafeStop\(\);`;   // MARGIN n'est fatal que dans le build de canari (e-ink 2,9″)
     assert.match(fn, new RegExp(String.raw`LogJob j = \{ fmt, &ap \};\s*if \(podNetOnMainStack\(\)\) \{\s*PodNetInfo li;\s*PodNet::runSized\(logfEmit, &j, POD_LOG_STACK_TOTAL, &li\);\s*${tail}\s*\} else logfEmit\(&j\);\s*va_end\(ap\);`), sk);
@@ -235,7 +236,7 @@ test("sondes de phase : 8 phases dans l'ordre, première phase fautive mémoris�
   assert.match(probe, /^ if \(\*slot == 0 && \*\(volatile uint32_t\*\)&__StackLimit != 0x434E5259UL\) \*slot = phase; $/);
   assert.ok(src.indexOf("#define POD_NET_PROBE(I, n) podNetProbe((I)->pad, (n))") < src.indexOf('#include "podNetStack.h"'));
   assert.match(src, /#if POD_RENDER_V1 && POD_CANARY\nextern char __StackLimit;[^\n]*\nstatic inline void podNetProbe/);
-  for (const sk of SKETCHES.filter((s) => s !== "pod_uno_r4_eink29")) assert.doesNotMatch(read(`arduino_uno_r4/${sk}/${sk}.ino`), /POD_NET_PROBE|podNetProbe/);
+  for (const sk of SKETCHES.filter((s) => s !== "pod_uno_r4_eink29")) assert.doesNotMatch(readSketch(root, sk), /POD_NET_PROBE|podNetProbe/);
 });
 
 test("EXÉCUTION HÔTE des sondes de phase : chaque phase k destructrice est désignée (pad[0] == k), marqueur déjà détruit à l'entrée = phase 1 (cause antérieure à PodNet), première phase conservée, NOMEM = phases 1 et 8 seulement ; CONTRÔLES NÉGATIFS : sonde écrasante, phase supprimée ou déplacée → refusé", { skip }, () => {

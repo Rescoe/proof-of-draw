@@ -5,6 +5,7 @@
 // AUDIT5 : mesures du tas (tas libre, sommet vierge) avant chaque read échantillonné, abort() redéfinie en canari (LED X + signature 0xAB dans le journal, aucune allocation / sortie / verrou), sixième LED ; pas de set_new_handler (il détournerait les new(nothrow)).
 // (2) cinq LED de la matrice pilotées en statique (F = écriture flash, R = dans read, C = dans connected, A = trace active, H = en-têtes lus) comme témoin indépendant de la flash.
 // (1) règles statiques + contrôles négatifs ; (2) exécution HÔTE du code réel contre une flash simulée (programmation = ET binaire, effacement par bloc, pannes, étanchéité du bloc 7), un faux client TLS qui ne rend jamais la main et de fausses LED.
+import { readSketch } from "./helpers/tftLot";
 import test from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
@@ -282,7 +283,7 @@ test("PULLFRAME-PHASE-AUDIT5 : carte de l'EEPROM — les clés, le dernier bloc 
     return Number(m![1]);
   };
   for (const sk of ["pod_uno_r4_eink29", ...OTHERS]) {
-    const s = read(`arduino_uno_r4/${sk}/${sk}.ino`);
+    const s = readSketch(root, sk);
     const ends: number[] = [];
     // chaque zone [offset, longueur] déclarée ; fin exclusive la plus haute
     ends.push(num(s, "EEPROM_PRIVKEY_OFF") + 32, num(s, "EEPROM_BLOCKHASH_OFF") + 32, num(s, "EEPROM_FLAG_OFF") + 1, num(s, "EEPROM_PUBKEY_OFF") + 32, num(s, "EEPROM_ONBOARDING_OFF") + 1);
@@ -383,7 +384,7 @@ test("PULLFRAME-PHASE-AUDIT5 (HÔTE) : CONTRÔLES NÉGATIFS — bloc 0, complém
 });
 
 test("PULLFRAME-PHASE-AUDIT5 : les quatre autres firmwares R4 et la production ne portent aucune marque ; statiques de canari : huit, hors enregistrement .noinit", () => {
-  for (const sk of OTHERS) assert.doesNotMatch(read(`arduino_uno_r4/${sk}/${sk}.ino`), /POD_FF|g_podFf|podFf|FfSSL|DataFlashBlockDevice/, sk);
+  for (const sk of OTHERS) assert.doesNotMatch(readSketch(root, sk), /POD_FF|g_podFf|podFf|FfSSL|DataFlashBlockDevice/, sk);
   const src = read(INO);
   assert.equal((src.match(/^static volatile (?:uint8_t|uint16_t|uint32_t) g_podFf\w+ = 0;$/gm) ?? []).length, 8);
   assert.doesNotMatch(noCanary(src), /POD_FF|g_podFf|podFf|FfSSL|DataFlashBlockDevice/);

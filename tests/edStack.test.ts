@@ -1,3 +1,4 @@
+import { readForHistory, readSketch } from "./helpers/tftLot";
 import test from "node:test";
 import assert from "node:assert/strict";
 import crypto from "node:crypto";
@@ -23,7 +24,7 @@ const stripComments = (s: string) => s.replace(/\/\*[\s\S]*?\*\//g, "").replace(
 // ── 1. le correctif ne change RIEN d'autre dans les cinq firmwares ─────────────────────────────────────────────
 for (const sk of ED_SKETCHES) {
   test(`${sk} : en annulant les modifications EXACTES de la table (tests/helpers/edStackEdits.ts), on retrouve le sketch d'avant le correctif au texte près`, () => {
-    const now = undoBoundedSsl(read(`arduino_uno_r4/${sk}/${sk}.ino`)), before = read(`${BACKUP}/${sk}/${sk}.ino`);   // PULLFRAME-BOUNDED-SSL-FIX1 annulé d'abord
+    const now = undoBoundedSsl(readForHistory(root, sk)), before = read(`${BACKUP}/${sk}/${sk}.ino`);   // PULLFRAME-BOUNDED-SSL-FIX1 annulé d'abord ; pod_uno_r4 : sketch gelé d'avant LOT8B2D (tests/helpers/tftLot.ts)
     // l'instrument de canari (blocs « POD_RENDER_V1 && POD_CANARY », absents du chemin désactivé) a évolué depuis (BOOT-FIX2) : il est exclu de la comparaison, comme dans la vue « POD_RENDER_V1 = 0 »
     const noCanary = (s: string) => s.replace(/#if POD_RENDER_V1 && POD_CANARY\n[\s\S]*?\n#endif\n/g, "");
     assert.equal(noCanary(undoEdStack(undoNetStack(now, sk), sk)), noCanary(before));   // NETSTACK-FIX1 (transactions réseau) annulé d'abord, puis PodEd
@@ -31,7 +32,7 @@ for (const sk of ED_SKETCHES) {
   });
 
   test(`${sk} : plus AUCUN appel direct Ed25519::sign/verify/derivePublicKey (tout passe par PodEd), chaque appel contrôle son résultat, défauts POD_RENDER_V1/POD_CANARY inchangés`, () => {
-    const src = read(`arduino_uno_r4/${sk}/${sk}.ino`), code = stripComments(src);
+    const src = readSketch(root, sk), code = stripComments(src);
     assert.doesNotMatch(code, /Ed25519::(sign|verify|derivePublicKey|generatePrivateKey)/);
     assert.match(src, /#include <Ed25519\.h>\n#include "podEdStack\.h"/);
     const calls = [...code.matchAll(/PodEd::(sign|verify|derivePublicKey)\(/g)];

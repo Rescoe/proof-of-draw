@@ -1,5 +1,6 @@
 // LOT8B2B2 NETSTACK-WIFI-CALLS-FIX1 (09/10/2026) — tout appel DIRECT au module Wi-Fi des cinq firmwares UNO R4 s'exécute sur une pile dédiée (podWifiRun, 1 536 o), résultats chez l'appelant, échec fermé.
 // Cause matérielle (canari FIX3-R1) : WiFi.macAddress() appelé depuis doRegister détruisait le marqueur de pile (24 o sous __StackLimit).
+import { readSketch } from "./helpers/tftLot";
 import test from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
@@ -26,7 +27,7 @@ function braced(code: string, open: number): string {
 
 for (const sk of SKETCHES) {
   test(`${sk} : AUCUN appel direct au module Wi-Fi hors des enveloppes sur pile dédiée ; chaque méthode une seule fois ; jamais dans une transaction PodNet`, () => {
-    const src = read(ino(sk)), code = strip(src);
+    const src = readSketch(root, sk), code = strip(src);
     const lines = code.split("\n").filter((l) => /\bWiFi\.[A-Za-z]+\(/.test(l));
     for (const l of lines) assert.match(l, /^\s*auto wx = \[&\]\(\) \{ [^\n]*\};$/, `${sk} : appel direct au module hors d'une enveloppe : ${l.trim()}`);
     const used = lines.map((l) => /WiFi\.([A-Za-z]+)\(/.exec(l)![1]).sort();
@@ -48,7 +49,7 @@ for (const sk of SKETCHES) {
   });
 
   test(`${sk} : échec fermé aux sites d'appel — statut inconnu, firmware/IP « ? », MAC vide, clés non générées, aucune inscription`, () => {
-    const full = read(ino(sk));
+    const full = readSketch(root, sk);
     const code = strip(full);
     const blk = strip(full.slice(full.indexOf(BLOCK_START), full.indexOf(BLOCK_END)));
     // chaque enveloppe : si l'appel a échoué (NOMEM, NESTED, GUARD, MARGIN), AUCUN résultat partiel n'est rendu
@@ -89,7 +90,7 @@ for (const sk of SKETCHES) {
   });
 
   test(`${sk} : l'adresse MAC est encodée par un hexadécimal manuel borné dans char[18] — plus de snprintf pour la MAC`, () => {
-    const code = strip(read(ino(sk)));
+    const code = strip(readSketch(root, sk));
     assert.match(code, /static char macHexDigit\(uint8_t v\) \{ return \(char\)\(v < 10 \? '0' \+ v : 'a' \+ \(v - 10\)\); \}/);
     const fn = /static String macString\(\) \{[\s\S]*?\n\}\n/.exec(code)![0];
     assert.doesNotMatch(fn, /snprintf|sprintf|WiFi\./);
@@ -115,7 +116,7 @@ const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "wificalls-"));
 const exe = path.join(tmp, process.platform === "win32" ? "wifi_calls_harness.exe" : "wifi_calls_harness");
 
 function extractWifi(sk: string): string {
-  const src = read(ino(sk));
+  const src = readSketch(root, sk);
   const blk = src.slice(src.indexOf(BLOCK_START), src.indexOf(BLOCK_END));
   const helper = /static char macHexDigit\(uint8_t v\) \{[^\n]*\n/.exec(src)![0];
   const mac = /static String macString\(\) \{[\s\S]*?\n\}\n/.exec(src)![0];
