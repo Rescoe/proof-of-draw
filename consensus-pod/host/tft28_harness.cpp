@@ -21,9 +21,10 @@ template <class T> static inline T max(T a, T b) { return a > b ? a : b; }
 #undef setup
 #undef loop
 #undef __builtin_frame_address
-static int g_failSticky = 0, g_failNext = 0;   // pile dédiée indisponible : pour tous les appels / pour le prochain seulement
+static int g_failSticky = 0, g_failNext = 0, g_failSkip = 0; static std::string g_failWhenLog;   // g_failWhenLog : la PREMIÈRE allocation de pile dédiée après l'apparition de ce texte dans le journal échoue   // g_failSkip : nombre d'allocations de pile dédiée LAISSÉES PASSER avant le premier échec de g_failNext   // pile dédiée indisponible : pour tous les appels / pour le prochain seulement
 static void harnessProbe(int n) {
-  if (n == 1) { podNetTestFailAlloc = (g_failSticky || g_failNext > 0) ? 1 : 0; if (g_failNext > 0) g_failNext--; }
+  if (n == 1 && !g_failWhenLog.empty() && Serial.log.find(g_failWhenLog) != std::string::npos) { podNetTestFailAlloc = 1; g_failWhenLog.clear(); }
+  else if (n == 1) { if (g_failSkip > 0) { g_failSkip--; podNetTestFailAlloc = 0; } else { podNetTestFailAlloc = (g_failSticky || g_failNext > 0) ? 1 : 0; if (g_failNext > 0) g_failNext--; } }
   else if (n == 2) podNetTestNested++; else if (n == 3) podNetTestNested--;
 }
 
@@ -67,7 +68,7 @@ static NetScript route(const NetRequest& r) {
 static void resetWorld(bool withSd = true, bool paintOld = true) {
   g_us = 1000000; g_requests.clear(); g_route = route; g_idleHook = nullptr; K = Knobs();
   g_sd = SdState(); g_tft = TftState(); g_touchPressedPolls = 0; g_touchPollCount = 0; Serial.log.clear(); g_strFailArmed = false; g_strAllocN = 0;
-  podNetTestHook = nullptr; podNetTestFailAlloc = 0; podNetTestNested = 0; g_failSticky = 0; g_failNext = 0;
+  podNetTestHook = nullptr; podNetTestFailAlloc = 0; podNetTestNested = 0; g_failSticky = 0; g_failNext = 0; g_failSkip = 0;
   if (paintOld) for (int i = 0; i < TFT_W * TFT_H; i++) g_tft.fb[i] = 0xBEEF;   // contenu « ancien » reconnaissable
   std::memset(g_fakeStack, 0, sizeof g_fakeStack);
 #if POD_CANARY
@@ -323,6 +324,49 @@ int main(int argc, char** argv) {
     }
     CHECK(countReq("/api/pull?") >= 5, "17 plusieurs pulls pendant 10 minutes de boucle (rythme nominal)");
     CHECK(countReq("/api/pull?") <= 14, "17 pas de rafale de pulls (rythme borné par PULL_INTERVAL)"); }
+
+  // ═══ 17b. REGISTER-STACK-FIX2 : phases de doRegister (appairé / non appairé / échecs), écran « Connecte » sur la pile dédiée ═══
+  { auto freshReg = [&]() { resetWorld(); initSD(); registered = false; paired = false; deviceId = ""; pairCode = ""; g_tft = TftState(); g_requests.clear(); Serial.log.clear(); };
+    g_onMainStackHook = &podNetOnMainStack;
+    // appairé : corps exact, écran sur la pile dédiée, état inscrit, journal
+    freshReg(); EEPROM.m[97] = 0x01;
+    const bool okP = doRegister();
+    CHECK(okP && registered && paired && deviceId == "dev_TEST0001" && pairCode == "ABCD2345", "17b appairé : inscription valide, état inscrit");
+    CHECK(countReq("/api/register") == 1, "17b appairé : une seule requête /api/register");
+    { std::string reqBody; for (auto& r : g_requests) if (r.path.rfind("/api/register", 0) == 0) reqBody = r.body;
+      const std::string pre = std::string("{\"mac\":\"") + "", mid = std::string("\",\"screens\":[\"") + SCREEN_TYPE + "\"],\"firmware\":\"" + FIRMWARE_VERSION + "\",\"publicKey\":\"";
+      CHECK(reqBody.rfind(pre, 0) == 0 && reqBody.find(mid) != std::string::npos && reqBody.find("\",\"ownedHashes\":[") != std::string::npos && !reqBody.empty() && reqBody.back() == '}', "17b appairé : corps JSON dans l'ordre mac, screens, firmware, publicKey, ownedHashes"); }
+    CHECK(g_tft.text.find("Connecte") != std::string::npos && g_tft.text.find("dev_TEST0001") != std::string::npos, "17b appairé : écran « Connecte » + identifiant");
+    CHECK(g_tft.fills > 0 && g_tft.fillsMain == 0, "17b appairé : le dessin de l'écran « Connecte » se fait SUR LA PILE DÉDIÉE (0 dessin sur la pile principale)");
+    CHECK(has(Serial.log, "[REGISTER] deviceId=dev_TEST0001 paired=oui"), "17b appairé : journal [REGISTER]");
+    // appairé, pile dédiée de l'écran indisponible : inscription valable, écran non redessiné, journal honnête
+    if (!CAN) {   // en canari une pile dédiée refusée est FATALE (arrêt sûr) : scénario de production seulement
+      freshReg(); EEPROM.m[97] = 0x01; g_failWhenLog = "[REGISTER] deviceId=dev_TEST0001";      // l'allocation suivante est celle de l'ÉCRAN
+      const bool okS = doRegister(); g_failWhenLog.clear();
+      CHECK(okS && registered && paired && g_tft.fills == 0 && has(Serial.log, "[SD] pile dédiée (registerConnected)"), "17b appairé, pile de l'écran indisponible : inscription valable, écran NON redessiné, journal honnête"); }
+    // non appairé : onboarding inchangé (QR sur la pile principale), état non appairé
+    freshReg(); K.registerJson = "{\"deviceId\":\"dev_TEST0002\",\"pairCode\":\"WXYZ2345\",\"paired\":false}"; EEPROM.m[97] = 0x01;
+    const bool okU = doRegister();
+    CHECK(okU && registered && !paired && deviceId == "dev_TEST0002" && pairCode == "WXYZ2345", "17b non appairé : inscription valide, code d'appairage conservé");
+    CHECK(g_tft.text.find("MAC:") != std::string::npos && g_tft.text.find("Scannez le QR") != std::string::npos && g_tft.fillsMain > 0, "17b non appairé : onboarding (QR, code, MAC) dessiné comme avant");
+    CHECK(g_tft.text.find("Connecte") == std::string::npos, "17b non appairé : pas d'écran « Connecte »");
+    CHECK(has(Serial.log, "paired=non"), "17b non appairé : journal paired=non");
+    // échec HTTP : rien d'inscrit, écran d'échec sur la pile dédiée, retour false
+    freshReg(); g_route = [](const NetRequest& r) { NetScript s; if (r.path.rfind("/api/register", 0) == 0) s.response = http(500, "{}"); else s.response = http(404, "{}"); return s; };
+    const bool okH = doRegister();
+    CHECK(!okH && !registered && !paired && deviceId == "", "17b HTTP 500 : false, aucun état inscrit");
+    CHECK(g_tft.text.find("Register echoue") != std::string::npos && g_tft.fillsMain == 0, "17b HTTP 500 : écran d'échec sur la pile dédiée");
+    // réponse invalide : rien d'inscrit, aucun écran « Connecte », pas de journal [REGISTER] deviceId
+    if (!CAN) {   // en canari une réponse refusée par le décodeur est FATALE (arrêt sûr)
+      freshReg(); K.registerJson = "{\"deviceId\":\"dev_bad\",\"paired\":true}";
+      const bool okI = doRegister();
+      CHECK(!okI && !registered && deviceId == "" && g_tft.text.find("Connecte") == std::string::npos && !has(Serial.log, "[REGISTER] deviceId="), "17b réponse invalide : rien d'inscrit, aucune suite"); }
+    // MAC indisponible (pile Wi-Fi refusée) : aucune requête, rien d'inscrit
+    if (!CAN) {
+      freshReg(); g_failNext = 1;
+      const bool okM = doRegister();
+      CHECK(!okM && !registered && countReq("/api/register") == 0 && has(Serial.log, "adresse MAC indisponible") && g_tft.text.empty(), "17b MAC indisponible : aucune requête, aucun écran, rien d'inscrit"); }
+    g_onMainStackHook = nullptr; }
 
   // ═══ 18. le journal ne contient jamais la clé privée ═══
   { resetWorld(); CHECK(Serial.log.find("010203") == std::string::npos, "18 (placeholder)"); }

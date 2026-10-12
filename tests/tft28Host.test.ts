@@ -32,7 +32,7 @@ function buildJson(kind: "register" | "pull" | "validate", canary: boolean, muta
   const dir = fs.mkdtempSync(path.join(tmp, `${kind}-`));
   const prod = effective(src, false);
   let extract: string, harness: string, incName: string;
-  if (kind === "register") { extract = "#include <new>\n" + between(prod, "enum RegisterStatus", "static bool doRegister() {"); harness = "register_work_harness.cpp"; incName = "register_extract.inc"; }
+  if (kind === "register") { extract = "#include <new>\n" + between(prod, "enum RegisterStatus", "enum RegisterExchange"); harness = "register_work_harness.cpp"; incName = "register_extract.inc"; }
   else if (kind === "validate") { extract = between(prod, "enum ValidateStatus", "static bool doValidateV1(const String& candidateId, float score);\nstatic bool doValidate() {"); harness = "validate_work_harness.cpp"; incName = "validate_extract.inc"; }
   else { extract = "#include <new>\n" + between(prod, "#define PULL_ID_MAX", "static bool doPull() {"); harness = "tft28_pull_work_harness.cpp"; incName = "pull_extract.inc"; }
   fs.writeFileSync(path.join(dir, incName), (kind === "register" ? hooks(false) : "") + mutate(extract));
@@ -79,7 +79,7 @@ test("HÔTE pull : CONTRÔLES NÉGATIFS — cartel appliqué sans nouvelle image
 });
 test("HÔTE register / validate : CONTRÔLES NÉGATIFS — validation relâchée, état inscrit trop tôt, décodage hors pile de travail", { skip: skipHost }, () => {
   const prod = effective(src, false);
-  const reg = "#include <new>\n" + between(prod, "enum RegisterStatus", "static bool doRegister() {"), val = between(prod, "enum ValidateStatus", "static bool doValidateV1(const String& candidateId, float score);\nstatic bool doValidate() {");
+  const reg = "#include <new>\n" + between(prod, "enum RegisterStatus", "enum RegisterExchange"), val = between(prod, "enum ValidateStatus", "static bool doValidateV1(const String& candidateId, float score);\nstatic bool doValidate() {");
   const cases: Array<["register" | "validate", string, string, string]> = [
     ["register", "deviceId non validé", "  if (!regDeviceIdOk(id)) { r.status = REG_P_INVALID; return; }\n", ""],
     ["register", "état inscrit avant le lancement", "  const bool ran = registerParseOnWorkStack(resp, *r, ni);", "  registered = true;\n  const bool ran = registerParseOnWorkStack(resp, *r, ni);"],

@@ -209,11 +209,13 @@ class WiFiSSLClient {
 struct TftState {
   std::vector<uint16_t> fb = std::vector<uint16_t>(TFT_W * TFT_H, 0);
   int wx = 0, wy = 0, ww = 0, wh = 0; size_t wpos = 0; bool inWindow = false;
-  long busBytes = 0, windows = 0, fills = 0, texts = 0;
+  long busBytes = 0, windows = 0, fills = 0, texts = 0, fillsMain = 0;   // fillsMain : dessins faits PENDANT que SP est sur la pile principale (REGISTER-STACK-FIX2)
+  std::string text;                             // tout le texte imprimé depuis la remise à zéro
   int cx = 0, cy = 0, size = 1; uint16_t fg = 0xFFFF, bg = 0;
   uint8_t odd = 0, hi = 0;                      // octet haut en attente
 };
 static TftState g_tft;
+static bool (*g_onMainStackHook)() = nullptr;   // renseigné par le harnais : « SP est-il sur la pile principale ? »
 static long g_busNow() { return g_tft.busBytes; }
 struct SPIMock {
   void transfer(void* buf, size_t n) {
@@ -244,14 +246,14 @@ class Adafruit_ILI9341 {
   void startWrite() {}
   void endWrite() { g_tft.inWindow = false; }
   void setAddrWindow(int x, int y, int w, int h) { g_tft.wx = x; g_tft.wy = y; g_tft.ww = w; g_tft.wh = h; g_tft.wpos = 0; g_tft.inWindow = true; g_tft.odd = 0; g_tft.windows++; }
-  void fillRect(int x, int y, int w, int h, uint16_t c) { g_tft.fills++; for (int j = y; j < y + h; j++) for (int i = x; i < x + w; i++) if (i >= 0 && i < TFT_W && j >= 0 && j < TFT_H) g_tft.fb[j * TFT_W + i] = c; }
+  void fillRect(int x, int y, int w, int h, uint16_t c) { g_tft.fills++; if (g_onMainStackHook && g_onMainStackHook()) g_tft.fillsMain++; for (int j = y; j < y + h; j++) for (int i = x; i < x + w; i++) if (i >= 0 && i < TFT_W && j >= 0 && j < TFT_H) g_tft.fb[j * TFT_W + i] = c; }
   void fillScreen(uint16_t c) { fillRect(0, 0, TFT_W, TFT_H, c); }
   void drawFastHLine(int x, int y, int w, uint16_t c) { fillRect(x, y, w, 1, c); }
   void setTextSize(int s) { g_tft.size = s; }
   void setTextColor(uint16_t f) { g_tft.fg = f; g_tft.bg = f; }
   void setTextColor(uint16_t f, uint16_t b) { g_tft.fg = f; g_tft.bg = b; }
   void setCursor(int x, int y) { g_tft.cx = x; g_tft.cy = y; }
-  void print(const char* s) { g_tft.texts++; for (; *s; s++) { const int s_ = g_tft.size; fillRect(g_tft.cx, g_tft.cy, 6 * s_, 8 * s_, g_tft.bg); fillRect(g_tft.cx + s_, g_tft.cy + s_, 4 * s_, 6 * s_, g_tft.fg); g_tft.cx += 6 * s_; } }
+  void print(const char* s) { g_tft.texts++; g_tft.text += s; for (; *s; s++) { const int s_ = g_tft.size; fillRect(g_tft.cx, g_tft.cy, 6 * s_, 8 * s_, g_tft.bg); fillRect(g_tft.cx + s_, g_tft.cy + s_, 4 * s_, 6 * s_, g_tft.fg); g_tft.cx += 6 * s_; } }
   void print(const String& s) { print(s.c_str()); }
 };
 

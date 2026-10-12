@@ -1,0 +1,2 @@
+FIX2 : journal-materiel-verdict.md (chiffres du verdict, texte brut non fourni), compile_*.log (arduino-cli sur le dossier du sketch, cœurs 1.5.3 et 1.6.0, OFF et canari, `-std=gnu++14`),
+pile-principale-statique-fix2.txt (scripts/tft28-register-paths.js et tft28-stack-report.js sur l'ELF 1.6.0). Mémoire : production 163 876 o flash / 21 700 o RAM statique ; canari 155 976 o / 21 696 o (identiques sur 1.5.3 et 1.6.0).

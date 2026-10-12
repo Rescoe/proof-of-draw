@@ -74,10 +74,19 @@ for (const sk of SKETCHES) {
     assert.match(code, /if \(wifiStatus\(\) != WL_CONNECTED\) \{ logf\("\[WIFI\] échec/);
     // MAC : chaîne vide si le module échoue ; doRegister n'inscrit pas
     assert.match(code, /static String macString\(\) \{\s*uint8_t m\[6\] = \{0\};\s*if \(!wifiMac\(m\)\) return String\(\);/);
+    if (sk === "pod_uno_r4") {   // TFT 2,8″ (REGISTER-STACK-FIX2) : inscription en phases noinline — la MAC (registerReadMac) est lue et vérifiée AVANT toute requête (registerPost)
+      const ex = code.slice(code.indexOf("static uint8_t __attribute__((noinline)) registerExchange()"));
+      const rm = code.slice(code.indexOf("static bool __attribute__((noinline)) registerReadMac()"));
+      assert.match(rm, /const String mac = macString\(\);\s*if \(mac\.length\(\) == 0\) return false;/);
+      const iR = ex.indexOf("if (!registerReadMac())"), iP = ex.indexOf("registerPost(resp)");
+      assert.ok(iR >= 0 && iR < iP, "registerExchange : la MAC vide est refusée AVANT toute requête d'inscription");
+      assert.match(ex.slice(iR, iR + 260), /inscription ANNULÉE"\); return REGX_NO_MAC; \}/);
+    } else {
     const dr = code.slice(code.indexOf("static bool doRegister()"));
     const iMac = dr.indexOf("const String mac = macString();"), iChk = dr.indexOf("if (mac.length() == 0) { logf(\"[REGISTER] adresse MAC indisponible"), iHttp = dr.indexOf("httpCall(\"POST\", \"/api/register\"");
     assert.ok(iMac >= 0 && iMac < iChk && iChk < iHttp, "doRegister : la MAC vide est refusée AVANT toute requête d'inscription");
     assert.match(dr.slice(iChk, iChk + 200), /inscription ANNULÉE"\); return false; \}/);
+    }
     // clés : entropie par le module ; échec → génération annulée, AUCUNE clé enregistrée
     const ge = code.slice(code.indexOf("static bool gatherEntropy(uint8_t out[32]) {"), code.indexOf("static void generateKeys()"));
     assert.match(ge, /if \(!wifiMac\(mac\) \|\| !wifiRssi\(rssi\)\) \{ memset\(out, 0, 32\); return false; \}/);

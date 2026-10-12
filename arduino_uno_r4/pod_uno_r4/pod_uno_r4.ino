@@ -1020,31 +1020,72 @@ static bool __attribute__((noinline)) doRegisterDecode(const String& resp) {
   return ok;
 }
 
-static bool doRegister() {
+// REGISTER-STACK-FIX2 (LOT8B2D) : le canari matériel a mesuré 916 / 1 024 o (marge 108 o < 128) au retour de doRegister d'un appareil déjà appairé. L'inscription est découpée en PHASES noinline dont les cadres
+// et les objets (mac, corps, réponse, temporaires de la concaténation) MEURENT avant la phase suivante ; le dessin de l'écran « Connecte » ne se fait plus depuis la pile principale mais sur la pile dédiée
+// (onSd : jamais imbriquée, échec fermé = écran non redessiné, l'inscription reste valide). Le parcours NON appairé (clés / QR) garde son propre chemin, inchangé.
+//   1. registerExchange : MAC -> corps -> transaction -> décodage (état inscrit par doRegisterDecode SEULEMENT sur réponse complète), puis retour : mac / corps / réponse détruits ;
+//   2. (retour) ; 3. registerLog : journal [REGISTER] ; 4. registerShow : TFT (appairé : pile dédiée ; non appairé : onboarding, chemin d'avant).
+enum RegisterExchange : uint8_t { REGX_OK = 0, REGX_NO_MAC = 1, REGX_HTTP = 2, REGX_DECODE = 3 };
+static char g_regMac[18];                                   // MAC de l'inscription en cours (l'onboarding l'affiche) : tampon statique de 18 o, vidé si l'inscription échoue
+// Phase 1a : lecture de la MAC (module Wi-Fi, pile dédiée). Le String de macString() meurt au retour ; seul g_regMac survit.
+static bool __attribute__((noinline)) registerReadMac() {
+  g_regMac[0] = '\0';
   const String mac = macString();
-  if (mac.length() == 0) { logf("[REGISTER] adresse MAC indisponible (module Wi-Fi, pile dédiée) : inscription ANNULÉE"); return false; }
+  if (mac.length() == 0) return false;
+  strncpy(g_regMac, mac.c_str(), sizeof(g_regMac) - 1); g_regMac[sizeof(g_regMac) - 1] = '\0';
+  return true;
+}
+// Phase 1b : corps JSON par ajouts SUCCESSIFS (réservation unique, aucun temporaire de concaténation). Même texte, octet pour octet, que l'ancienne expression « a + b + c… ».
+static void __attribute__((noinline)) registerBuildBody(String& body) {
+  body.reserve(320);
+  body += "{\"mac\":\""; body += g_regMac;
+  body += "\",\"screens\":[\"" SCREEN_TYPE "\"],\"firmware\":\"" FIRMWARE_VERSION "\",\"publicKey\":\"";
+  if (keysLoaded) { const String pk = bytesToHex(publicKey, 32); body += pk; }
+  body += "\",\"ownedHashes\":";
+  { const String owned = loadOwnedHashesJson(); body += owned; }
+  body += "}";
+}
+// Phase 1c : corps + transaction. Le corps MEURT au retour (il n'est plus utile une fois la requête partie) ; la réponse vit chez l'appelant.
+static int __attribute__((noinline)) registerPost(String& resp) {
+  String body;
+  registerBuildBody(body);
+  return httpCall("POST", "/api/register", &body, resp);
+}
+static uint8_t __attribute__((noinline)) registerExchange() {
+  if (!registerReadMac()) { logf("[REGISTER] adresse MAC indisponible (module Wi-Fi, pile dédiée) : inscription ANNULÉE"); return REGX_NO_MAC; }
   // Pas de « sceneCapability » : cet écran n'est pas un lecteur de scènes, le serveur lui sert toujours une image fixe.
-  const String body = "{\"mac\":\"" + mac + "\",\"screens\":[\"" SCREEN_TYPE "\"],"
-                      "\"firmware\":\"" FIRMWARE_VERSION "\","
-                      "\"publicKey\":\"" + (keysLoaded ? bytesToHex(publicKey, 32) : String("")) + "\","
-                      "\"ownedHashes\":" + loadOwnedHashesJson() + "}";
   String resp;
-  if (httpCall("POST", "/api/register", &body, resp) != 200) {
-    tftStatus("Register echoue", "Nouvel essai dans 5 s...", C_RED);
-    return false;
-  }
-  if (!doRegisterDecode(resp)) return false;
-  logf("[REGISTER] deviceId=%s paired=%s", deviceId.c_str(), paired ? "oui" : "non");
-
-  if (!paired && !onboardingAlreadyShown()) {
+  if (registerPost(resp) != 200) return REGX_HTTP;
+  if (!doRegisterDecode(resp)) return REGX_DECODE;
+  return REGX_OK;
+}
+static void __attribute__((noinline)) registerLog() { logf("[REGISTER] deviceId=%s paired=%s", deviceId.c_str(), paired ? "oui" : "non"); }
+// Écran d'état sur la pile dédiée : si elle est indisponible, l'écran n'est PAS redessiné (journal), l'inscription reste valable.
+static void __attribute__((noinline)) registerStatusOnDedicatedStack(const char* l1, const char* l2, uint16_t bg) {
+  auto w = [&]() { tftStatus(String(l1), String(l2), bg); };
+  onSd("registerStatus", w);
+}
+static void __attribute__((noinline)) registerShowOnboarding() {
+  const String mac(g_regMac);
+  if (!onboardingAlreadyShown()) {
     displayKeyMaterialOnce();
     displayOnboardingTFT(String("https://" SERVER_HOST "/onboard?code=") + pairCode, pairCode, mac);
     setOnboardingShown();
-  } else if (!paired) {
-    displayOnboardingTFT(String("https://" SERVER_HOST "/onboard?code=") + pairCode, pairCode, mac);
   } else {
-    tftStatus("Connecte", deviceId);
+    displayOnboardingTFT(String("https://" SERVER_HOST "/onboard?code=") + pairCode, pairCode, mac);
   }
+}
+static void __attribute__((noinline)) registerShowFailure() { registerStatusOnDedicatedStack("Register echoue", "Nouvel essai dans 5 s...", C_RED); }
+static void __attribute__((noinline)) registerShowConnected() {
+  auto w = [&]() { tftStatus(String("Connecte"), deviceId); };
+  onSd("registerConnected", w);
+}
+static bool doRegister() {
+  const uint8_t x = registerExchange();
+  if (x == REGX_HTTP) { registerShowFailure(); return false; }
+  if (x != REGX_OK) return false;
+  registerLog();
+  if (!paired) registerShowOnboarding(); else registerShowConnected();
   return true;
 }
 
