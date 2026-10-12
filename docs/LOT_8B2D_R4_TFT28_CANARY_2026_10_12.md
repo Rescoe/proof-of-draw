@@ -115,3 +115,12 @@ Seulement **après** audit de ce lot et canari matériel vert :
 3. vote **unique et contrôlé** (un appareil, un candidat, journal complet, arrêt sûr conservé) ; observation et re-register à reprendre un par un ;
 4. corriger la cadence « frame déjà affichée » comme sur l'ESP8266 (FIX2), avec ses tests ;
 5. tests : vote accepté / refusé / signature refusée / 422, ré-inscription différée, candidat de chaque écran.
+
+## 10. FIX1 (13/10/2026) — compilation avec le vrai pipeline Arduino
+
+Audit de `cab924b` : le sketch **ne compilait pas** avec la chaîne du porteur (arduino-cli 1.4.1, cœur 1.6.0, SD 1.3.0) — `pod_uno_r4.ino:377:36: error: 'F' is not a type`. Cause : le générateur de prototypes d'Arduino traite les fichiers `.ino` et donne à un **template défini dans le .ino** un prototype sans `template <typename F>`. Mes compilations de `cab924b` passaient par une enveloppe qui contournait ce générateur : elles ne pouvaient pas voir l'erreur (corrigé : les builds de référence sont désormais ceux du dossier du sketch tel quel).
+
+- **Correction.** `onSd` / `onSdDirect` déplacés dans `arduino_uno_r4/pod_uno_r4/pod_sd_stack.h`, inclus par le `.ino` après `sdStackFailed`, `POD_SD_STACK_TOTAL` et `POD_CANARY_SD`. Texte des gabarits inchangé : mêmes tailles de pile (1 536 o), mêmes échecs fermés. Un test interdit désormais tout `template <` dans le `.ino` et vérifie l'ordre d'inclusion et que toute fonction du `.ino` dont la signature cite un type défini dans le `.ino` porte `__attribute__` (le générateur ne lui fait alors pas de prototype avant la définition du type).
+- **Compilations réelles** (`docs/mesures/8B2D_2026_10_12/arduino-reel/`, commandes et sorties brutes) : production et canari × cœurs 1.6.0 et 1.5.3, **OK** ; la même erreur `377:36` est reproduite sur `cab924b`. Production 163 460 o / 21 676 o ; canari 155 560 o / 21 672 o. Différences de chaîne avec le porteur : voir `LISEZ-MOI.md` du dossier.
+- **Portabilité Windows des tests.** Empreinte SHA-256 de la sauvegarde calculée sur le texte normalisé en LF (stable sous `core.autocrlf`) et `.gitattributes` impose LF à la sauvegarde et au harnais ; la comparaison avec l'original utilise `git diff --no-index --unified=0` (plus l'exécutable Unix `diff`) ; tous les chemins transmis au g++ MSYS (harnais JSON et firmware complet) sont normalisés en `/`.
+- Aucun changement de logique, de vote, de serveur, de Redis, de polling ni d'OTA ; drapeaux à 0/0 ; aucun flash.

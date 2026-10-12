@@ -20,6 +20,7 @@ const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "tft28-"));
 const HOST = path.join(ROOT, "consensus-pod", "host");
 const AJ_FLAGS = ["-DARDUINOJSON_ENABLE_ARDUINO_STRING=1", "-DARDUINOJSON_ENABLE_ARDUINO_STREAM=0", "-DARDUINOJSON_ENABLE_ARDUINO_PRINT=0", "-DARDUINOJSON_ENABLE_PROGMEM=0"];
 const LENIENT = ["-Wno-unused-variable", "-Wno-unused-parameter", "-Wno-unused-function", "-Wno-unused-but-set-variable"];
+const fwd = (p: string) => p.replace(/\\/g, "/");   // g++ MSYS sous Windows : chemins en « / »
 const between = (s: string, a: string, b: string) => { const i = s.indexOf(a), j = s.indexOf(b, i + 1); assert.ok(i >= 0 && j > i, `région introuvable : ${a.slice(0, 40)} … ${b.slice(0, 40)}`); return s.slice(i, j); };
 
 function hooks(canary: boolean): string {
@@ -37,7 +38,7 @@ function buildJson(kind: "register" | "pull" | "validate", canary: boolean, muta
   fs.writeFileSync(path.join(dir, incName), (kind === "register" ? hooks(false) : "") + mutate(extract));
   fs.writeFileSync(path.join(dir, "hooks.inc"), hooks(canary));
   const out = path.join(dir, "harness");
-  compileHarness(choice.path!, path.join(HOST, harness), out, [`-I${dir}`, `-I${path.join(HOST, "shim")}`, `-I${path.join(ROOT, "arduino_uno_r4", "pod_uno_r4")}`, "-isystem", ajDir!, ...AJ_FLAGS, ...(canary ? ["-DHARNESS_CANARY=1"] : []), ...(lenient ? LENIENT : [])]);
+  compileHarness(choice.path!, fwd(path.join(HOST, harness)), fwd(out), [`-I${fwd(dir)}`, `-I${fwd(path.join(HOST, "shim"))}`, `-I${fwd(path.join(ROOT, "arduino_uno_r4", "pod_uno_r4"))}`, "-isystem", fwd(ajDir!), ...AJ_FLAGS, ...(canary ? ["-DHARNESS_CANARY=1"] : []), ...(lenient ? LENIENT : [])]);
   return out;
 }
 const passes = (r: { status: number | null; stdout: string }) => r.status === 0 && /^PASS \d+$/.test(r.stdout.trim());
@@ -99,14 +100,15 @@ import { encodeClip, CLIP } from "../lib/bench/clip";
 const MOCK = path.join(HOST, "tft28");
 const SKETCH_DIR = path.join(ROOT, "arduino_uno_r4", "pod_uno_r4");
 let nBuild = 0;
-function buildFull(canary: boolean, mutate: (s: string) => string = (s) => s): string {
+function buildFull(canary: boolean, mutate: (s: string) => string = (s) => s, mutateHdr: (s: string) => string = (s) => s): string {
   const dir = fs.mkdtempSync(path.join(tmp, `full-${nBuild++}-`));
   const sk = path.join(dir, "sk"); fs.mkdirSync(sk);
   for (const f of ["podEdStack.h", "podNetStack.h", "pod_http.h", "pod_bench.h", "pod_vote_r4.h", "pod_metrics.h", "pod_metrics_table.h"]) fs.copyFileSync(path.join(SKETCH_DIR, f), path.join(sk, f));
+  fs.writeFileSync(path.join(sk, "pod_sd_stack.h"), mutateHdr(fs.readFileSync(path.join(SKETCH_DIR, "pod_sd_stack.h"), "utf8")));   // gabarits onSd / onSdDirect (hors du .ino)
   fs.copyFileSync(path.join(MOCK, "pod_ssl_bounded.h"), path.join(sk, "pod_ssl_bounded.h"));   // le client TLS SIMULÉ (le vrai est testé contre le vrai Modem.cpp par boundedSsl.test.ts)
   fs.writeFileSync(path.join(sk, "sketch_body.inc"), mutate(src));
   const out = path.join(dir, "tft28_harness");
-  const r = runProcess(choice.path!, ["-std=gnu++17", "-O1", "-w", "-fno-strict-aliasing", `-DPOD_CANARY=${canary ? 1 : 0}`, `-DPOD_RENDER_V1=${canary ? 1 : 0}`, `-I${sk}`, `-I${MOCK}`, "-isystem", ajDir!, ...AJ_FLAGS, path.join(HOST, "tft28_harness.cpp"), "-o", out], 240000);
+  const r = runProcess(choice.path!, ["-std=gnu++17", "-O1", "-w", "-fno-strict-aliasing", `-DPOD_CANARY=${canary ? 1 : 0}`, `-DPOD_RENDER_V1=${canary ? 1 : 0}`, `-I${fwd(sk)}`, `-I${fwd(MOCK)}`, "-isystem", fwd(ajDir!), ...AJ_FLAGS, fwd(path.join(HOST, "tft28_harness.cpp")), "-o", fwd(out)], 240000);
   assert.equal(r.status, 0, `compilation du harnais firmware complet impossible\n${(r.stderr || "").slice(-2500)}`);
   return out;
 }
@@ -114,7 +116,7 @@ const clipHexFile = (() => {
   const f1 = Uint8Array.from({ length: CLIP.FRAME_BYTES }, (_, i) => (i * 7) & 0xff), f2 = Uint8Array.from({ length: CLIP.FRAME_BYTES }, (_, i) => (i * 13 + 5) & 0xff);
   const f = path.join(tmp, "clip.hex"); fs.writeFileSync(f, Buffer.from(encodeClip({ frames: [f1, f2], delaysMs: [50, 50], loops: 0, fg: 0x07e0, bg: 0x0842 })).toString("hex")); return f;
 })();
-const passFull = (exe: string) => { const r = runProcess(exe, ["--clip", clipHexFile], 180000); return { ok: r.status === 0 && /^PASS \d+$/.test(r.stdout.trim()), out: r.stdout + r.stderr }; };
+const passFull = (exe: string) => { const r = runProcess(exe, ["--clip", fwd(clipHexFile)], 180000); return { ok: r.status === 0 && /^PASS \d+$/.test(r.stdout.trim()), out: r.stdout + r.stderr }; };
 const exeCache = new Map<string, string>();
 const fullExe = (canary: boolean) => { const k = String(canary); if (!exeCache.has(k)) exeCache.set(k, buildFull(canary)); return exeCache.get(k)!; };
 
@@ -158,8 +160,11 @@ test("HÔTE firmware complet : CONTRÔLES NÉGATIFS — ACK avant l'affichage, d
     ["pile SD : exécution directe même sur la pile principale", false, "  if (!podNetOnMainStack()) { onSdDirect(f); return true; }", "  { onSdDirect(f); return true; }"],
   ];
   for (const [name, canary, a, b, a2, b2] of muts) {
-    for (const x of [a, a2]) if (x) assert.equal(src.split(x).length, 2, `mutation « ${name} » : motif introuvable ou multiple`);
-    const r = passFull(buildFull(canary, (s) => { let o = s.split(a).join(b); if (a2) o = o.split(a2).join(b2!); return o; }));
+    const inHdr = name.startsWith("pile SD");   // ces mutants portent sur pod_sd_stack.h
+    const hdrText = fs.readFileSync(path.join(SKETCH_DIR, "pod_sd_stack.h"), "utf8");
+    for (const x of [a, a2]) if (x) assert.equal((inHdr ? hdrText : src).split(x).length, 2, `mutation « ${name} » : motif introuvable ou multiple`);
+    const mut = (s: string) => { let o = s.split(a).join(b); if (a2) o = o.split(a2).join(b2!); return o; };
+    const r = passFull(inHdr ? buildFull(canary, (s) => s, mut) : buildFull(canary, mut));
     assert.ok(!r.ok, `mutation « ${name} » NON détectée`);
   }
 });

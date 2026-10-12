@@ -17,7 +17,7 @@ const prodNoHooks = stripHooks(prod);
 const code = (s: string) => stripBlock(stripLine(s));
 
 test("sauvegarde figée d'avant le lot : empreinte SHA-256 (= sketch de origin/main 3239d2e)", () => {
-  assert.equal(crypto.createHash("sha256").update(fs.readFileSync(path.join(ROOT, BACKUP))).digest("hex"), "44fe50060b99360abd2092219cc4bf36e5a68ce9913ecaa0ef5bb95664408434");
+  assert.equal(crypto.createHash("sha256").update(Buffer.from(readText(BACKUP), "utf8")).digest("hex")   /* fins de ligne normalisées : stable sous core.autocrlf */, "44fe50060b99360abd2092219cc4bf36e5a68ce9913ecaa0ef5bb95664408434");
 });
 
 test("drapeaux : POD_CANARY = 0 et POD_RENDER_V1 = 0 par défaut, jamais commités à 1 ; POD_RENDER_V1 sans AUCUN effet sur ce firmware (pas de rasteriseur v1)", () => {
@@ -32,9 +32,11 @@ test("drapeaux : POD_CANARY = 0 et POD_RENDER_V1 = 0 par défaut, jamais commit�
 // ── 1. chemin désactivé == firmware d'origine, hors fonctions listées ───────────────────────────────────────────────
 function removedHunks(a: string, b: string): Array<{ start: number; count: number }> {
   const d = fs.mkdtempSync(path.join(os.tmpdir(), "tft28diff-"));
-  fs.writeFileSync(path.join(d, "a"), a); fs.writeFileSync(path.join(d, "b"), b);
+  const fa = path.join(d, "a").replace(/\\/g, "/"), fb = path.join(d, "b").replace(/\\/g, "/");
+  fs.writeFileSync(fa, a); fs.writeFileSync(fb, b);
   let out = "";
-  try { execFileSync("diff", ["-U0", path.join(d, "a"), path.join(d, "b")], { encoding: "utf8" }); } catch (e) { out = (e as { stdout: string }).stdout; }
+  // git (déjà requis par le dépôt) plutôt que l'exécutable Unix « diff » : portable sous Windows ; code de sortie 1 = différences
+  try { execFileSync("git", ["-c", "core.autocrlf=false", "diff", "--no-index", "--no-color", "--unified=0", fa, fb], { encoding: "utf8", maxBuffer: 64 * 1024 * 1024 }); } catch (e) { out = (e as { stdout: string }).stdout ?? ""; }
   return [...out.matchAll(/^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/gm)].map((m) => ({ start: +m[1], count: m[2] === undefined ? 1 : +m[2] })).filter((h) => h.count > 0);
 }
 /** Fonctions d'ORIGINE autorisées à perdre ou modifier des lignes (chacune a une raison écrite dans docs/LOT_8B2D_R4_TFT28_CANARY_2026_10_12.md § 3). */
@@ -157,7 +159,9 @@ test("SD : tout accès à la carte depuis la pile principale passe par onSd() ; 
   const fa = fnBody(c, "static bool fetchAnimToSd("); assert.ok(fa.indexOf("netGetBlockClip(hash, clip, announced)") < fa.indexOf('onSd("animStore", store)'));
   const ra = fnBody(c, "static AnimEnd runResidentAnim("); assert.ok(ra.indexOf('onSd("animSize", sizeOf)') < ra.indexOf("malloc(n)") && ra.indexOf("malloc(n)") < ra.indexOf('onSd("animRead", readClip)'));
   // onSd : pas d'imbrication (branche directe dans une fonction à part, barrière de l'analyse statique), taille et échec fermé
-  const sd = fnBody(c, "template <typename F> static bool onSd(");
+  const sdHdr = code(readText("arduino_uno_r4/pod_uno_r4/pod_sd_stack.h"));
+  assert.ok(!c.includes("template <typename F> static bool onSd("), "les gabarits ne sont plus définis dans le .ino");
+  const sd = fnBody(sdHdr, "template <typename F> static bool onSd(");
   assert.match(sd, /if \(!podNetOnMainStack\(\)\) \{ onSdDirect\(f\); return true; \}/);
   assert.match(sd, /PodNet::runSized\(\[\]\(void\* p\) \{ \(\*static_cast<F\*>\(p\)\)\(\); \}, &f, POD_SD_STACK_TOTAL, &ni\)/);
   assert.match(sd, /if \(!ran\) sdStackFailed\(what, ni\);\s*return ran;/);
@@ -258,4 +262,20 @@ test("INVENTAIRE FORMEL : WiFi.* (6, tous dans une enveloppe podWifiRun), Conn (
   // chaque lanceur de pile (réseau / Wi-Fi / travail / SD) existe pour chaque site profond : pas de lanceur imbriqué dans un autre
   const launchers = inv.canari.launchers.filter((l) => !/^(logf|onSd) → /.test(l));
   assert.ok(launchers.length >= 15);
+});
+
+// ── 8. compatibilité avec le générateur de prototypes d'Arduino (arduino-cli 1.4.1, cœur 1.6.0 : « error: 'F' is not a type ») ─────────────────────────────────────
+test("générateur de prototypes d'Arduino : AUCUN gabarit (template) défini dans le .ino ; onSd / onSdDirect vivent dans pod_sd_stack.h, inclus après sdStackFailed et POD_CANARY_SD", () => {
+  assert.doesNotMatch(code(src), /^\s*template\s*</m, "un template dans le .ino reçoit un prototype sans sa ligne « template <…> »");
+  const hdr = readText("arduino_uno_r4/pod_uno_r4/pod_sd_stack.h");
+  assert.match(hdr, /^#pragma once$/m);
+  assert.match(code(hdr), /template <typename F> static void __attribute__\(\(noinline\)\) onSdDirect\(F& f\) \{ f\(\); \}/);
+  assert.match(code(hdr), /template <typename F> static bool onSd\(const char\* what, F& f\) \{/);
+  const iHdr = src.indexOf('#include "pod_sd_stack.h"');
+  assert.ok(iHdr > src.indexOf("static void __attribute__((noinline)) sdStackFailed(") && iHdr > src.indexOf("#define POD_SD_STACK_TOTAL 1536u") && iHdr > src.indexOf("#define POD_CANARY_SD(tag, ni, ran) ((void)0)"), "ordre d'inclusion");
+  assert.equal((src.match(/#include "pod_sd_stack.h"/g) ?? []).length, 1);
+  // toute fonction de haut niveau dont la signature cite un type DÉFINI dans le .ino porte __attribute__ (le générateur d'Arduino ne lui fait alors pas de prototype avant la définition du type)
+  for (const t of ["RegisterParsed", "PullParsed", "ValidateParsed", "BenchPollParsed", "PodCanaryCtx", "PodCanaryHeapCtx", "PodCanaryStackCtx"]) {
+    for (const m of code(src).matchAll(new RegExp(`^(static [^\\n(]*\\b\\w+\\([^\\n]*\\b${t}\\b[^\\n]*\\)) \\{$`, "gm"))) assert.match(m[1], /__attribute__/, `${m[1].slice(0, 80)} : prototype généré avant la définition de ${t}`);
+  }
 });

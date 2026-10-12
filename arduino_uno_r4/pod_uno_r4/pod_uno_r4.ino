@@ -373,15 +373,7 @@ static void __attribute__((noinline)) sdStackFailed(const char* what, const PodN
   if (ni.err == POD_NET_GUARD) logfSafeStop();
   logf("[SD] pile dédiée (%s) : %s (erreur %u, marge %u o) — opération NON faite ou résultat rejeté", what, podNetWhy(ni), (unsigned)ni.err, (unsigned)ni.margin);
 }
-template <typename F> static void __attribute__((noinline)) onSdDirect(F& f) { f(); }   // branche « déjà sur une pile dédiée » : fonction à part pour que l'analyse statique de la pile PRINCIPALE ne la suive pas (tft28-stack-report.js : barrière)
-template <typename F> static bool onSd(const char* what, F& f) {
-  if (!podNetOnMainStack()) { onSdDirect(f); return true; }                 // déjà sur une pile dédiée (transaction réseau, pile de travail) : pas d'imbrication
-  PodNetInfo ni;
-  const bool ran = PodNet::runSized([](void* p) { (*static_cast<F*>(p))(); }, &f, POD_SD_STACK_TOTAL, &ni);
-  POD_CANARY_SD(what, ni, ran);
-  if (!ran) sdStackFailed(what, ni);
-  return ran;
-}
+#include "pod_sd_stack.h"   // onSd / onSdDirect (gabarits) : hors du .ino, voir l'en-tête (générateur de prototypes d'Arduino)
 
 // ─── Texte : ASCII seulement (police 5×7 de GFX) — replie les accents UTF-8 ─────────────────
 static String asciiFold(const String& in) {
