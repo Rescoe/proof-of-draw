@@ -1,0 +1,44 @@
+[BOOT] Proof-of-Draw UNO R4 WiFi + TFT 2.8" tactile — r4tft28-2.5
+[CANARY] BUILD LOT8B2D-R4-TFT28-CANARY-1 | base 3239d2e | POD_CANARY=1 | AUCUN VOTE | compile Oct 12 2026 17:27:47
+[CANARY] validate : routes de vote ABSENTES du binaire (canari sans vote) ; seule signature restante = auto-test Ed25519 du boot (message fixe, aucun vote)
+[CANARY] boot : avant tout : pile principale utilisee au plus 528 o / 1024 (marge 496 o) | tas libre 8260
+[CANARY] tas au boot : libre 8260 o, plus grand bloc 4132 o, fragmentation 50 %
+[MEM] boot: tas libre 9804 o, zone 0xA5 sous la pile 1024 o (INDICATIF : NON fiable des la 1re pile temporaire)
+[TOUCH] STMPE610 détecté (toucher = afficher / cacher le cartel)
+[SD] carte lisible (cache de l'image + cartel masquable)
+[CANARY] pile wifi firmwareVersion : utilisee 448 o, marge 1024 o (objectif >= 256 : OK), erreur 0, statut 0 | tas libre 8244
+[WIFI] firmware du module: 0.5.2
+[CANARY] pile wifi begin : utilisee 536 o, marge 936 o (objectif >= 256 : OK), erreur 0, statut 0 | tas libre 8260
+[CANARY] pile wifi localIP : utilisee 568 o, marge 904 o (objectif >= 256 : OK), erreur 0, statut 0 | tas libre 8244
+[WIFI] IP: 0.0.0.0
+[CANARY] pile wifi localIP : utilisee 568 o, marge 904 o (objectif >= 256 : OK), erreur 0, statut 0 | tas libre 8228
+[CANARY] wifi : connecte : pile principale utilisee au plus 780 o / 1024 (marge 244 o, SOUS L'OBJECTIF 256) | tas libre 8260
+[CANARY] tas apres le Wi-Fi : libre 8260 o, plus grand bloc 4132 o, fragmentation 50 %
+[KEYS] clés chargées: e5d255caf8dbd94f08ae1e0eab84cce709796613cc05fc30a5f1b82c610b993a
+[CANARY] pile ed25519 sign : utilisee 1316 o, marge 924 o (objectif >= 256 : OK), erreur 0, statut 0 | tas libre 8260
+[CANARY] pile ed25519 verify : utilisee 1532 o, marge 708 o (objectif >= 256 : OK), erreur 0, statut 0 | tas libre 8260
+[SELFTEST] Ed25519 signature 178 ms, vérification 279 ms -> OK
+[MEM] après Ed25519: tas libre 9804 o, zone 0xA5 sous la pile 1024 o (INDICATIF : NON fiable des la 1re pile temporaire)
+[ED25519] pile dédiée (utilisé/marge, o) : sign 1316/924, verify 1532/708 ; erreurs sign=0 verify=0 (0 = aucune) ; alloué 2304 o (garde 64 o, marge minimale exigée 128 o)
+[CANARY] auto-test Ed25519 : retour : pile principale utilisee au plus 780 o / 1024 (marge 244 o, SOUS L'OBJECTIF 256) | tas libre 8260
+[CANARY] pile wifi macAddress : utilisee 520 o, marge 952 o (objectif >= 256 : OK), erreur 0, statut 0 | tas libre 8228
+[CANARY] pile reseau http : utilisee 1156 o, marge 828 o (objectif >= 256 : OK), erreur 0, statut 0 | tas libre 7860
+[HTTP POST] /api/register -> 200
+[CANARY] pile travail register JSON : utilisee 496 o, marge 1488 o (objectif >= 256 : OK), erreur 0, statut 1 | tas libre 8020
+[REGISTER] deviceId=dev_7B4L17N3 paired=oui 
+[CANARY] register : retour : pile principale utilisee au plus 780 o / 1024 (marge 244 o, SOUS L'OBJECTIF 256) | tas libre 8208
+[CANARY] tas apres le register : libre 8208 o, plus grand bloc 4264 o, fragmentation 49 %
+[SD] dernière œuvre réaffichée en 910 ms (frameId=9599d9ad-d604-4077-bf3f-4483ba96c94c)
+[ANIM] clip trouvé sur la carte (bloc 68f275ce5113…) : lecture en boucle
+[CANARY] restauration SD : retour : pile principale utilisee au plus 780 o / 1024 (marge 244 o, SOUS L'OBJECTIF 256) | tas libre 8092
+[BOOT] premier pull immédiat
+[CANARY] pile reseau http : utilisee 1156 o, marge 828 o (objectif >= 256 : OK), erreur 0, statut 0 | tas libre 8004
+[HTTP GET] /api/pull?deviceId=dev_7B4L17N3 -> 200
+[CANARY] pile travail pull JSON : utilisee 764 o, marge 1220 o (objectif >= 256 : OK), erreur 0, statut 1 | tas libre 7228
+[PULL] nouveau bloc #95
+[PULL] aucune frame
+[CANARY] pull : retour (premier pull) : pile principale utilisee au plus 812 o / 1024 (marge 212 o, SOUS L'OBJECTIF 256) | tas libre 8060
+[CANARY] tas apres le premier pull : libre 8060 o, plus grand bloc 4884 o, fragmentation 40 %
+[BOOT] prêt — pull toutes les 60 s
+[ANIM] mémoire insuffisante pour la lecture
+[ANIM] lecture impossible : animation abandonnée (l'affiche reste)
