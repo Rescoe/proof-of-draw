@@ -3,6 +3,19 @@
 Ce fichier garde les idées validées « sur le principe » mais volontairement pas construites.
 Ne pas les implémenter sans feu vert explicite.
 
+## Preuve de mesure environnementale et modèle économique (noté le 12/10/2026)
+
+La recherche sur les canaris a fait émerger une piste : associer la preuve d'affichage
+(`frameHash`, `renderHash`, ACK matériel) à des mesures environnementales signées. Un DHT22
+peut servir de démonstrateur, mais une signature ne garantit que l'origine déclarée de la
+mesure, pas sa vérité physique. Un usage muséal exige notamment calibration, incertitude,
+maintenance et procédure d'audit.
+
+Le cadrage complet, les limites et les modèles économiques envisagés sont conservés dans
+[`NOTE_PREUVES_AFFICHAGE_MESURES_MODELE_ECONOMIQUE_2026_10_12.md`](NOTE_PREUVES_AFFICHAGE_MESURES_MODELE_ECONOMIQUE_2026_10_12.md).
+Ne pas implémenter `pod-measure-v1` sans décision explicite, après stabilisation des lots 8B
+et validation d'un premier pilote.
+
 ## Système d'amis (noté le 30/09/2026)
 
 **Idée du porteur :** au fur et à mesure que l'application grandit, ajouter une fonction
