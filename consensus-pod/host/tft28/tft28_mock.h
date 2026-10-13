@@ -168,6 +168,7 @@ static std::vector<NetRequest> g_requests;
 static long g_busNow();
 static std::function<NetScript(const NetRequest&)> g_route;
 static int g_liveClients = 0;
+static size_t g_printShort = 0; static std::string g_printShortPath;   // V3-FIX1 : écriture PARTIELLE injectée — la requête ARRIVE au serveur simulé (octets partis) mais print() retourne N octets de moins
 class WiFiSSLClient {
  public:
   WiFiSSLClient() { g_liveClients++; }
@@ -179,6 +180,7 @@ class WiFiSSLClient {
     r.busAt = g_busNow(); g_requests.push_back(r);
     sc_ = g_route(r); if (!sc_.connectOk) { connected_ = false; }
     arrived_ = 0; consumed_ = 0; nextUs_ = g_us; ci_ = 0;
+    if (g_printShort && r.path.rfind(g_printShortPath, 0) == 0) return s.size() > g_printShort ? s.size() - g_printShort : 0;
     return s.size();
   }
   virtual int read(uint8_t* buf, size_t n) {

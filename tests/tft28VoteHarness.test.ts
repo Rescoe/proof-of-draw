@@ -225,7 +225,7 @@ const CHECKS: Record<string, Check> = {
   // table des issues
   classify: (exe) => {
     const r = runProcess(fwd(exe), ["classify"], 60000); const got = (r.stdout || "").split(/\r?\n/).filter((l) => l.startsWith("CLASS "));
-    const want = ["200|{}|ACCEPTED", "-4||NOT_SENT", "-2||NOT_SENT", "-1||SENT_UNKNOWN", "-3||SENT_UNKNOWN", "-5||SENT_UNKNOWN", "-6||NOT_SENT", "403|{\"error\":\"Signature invalide\"}|SIGNATURE_REFUSED", "403|{\"error\":\"autre\"}|REFUSED_BY_SERVER",
+    const want = ["200|{}|ACCEPTED", "-4||NOT_SENT", "-2||NOT_SENT", "-1||SENT_UNKNOWN", "-3||SENT_UNKNOWN", "-5||SENT_UNKNOWN", "-6||NOT_SENT", "-7||SENT_UNKNOWN", "403|{\"error\":\"Signature invalide\"}|SIGNATURE_REFUSED", "403|{\"error\":\"autre\"}|REFUSED_BY_SERVER",
       "422|{}|HASH_REFUSED", "400|{}|REFUSED_BY_SERVER", "409|{}|REFUSED_BY_SERVER", "429|{}|REFUSED_BY_SERVER", "500|{}|SENT_UNKNOWN", "503|{}|SENT_UNKNOWN", "302||REFUSED_BY_SERVER",
       "409|Signature|REFUSED_BY_SERVER", "500|Signature|SENT_UNKNOWN", "-5|Signature|SENT_UNKNOWN", "-4|Signature|NOT_SENT"].map((x) => `CLASS ${x}`);
     return got.length === want.length && got.every((l, i) => l === want[i]) ? [] : [`table des issues : attendu ${JSON.stringify(want)}, vu ${JSON.stringify(got)}`];
@@ -271,6 +271,30 @@ CHECKS.memoryFailures = (exe) => {
   }
   return v;
 };
+// ─── V3-FIX1 : écriture PARTIELLE de la requête (client.print() rend moins d'octets que req.length(), connexion ouverte : des octets ont PU partir) ─────────
+CHECKS.partialWrite = (exe) => {
+  const v: string[] = []; const r = run(exe, "partial-write");
+  if (JSON.stringify(outcomeOf(r)) !== JSON.stringify(["SENT_UNKNOWN:-7"])) v.push(`partial-write : SENT_UNKNOWN (-7) attendu, vu ${outcomeOf(r)}`);
+  if (n(r, "posts") !== 1) v.push("partial-write : les octets sont partis, le serveur simulé a vu le POST (jamais classé NOT_SENT)");
+  if (r.facts.spent !== SPENT) v.push("partial-write : candidat DÉPENSÉ");
+  if (logHas(r, "Vote OK") || logHas(r, "BLOC MINÉ") || logHas(r, "vote NON envoyé") || n(r, "ret") !== 0) v.push("partial-write : aucun succès annoncé, jamais « non envoyé »");
+  if (!logHas(r, "PU atteindre le serveur") || n(r, "registers") !== 0 || r.facts.registered !== "1") v.push("partial-write : journal « a PU atteindre le serveur », aucune ré-inscription");
+  const d = run(exe, "double-partial");
+  if (n(d, "posts") !== 1 || n(d, "reads") !== 1 || n(d, "validates") !== 1 || !logHas(d, "aucune nouvelle tentative automatique")) v.push("double-partial : aucune répétition automatique après l'écriture partielle (1 validate, 1 lecture, 1 POST au total)");
+  return v;
+};
+/** Les chemins image / ACK qui utilisent Conn restent FERMÉS sur une écriture partielle (-7). */
+CHECKS.connPaths = (exe) => {
+  const v: string[] = [];
+  const ok = run(exe, "frame-nominal");
+  if (n(ok, "ret") !== 1 || n(ok, "acks") !== 1 || n(ok, "pullframes") !== 1 || n(ok, "bus_delta") !== 153600 || ok.facts.frame_unchanged !== "0") v.push("frame-nominal (sensibilité) : image affichée (153 600 o sur le bus), 1 ACK, œuvre courante remplacée");
+  const f = run(exe, "frame-partial");
+  if (n(f, "ret") !== 0 || n(f, "acks") !== 0 || n(f, "bus_delta") !== 0 || f.facts.frame_unchanged !== "1") v.push("frame-partial : écriture partielle de la requête d'image => AUCUN affichage, AUCUN ACK, œuvre courante inchangée");
+  if (!logHas(f, "pull-frame -> -7") || !f.facts.last_log.includes("image incomplète — pas d'ACK")) v.push("frame-partial : journal honnête (-7, « image incomplète — pas d'ACK »)");
+  const a = run(exe, "ack-partial");
+  if (!a.facts.last_log.includes("-> FAIL") || logHas(a, "[ACK] frame-nouvelle -> OK")) v.push("ack-partial : l'ACK partiellement écrit est journalisé FAIL, jamais OK");
+  return v;
+};
 /** g_voteScratch est UTILISÉ sur le TFT : le serveur propose n'importe quel écran (app/api/validate-candidate/route.ts) ; un candidat oled096 (1 024 o) exige le tampon de travail. */
 const OLED_RAW = Buffer.alloc(1024); for (let i = 0; i < 1024; i++) OLED_RAW[i] = (i * 37 + (i >> 3) * 11 + 5) & 0xff;
 CHECKS.scratchUsed = (exe) => {
@@ -283,7 +307,7 @@ CHECKS.scratchUsed = (exe) => {
   return v;
 };
 const ALL_SCENARIOS_FOR_S14 = ["nominal", "mined", "altered", "truncated", "stalled", "fault-midway", "fault-after-last", "longer", "sign-fail", "unknown-screen", "keys-not-loaded", "selftest-fail", "not-registered", "not-paired", "v1-announced", "post-not-executed",
-  "post-executed-rejected", "post-500", "post-409", "sig-403", "hash-422", "guard-on-read", "guard-on-post", "double", "double-unknown", "double-forgetful", "double-notsent", "votework-fail", "double-vwfail"];
+  "post-executed-rejected", "post-500", "post-409", "sig-403", "hash-422", "guard-on-read", "guard-on-post", "double", "double-unknown", "double-forgetful", "double-notsent", "votework-fail", "double-vwfail", "partial-write", "double-partial"];
 CHECKS.s14 = (exe) => ALL_SCENARIOS_FOR_S14.flatMap((sc) => s14(sc, run(exe, sc)));
 const violationsOf = (exe: string, ids: string[]) => ids.flatMap((id) => CHECKS[id](exe));
 
@@ -323,8 +347,15 @@ function staticViolations(ino: string): string[] {
   if (/snprintf|sprintf|bytesToHex\(/.test(phases)) v.push("phases du vote : ni snprintf, ni String temporaire pour la signature (hexadécimal écrit dans VoteWork)");
   if (!/if \(msg\.length\(\) != want\)/.test(phases) || !/if \(!ok\) \{ logf\("\[VALIDATE2\] corps du vote incomplet/.test(phases)) v.push("message et corps du vote contrôlés par leur longueur (aucune troncature silencieuse)");
   if (!/static uint8_t g_voteChunk\[256\];\nstatic uint8_t g_voteScratch\[4736\];/.test(ino)) v.push("g_voteChunk / g_voteScratch restent statiques (voir § 5 du lot V3 : g_voteScratch est utilisé sur le TFT)");
-  if (!/if \(!ok\) return -6;\n    if \(!client\.connect\(SERVER_HOST, 443\)\) return -2;\n    client\.print\(req\);/.test(ino)) v.push("Conn::request : requête construite EN TOUT OU RIEN avant la connexion (-6 si non construite, rien n'est émis)");
+  if (!/if \(!ok\) return -6;\n    if \(!client\.connect\(SERVER_HOST, 443\)\) return -2;\n    const size_t sent = client\.print\(req\);/.test(ino)) v.push("Conn::request : requête construite EN TOUT OU RIEN avant la connexion (-6 si non construite, rien n'est émis)");
   if (/String req = String\(method\)/.test(ino)) v.push("Conn::request : plus de concaténation silencieuse de la requête");
+  if (!/const size_t sent = client\.print\(req\);\n    if \(sent != \(size_t\)req\.length\(\)\) return -7;/.test(ino)) v.push("Conn::request : le nombre d'octets écrits est contrôlé (écriture partielle => -7)");
+  if (!/if \(code < 0\) return VOTE_SENT_UNKNOWN;/.test(ino) || /code == -7\) return VOTE_NOT_SENT|code == -7 \|\|[^\n]*VOTE_NOT_SENT/.test(ino)) v.push("-7 est SENT_UNKNOWN, jamais NOT_SENT");
+  // chaque appelant de Conn::request n'agit que sur HTTP 200 (donc jamais sur -7) ; le canari fait décider l'ACK
+  const reqCalls = [...ino.matchAll(/const int code = c\.request\(/g)];
+  if (reqCalls.length !== 4) v.push(`4 appelants image / clip / candidat de Conn::request (vu ${reqCalls.length})`);
+  for (const m of reqCalls) if (!/code == 200|code == 404/.test(ino.slice(m.index!, m.index! + 700))) v.push("un appelant de Conn::request agit sans tester le code HTTP 200 (donc sur -7)");
+  if (!/const bool acked = ackFrame\(frameId\);/.test(ino) || !/if \(!acked\)/.test(ino)) v.push("canari : l'ACK (code != 200, donc aussi -7) décide du succès");
   if (/le prochain cycle votera/.test(ino)) v.push("commentaire faux : après SIGNATURE_REFUSED le candidat courant est DÉPENSÉ, il n'est pas revoté au prochain cycle");
   return v;
 }
@@ -398,6 +429,8 @@ const MUTANTS: Array<[string, (ino: string) => string, string[]]> = [
   // V3
   ["la requête HTTP tronquée en silence est envoyée quand même (-6 supprimé)", (i) => firstOnly(i, "    if (!ok) return -6;\n", ""), ["memoryFailures"]],
   ["-6 (requête non construite) n'est plus NOT_SENT", (i) => firstOnly(i, "  if (code == -4 || code == -2 || code == -6) return VOTE_NOT_SENT;", "  if (code == -4 || code == -2) return VOTE_NOT_SENT;"), ["classify"]],
+  ["l'écriture partielle de la requête est ignorée (-7 supprimé)", (i) => firstOnly(i, "if (sent != (size_t)req.length()) return -7;", ""), ["partialWrite", "connPaths"]],
+  ["-7 (écriture partielle) est classé NOT_SENT", (i) => firstOnly(i, "  if (code == -4 || code == -2 || code == -6) return VOTE_NOT_SENT;", "  if (code == -4 || code == -2 || code == -6 || code == -7) return VOTE_NOT_SENT;"), ["classify", "partialWrite"]],
   ["VoteWork n'est plus libéré", (i) => firstOnly(i, "  delete w;", ""), ["cleanup", "voteWorkFail"]],
   ["l'échec d'allocation de VoteWork est ignoré", (i) => firstOnly(i, "  if (!w) { logf(", "  if (false) { logf("), ["voteWorkFail"]],
   ["la signature est tentée même si la lecture a échoué", (i) => firstOnly(i, "votePhaseRead(*w, candidateId, screenName, bytes, announcedHash) && votePhaseSign(*w, candidateId)", "(votePhaseRead(*w, candidateId, screenName, bytes, announcedHash) || true) && votePhaseSign(*w, candidateId)"), ["incomplete", "altered"]],

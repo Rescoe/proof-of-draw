@@ -596,7 +596,7 @@ struct Conn {
   WiFiSSLClient client;
   podhttp::Reader<WiFiSSLClient> rd;
   explicit Conn(uint32_t timeoutMs) : rd(client, timeoutMs) {}
-  /** Construit la requête EN TOUT OU RIEN, se connecte, l'envoie, lit les en-têtes. Retourne le code HTTP, -2 = connexion TLS impossible, -1 = réponse illisible, -6 = requête NON construite (mémoire) : RIEN n'est émis
+  /** Construit la requête EN TOUT OU RIEN, se connecte, l'envoie, lit les en-têtes. Retourne le code HTTP, -2 = connexion TLS impossible, -1 = réponse illisible, -7 = écriture PARTIELLE de la requête (connexion ouverte : des octets ont PU partir), -6 = requête NON construite (mémoire) : RIEN n'est émis
    *  (V3 : une requête tronquée en silence — corps de vote absent ou coupé — n'est jamais envoyée). */
   int request(const char* method, const String& path, const String* body) {
     String req;
@@ -608,7 +608,8 @@ struct Conn {
     if (ok && body) ok = strAppendChecked(req, body->c_str());
     if (!ok) return -6;
     if (!client.connect(SERVER_HOST, 443)) return -2;
-    client.print(req);
+    const size_t sent = client.print(req);
+    if (sent != (size_t)req.length()) return -7;   // V3-FIX1 : écriture PARTIELLE — la connexion est OUVERTE, des octets ont PU partir : jamais « non émise » (-7 => SENT_UNKNOWN pour un vote)
     return rd.readHeaders();
   }
 };
@@ -1348,7 +1349,7 @@ static const char* voteOutcomeName(VoteOutcome o) {
 static VoteOutcome __attribute__((noinline)) voteClassify(int code, const String& resp) {
   if (code == -4 || code == -2 || code == -6) return VOTE_NOT_SENT;
   if (code == 200) return VOTE_ACCEPTED;
-  if (code < 0) return VOTE_SENT_UNKNOWN;
+  if (code < 0) return VOTE_SENT_UNKNOWN;                 // -1 illisible, -3 incomplet, -5 exécuté/rejeté, -7 écriture PARTIELLE (connexion ouverte : des octets ont pu partir) — JAMAIS NOT_SENT
   if (code == 403 && resp.indexOf("Signature") >= 0) return VOTE_SIGNATURE_REFUSED;
   if (code == 422) return VOTE_HASH_REFUSED;
   if (code >= 500) return VOTE_SENT_UNKNOWN;

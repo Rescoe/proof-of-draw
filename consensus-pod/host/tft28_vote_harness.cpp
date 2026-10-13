@@ -86,6 +86,7 @@ static std::string v2Json(const std::string& screen, int bytes, const std::strin
   return "{\"candidate\":{\"candidateId\":\"" + V.candId + "\",\"score_server\":0.5,\"poolScreen\":\"" + screen + "\",\"expiresIn\":600,\"v2\":{\"screen\":\"" + screen + "\",\"bytes\":" + std::to_string(bytes) + ",\"hash\":\"" + hash + "\"}}}";
 }
 static std::string v1Json() { return "{\"candidate\":{\"candidateId\":\"" + V.candId + "\",\"score_server\":0.5,\"poolScreen\":\"tft28\",\"expiresIn\":600}}"; }
+static bool g_frameRoutes = false;
 static std::string g_pendingAtPost = "?";   // pendingCandidateId AU MOMENT où le POST arrive chez le « serveur » (ne doit pas être effacé avant le classement de l'issue)
 static NetScript route(const NetRequest& r) {
   NetScript s;
@@ -94,6 +95,8 @@ static NetScript route(const NetRequest& r) {
   if (r.path.rfind("/api/validation-result", 0) == 0) { g_pendingAtPost = pendingCandidateId.length() ? pendingCandidateId.c_str() : "-"; if (V.voteCode == 200 && !V.forgetful) V.voted = true; s.response = http(V.voteCode, V.voteBody); return s; }
   if (r.path.rfind("/api/register", 0) == 0) { s.response = http(200, "{\"deviceId\":\"dev_TEST0001\",\"pairCode\":\"ABCD2345\",\"paired\":true}"); return s; }
   if (r.path.rfind("/api/pull?", 0) == 0) { s.response = http(200, "{\"frameSource\":\"none\",\"retryAfter\":300}"); return s; }
+  if (r.path.rfind("/api/pull-frame", 0) == 0 && g_frameRoutes) return V.cand;   // V3-FIX1 : scénarios frame-* seulement
+  if (r.path.rfind("/api/ack-frame", 0) == 0 && g_frameRoutes) { s.response = http(200, "{\"ok\":true}"); return s; }
   s.response = http(404, "{}"); return s;     // pull-frame, ack-frame, obs-confirm... : ne doivent JAMAIS être appelés par un vote
 }
 
@@ -102,7 +105,7 @@ static uint8_t g_seed[32]; static bool g_keysOk = true;
 static void world() {
   g_us = 1000000; g_requests.clear(); g_route = route; g_idleHook = nullptr; V = VK();
   g_sd = SdState(); g_tft = TftState(); Serial.log.clear(); g_strFailArmed = false; g_strAllocN = 0;
-  podNetTestHook = nullptr; podNetTestFailAlloc = 0; podNetTestNested = 0; g_failNext = 0; g_failWhenLog.clear(); g_guardWhenLog.clear(); g_guardFired = 0; g_marginWhenLog.clear(); g_marginFired = 0; g_logLenAtStop = 0; g_edSelfTestOk = true; g_voteSpentId[0] = '\0'; g_pendingAtPost = "?"; g_vwFail = 0; g_vwLive = 0; g_vwAllocs = 0; g_strFailArmed = false; g_strFailAt = 0; g_strAllocN = 0;
+  podNetTestHook = nullptr; podNetTestFailAlloc = 0; podNetTestNested = 0; g_failNext = 0; g_failWhenLog.clear(); g_guardWhenLog.clear(); g_guardFired = 0; g_marginWhenLog.clear(); g_marginFired = 0; g_logLenAtStop = 0; g_edSelfTestOk = true; g_voteSpentId[0] = '\0'; g_pendingAtPost = "?"; g_printShort = 0; g_printShortPath.clear(); g_frameRoutes = false; g_vwFail = 0; g_vwLive = 0; g_vwAllocs = 0; g_strFailArmed = false; g_strFailAt = 0; g_strAllocN = 0;
   podEdTestHook = nullptr; podEdTestFailAlloc = 0; podEdTestNested = 0;
   std::memset(g_fakeStack, 0, sizeof g_fakeStack);
   deviceId = "dev_TEST0001"; pairCode = "ABCD2345"; registered = true; paired = true; lastFrameId = "frame-avant-vote"; lastFrameWasConsensus = false; pendingCandidateId = "";
@@ -143,7 +146,7 @@ static void report(const char* sc, bool ret, long fillsBefore, long busBefore, l
 
 static void classifyTable() {
   struct Row { int code; const char* body; };
-  const Row rows[] = { {200, "{}"}, {-4, ""}, {-2, ""}, {-1, ""}, {-3, ""}, {-5, ""}, {-6, ""}, {403, "{\"error\":\"Signature invalide\"}"}, {403, "{\"error\":\"autre\"}"}, {422, "{}"}, {400, "{}"}, {409, "{}"}, {429, "{}"}, {500, "{}"}, {503, "{}"}, {302, ""}, {409, "Signature"}, {500, "Signature"}, {-5, "Signature"}, {-4, "Signature"} };
+  const Row rows[] = { {200, "{}"}, {-4, ""}, {-2, ""}, {-1, ""}, {-3, ""}, {-5, ""}, {-6, ""}, {-7, ""}, {403, "{\"error\":\"Signature invalide\"}"}, {403, "{\"error\":\"autre\"}"}, {422, "{}"}, {400, "{}"}, {409, "{}"}, {429, "{}"}, {500, "{}"}, {503, "{}"}, {302, ""}, {409, "Signature"}, {500, "Signature"}, {-5, "Signature"}, {-4, "Signature"} };
   for (const Row& r : rows) std::printf("CLASS %d|%s|%s\n", r.code, r.body, voteOutcomeName(voteClassify(r.code, String(r.body))));
 }
 
@@ -172,6 +175,10 @@ int main(int argc, char** argv) {
   if (sc == "double-forgetful") V.forgetful = true;
   if (sc == "sign-fail") podEdTestFailAlloc = 1;
   if (sc == "votework-fail" || sc == "double-vwfail") g_vwFail = 1;
+  if (sc == "partial-write" || sc == "double-partial") { g_printShort = 9; g_printShortPath = "/api/validation-result"; }   // V3-FIX1 : le POST du vote part, print() rend 9 octets de moins
+  if (sc == "frame-nominal") g_frameRoutes = true;
+  if (sc == "frame-partial") { g_frameRoutes = true; g_printShort = 9; g_printShortPath = "/api/pull-frame"; }
+  if (sc == "ack-partial") { g_frameRoutes = true; g_printShort = 9; g_printShortPath = "/api/ack-frame"; }
   if (sc == "post-not-executed" || sc == "double-notsent") g_failWhenLog = "[VALIDATE2] signature en";
   if (sc == "post-executed-rejected" || sc == "double-unknown") { g_marginWhenLog = "[VALIDATE2] signature en"; podNetTestHook = marginHook; }   // POST EXÉCUTÉ (le « serveur » le reçoit) mais marge de pile rejetée : httpCall -5
   if (sc == "guard-on-post") { g_guardWhenLog = "[VALIDATE2] signature en"; g_guardStackBytes = (unsigned)(POD_NET_STACK_TOTAL - POD_NET_GUARD_BYTES); podNetTestHook = smashGuardHook; }   // GUARD pendant le POST => arrêt sûr
@@ -187,8 +194,9 @@ int main(int argc, char** argv) {
   std::printf("FACT announced_hash=%s\n", hash.c_str());
   bool ret = false; int stopped = 0;
   try {
-    ret = doValidate();
-    if (sc == "double" || sc == "double-forgetful" || sc == "double-unknown" || sc == "double-notsent" || sc == "double-vwfail") { pendingCandidateId = V.candId.c_str(); ret = doValidate() || ret; }
+    if (sc == "frame-nominal" || sc == "frame-partial" || sc == "ack-partial") ret = doFetchFrame(String("frame-nouvelle"), String("consensus"));   // chemins Conn hors vote : image, ACK
+    else ret = doValidate();
+    if (sc == "double" || sc == "double-forgetful" || sc == "double-unknown" || sc == "double-notsent" || sc == "double-vwfail" || sc == "double-partial") { pendingCandidateId = V.candId.c_str(); ret = doValidate() || ret; }
   } catch (HarnessStop&) { stopped = 1; }
   std::printf("FACT safe_stop=%d\n", stopped);
   std::printf("FACT vw_live=%d\n", g_vwLive);
