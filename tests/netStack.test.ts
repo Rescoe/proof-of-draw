@@ -79,7 +79,7 @@ for (const sk of SKETCHES) {
     assert.doesNotMatch(hc, /auto tx|Conn c\(/, "httpCall ne porte plus la fermeture ni le Conn");
     assert.equal((code.match(/podNetRun\(/g) ?? []).length, conns, "un appel podNetRun par transaction");
     // le vote : la pile réseau est fermée AVANT la signature (jamais imbriquée dans PodEd)
-    const v = code.search(/static bool (?:__attribute__\(\(noinline\)\) )?doValidateV2/), end = code.indexOf("\n}\n", v), body = code.slice(v, end);
+    const v = code.search(/static (?:bool|VoteOutcome) (?:__attribute__\(\(noinline\)\) )?doValidateV2/), end = code.indexOf("\n}\n", v), body = code.slice(v, end);
     assert.ok(body.indexOf("netReadCandidate(candidateId, kind, bytes, chk") > 0 && body.indexOf("netReadCandidate(") < body.indexOf("PodEd::sign("), "la lecture du candidat (pile réseau, fonction à part) précède la signature");
     assert.equal(body.includes("podNetRun("), false, "doValidateV2 ne contient plus de transaction : son cadre ne porte que la signature");
   });
@@ -89,10 +89,13 @@ test("échec fermé aux sites : un échec de pile dédiée ne laisse aucun résu
   for (const sk of SKETCHES) {
     const code = stripLine(readSketch(root, sk));
     // httpCall : code -5 si la transaction a été EXÉCUTÉE (un POST/vote/ACK a pu partir), -4 sinon ; le message le dit
+    const httpFail = /netStackFailed\("HTTP ", method, ni, podNetExecuted\(ni\) \? " — la requête a PU atteindre le serveur \(POST, vote ou ACK possibles\)" : ""\); return podNetExecuted\(ni\) \? -5 : -4; \}/.test(code);   // LOT8B2E V2 : gestionnaire commun (TFT)
+    if (httpFail) { const nf = /static void __attribute__\(\(noinline\)\) netStackFailed\([^)]*\) \{[\s\S]*?\n\}\n/.exec(code)!; assert.match(nf[0], /if \(ni\.err == POD_NET_GUARD\) logfSafeStop\(\);\n  logf\("\[%s%s\] pile réseau dédiée : %s \(erreur %u, marge %u o\)%s", tag, arg, podNetWhy\(ni\), \(unsigned\)ni\.err, \(unsigned\)ni\.margin, tail\);/); } else
     assert.match(code, /if \(!ran\) \{ logf\("\[HTTP %s\] pile réseau dédiée : %s \(erreur %u, marge %u o\)%s", method, podNetWhy\(ni\), \(unsigned\)ni\.err, \(unsigned\)ni\.margin, podNetExecuted\(ni\) \? " — la requête a PU atteindre le serveur \(POST, vote ou ACK possibles\)" : ""\); return podNetExecuted\(ni\) \? -5 : -4; \}/, `${sk} : httpCall`);
     for (const m of code.matchAll(/if \(!ran\) \{([^\n]*)\}\n/g)) {
       const s = m[1];
-      if (/\[HTTP %s\]/.test(s)) continue;   // httpCall : vérifié ci-dessus
+      if (/\[HTTP %s\]/.test(s) || /netStackFailed\("HTTP "/.test(s)) continue;   // httpCall : vérifié ci-dessus
+      if (/netStackFailed\(/.test(s)) { assert.ok(/(got|shown) = false;/.test(s) || /memset\(&chk, 0, sizeof\(chk\)\)/.test(s), `${sk} : échec de pile dédiée non fermé : ${s.slice(0, 80)}`); continue; }   // V2 : cause honnête dans netStackFailed (vérifié plus haut)
       if (/wifiFailed\(/.test(s)) continue;  // appels au module Wi-Fi (NETSTACK-WIFI-CALLS-FIX1) : vérifiés par tests/wifiCalls.test.ts
       if (/pullWorkFailed\(/.test(s)) continue;  // analyse du pull sur la pile de travail (DOPULL-JSON-STACK-FIX1) : vérifiée par tests/dopullJsonStack.test.ts
       // échec fermé : les indicateurs de succès sont remis à zéro AVANT le traitement d'échec existant (ou : chk remis à zéro)
@@ -102,7 +105,7 @@ test("échec fermé aux sites : un échec de pile dédiée ne laisse aucun résu
       assert.doesNotMatch(s, /indisponible/, "plus de « indisponible » : la formulation dépend de podNetWhy");
     }
     // TFT : l'écran a pu être redessiné AVANT la détection de la marge → jamais « image NON présentée » ; e-ink/OLED : l'image n'est affichée qu'après, donc la formule reste exacte
-    const frames = [...code.matchAll(/if \(!ran\) \{ (?:got|shown) = false; noFrame = false; logf\("(\[FRAME\]|\[OLED\])([^\n]*)\}\n/g)].map((m) => m[0]);
+    const frames = [...code.matchAll(/if \(!ran\) \{ (?:got|shown) = false; noFrame = false; (?:logf\("(\[FRAME\]|\[OLED\])|netStackFailed\("FRAME", "", ni, ")([^\n]*)\}\n/g)].map((m) => m[0]);
     assert.ok(frames.length >= 1, `${sk} : échec de lecture d'image`);
     for (const l of frames) {
       if (sk === "pod_uno_r4_tft18" || sk === "pod_uno_r4") {

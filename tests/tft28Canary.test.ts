@@ -45,6 +45,7 @@ const MAY_CHANGE = new Set([
   "doFetchFrame", "netGetBenchClip", "netGetBlockClip", "maybeFetchAnim",                                                                                                    // défaut collant du client TLS borné
   "doRegister", "doPull", "doValidate", "benchPollOnce",                                                                                                   // JSON sur la pile de travail
   "doValidateV2",                                                                                                                                          // re-register différé (plus de doRegister imbriqué sous le cadre de 416 o du vote)
+  "httpCall", "netReadCandidate", "§ VALIDATION RÉELLE (vote v2) — ⚠ NON TESTÉE SUR LA CARTE",                                                              // LOT8B2E V2 : gestionnaire commun netStackFailed (R-M1) ; lecture du candidat fermée en cas d'erreur (R-H3)
 ]);
 const MUST_BE_IDENTICAL = [
   "static void tftStatus(", "static void pushRow(int y) {", "static void swapRowBytes() {", "static void drawCartel() {", "static void drainTouch() {", "static void serviceTouch() {",
@@ -73,9 +74,11 @@ test("OFF : les lignes d'origine supprimées ou modifiées appartiennent toutes 
 });
 
 test("OFF : la partie réseau d'origine est inchangée (httpCall, Conn, netHttpRaw, doFetchFrame au défaut collant près) ; la cadence de pull est inchangée", () => {
-  for (const head of ["static bool __attribute__((noinline)) netHttpRaw(", "static int httpCall("]) assert.equal(fnBody(prodNoHooks, head), fnBody(before, head), head);
+  const V2_HTTP_FAIL = '  if (!ran) { netStackFailed("HTTP ", method, ni, podNetExecuted(ni) ? " — la requête a PU atteindre le serveur (POST, vote ou ACK possibles)" : ""); return podNetExecuted(ni) ? -5 : -4; }', OLD_HTTP_FAIL = '  if (!ran) { logf("[HTTP %s] pile réseau dédiée : %s (erreur %u, marge %u o)%s", method, podNetWhy(ni), (unsigned)ni.err, (unsigned)ni.margin, podNetExecuted(ni) ? " — la requête a PU atteindre le serveur (POST, vote ou ACK possibles)" : ""); return podNetExecuted(ni) ? -5 : -4; }';   // LOT8B2E V2 : seule ligne de httpCall modifiée
+  for (const head of ["static bool __attribute__((noinline)) netHttpRaw(", "static int httpCall("]) assert.equal(fnBody(prodNoHooks, head).replace(V2_HTTP_FAIL, OLD_HTTP_FAIL), fnBody(before, head), head);
   const df = fnBody(prodNoHooks, "static bool doFetchFrame("), dfOld = fnBody(before, "static bool doFetchFrame(");
-  assert.equal(df.replace(" && c.client.fault() == 0;   // défaut collant du client TLS borné : image refusée (ni affichage annoncé, ni ACK)", ";"), dfOld);
+  const V2_FRAME_FAIL = "netStackFailed(\"FRAME\", \"\", ni, \" — pas d'ACK ; l'écran a pu être partiellement ou totalement redessiné\");", OLD_FRAME_FAIL = "logf(\"[FRAME] pile réseau dédiée : %s (erreur %u, marge %u o) — pas d'ACK ; l'écran a pu être partiellement ou totalement redessiné\", podNetWhy(ni), (unsigned)ni.err, (unsigned)ni.margin);";   // LOT8B2E V2 : gestionnaire commun netStackFailed
+  assert.equal(df.replace(" && c.client.fault() == 0;   // défaut collant du client TLS borné : image refusée (ni affichage annoncé, ni ACK)", ";").replace(V2_FRAME_FAIL, OLD_FRAME_FAIL), dfOld);
   for (const k of ["#define PULL_INTERVAL     60000UL", "#define VALIDATE_INTERVAL 30000UL", "#define HTTP_TIMEOUT_MS   20000UL", "#define BENCH_POLL_MS      3000UL"]) assert.ok(src.includes(k), k);
   // même formule d'intervalle qu'avant (le défaut « frame déjà affichée => 60 s » du TFT est CONNU et NON corrigé ici : aucun changement de polling dans ce lot)
   assert.ok(prodNoHooks.includes("nextPullIntervalMs = (r.frameSource == \"none\" && r.candId.length() == 0) ? (unsigned long)r.retryAfter * 1000UL : PULL_INTERVAL;"));

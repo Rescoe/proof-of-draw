@@ -31,6 +31,11 @@
 #ifndef POD_CANARY
 #define POD_CANARY 0
 #endif
+// POD_VOTE_V1 (LOT8B2E V2, R-H2) : 0 = la voie de vote v1 (écho du score du serveur, signature et formatage flottant) est RETIRÉE du binaire : un candidat v1 ne produit ni lecture, ni signature, ni POST.
+//   Un vote v1 ne doit jamais valider une animation v3. NE JAMAIS METTRE À 1 (testé).
+#ifndef POD_VOTE_V1
+#define POD_VOTE_V1 0
+#endif
 
 #include <Arduino.h>
 #include <malloc.h>
@@ -153,6 +158,11 @@ bool   lastFrameWasConsensus = false;
 
 uint8_t privateKey[32], publicKey[32];
 bool    keysLoaded = false;
+#if !POD_CANARY
+static bool g_edSelfTestOk = false;   // LOT8B2E V2 (R-H1) : résultat de l'auto-test Ed25519 du boot (porte du vote) ; faux tant qu'il n'a pas réussi ; jamais refait à chaque vote
+// LOT8B2E V2 : l'énumération est déclarée ICI (avant toute fonction) : le générateur de prototypes de l'IDE Arduino place les prototypes avant sa définition sinon (erreur « VoteOutcome was not declared »).
+enum VoteOutcome : uint8_t { VOTE_NOT_SENT = 0, VOTE_SENT_UNKNOWN = 1, VOTE_ACCEPTED = 2, VOTE_REFUSED_BY_SERVER = 3, VOTE_SIGNATURE_REFUSED = 4, VOTE_HASH_REFUSED = 5 };
+#endif
 
 String currentBlockHash = "";
 int    currentBlockIndex = -1;
@@ -556,6 +566,7 @@ static void generateKeys() {
 }
 // CANARI SANS VOTE : la signature d'un vote n'existe pas dans le binaire
 #if !POD_CANARY
+#if POD_VOTE_V1
 static String signED25519(const String& candidateId, float score) {
   const int m = (int)(score * 1000.0f + 0.5f);               // « 0.543 » : 3 décimales, comme toFixed(3) côté serveur
   char scoreStr[12]; snprintf(scoreStr, sizeof(scoreStr), "%d.%03d", m / 1000, m % 1000);
@@ -564,6 +575,7 @@ static String signED25519(const String& candidateId, float score) {
   if (!PodEd::sign(sig, privateKey, publicKey, (const uint8_t*)message.c_str(), message.length())) { logf("[VOTE] signature impossible (pile Ed25519 dédiée) — vote NON envoyé"); return String(); }   // POD_ED_STACK
   return bytesToHex(sig, 64);
 }
+#endif
 #endif
 
 // ─── HTTP (WiFiSSLClient + pod_http.h) ─────────────────────────────────────
@@ -597,13 +609,20 @@ static bool __attribute__((noinline)) netHttpRaw(const char* method, const Strin
   return podNetRun(tx, &ni);
 }
 
+/** R-M1 (LOT8B2E V2) : gestionnaire COMMUN des échecs de la pile réseau dédiée (httpCall, doFetchFrame, netReadCandidate, clip du banc d'essai, netGetBlockClipToSd). GUARD = garde basse écrasée : le tas voisin
+ *  peut être corrompu (logf alloue) => arrêt sûr SILENCIEUX d'abord, avant tout journal, String ou allocation. Les autres erreurs (NOMEM, NESTED, MARGIN) restent FERMÉES et sont décrites. */
+static void __attribute__((noinline)) netStackFailed(const char* tag, const char* arg, const PodNetInfo& ni, const char* tail) {
+  if (ni.err == POD_NET_GUARD) logfSafeStop();
+  logf("[%s%s] pile réseau dédiée : %s (erreur %u, marge %u o)%s", tag, arg, podNetWhy(ni), (unsigned)ni.err, (unsigned)ni.margin, tail);
+}
+
 /** Appel JSON : retourne le code HTTP (>0) et le corps dans resp ; <0 = échec réseau/lecture/corps incomplet ; -4 = pile dédiée indisponible, transaction NON exécutée ; -5 = transaction EXÉCUTÉE mais résultat local REJETÉ (garde/marge). */
 static int httpCall(const char* method, const String& path, const String* body, String& resp) {
   resp = "";
   int code = -4; bool complete = false; PodNetInfo ni;
   const bool ran = netHttpRaw(method, path, body, code, complete, ni);
   POD_CANARY_NET("http", ni, ran);
-  if (!ran) { logf("[HTTP %s] pile réseau dédiée : %s (erreur %u, marge %u o)%s", method, podNetWhy(ni), (unsigned)ni.err, (unsigned)ni.margin, podNetExecuted(ni) ? " — la requête a PU atteindre le serveur (POST, vote ou ACK possibles)" : ""); return podNetExecuted(ni) ? -5 : -4; }
+  if (!ran) { netStackFailed("HTTP ", method, ni, podNetExecuted(ni) ? " — la requête a PU atteindre le serveur (POST, vote ou ACK possibles)" : ""); return podNetExecuted(ni) ? -5 : -4; }
   if (!(g_quietHttp && code == 200)) logf("[HTTP %s] %s -> %d", method, path.length() > 60 ? (path.substring(0, 60) + "...").c_str() : path.c_str(), code);
   if (code < 0) { if (code == -2) logf("[HTTP] connexion TLS impossible (voir l'en-tête du sketch)"); return code; }
   if (!complete) { logf("[HTTP] corps incomplet ou > %u octets", (unsigned)sizeof(g_body) - 1); return -3; }
@@ -805,7 +824,7 @@ static bool doFetchFrame(const String& frameId, const String& frameSource) {
   POD_CANARY_NET("pull-frame (reseau + SD + TFT)", ni, ran);
   POD_CANARY_CHECK("pull-frame/affichage : retour de la transaction");
   POD_CANARY_HEAP("apres la transaction pull-frame");
-  if (!ran) { shown = false; noFrame = false; logf("[FRAME] pile réseau dédiée : %s (erreur %u, marge %u o) — pas d'ACK ; l'écran a pu être partiellement ou totalement redessiné", podNetWhy(ni), (unsigned)ni.err, (unsigned)ni.margin); }
+  if (!ran) { shown = false; noFrame = false; netStackFailed("FRAME", "", ni, " — pas d'ACK ; l'écran a pu être partiellement ou totalement redessiné"); }
   if (noFrame) { logf("[FRAME] pas de frame disponible"); return true; }
   if (!shown) { logf("[FRAME] image incomplète — pas d'ACK, nouvel essai au prochain pull"); sdFrameValid = false; return false; }
 #if POD_CANARY
@@ -1291,29 +1310,98 @@ static bool doPull() {
 static uint8_t g_voteChunk[256];
 static uint8_t g_voteScratch[4736];
 
+// ─── LOT8B2E V2 (sécurité du vote, hôte seulement) ───────────────────────────────────────────────────────────────────────────────────────────────
+// Issue TYPÉE d'un vote (R-H4) : plus aucune interprétation d'un code ou d'une sous-chaîne ambiguë.
+//   NOT_SENT              la requête n'a PAS été émise (porte fermée, lecture/signature impossible, abstention, httpCall -4 pile indisponible, -2 connexion TLS impossible)
+//   SENT_UNKNOWN          la requête a PU atteindre le serveur et l'issue est INDÉTERMINÉE (-1 réponse illisible, -3 corps incomplet, -5 exécutée mais rejetée localement, HTTP >= 500)
+//   ACCEPTED              HTTP 200
+//   REFUSED_BY_SERVER     refus du serveur sans motif de signature ni de hash (autres HTTP 4xx/3xx)
+//   SIGNATURE_REFUSED     HTTP 403 ET corps « Signature » (seul cas qui déclenche une ré-inscription différée)
+//   HASH_REFUSED          HTTP 422 (hash ou métriques différents de ceux du serveur)
+// Tout sauf NOT_SENT « dépense » le candidat : aucune nouvelle tentative automatique (verrou RAM ci-dessous ; le verrou persistant en EEPROM est le lot V4).
+static const char* voteOutcomeName(VoteOutcome o) {
+  switch (o) {
+    case VOTE_NOT_SENT: return "NOT_SENT";
+    case VOTE_SENT_UNKNOWN: return "SENT_UNKNOWN";
+    case VOTE_ACCEPTED: return "ACCEPTED";
+    case VOTE_REFUSED_BY_SERVER: return "REFUSED_BY_SERVER";
+    case VOTE_SIGNATURE_REFUSED: return "SIGNATURE_REFUSED";
+    default: return "HASH_REFUSED";
+  }
+}
+static VoteOutcome __attribute__((noinline)) voteClassify(int code, const String& resp) {
+  if (code == -4 || code == -2) return VOTE_NOT_SENT;
+  if (code == 200) return VOTE_ACCEPTED;
+  if (code < 0) return VOTE_SENT_UNKNOWN;
+  if (code == 403 && resp.indexOf("Signature") >= 0) return VOTE_SIGNATURE_REFUSED;
+  if (code == 422) return VOTE_HASH_REFUSED;
+  if (code >= 500) return VOTE_SENT_UNKNOWN;
+  return VOTE_REFUSED_BY_SERVER;
+}
+// Verrou RAM « candidat dépensé » : un candidat dont le vote a PU partir n'est jamais revoté automatiquement (même ré-annoncé par un pull). Perdu à un reset : le verrou EEPROM est le lot V4.
+static char g_voteSpentId[65] = "";
+static bool voteSpent(const String& id) { return g_voteSpentId[0] != '\0' && id == g_voteSpentId; }
+static void voteMarkSpent(const String& id) { strncpy(g_voteSpentId, id.c_str(), sizeof(g_voteSpentId) - 1); g_voteSpentId[sizeof(g_voteSpentId) - 1] = '\0'; }
+// Porte de sécurité (R-H1) : clés chargées ET auto-test Ed25519 du boot réussi ET appareil enregistré ET appairé. Sinon : aucune lecture de candidat, aucune signature, aucun POST (journal borné).
+static bool __attribute__((noinline)) voteGate() {
+  const char* why = !keysLoaded ? "cles non chargees" : !g_edSelfTestOk ? "auto-test Ed25519 non reussi" : !registered ? "appareil non enregistre" : !paired ? "appareil non appaire" : nullptr;
+  if (why) logf("[VOTE] porte FERMEE : %s — aucune lecture, aucune signature, aucun POST", why);
+  return why == nullptr;
+}
+
 // POD_NET_STACK : lecture du candidat sur la pile réseau dédiée. Fonction à part (noinline) : ses variables ne vivent que pendant la transaction, FERMÉE avant la signature (jamais imbriquée dans PodEd),
-// et ne gonflent pas le cadre de doValidate, qui porte ensuite l'appel de signature. Échec de la pile dédiée : chk remis à zéro (chk.ok = false) → « calcul impossible », pas de vote.
+// et ne gonflent pas le cadre de doValidate, qui porte ensuite l'appel de signature. FERMÉ EN CAS D'ERREUR (R-H3) : le candidat n'est accepté que si l'échec de la pile dédiée est absent (garde, marge), si le lecteur
+// HTTP est COMPLET et si le défaut collant du client TLS est NUL — en plus du nombre d'octets exact ; sinon chk est remis à zéro (chk.ok = false) : « calcul impossible », ni signature ni POST.
 static void __attribute__((noinline)) netReadCandidate(const String& candidateId, PodScreenKind kind, size_t bytes, PodCheck& chk) {
   PodNetInfo ni;
+  bool rdComplete = false; int rdFault = -1;      // -1 = jamais lu (réponse autre que 200)
   auto tx = [&]() {
     Conn c(HTTP_TIMEOUT_MS);
     const int code = c.request("GET", String("/api/candidate-frame?candidateId=") + candidateId, nullptr);
     chk.http = code;
     logf("[HTTP GET] /api/candidate-frame -> %d", code);
-    if (code == 200) podCheckStream(c.rd, kind, bytes, g_voteScratch, sizeof(g_voteScratch), g_voteChunk, sizeof(g_voteChunk), &chk);
+    if (code == 200) {
+      podCheckStream(c.rd, kind, bytes, g_voteScratch, sizeof(g_voteScratch), g_voteChunk, sizeof(g_voteChunk), &chk);
+      rdComplete = c.rd.complete(); rdFault = (int)c.client.fault();
+    }
     c.client.stop();
   };
   const bool ran = podNetRun(tx, &ni);
-  if (!ran) { memset(&chk, 0, sizeof(chk)); logf("[VALIDATE2] pile réseau dédiée : %s (erreur %u, marge %u o) — pas de vote", podNetWhy(ni), (unsigned)ni.err, (unsigned)ni.margin); }
+  if (!ran) { memset(&chk, 0, sizeof(chk)); netStackFailed("VALIDATE2", "", ni, " — pas de vote"); }
+  else if (chk.ok && !(rdComplete && rdFault == 0)) { memset(&chk, 0, sizeof(chk)); logf("[VALIDATE2] lecture du candidat REFUSEE : lecteur %s, defaut TLS %d — pas de vote", rdComplete ? "complet" : "INCOMPLET", rdFault); }
 }
 
-static bool __attribute__((noinline)) doValidateV2(const String& candidateId, const String& screenName, size_t bytes, const String& announcedHash) {
+static bool g_voteMined = false;   // renseigné par voteFinish (vote ACCEPTED avec blockMined:true) ; lu par doValidate
+// Classe l'issue du POST, la journalise HONNÊTEMENT et applique ses seules conséquences (blocMined, ré-inscription différée). Fonction à part (noinline) : ses String et son journal ne gonflent pas le cadre de doValidateV2.
+static VoteOutcome __attribute__((noinline)) voteFinish(int vCode, const String& vResp) {
+  const VoteOutcome out = voteClassify(vCode, vResp);
+  logf("[VALIDATE2] issue du vote : %s (code %d)", voteOutcomeName(out), vCode);
+  switch (out) {
+    case VOTE_ACCEPTED:
+      logf("[VALIDATE2] Vote OK");
+      if (vResp.indexOf("\"blockMined\":true") >= 0) { logf("[VALIDATE2] BLOC MINÉ"); g_voteMined = true; }
+      if (vResp.indexOf("\"rejectObserved\":true") >= 0) logf("[VALIDATE2] refus enregistré par le serveur (non bloquant)");
+      break;
+    case VOTE_NOT_SENT: logf("[VALIDATE2] vote NON envoyé : la requête n'a pas été émise"); break;
+    case VOTE_SENT_UNKNOWN: logf("[VALIDATE2] vote a PU atteindre le serveur, issue INDÉTERMINÉE — aucune nouvelle tentative automatique de ce candidat"); break;
+    case VOTE_SIGNATURE_REFUSED:
+      // 403 « Signature » = clé publique désynchronisée côté serveur : on se ré-enregistre pour la renvoyer, le prochain cycle votera. SD-STACK-FIX1 : jamais de doRegister() imbriqué (cadre de doValidate).
+      logf("[VALIDATE2] signature refusée par le serveur — resynchronisation de la clé publique (re-register au prochain tour de loop)"); registered = false; break;
+    case VOTE_HASH_REFUSED: logf("[VALIDATE2] hash ou métriques refusés par le serveur (422)"); break;
+    default: logf("[VALIDATE2] vote refusé par le serveur (%d)", vCode); break;
+  }
+  return out;
+}
+static VoteOutcome __attribute__((noinline)) doValidateV2(const String& candidateId, const String& screenName, size_t bytes, const String& announcedHash) {
+  g_voteMined = false;
   PodScreenKind kind;
-  if (!podKindFromName(screenName.c_str(), &kind)) { logf("[VALIDATE2] écran inconnu : %s", screenName.c_str()); return false; }
+  if (!podKindFromName(screenName.c_str(), &kind)) { logf("[VALIDATE2] écran inconnu : %s", screenName.c_str()); return VOTE_NOT_SENT; }
   reportMem("VALIDATE2-avant");
   PodCheck chk; memset(&chk, 0, sizeof(chk));
   netReadCandidate(candidateId, kind, bytes, chk);
-  if (!chk.ok) { logf("[VALIDATE2] lecture/calcul impossible (http=%d, %u/%u octets)", chk.http, (unsigned)chk.bytes, (unsigned)bytes); return false; }
+  if (!chk.ok) { logf("[VALIDATE2] lecture/calcul impossible (http=%d, %u/%u octets)", chk.http, (unsigned)chk.bytes, (unsigned)bytes); return VOTE_NOT_SENT; }
+  // D-V2 (gelée) : hash reçu ≠ hash annoncé => ABSTENTION locale (aucune signature, aucun POST) : ce n'est PAS un refus signé.
+  if (strcmp(announcedHash.c_str(), chk.hash) != 0) { logf("[VALIDATE2] hash reçu != hash annoncé : ABSTENTION (aucun vote signé, aucun POST)"); return VOTE_NOT_SENT; }
 
   bool accept = false;
   const char* reason = podVerdict(chk, announcedHash, &accept);
@@ -1324,7 +1412,7 @@ static bool __attribute__((noinline)) doValidateV2(const String& candidateId, co
   const String msg = podVoteMessage(deviceId, candidateId, chk.hash, chk.m, accept);
   uint8_t sig[64];
   const unsigned long ts = millis();
-  if (!PodEd::sign(sig, privateKey, publicKey, (const uint8_t*)msg.c_str(), msg.length())) { logf("[VALIDATE2] signature impossible (pile Ed25519 dédiée) — vote NON envoyé"); return false; }   // POD_ED_STACK
+  if (!PodEd::sign(sig, privateKey, publicKey, (const uint8_t*)msg.c_str(), msg.length())) { logf("[VALIDATE2] signature impossible (pile Ed25519 dédiée) — vote NON envoyé"); return VOTE_NOT_SENT; }   // POD_ED_STACK
   logf("[VALIDATE2] signature en %lu ms", millis() - ts);
   const String body = String("{\"v\":2,\"deviceId\":\"") + deviceId + "\",\"candidateId\":\"" + candidateId + "\",\"rawHash\":\"" + chk.hash + "\"," +
                       "\"e\":" + String((unsigned long)chk.m.e) + ",\"t\":" + String((unsigned long)chk.m.t) + ",\"r\":" + String((unsigned long)chk.m.r) + "," +
@@ -1332,18 +1420,9 @@ static bool __attribute__((noinline)) doValidateV2(const String& candidateId, co
                       ",\"signature\":\"" + bytesToHex(sig, 64) + "\"}";
   String vResp;
   const int vCode = httpCall("POST", "/api/validation-result", &body, vResp);
-  bool mined = false;
-  if (vCode == 200) {
-    logf("[VALIDATE2] Vote OK");
-    if (vResp.indexOf("\"blockMined\":true") >= 0) { logf("[VALIDATE2] BLOC MINÉ"); mined = true; }
-    if (vResp.indexOf("\"rejectObserved\":true") >= 0) logf("[VALIDATE2] refus enregistré par le serveur (non bloquant)");
-  } else {
-    logf("[VALIDATE2] Echec vote (%d) : 403 = signature, 422 = hash/métriques différents du serveur — %s", vCode, vResp.c_str());
-    // 403 « Signature » = clé publique désynchronisée côté serveur : on se ré-enregistre pour la renvoyer (comme le chemin v1), le prochain cycle votera.
-    if (vResp.indexOf("Signature") >= 0) { logf("[VALIDATE2] resynchronisation de la clé publique (re-register au prochain tour de loop)"); registered = false; }   // SD-STACK-FIX1 : plus de doRegister() imbriqué (cadre de 144 o + écran d'appairage) sous le cadre de 416 o de la voie vote : loop() ré-inscrit aussitôt
-  }
+  const VoteOutcome out = voteFinish(vCode, vResp);
   reportMem("VALIDATE2-après");
-  return mined;
+  return out;
 }
 
 // ─── VALIDATION ────────────────────────────────────────────────────────────
@@ -1427,9 +1506,14 @@ static int __attribute__((noinline)) doValidateDecode(const String& resp, String
   return mode;
 }
 
+#if POD_VOTE_V1
 static bool doValidateV1(const String& candidateId, float score);
+#endif
 static bool doValidate() {
   if (pendingCandidateId.length() == 0) return false;
+  // LOT8B2E V2 : porte de sécurité AVANT toute requête (R-H1) ; candidat déjà dépensé => aucune nouvelle tentative automatique. pendingCandidateId n'est effacé qu'APRÈS le classement de l'issue.
+  if (!voteGate()) { pendingCandidateId = ""; return false; }
+  if (voteSpent(pendingCandidateId)) { logf("[VALIDATE] candidat déjà traité : son vote a PU partir — aucune nouvelle tentative automatique"); pendingCandidateId = ""; return false; }
   String candidateId, v2screen, v2hash;
   size_t v2bytes = 0;
   float score = 0.5f;
@@ -1440,11 +1524,26 @@ static bool doValidate() {
     mode = doValidateDecode(resp, candidateId, v2screen, v2bytes, v2hash, score);
   }                                                          // resp libérée ici, avant la lecture du candidat, la signature et le vote
   if (mode == 0) { pendingCandidateId = ""; return false; }
-  // Validation RÉELLE : si le serveur annonce { v2 }, on revérifie le contenu au lieu de recopier son score (anciens serveurs / animations : chemin v1 ci-dessous).
-  if (mode == 1) { pendingCandidateId = ""; return doValidateV2(candidateId, v2screen, v2bytes, v2hash); }
+  // Validation RÉELLE : si le serveur annonce { v2 }, on revérifie le contenu au lieu de recopier son score (anciens serveurs / animations : chemin v1).
+  if (mode == 1) {
+    if (voteSpent(candidateId)) { logf("[VALIDATE] candidat déjà traité : son vote a PU partir — aucune nouvelle tentative automatique"); pendingCandidateId = ""; return false; }
+    const VoteOutcome out = doValidateV2(candidateId, v2screen, v2bytes, v2hash);
+    if (out != VOTE_NOT_SENT) voteMarkSpent(candidateId);   // la requête a PU partir : jamais de seconde tentative automatique
+    pendingCandidateId = "";                                // effacé APRÈS le classement de l'issue
+    return g_voteMined;
+  }
+#if POD_VOTE_V1
   return doValidateV1(candidateId, score);
+#else
+  (void)score;
+  logf("[VALIDATE] candidat v1 (écho du score du serveur) : AUCUN vote (POD_VOTE_V1 = 0)");
+  pendingCandidateId = "";
+  return false;
+#endif
 }
+#if POD_VOTE_V1
 // Ancien chemin (v1 : le score du serveur est recopié, signé et voté) dans sa propre fonction : sa signature, son corps JSON et son vote ne gonflent plus le cadre de doValidate (SD-STACK-FIX1, texte inchangé).
+// LOT8B2E V2 : RETIRÉ du binaire (POD_VOTE_V1 = 0) — un vote v1 ne doit jamais valider une animation v3 et son formatage flottant pèse 384 o de pile.
 static bool __attribute__((noinline)) doValidateV1(const String& candidateId, float score) {
   const String signature = signED25519(candidateId, score);
   if (signature.length() == 0) { pendingCandidateId = ""; return false; }   // POD_ED_STACK : signature impossible → pas de vote
@@ -1467,6 +1566,7 @@ static bool __attribute__((noinline)) doValidateV1(const String& candidateId, fl
   }
   return blockMined;
 }
+#endif
 #else
 // CANARI SANS VOTE : ni lecture du candidat, ni calcul de métriques, ni signature, ni /api/validate-candidate, ni /api/validation-result, ni re-register depuis ce chemin. Un candidat annoncé par le pull n'est jamais retenu
 // (POD_CANARY_CANDIDATE) ; ce stub n'est qu'une ceinture : il oublie tout candidat et ne fait aucune requête.
@@ -1570,7 +1670,7 @@ static bool __attribute__((noinline)) netGetBenchClip(const String& clipId, uint
     c.client.stop();
   };
   const bool ran = podNetRun(tx, &ni);
-  if (!ran) { got = false; logf("[BENCH] pile réseau dédiée : %s (erreur %u, marge %u o) — clip NON retenu", podNetWhy(ni), (unsigned)ni.err, (unsigned)ni.margin); }
+  if (!ran) { got = false; netStackFailed("BENCH", "", ni, " — clip NON retenu"); }
   return got;
 }
 
@@ -1738,7 +1838,7 @@ static bool __attribute__((noinline)) netGetBlockClipToSd(const String& hash, si
   const bool ran = podNetRun(tx, &ni);
   POD_CANARY_NET("block-clip (reseau + SD)", ni, ran);
   POD_CANARY_CHECK("block-clip : retour de la transaction");
-  if (!ran) { got = false; logf("[ANIM] pile réseau dédiée : %s (erreur %u, marge %u o) — clip NON retenu", podNetWhy(ni), (unsigned)ni.err, (unsigned)ni.margin); }
+  if (!ran) { got = false; netStackFailed("ANIM", "", ni, " — clip NON retenu"); }
   return got;
 }
 
@@ -1881,6 +1981,9 @@ static void selfTestEd25519() {
   POD_CANARY_ED("sign", infoS);
   POD_CANARY_ED("verify", infoV);
   logf("[SELFTEST] Ed25519 signature %lu ms, vérification %lu ms -> %s", tSign, tVerify, ok ? "OK" : "ECHEC");
+#if !POD_CANARY
+  g_edSelfTestOk = ok;                                 // LOT8B2E V2 : état exploitable par la porte du vote
+#endif
   reportMem("après Ed25519");
   logf("[ED25519] pile dédiée (utilisé/marge, o) : sign %u/%u, verify %u/%u ; erreurs sign=%u verify=%u (0 = aucune) ; alloué %u o (garde %u o, marge minimale exigée %u o)", (unsigned)infoS.used, (unsigned)infoS.margin, (unsigned)infoV.used, (unsigned)infoV.margin, (unsigned)infoS.err, (unsigned)infoV.err, (unsigned)POD_ED_STACK_TOTAL, (unsigned)POD_ED_GUARD_BYTES, (unsigned)POD_ED_MARGIN_MIN);   // POD_ED_STACK
 }
