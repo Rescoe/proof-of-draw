@@ -1,5 +1,7 @@
 # État des branches et des canaris — 13/10/2026
 
+> Mise à jour : verdict matériel ESP8266 + e-ink 2,7″ + OLED archivé (`cb883bf`) ; lot V2 du vote TFT livré sur l'hôte (`9514c7f`). Rien n'est fusionné dans `main`.
+
 Document de référence unique, **établi sans fusion ni suppression** : aucune branche, aucun worktree, aucun fichier n'a été supprimé ; rien n'est poussé sur `main`. Chaque travail récent est sauvegardé sur sa propre branche GitHub.
 Source des faits matériels : le porteur (journaux série) et les verdicts GPT/Codex. « Validé matériellement » = observé sur la carte par le porteur ; « hôte » = harnais/tests sur PC ; « compilé » = compilation seule.
 
@@ -11,8 +13,8 @@ Source des faits matériels : le porteur (journaux série) et les verdicts GPT/C
 |---|---|---|---|---|
 | `main` | `3239d2e` | — | `origin/main` | production (R4 e-ink 2,9″ canari 8B2B2 validé, capteur DHT22…) |
 | `claude/r4-tft28-touch-gestures-8b2e` | `89b93cc` | +16 | **poussée, upstream posé** | TFT 2,8″ : chaîne canari + animation en flux + gestes tactiles |
-| `claude/r4-tft28-vote-audit-8b2e` | `2399c73` | +16 | **poussée, upstream posé** | TFT 2,8″ : chaîne canari + animation en flux + audit/harnais du vote |
-| `claude/esp8266-eink27-oled-canary-8b2c` | `b94bfb9` | +7 | **poussée, upstream posé** (l'ancien upstream pointait à tort vers la branche 2,9″) | ESP8266 : canari 2,9″ (validé) + canari 2,7″ + OLED |
+| `claude/r4-tft28-vote-audit-8b2e` | `9514c7f` (V2, hôte seulement) | +17 | **poussée, upstream posé** | TFT 2,8″ : chaîne canari + animation en flux + audit/harnais du vote |
+| `claude/esp8266-eink27-oled-canary-8b2c` | `cb883bf` (build testé : `b94bfb9`) | +8 | **poussée, upstream posé** (l'ancien upstream pointait à tort vers la branche 2,9″) | ESP8266 : canari 2,9″ (validé) + canari 2,7″ + OLED |
 | `origin/claude/esp8266-eink29-canary-8b2c` | `e059db3` | +3 | distante | ESP8266 e-ink 2,9″ : canari validé (sous-ensemble de la branche 2,7″) |
 | `origin/claude/r4-tft28-canary-8b2d` | `480eacd` | +7 | distante | TFT 2,8″ historique (s'arrête à l'animation FIX1 ; FIX2 est sur les deux branches 8b2e) |
 | `codex/claude-local-resume-2026-10-12` | `c4bbeda` | +17 | **locale seulement** | reprise Codex, GELÉE (canari animation) ; contient 0059f74 + docs |
@@ -46,7 +48,7 @@ Fichiers locaux ignorés notables (jamais commités) : `canary-builds/` (binaire
 | ESP8266 + e-ink 2,9″ BWR | `origin/claude/esp8266-eink29-canary-8b2c` @ `e059db3` (aussi dans la branche 2,7″) | distante | instrumentation canari (`POD_CANARY`) + production inchangée | oui (harnais + mutants) | **frame, rendu, ACK validés** | non validé | décider l'intégration (§ 4, groupe A) | non applicable (validé) |
 | UNO R4 + e-ink 2,9″ BWR | `main` @ `3239d2e` (lots 8B2B2, BOUNDED-SSL-FIX1) | oui | production | oui | **frame, rendu, ACK validés** (pile réseau dédiée, `PodBoundedSSL`) | non validé | garde-fous avant vote : migrer `doValidate` | `canary-builds/` du worktree principal (`canary/` et `stable/`, voir `MANIFEST.txt`) |
 | UNO R4 + TFT 2,8″ + SD | `claude/r4-tft28-touch-gestures-8b2e` @ `89b93cc` ; `claude/r4-tft28-vote-audit-8b2e` @ `2399c73` ; base validée `0059f74` | poussées | canari sans vote + animation en flux ; gestes tactiles (non essayés) | oui | **images fixes, cache SD, ACK, animation SD validés** ; pause/reprise tactile et reprise auto 60 s **observées** (sur la version avant gestes) ; pile animPlay 828 o (marge 644), tas ≈ 5 944 stable | **non validé** | canari des gestes (89b93cc) ; vote : lots issus de l'audit | copie de canari non répertoriée ici (à confirmer dans le worktree concerné) |
-| ESP8266 + e-ink 2,7″ BW + OLED | `claude/esp8266-eink27-oled-canary-8b2c` @ `b94bfb9` | poussée | canari sans vote, rendu v1, BUSY/Content-Length fail-closed, drapeaux en source unique | oui (6 configurations, 24 mutants, build IDE-style) | **canari non exécuté** (code compilé et audité ; FIX1 en audit GPT) | non (aucun vote dans le canari) | flasher après verdict GPT, protocole du lot (§ 4 du doc de lot) | `canary-builds\esp27-oled-canary-fix1\esp_eink_2.7BW_OLED\esp_eink_2.7BW_OLED.ino` (copie IGNORÉE, drapeaux 1/1 dans **`pod_canary_flags.h`**, pas dans le `.ino`) |
+| ESP8266 + e-ink 2,7″ BW + OLED | `claude/esp8266-eink27-oled-canary-8b2c` @ `cb883bf` (firmware testé : `b94bfb9`) | poussée | canari sans vote, rendu v1, BUSY/Content-Length fail-closed, drapeaux en source unique | oui (6 configurations, 24 mutants, build IDE-style) | **affichage, rendu v1, ACK, coexistence e-ink/OLED et stabilité sur quatre pulls validés matériellement ; vote non validé** (13/10/2026 ; frame `source=consensus` ; réserves : pile 384 o à l'ACK, `ReadBusy()` illimité en production ; journal série brut à archiver) | non validé (aucun vote dans le canari) | décision d'intégration (groupe A) ; vote = lot ultérieur | `canary-builds\esp27-oled-canary-fix1\esp_eink_2.7BW_OLED\esp_eink_2.7BW_OLED.ino` (copie IGNORÉE, drapeaux 1/1 dans **`pod_canary_flags.h`**, pas dans le `.ino`) |
 | UNO R4 + e-ink 2,7″ (solo/+OLED) | `origin/claude/hopeful-noether-ndz9ud` @ `1a68a49` | distante | propagation étroite, canari sans vote | oui | **reporté (cartes indisponibles)** | non | attendre les cartes | aucune |
 
 Règle commune : la source suivie par Git reste à `POD_RENDER_V1 = 0` et `POD_CANARY = 0` ; les copies de canari sont ignorées par git.
@@ -59,14 +61,16 @@ Branche préparée : `claude/integration-validated-2026-10-13` = `origin/main` (
 - **ESP8266 e-ink 2,9″** : `01cafd0`, `6ccb729`, `e059db3` (canari + FIX1 + FIX2, verdict matériel dans `e059db3`).
 - **TFT 2,8″ — canari sans vote** (verdicts matériels : démarrage, frames, SD, ACK) : `2abc358` (test infra), `266b40f`, `cab924b`, `30dc304`, `f1471d4`, `1bb2512`.
 - **TFT 2,8″ — animation en flux (validée sur carte)** : `480eacd` (FIX1), `0059f74` (FIX2, validé).
+- **ESP8266 e-ink 2,7″ + OLED — canari sans vote (validé matériellement le 13/10/2026 : affichage, rendu v1, ACK, coexistence e-ink/OLED, 4 pulls ; vote non validé)** : `6a988a1` (canari), `5986582` (FIX1 : BUSY et Content-Length fail-closed), `b94bfb9` (drapeaux en source unique `pod_canary_flags.h` — c'est le build testé). Les commits communs `01cafd0`, `6ccb729`, `e059db3` sont déjà au groupe A (ESP8266 2,9″).
 
 ### Groupe B — documentation / tests seulement (aucun code firmware)
+- **Outillage (ESP8266 2,7″ + OLED)** : `275f82c` (script de build local stable + canari, sortie ignorée par git). **Documentation** : `cb883bf` (verdict matériel archivé, invariant corrigé).
 - `f8657d8` (cadrage mesures et modèle économique), `224a164` (orchestration), `685b1a0` (audit 480eacd), `3f9b35e` et `a88d582` (audits : autorisation puis validation du canari animation), `1ed3393` (spécification appui court/long).
 - Branche vote : `4d00aae`, `a83b5d4` (audit de la chaîne de vote, cadrage SD), `9977183`, `2399c73` (harnais de vote hôte, D-V2 appliquée — **tests/docs, aucun changement de firmware**). À intégrer éventuellement après relecture des écarts R-H1…R-M1.
 
 ### Groupe C — en attente de canari matériel, EXCLUS de main
 - `c98168e`, `89b93cc` : gestes tactiles du TFT (firmware modifié, **jamais essayé sur la carte**).
-- `6a988a1`, `5986582`, `275f82c`, `b94bfb9` : canari ESP8266 2,7″ + OLED (canari non exécuté ; FIX1 en audit).
+- `9514c7f` : LOT8B2E-R4-TFT28-VOTE-V2-SAFETY (firmware du vote TFT modifié, **hôte seulement**, aucun vote ni flash ; en attente d'audit GPT/Codex).
 - `465c566`, `b7ea573`, `0391c71`, `1a68a49` : R4 e-ink 2,7″ (cartes indisponibles).
 - Tout futur vote réel (aucun n'est validé).
 
