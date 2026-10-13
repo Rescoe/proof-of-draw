@@ -127,12 +127,14 @@ struct EEPROMMock {
 static EEPROMMock EEPROM;
 
 // ── Ed25519 / SHA256 / QR factices ──────────────────────────────────────────────────────────────────────────────
+#ifndef POD_HOST_REAL_CRYPTO   // LOT8B2E V1 : le harnais de VOTE (tft28_vote_harness.cpp) compile la VRAIE bibliothèque Crypto (SHA-256, Ed25519) ; les autres harnais gardent ces maquettes
 struct Ed25519 {
   static void derivePublicKey(uint8_t* pub, const uint8_t* priv) { for (int i = 0; i < 32; i++) pub[i] = priv[i] ^ 0x5A; }
   static void sign(uint8_t* sig, const uint8_t* priv, const uint8_t*, const void*, size_t len) { for (int i = 0; i < 64; i++) sig[i] = (uint8_t)(priv[i % 32] + i + len); }
   static bool verify(const uint8_t* sig, const uint8_t*, const void*, size_t) { return sig != nullptr; }
 };
 class SHA256 { public: void reset() {} void update(const void*, size_t) {} void finalize(void* out, size_t n) { std::memset(out, 0xAB, n); } };
+#endif
 struct QRCode { uint8_t size; };
 static inline int qrcode_getBufferSize(int v) { return 16 * v; }
 static inline int qrcode_initText(QRCode*, uint8_t*, int, int, const char*) { return -1; }
