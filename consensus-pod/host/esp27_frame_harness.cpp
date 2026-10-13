@@ -252,7 +252,14 @@ int main() {
     CHECK(r.ret && g_ackCalls == 1, "S4b (hors canari) surplus ignoré : comportement existant");
 #endif
     resetWorld(); auto h = mkFrame(0, 6); g_scn.contentLength = -1; r = fetch(h);
-    CHECK(r.ret && g_ackCalls == 1, "S4c Content-Length inconnu (-1) : accepté si 5 808 octets exacts arrivent");
+#if POD_RENDER_V1 && POD_CANARY
+    CHECK(!r.ret, "S4c CANARI : Content-Length absent / inconnu (-1) REFUSÉ même si 5 808 octets exacts arrivent"); failClosed("S4c");
+    CHECK(logHas("REFUS : corps de taille inattendue"), "S4c message de refus");
+#else
+    CHECK(r.ret && g_ackCalls == 1, "S4c (hors canari) Content-Length inconnu (-1) : accepté si 5 808 octets exacts arrivent (comportement existant)");
+#endif
+    resetWorld(); auto h2 = mkFrame(0, 9); g_scn.contentLength = (int)PLANE; r = fetch(h2);
+    CHECK(r.ret && g_ackCalls == 1, "S4e Content-Length EXACT (5 808) : accepté, ACK");
     resetWorld(); auto k = mkFrame(0, 7); g_scn.contentLength = (int)PLANE - 1; r = fetch(k);   // en-tête annonce 1 octet de moins que le plan attendu
 #if POD_RENDER_V1 && POD_CANARY
     CHECK(!r.ret, "S4d CANARI : Content-Length trop COURT refusé"); failClosed("S4d");
@@ -394,7 +401,18 @@ int main() {
     CHECK(g_pcBusyTimeouts == 3 && g_pcBusyMaxMs >= 20000 && g_pcBusyMaxMs < 20500, "B2 CANARI : 3 attentes plafonnées à 20 s (≈ 60 s au total), dépassements comptés");
     CHECK(logHas("e-Paper busy TIMEOUT (plafond canari)") && logHas("ALERTE : BUSY anormalement long ou bloque"), "B2 CANARI : TIMEOUT et ALERTE journalisés");
     CHECK(g_maxNoFeedUs < 3000000ULL, "B2 CANARI : chien de garde nourri pendant les 60 s d'attente (delay à chaque pas de 100 ms)");
-    // jamais de succès présenté sans ACK ; ici l'image a PU s'afficher : l'ACK reste décidé par le serveur seulement
+    CHECK(!r.ret && g_ackCalls == 0 && evCount("POST /api/ack-frame") == 0, "B2 CANARI : BUSY plafonné => AUCUN ACK (échec fermé)");
+    CHECK(lastFrameIdE27 == "" && g_pcRtc.phase != PCP_DONE && !logHas("ACK recu") && logHas("REFUS ACK : BUSY"), "B2 CANARI : frame NON acquittée, refus journalisé, jamais « ACK reçu »");
+    CHECK(hasDisplayedFrame && g_outstanding == 0 && g_fs.empty() && g_oledDisplays >= 1, "B2 CANARI : ressources libérées, OLED remis en état, l'écran a PU être affiché (dit)");
+    // BUSY long mais non plafonné (9 s > 8 s d'alerte) : même refus
+    resetWorld(); g_refreshBusyUs = 9000000ULL; r = fetch(mkFrame(0, 72));
+    CHECK(!r.ret && g_ackCalls == 0 && lastFrameIdE27 == "" && g_pcBusyTimeouts == 0 && logHas("REFUS ACK : BUSY"), "B4 CANARI : BUSY de 9 s (> alerte 8 s, sous le plafond) => aucun ACK, rien d'acquitté");
+    // BUSY à la limite (7,5 s) : succès
+    resetWorld(); g_refreshBusyUs = 7500000ULL; r = fetch(mkFrame(0, 73));
+    CHECK(r.ret && g_ackCalls == 1 && lastFrameIdE27 == "frame-1", "B5 CANARI : BUSY de 7,5 s (sous l'alerte) : succès");
+    // compteurs antérieurs à la frame (affichage d'avant) : remis à zéro, aucun faux refus
+    resetWorld(); g_pcBusyTimeouts = 2; g_pcBusyMaxMs = 25000; r = fetch(mkFrame(0, 74));
+    CHECK(r.ret && g_ackCalls == 1 && !logHas("REFUS ACK"), "B6 CANARI : compteurs BUSY d'un affichage ANTÉRIEUR ignorés (instantané avant le rendu)");
 #else
     // PRODUCTION : ReadBusy() n'a AUCUN plafond. On le prouve en l'appelant DIRECTEMENT avec BUSY bloqué et la garde « delay en boucle » : il ne rend jamais la main de lui-même.
     resetWorld(); g_busyStuck = true; g_haltOnDelayLoop = true; bool returned = false, halted = false;

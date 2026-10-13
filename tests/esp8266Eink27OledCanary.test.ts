@@ -16,6 +16,8 @@ const DIR = "esp8266/esp_eink_2.7BW_OLED";
 const INO = `${DIR}/esp_eink_2.7BW_OLED.ino`;
 const DRV = `${DIR}/epd2in7_V2.cpp`;
 const BK = "firmware-backups/2026-10-13_avant-canari-esp8266-eink27-oled";
+const trimEnds = (s: string) => s.replace(/[ 	]+$/gm, "");   // la sauvegarde est normalisée (espaces finaux) : on compare sans eux
+const readBk = (p: string) => trimEnds(read(`${BK}/${p}`));
 const CANARY_RE = /#if POD_RENDER_V1 && POD_CANARY\n[\s\S]*?\n#endif\n/g;
 const stripLine = (s: string) => s.replace(/\/\*[\s\S]*?\*\//g, "").replace(/("(?:[^"\\\n]|\\.)*")|\/\/.*$/gm, (_m, str?: string) => str ?? "");
 
@@ -42,8 +44,8 @@ test("dépôt : POD_RENDER_V1 = 0 et POD_CANARY = 0 ; aucun drapeau à 1", () =>
 
 test("OFF : retirer les blocs de canari et le drapeau redonne le firmware d'avant AU TEXTE PRÈS (sketch ET pilote)", () => {
   const s = read(INO).replace(CANARY_RE, "").replace(/#ifndef POD_CANARY\n#define POD_CANARY 0 [^\n]*\n#endif\n/, "");
-  assert.equal(s, read(`${BK}/esp_eink_2.7BW_OLED.ino`));
-  assert.equal(read(DRV).replace(CANARY_RE, ""), read(`${BK}/epd2in7_V2.cpp`));
+  assert.equal(trimEnds(s), readBk(`esp_eink_2.7BW_OLED.ino`));
+  assert.equal(trimEnds(read(DRV).replace(CANARY_RE, "")), readBk(`epd2in7_V2.cpp`));
 });
 
 test("tout le code du canari est sous « #if POD_RENDER_V1 && POD_CANARY » ; chaînes du sketch en flash (F / PSTR)", () => {
@@ -66,7 +68,7 @@ test("R4/WiFiS3 non copié dans le firmware ESP8266 2,7″", () => {
 });
 
 test("canari : aucun vote — doValidate et doObsConfirm retournent avant tout réseau ; aucune route nouvelle", () => {
-  const src = read(INO), before = read(`${BK}/esp_eink_2.7BW_OLED.ino`);
+  const src = read(INO), before = readBk(`esp_eink_2.7BW_OLED.ino`);
   const routes = (s: string) => [...stripLine(s).matchAll(/"(\/api\/[a-z-]+)/g)].map((m) => m[1]).sort();
   assert.deepEqual(routes(src), routes(before), "le canari n'ajoute aucune route");
   for (const header of ["bool doValidate() {", "bool doObsConfirm() {"]) {
@@ -83,14 +85,19 @@ test("canari : l'ACK décide du succès — pré-vol, ACK, PUIS état acquitté 
   const src = read(INO);
   const body = between(src, "  // LOT8B2C-27 : en canari le RÉSULTAT de l'ACK décide du succès.", "  return true;\n#endif");
   const i = body.indexOf("canaryTlsPreflight(PCP_ACK"), j = body.indexOf("ackFrame(frameId, SCREEN_E27)"), k = body.indexOf("lastFrameIdE27        = frameId;"), d = body.indexOf("canaryStep(PCP_DONE");
-  assert.ok(i > 0 && i < j && j < k && k < d, "ordre : pré-vol, ACK, état acquitté, TERMINE");
+  const bz = body.indexOf("g_pcBusyTimeouts > 0 || g_pcBusyMaxMs > POD_CANARY_BUSY_ALERT_MS");
+  assert.ok(bz > 0 && bz < i && i < j && j < k && k < d, "ordre : refus BUSY, pré-vol, ACK, état acquitté, TERMINE");
+  assert.match(body.slice(bz, i), /return false;/, "BUSY anormal : retour false avant tout pré-vol / ACK");
+  assert.match(src, /g_pcBusyCalls = g_pcBusyTotalMs = g_pcBusyMaxMs = g_pcBusyTimeouts = 0;/, "compteurs BUSY remis à zéro avant le rendu de cette frame");
+  assert.match(src, /canaryClen != \(int\)E27_BUF_SIZE \|\| canarySurplus > 0/, "Content-Length exact exigé (−1 refusé)");
+  assert.doesNotMatch(src, /canaryClen >= 0/);
   assert.equal((src.match(/canaryStep\(PCP_DONE/g) ?? []).length, 1);
   assert.match(body, /if \(!ackFrame\(frameId, SCREEN_E27\)\) \{[\s\S]*?return false;/);
   assert.doesNotMatch(body.slice(0, k), /lastFrameIdE27\s*=/, "rien n'est marqué acquitté avant l'ACK");
 });
 
 test("OLED : le code OLED/bus de production n'est pas touché (ensureOLEDReady, activateSPI, tickerStep, onboarding identiques au firmware d'avant)", () => {
-  const now = read(INO).replace(CANARY_RE, ""), before = read(`${BK}/esp_eink_2.7BW_OLED.ino`);
+  const now = trimEnds(read(INO).replace(CANARY_RE, "")), before = readBk(`esp_eink_2.7BW_OLED.ino`);
   for (const [a, b] of [["void activateSPI() {", "// ─── FONT 5×7"], ["// ─── OLED ──────", "void displayKeyMaterialOnce() {"]] as const)
     assert.equal(between(now, a, b).replace(/#ifndef POD_CANARY[\s\S]*?#endif\n/, ""), between(before, a, b));
 });
@@ -105,7 +112,7 @@ test("seuils du pré-vol BearSSL : iobuf 16 384 + 512 + pile de poussée 6 200",
 test("pilote : BUSY de production inchangé (illimité) ; en canari plafond de 20 s mesuré", () => {
   const s = read(DRV);
   assert.match(s, /#define POD_CANARY_BUSY_CEIL_MS 20000UL/);
-  assert.equal(s.replace(CANARY_RE, ""), read(`${BK}/epd2in7_V2.cpp`));
+  assert.equal(trimEnds(s.replace(CANARY_RE, "")), readBk(`epd2in7_V2.cpp`));
 });
 
 // ── 2. exécution hôte ────────────────────────────────────────────────────────────────────────────
@@ -163,12 +170,16 @@ const MUTANTS: [string, number, number, boolean, string, string, string][] = [
   // [nom, v1, canary, vote, fragment, motif, remplacement]
   ["ACK avant le rendu", 1, 1, false, "fetch", "  if (podRenderAndShowE27(e27Buf) != 2) {", "  ackFrame(frameId, SCREEN_E27);\n  if (podRenderAndShowE27(e27Buf) != 2) {"],
   ["ACK malgré échec du rendu", 1, 1, false, "fetch", "if (podRenderAndShowE27(e27Buf) != 2) {", "if (podRenderAndShowE27(e27Buf) == 99) {"],
-  ["garde Content-Length / surplus supprimée (canari)", 1, 1, false, "fetch", "if ((canaryClen >= 0 && canaryClen != (int)E27_BUF_SIZE) || canarySurplus > 0) {", "if (false) {"],
+  ["garde Content-Length / surplus supprimée (canari)", 1, 1, false, "fetch", "if (canaryClen != (int)E27_BUF_SIZE || canarySurplus > 0) {", "if (false) {"],
   ["refus du corps inattendu sans effet (bRead conservé)", 1, 1, false, "fetch", "        bRead = 0;   // retombe", "        // retombe"],
   ["pré-vol TLS avant téléchargement supprimé", 1, 1, false, "fetch", "if (!canaryTlsPreflight(PCP_PLANE_DEST,", "if (false && !canaryTlsPreflight(PCP_PLANE_DEST,"],
+  ["BUSY plafonné/long : le refus avant l'ACK est supprimé", 1, 1, false, "fetch", "if (g_pcBusyTimeouts > 0 || g_pcBusyMaxMs > POD_CANARY_BUSY_ALERT_MS) {", "if (false) {"],
+  ["BUSY : seul le plafonnement refuse (un BUSY long non plafonné passe)", 1, 1, false, "fetch", "if (g_pcBusyTimeouts > 0 || g_pcBusyMaxMs > POD_CANARY_BUSY_ALERT_MS) {", "if (g_pcBusyTimeouts > 0) {"],
+  ["BUSY : compteurs non remis à zéro avant le rendu", 1, 1, false, "fetch", "  g_pcBusyCalls = g_pcBusyTotalMs = g_pcBusyMaxMs = g_pcBusyTimeouts = 0;", "  ;"],
+  ["Content-Length −1 accepté (canari)", 1, 1, false, "fetch", "if (canaryClen != (int)E27_BUF_SIZE || canarySurplus > 0) {", "if ((canaryClen >= 0 && canaryClen != (int)E27_BUF_SIZE) || canarySurplus > 0) {"],
   ["ACK : pré-vol supprimé", 1, 1, false, "fetch", "if (!canaryTlsPreflight(PCP_ACK,", "if (false && !canaryTlsPreflight(PCP_ACK,"],
   ["ACK : résultat ignoré", 1, 1, false, "fetch", "if (!ackFrame(frameId, SCREEN_E27)) {", "if (ackFrame(frameId, SCREEN_E27) && false) {"],
-  ["ACK : frame marquée acquittée avant l'ACK", 1, 1, false, "fetch", "  hasDisplayedFrame = true;\n  if (!canaryTlsPreflight(PCP_ACK,", "  hasDisplayedFrame = true; lastFrameIdE27 = frameId;\n  if (!canaryTlsPreflight(PCP_ACK,"],
+  ["ACK : frame marquée acquittée avant l'ACK", 1, 1, false, "fetch", "  hasDisplayedFrame = true;\n  if (g_pcBusyTimeouts > 0 ||", "  hasDisplayedFrame = true; lastFrameIdE27 = frameId;\n  if (g_pcBusyTimeouts > 0 ||"],
   ["plan non libéré après le rendu", 1, 0, false, "fetch", "  free(e27Buf);                                        // libéré AVANT l'ACK", "  // plan conservé"],
   ["vote autorisé en canari", 1, 1, true, "vote", "AUCUN vote en build canari", "VOTE AUTORISE"],
   ["vote : ni oubli ni retour anticipé en canari (le vote s'exécute)", 1, 1, true, "vote", "    pendingCandidateId = \"\";\n  }\n  return false;\n#endif", "  }\n#endif"],

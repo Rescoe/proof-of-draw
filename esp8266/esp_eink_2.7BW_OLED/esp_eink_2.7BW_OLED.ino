@@ -1612,8 +1612,8 @@ bool doFetchFrameE27(const String& frameId, const String& frameSource) {
       const int canaryClen = http.getSize();            // en-têtes HTTP/1.0 : Content-Length (−1 = inconnu)
       const int canarySurplus = stream->available();    // octets déjà disponibles APRÈS les 5 808 attendus (http.end() les VIDE sans rien dire)
       Serial.printf_P(PSTR("[CANARY] corps : Content-Length=%d lus=%u attendus=%u surplus=%d\n"), canaryClen, (unsigned)bRead, (unsigned)E27_BUF_SIZE, canarySurplus);
-      if ((canaryClen >= 0 && canaryClen != (int)E27_BUF_SIZE) || canarySurplus > 0) {
-        Serial.println(F("[CANARY] REFUS : corps de taille inattendue (tronque, trop long ou surplus) — aucun rendu, aucun ACK"));
+      if (canaryClen != (int)E27_BUF_SIZE || canarySurplus > 0) {   // Content-Length EXACT exigé : absent / inconnu (−1) REFUSÉ
+        Serial.println(F("[CANARY] REFUS : corps de taille inattendue (Content-Length absent ou different de 5808, ou surplus) — aucun rendu, aucun ACK"));
         bRead = 0;   // retombe dans la branche « lecture incomplète » : destination libérée, aucun ACK
       }
       canaryStep(PCP_BODY, F("corps lu (TLS encore ouvert)"));
@@ -1650,6 +1650,7 @@ bool doFetchFrameE27(const String& frameId, const String& frameSource) {
 
 #if POD_RENDER_V1 && POD_CANARY
   canaryStep(PCP_PLANE_READY, F("plan de 5808 o pret en RAM (TLS ferme)"));
+  g_pcBusyCalls = g_pcBusyTotalMs = g_pcBusyMaxMs = g_pcBusyTimeouts = 0;   // compteurs BUSY propres à CETTE frame (aucun faux refus dû à un affichage antérieur)
 #endif
 #if POD_RENDER_V1
   // Rendu v1 en flux : cartel + fit calculés par le noyau (toujours un cartel : repli « PROOF-OF-DRAW »), remis au pilote par morceaux
@@ -1685,6 +1686,12 @@ bool doFetchFrameE27(const String& frameId, const String& frameSource) {
   // LOT8B2C-27 : en canari le RÉSULTAT de l'ACK décide du succès. L'écran a PU être affiché (hasDisplayedFrame), mais la frame n'est « terminée » (lastFrameIdE27, retour true) QU'APRÈS un ACK HTTP 200 ;
   // sinon retour false : le serveur reproposera la frame au prochain pull (≥ 60 s, jamais de polling accéléré). Pré-vol BearSSL aussi pour l'ACK (le plan est déjà libéré : mémoire restituée après le TLS).
   hasDisplayedFrame = true;
+  if (g_pcBusyTimeouts > 0 || g_pcBusyMaxMs > POD_CANARY_BUSY_ALERT_MS) {   // toute ALERTE BUSY échoue FERMÉ : ni pré-vol, ni ACK, ni état acquitté
+    canaryBusyReport(F("refus ACK"));
+    Serial.println(F("[CANARY] REFUS ACK : BUSY anormalement long ou plafonne — AUCUN ACK, frame NON acquittee (lastFrameIdE27 inchange), l'ecran a PU etre affiche ; retentee au prochain pull"));
+    canaryOledProbe();
+    return false;
+  }
   if (!canaryTlsPreflight(PCP_ACK, F("rendu OK, pre-vol TLS avant l'ACK"), F("AUCUN ACK envoye : l'ecran a PU etre affiche mais la frame N'EST PAS acquittee (retentee au prochain pull)"))) {
     canaryOledProbe();
     return false;
