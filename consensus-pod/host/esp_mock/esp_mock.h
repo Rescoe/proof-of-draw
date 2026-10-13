@@ -36,10 +36,12 @@ static uint32_t g_yieldCostUs = 20;        // coût simulé d'un yield() (tâche
 static inline unsigned long millis() { return (unsigned long)(g_us / 1000); }
 static inline unsigned long micros() { return (unsigned long)g_us; }
 static inline void advanceUs(uint64_t us) { g_us += us; if (g_pump) g_pump(); }
+static uint64_t g_lastFeedUs = 1000000, g_maxNoFeedUs = 0;   // LOT8B2C-27 : plus long intervalle sans delay() / yield() / wdtFeed() (chien de garde logiciel ≈ 3,2 s) ; mesuré par les harnais qui le lisent
+static inline void noteNoFeedGap() { const uint64_t gap = g_us - g_lastFeedUs; if (gap > g_maxNoFeedUs) g_maxNoFeedUs = gap; }
 struct HostHalt { int code; };
 static bool g_haltOnDelayLoop = false;
-static inline void delay(unsigned long ms) { advanceUs((uint64_t)ms * 1000); if (g_haltOnDelayLoop) throw HostHalt{ 2 }; }
-static inline void yield() { g_yields++; advanceUs(g_yieldCostUs); }
+static inline void delay(unsigned long ms) { advanceUs((uint64_t)ms * 1000); g_lastFeedUs = g_us; if (g_haltOnDelayLoop) throw HostHalt{ 2 }; }
+static inline void yield() { g_yields++; advanceUs(g_yieldCostUs); g_lastFeedUs = g_us; }
 static inline void delayMicroseconds(unsigned int us) { advanceUs(us); }
 
 // ── String (sous-ensemble d'Arduino String, assez pour le code extrait et pour ArduinoJson) ─────────────────────
@@ -78,6 +80,7 @@ class String {
   void replace(const char* a, const char* b) { size_t p = 0, la = std::strlen(a); while ((p = s_.find(a, p)) != std::string::npos) { s_.replace(p, la, b); p += std::strlen(b); } }
   int indexOf(const char* c) const { size_t p = s_.find(c); return p == std::string::npos ? -1 : (int)p; }
   void reserve(unsigned) {}
+  void trim() { const char* ws = " \t\r\n"; size_t b = s_.find_first_not_of(ws); if (b == std::string::npos) { s_.clear(); return; } size_t e = s_.find_last_not_of(ws); s_ = s_.substr(b, e - b + 1); }
  private:
   std::string s_;
 };
@@ -123,7 +126,7 @@ struct EspMock {
   uint32_t getMaxFreeBlockSize() { uint32_t f = getFreeHeap(); return f > g_fragBytes ? f - g_fragBytes : 0; }
   uint8_t getHeapFragmentation() { uint32_t f = getFreeHeap(); return f ? (uint8_t)(100 - 100 * getMaxFreeBlockSize() / f) : 100; }
   uint32_t getFreeContStack() { return g_contStack; }
-  void wdtFeed() { g_wdt++; }
+  void wdtFeed() { g_wdt++; g_lastFeedUs = g_us; }
   void restart() { throw HostRestart{}; }
   const rst_info* getResetInfoPtr() { return &g_rst; }
   String getResetReason() { return String("mock"); }
