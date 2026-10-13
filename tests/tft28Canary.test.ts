@@ -71,7 +71,8 @@ test("OFF : les lignes d'origine supprimées ou modifiées appartiennent toutes 
     const b = fnBody(prodNoHooks, `${sig} ${impl}(`);
     // LOT8B2E ANIM-TOUCH-GESTURES-1 : les DEUX seules modifications voulues de ces corps (masquer le cartel ne reprend plus l'animation ; message de la pause par appui long)
     if (impl === "toggleCartelImpl") { const x = '    if (animOn && animPaused) { animPaused = false; logf("[ANIM] reprise"); }\n'; assert.equal(a.split(x).length, 2, "ligne de reprise automatique d'origine introuvable"); a = a.replace(x, ""); }
-    if (impl === "onAnimTouchImpl") { const x = 'logf("[ANIM] pause (toucher) : re-toucher ou attendre 60 s pour reprendre");'; assert.equal(a.split(x).length, 2, "message de pause d'origine introuvable"); a = a.replace(x, 'logf("[ANIM] pause (appui long) : appui court = cartel, appui long ou 60 s = reprise");'); }
+    if (impl === "onAnimTouchImpl") { const x = 'logf("[ANIM] pause (toucher) : re-toucher ou attendre 60 s pour reprendre");'; assert.equal(a.split(x).length, 2, "message de pause d'origine introuvable"); a = a.replace(x, 'logf("[ANIM] pause (appui long) : appui court = cartel, appui long ou 60 s = reprise");'); const y = "  animPaused = true; animPausedSince = millis();\n"; assert.equal(a.split(y).length, 2, "ligne de pause d'origine introuvable"); a = a.replace(y, "  animPaused = true; animPausedSince = millis(); animBgValid = false;   // l'affiche est restaurée : le champ d'animation n'est plus à l'écran\n"); }
+    if (impl === "restoreLastFrameImpl") { const x = "  sdFrameValid = true; cartelVisible = false;\n"; assert.equal(a.split(x).length, 2, "ligne d'origine de restoreLastFrame introuvable"); a = a.replace(x, "  sdFrameValid = true; cartelVisible = false; animBgValid = false;\n"); }
     assert.ok(a.length > 20 && b.length > 20, `${orig} / ${impl} introuvable`);
     assert.equal(b, a, `${impl} : corps différent de ${orig} d'origine`);
   }
@@ -80,7 +81,11 @@ test("OFF : les lignes d'origine supprimées ou modifiées appartiennent toutes 
 test("OFF : la partie réseau d'origine est inchangée (httpCall, Conn, netHttpRaw, doFetchFrame au défaut collant près) ; la cadence de pull est inchangée", () => {
   for (const head of ["static bool __attribute__((noinline)) netHttpRaw(", "static int httpCall("]) assert.equal(fnBody(prodNoHooks, head), fnBody(before, head), head);
   const df = fnBody(prodNoHooks, "static bool doFetchFrame("), dfOld = fnBody(before, "static bool doFetchFrame(");
-  assert.equal(df.replace(" && c.client.fault() == 0;   // défaut collant du client TLS borné : image refusée (ni affichage annoncé, ni ACK)", ";"), dfOld);
+  // LOT8B2E ANIM-TOUCH-GESTURES-1 (FIX1) : la SEULE autre différence voulue = « animBgValid = false » quand une nouvelle image remplace le champ d'animation
+  const animBgDiff = [["      cartelVisible = false; animBgValid = false;            // une nouvelle image remplace tout, cartel compris (le champ d'animation n'est plus à l'écran)\n", "      cartelVisible = false;                                 // une nouvelle image remplace tout, cartel compris\n"]];
+  let dfNorm = df.replace(" && c.client.fault() == 0;   // défaut collant du client TLS borné : image refusée (ni affichage annoncé, ni ACK)", ";");
+  for (const [a, b] of animBgDiff) { assert.equal(dfNorm.split(a).length, 2, "ligne animBgValid de doFetchFrame introuvable"); dfNorm = dfNorm.replace(a, b); }
+  assert.equal(dfNorm, dfOld);
   for (const k of ["#define PULL_INTERVAL     60000UL", "#define VALIDATE_INTERVAL 30000UL", "#define HTTP_TIMEOUT_MS   20000UL", "#define BENCH_POLL_MS      3000UL"]) assert.ok(src.includes(k), k);
   // même formule d'intervalle qu'avant (le défaut « frame déjà affichée => 60 s » du TFT est CONNU et NON corrigé ici : aucun changement de polling dans ce lot)
   assert.ok(prodNoHooks.includes("nextPullIntervalMs = (r.frameSource == \"none\" && r.candId.length() == 0) ? (unsigned long)r.retryAfter * 1000UL : PULL_INTERVAL;"));

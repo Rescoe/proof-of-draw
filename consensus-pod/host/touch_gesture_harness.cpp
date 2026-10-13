@@ -42,7 +42,7 @@ static PodGesture model(const std::vector<Sample>& s, uint32_t* at = nullptr) {
 int main() {
   CHECK(POD_TOUCH_LONG_MS == 650u && POD_TOUCH_MIN_MS == 20u && POD_TOUCH_RELEASE_STABLE_MS == 30u && POD_TOUCH_POLL_MS == 20u, "constantes de la spécification : 650 / 20 / 30 / 20 ms");
   const uint32_t periods[] = { 5, 10, 20, 25, 33, 50 };
-  const uint32_t bases[] = { 0, 1000, 0xFFFFFFFFu - 300u, 0xFFFFFFFFu - 1u };      // dont le dépassement de millis() en plein contact
+  const uint32_t bases[] = { 0, 1000, 0xFFFFFFFFu - 300u, 0xFFFFFFFFu - 1u, 0xFFFFFFF0u };      // dont le dépassement de millis() en plein contact
   // P1 : contact simple, toutes durées 0..2500 ms, plusieurs phases : UNE action au plus, égale au modèle ; un appui long agit pendant le contact, jamais au relâchement
   for (uint32_t base : bases) for (uint32_t period : periods) for (uint32_t start : { 0u, 3u, 17u }) for (uint32_t dur = 0; dur <= 2500; dur += 1) {
     const auto s = contact(base, period, start, dur, 200);
@@ -75,7 +75,27 @@ int main() {
   CHECK(podTouchAction(PG_SHORT, true, true) == PTA_TOGGLE_PAUSED && podTouchAction(PG_LONG, true, true) == PTA_RESUME, "pause : court = cartel sans reprendre, long = reprise");
   CHECK(podTouchAction(PG_SHORT, false, true) == PTA_TOGGLE_STATIC, "pause sans animation (état incohérent) : traité comme image fixe");
   // P8 : taille de l'état et absence de dépendances
-  CHECK(sizeof(PodTouchClassifier) <= 16, "état <= 16 octets");
+  CHECK(sizeof(PodTouchClassifier) <= 16 && sizeof(PodTouchLatch) <= 8, "états <= 16 et <= 8 octets");
+  // P9 (FIX1) : frontière EXACTE du relâchement stable de 30 ms — classificateur : 29 ms ne suffisent pas, 30 ms oui
+  for (uint32_t base : bases) {
+    { std::vector<Sample> a = { { base + 0, true }, { base + 100, true }, { base + 129, false } }; CHECK(run(a).actions == 0, "classificateur : relâché depuis 29 ms : rien encore"); }
+    { std::vector<Sample> a = { { base + 0, true }, { base + 100, true }, { base + 130, false } }; Out o = run(a); CHECK(o.actions == 1 && o.first == PG_SHORT, "classificateur : relâché depuis 30 ms : COURT"); }
+    { std::vector<Sample> a = { { base + 0, true }, { base + 100, true }, { base + 129, false }, { base + 131, true }, { base + 300, true }, { base + 400, false }, { base + 440, false } }; Out o = run(a); CHECK(o.actions == 1 && o.first == PG_SHORT, "classificateur : relâchement de 29 ms puis reprise : MÊME contact, un seul court"); }
+  }
+  // P10 (FIX1) : verrou de relâchement après un appui long — frontière 29 / 30 ms, rebonds, dépassement de millis()
+  auto lat = [&](uint32_t base, const std::vector<Sample>& s) { PodTouchLatch l; podTouchLatchArm(l); std::vector<int> blocked; for (const Sample& x : s) blocked.push_back(podTouchLatchBlocked(l, x.pressed, (uint32_t)(base + x.t)) ? 1 : 0); return blocked; };
+  for (uint32_t base : bases) {
+    { auto b = lat(base, { { 0, true }, { 40, true }, { 80, false }, { 109, false } }); CHECK(b == std::vector<int>({ 1, 1, 1, 1 }), "verrou : 29 ms de relâchement INSUFFISANTS (toujours retenu)"); }
+    { auto b = lat(base, { { 0, true }, { 40, true }, { 80, false }, { 110, false } }); CHECK(b == std::vector<int>({ 1, 1, 1, 0 }), "verrou : 30 ms de relâchement ACCEPTÉS (levé sur l'échantillon qui complète)"); }
+    { auto b = lat(base, { { 0, true }, { 40, false }, { 60, true }, { 100, false }, { 129, false } }); CHECK(b == std::vector<int>({ 1, 1, 1, 1, 1 }), "verrou : un rebond (relâché puis reposé) remet la série à zéro"); }
+    { auto b = lat(base, { { 0, true }, { 40, false }, { 60, true }, { 100, false }, { 130, false } }); CHECK(b == std::vector<int>({ 1, 1, 1, 1, 0 }), "verrou : 30 ms comptés depuis le dernier premier relâchement"); }
+    { auto b = lat(base, { { 0, false }, { 5, false } }); CHECK(b == std::vector<int>({ 1, 1 }), "verrou : relâché depuis le début mais < 30 ms : retenu"); }
+    { PodTouchLatch l; CHECK(!podTouchLatchBlocked(l = PodTouchLatch{ 0, false, false }, true, base) , "verrou désarmé : ne retient rien"); }
+    // un doigt maintenu des heures ne lève JAMAIS le verrou
+    { PodTouchLatch l; podTouchLatchArm(l); bool any = false; for (uint32_t t = 0; t < 100000; t += 20) if (!podTouchLatchBlocked(l, true, (uint32_t)(base + t))) any = true; CHECK(!any, "verrou : doigt maintenu = jamais levé"); }
+    // lever ET ne plus jamais retenir ensuite
+    { PodTouchLatch l; podTouchLatchArm(l); (void)podTouchLatchBlocked(l, false, base); (void)podTouchLatchBlocked(l, false, base + 40); CHECK(!podTouchLatchBlocked(l, true, base + 50), "verrou levé : un nouveau contact n'est plus retenu"); }
+  }
 
   if (!g_fail.empty()) { for (auto& f : g_fail) std::printf("ECART : %s\n", f.c_str()); return 1; }
   std::printf("PASS %d\n", g_checks);

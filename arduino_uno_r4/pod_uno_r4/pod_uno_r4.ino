@@ -176,7 +176,8 @@ bool   animOn = false;                            // un clip est sur la carte et
 bool   animPaused = false;                        // en pause (toucher) : l'affiche et le cartel sont à l'écran
 unsigned long animPausedSince = 0;
 uint16_t animBg = 0;                              // fond de la zone d'animation (posé à chaque démarrage de lecture) : sert à masquer le cartel PENDANT la lecture
-uint8_t  touchHold = 0;                           // > 0 : un appui long vient d'agir, on attend un relâchement STABLE avant tout nouveau geste (jamais d'appui court fantôme)
+PodTouchLatch touchLatch = { 0, false, false };   // verrou temporel de relâchement après un appui long (aucun appui court fantôme)
+bool     animBgValid = false;                     // le champ d'animation (fond animBg) est ce qui est à l'écran (faux : l'affiche restaurée / une image fixe)
 String animHash = "";                             // bloc dont le clip est sur la carte
 String pendingAnimHash = "";                      // pointeur reçu par le dernier pull
 size_t pendingAnimBytes = 0;
@@ -725,7 +726,7 @@ static void restoreLastFrameImpl() {
   const unsigned long t0 = millis();
   if (!restoreRows(0, SCR_H)) { logf("[SD] image enregistrée illisible"); return; }
   lastFrameId = id; currentBlockIndex = blk.toInt(); pendingWorkTitle = title; pendingArtistName = artist;
-  sdFrameValid = true; cartelVisible = false;
+  sdFrameValid = true; cartelVisible = false; animBgValid = false;
   logf("[SD] dernière œuvre réaffichée en %lu ms (frameId=%s)", millis() - t0, id.c_str());
   animLoadMarker();                                          // c'était une animation ? elle reprend depuis la carte
 }
@@ -797,7 +798,7 @@ static bool doFetchFrame(const String& frameId, const String& frameSource) {
     logf("[HTTP GET] /api/pull-frame -> %d (contenu %ld)", code, c.rd.contentLength());
     if (code == 404) noFrame = true;
     else if (code == 200 && (c.rd.contentLength() < 0 || c.rd.contentLength() == FRAME_BYTES)) {
-      cartelVisible = false;                                 // une nouvelle image remplace tout, cartel compris
+      cartelVisible = false; animBgValid = false;            // une nouvelle image remplace tout, cartel compris (le champ d'animation n'est plus à l'écran)
       shown = streamFrame(c.rd) && c.rd.complete() && c.client.fault() == 0;   // défaut collant du client TLS borné : image refusée (ni affichage annoncé, ni ACK)
     } else if (code == 200) {
       logf("[FRAME] taille annoncée %ld != %d (le serveur sert-il bien tft28 ?)", c.rd.contentLength(), FRAME_BYTES);
@@ -866,6 +867,12 @@ static void __attribute__((noinline)) animCartelToggleLive() {
   tft.fillRect(0, 0, SCR_W, BAND_TOP_H, animBg);
   tft.fillRect(0, BAND_BOT_Y, SCR_W, BAND_BOT_H, animBg);
   cartelVisible = false;
+}
+/** Appui COURT vu HORS du lecteur alors que l'animation est « en cours » (entre deux lectures, ou pendant/après une fenêtre réseau) : on bascule le cartel et l'animation RESTE en cours (animPaused inchangé), jamais de pause.
+ *  Champ d'animation à l'écran (animBgValid) : bascule TFT seule sur la pile SD dédiée (aucune carte, aucun réseau, aucune allocation). Sinon l'écran montre l'affiche (restaurée) : bascule habituelle (masquage depuis la carte, un seul onSd). */
+static void toggleCartelWhilePlaying() {
+  if (animBgValid) { auto w = [&]() { animCartelToggleLive(); }; onSd("animCartelLive", w); }
+  else toggleCartel();
 }
 static bool waitTapOrTimeout(unsigned long ms) {   // pour l'écran des clés : touché = continuer
   const unsigned long t0 = millis();
@@ -1822,7 +1829,7 @@ static AnimEnd __attribute__((noinline)) runResidentAnim(unsigned long budgetMs)
     perr = podbench::validateStream(src, n, si, work, work + BENCH_FRAME);
     if (perr != podbench::OK) { st = 3; src.f.close(); return; }
     tft.setRotation(0);
-    animBg = si.bg;
+    animBg = si.bg; animBgValid = true;
     if (cartelVisible) tft.fillRect(0, BAND_TOP_H, SCR_W, BAND_BOT_Y - BAND_TOP_H, si.bg);   // le cartel RESTE affiché : seule la zone centrale (y 40..271) est effacée
     else tft.fillScreen(si.bg);
     FastTft ft;
@@ -1835,7 +1842,7 @@ static AnimEnd __attribute__((noinline)) runResidentAnim(unsigned long budgetMs)
         if (touchOk && millis() - lastTouchChk >= POD_TOUCH_POLL_MS) {
           lastTouchChk = millis();
           const PodGesture g = podTouchStep(tc, ts.touched(), millis());
-          if (g == PG_LONG) { drainTouch(); touchHold = 3; why = AE_TOUCH; return false; }               // appui long : on sort (fichier fermé), loop() met en pause
+          if (g == PG_LONG) { drainTouch(); podTouchLatchArm(touchLatch); why = AE_TOUCH; return false; }               // appui long : on sort (fichier fermé), loop() met en pause
           if (g == PG_SHORT) { drainTouch(); if (cartelVisible) liveHidden++; else liveShown++; animCartelToggleLive(); }   // appui court : cartel sur place, la lecture continue
         }
         if ((long)(millis() - tEnd) >= 0) return false;
@@ -1859,7 +1866,7 @@ static AnimEnd __attribute__((noinline)) runResidentAnim(unsigned long budgetMs)
 
 /** Un toucher pendant l'animation : pause sur l'affiche, avec le cartel. */
 static void onAnimTouchImpl() {
-  animPaused = true; animPausedSince = millis();
+  animPaused = true; animPausedSince = millis(); animBgValid = false;   // l'affiche est restaurée : le champ d'animation n'est plus à l'écran
   if (!(sdFrameValid && restoreRows(0, SCR_H))) tft.fillScreen(C_BLACK);
   drawCartel(); cartelVisible = true;
   logf("[ANIM] pause (appui long) : appui court = cartel, appui long ou 60 s = reprise");
@@ -1873,19 +1880,19 @@ static void onAnimTouch() {
  *  lui-même l'appui court (cartel sur place) et l'appui long (sortie puis pause). Un contact vu HORS lecture alors que l'animation est « en cours » (écran de lecture figé, état inconnu) donne la pause avec cartel. */
 static void serviceTouch() {
   if (!touchOk) return;
-  if (touchHold > 0) { if (ts.touched()) touchHold = 3; else touchHold--; return; }   // après un appui long : attendre un relâchement STABLE (≈ 3 tours de loop)
+  if (touchLatch.on) { (void)podTouchLatchBlocked(touchLatch, ts.touched(), millis()); return; }   // après un appui long : attendre un relâchement STABLE (POD_TOUCH_RELEASE_STABLE_MS)
   if (!ts.touched()) return;
   PodTouchClassifier tc; podTouchReset(tc);
   PodGesture g = podTouchStep(tc, true, millis());
   const unsigned long t0 = millis();
   while (g == PG_NONE && tc.down && millis() - t0 < 2000UL) { delay(POD_TOUCH_POLL_MS); g = podTouchStep(tc, ts.touched(), millis()); }
   drainTouch();
-  if (g == PG_LONG) touchHold = 3;
+  if (g == PG_LONG) podTouchLatchArm(touchLatch);
   switch (podTouchAction(g, animOn, animPaused)) {
     case PTA_TOGGLE_STATIC:
     case PTA_TOGGLE_PAUSED:  toggleCartel(); break;
-    case PTA_PAUSE:
-    case PTA_TOGGLE_PLAYING: onAnimTouch(); break;
+    case PTA_TOGGLE_PLAYING: toggleCartelWhilePlaying(); break;   // appui court : cartel seulement, l'animation continue
+    case PTA_PAUSE:          onAnimTouch(); break;
     case PTA_RESUME:
       if (cartelVisible) toggleCartel();                       // les bandes sont restaurées depuis la carte avant la reprise
       animPaused = false; cartelVisible = false;

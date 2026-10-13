@@ -276,9 +276,9 @@ class Adafruit_STMPE610 {
   bool touched() {
     g_touchPollCount++;
     if (g_touchPressedPolls > 0) { g_touchPressedPolls--; return true; }
-    const unsigned long now = millis();
-    for (const auto& g : g_touchGaps) if (now >= g.a && now < g.b) return false;
-    for (const auto& s : g_touchSpans) if (now >= s.a && now < s.b) return true;
+    const uint32_t now = (uint32_t)millis();    // arithmétique modulaire : un intervalle peut enjamber le dépassement de millis() (32 bits)
+    for (const auto& g : g_touchGaps) if ((uint32_t)(now - (uint32_t)g.a) < (uint32_t)((uint32_t)g.b - (uint32_t)g.a)) return false;
+    for (const auto& s : g_touchSpans) if ((uint32_t)(now - (uint32_t)s.a) < (uint32_t)((uint32_t)s.b - (uint32_t)s.a)) return true;
     return false;
   }
   bool bufferEmpty() { return true; }

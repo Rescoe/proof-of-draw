@@ -45,6 +45,23 @@ inline PodGesture podTouchStep(PodTouchClassifier& c, bool pressed, uint32_t now
   return dur >= POD_TOUCH_MIN_MS ? PG_SHORT : PG_NONE;
 }
 
+/** VERROU DE RELÂCHEMENT après un appui long : tant que le doigt reste posé, ou que son relâchement n'est pas STABLE, aucun nouveau geste n'est pris en compte (jamais d'appui court fantôme).
+ *  « Stable » = deux échantillons « relâché » consécutifs séparés d'au moins POD_TOUCH_RELEASE_STABLE_MS, sans échantillon « posé » entre eux (29 ms : insuffisant, 30 ms : accepté). 8 o ; arithmétique uint32_t (dépassement de millis() sans effet). */
+struct PodTouchLatch {
+  uint32_t relAt;       // instant du PREMIER échantillon « relâché » de la série en cours
+  bool on;              // verrou armé
+  bool rel;             // une série de relâchements est en cours
+};
+inline void podTouchLatchArm(PodTouchLatch& l) { l.on = true; l.rel = false; l.relAt = 0; }
+/** Un échantillon : retourne true tant que le verrou RETIENT les gestes (y compris cet échantillon) ; le verrou se lève sur l'échantillon qui complète un relâchement stable. */
+inline bool podTouchLatchBlocked(PodTouchLatch& l, bool pressed, uint32_t now) {
+  if (!l.on) return false;
+  if (pressed) { l.rel = false; return true; }                                       // doigt posé (ou rebond) : la série de relâchements recommence
+  if (!l.rel) { l.rel = true; l.relAt = now; return true; }                          // premier échantillon relâché
+  if ((uint32_t)(now - l.relAt) >= POD_TOUCH_RELEASE_STABLE_MS) { l.on = false; return false; }
+  return true;
+}
+
 /** Ce que fait chaque geste, selon l'état de l'animation. */
 enum PodTouchAction : uint8_t {
   PTA_NONE = 0,

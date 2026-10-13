@@ -48,6 +48,12 @@ test("classificateur : MUTANTS — chaque régression est REFUSÉE par le harnai
     ["table : appui court pendant la lecture met en pause", "return g == PG_LONG ? PTA_PAUSE : PTA_TOGGLE_PLAYING;", "return PTA_PAUSE;"],
     ["table : image fixe, l'appui long ne bascule pas", "if (!animOn) return PTA_TOGGLE_STATIC;", "if (!animOn) return g == PG_LONG ? PTA_NONE : PTA_TOGGLE_STATIC;"],
     ["nouveau contact sans remise à zéro du verrou", "if (!c.down) { c.down = true; c.downAt = now; c.lastSeen = now; c.fired = false; return PG_NONE; }", "if (!c.down) { c.down = true; c.downAt = now; c.lastSeen = now; return PG_NONE; }"],
+    ["FIX1 verrou : le relâchement stable n'est plus exigé (levé au 2e échantillon relâché)", "  if ((uint32_t)(now - l.relAt) >= POD_TOUCH_RELEASE_STABLE_MS) { l.on = false; return false; }", "  if ((uint32_t)(now - l.relAt) >= 1u) { l.on = false; return false; }"],
+    ["FIX1 verrou : 29 ms suffisent", "  if ((uint32_t)(now - l.relAt) >= POD_TOUCH_RELEASE_STABLE_MS) { l.on = false; return false; }", "  if ((uint32_t)(now - l.relAt) >= POD_TOUCH_RELEASE_STABLE_MS - 1u) { l.on = false; return false; }"],
+    ["FIX1 verrou : un rebond ne remet pas la série à zéro", "  if (pressed) { l.rel = false; return true; }", "  if (pressed) { return true; }"],
+    ["FIX1 verrou : le premier échantillon relâché lève le verrou", "  if (!l.rel) { l.rel = true; l.relAt = now; return true; }", "  if (!l.rel) { l.rel = true; l.relAt = now; l.on = false; return false; }"],
+    ["FIX1 verrou : comparaison non protégée contre le dépassement de millis()", "(uint32_t)(now - l.relAt) >= POD_TOUCH_RELEASE_STABLE_MS", "now >= l.relAt + POD_TOUCH_RELEASE_STABLE_MS"],
+    ["FIX1 classificateur : 29 ms de relâchement suffisent", "if ((uint32_t)(now - c.lastSeen) < POD_TOUCH_RELEASE_STABLE_MS) return PG_NONE;", "if ((uint32_t)(now - c.lastSeen) < POD_TOUCH_RELEASE_STABLE_MS - 1u) return PG_NONE;"],
   ];
   for (const [label, from, to] of muts) {
     assert.equal(HDR.split(from).length, 2, `motif obsolète pour le mutant « ${label} »`);
@@ -82,7 +88,7 @@ function violations(ino: string, hdr: string): string[] {
   // 2. lecture : classificateur local, cadence de 20 ms, long = sortie, court = bascule sur place, journal APRÈS la lecture
   if (!/PodTouchClassifier tc; podTouchReset\(tc\);/.test(rr)) v.push("runResidentAnim : classificateur local absent");
   if (!/millis\(\) - lastTouchChk >= POD_TOUCH_POLL_MS/.test(rr)) v.push("runResidentAnim : cadence d'interrogation du tactile");
-  if (!/if \(g == PG_LONG\) \{ drainTouch\(\); touchHold = 3; why = AE_TOUCH; return false; \}/.test(rr)) v.push("runResidentAnim : l'appui long doit sortir de la lecture (AE_TOUCH) et poser le verrou de relâchement");
+  if (!/if \(g == PG_LONG\) \{ drainTouch\(\); podTouchLatchArm\(touchLatch\); why = AE_TOUCH; return false; \}/.test(rr)) v.push("runResidentAnim : l'appui long doit sortir de la lecture (AE_TOUCH) et poser le verrou de relâchement");
   if (!/if \(g == PG_SHORT\) \{ drainTouch\(\); [^}]*animCartelToggleLive\(\); \}/.test(rr)) v.push("runResidentAnim : l'appui court doit basculer le cartel SUR PLACE");
   const iHook = rr.indexOf("podTouchStep(tc"), iRet = rr.indexOf("return false; }", iHook);
   if (iHook < 0 || iRet < 0) v.push("runResidentAnim : crochet tactile introuvable");
@@ -96,7 +102,19 @@ function violations(ino: string, hdr: string): string[] {
   if (/restoreRows|onAnimTouch/.test(rr)) v.push("runResidentAnim : aucune restauration SD / pause dans la lecture (le clip doit être fermé avant)");
   // 5. serviceTouch : pas d'allocation, pas d'accès direct SD / TFT (tout passe par toggleCartel / onAnimTouch, donc onSd)
   if (/\bString\b|\bmalloc\(|\bnew\b|\btft\.|\bSD\./.test(st)) v.push("serviceTouch : allocation ou accès direct SD / TFT");
-  if (!/touchHold > 0/.test(st) || !/if \(g == PG_LONG\) touchHold = 3;/.test(st)) v.push("serviceTouch : verrou de relâchement après un appui long");
+  if (!/if \(touchLatch\.on\) \{ \(void\)podTouchLatchBlocked\(touchLatch, ts\.touched\(\), millis\(\)\); return; \}/.test(st) || !/if \(g == PG_LONG\) podTouchLatchArm\(touchLatch\);/.test(st)) v.push("serviceTouch : verrou TEMPOREL de relâchement après un appui long");
+  if (/touchHold/.test(c)) v.push("l'ancien verrou « 3 tours de loop » (touchHold) ne doit plus exister");
+  // FIX1 : un appui court hors du lecteur ne met JAMAIS l'animation en pause
+  if (!/case PTA_TOGGLE_PLAYING:\s*toggleCartelWhilePlaying\(\); break;/.test(st)) v.push("serviceTouch : appui court hors du lecteur = toggleCartelWhilePlaying (cartel seulement)");
+  if (/case PTA_TOGGLE_PLAYING:[^\n]*onAnimTouch/.test(st) || !/case PTA_PAUSE:\s*onAnimTouch\(\); break;/.test(st)) v.push("serviceTouch : onAnimTouch (pause) seulement pour l'appui LONG");
+  const twp = fnBody(c, "static void toggleCartelWhilePlaying(");
+  if (!twp) v.push("toggleCartelWhilePlaying introuvable");
+  else {
+    if (/animPaused|onAnimTouch|\bString\b|\bmalloc\(|\bnew\b|\blogf\(|\bWiFi|httpCall|\bConn\b/.test(twp)) v.push("toggleCartelWhilePlaying : ni pause, ni allocation, ni journal, ni réseau");
+    if (!/if \(animBgValid\) \{ auto w = \[&\]\(\) \{ animCartelToggleLive\(\); \}; onSd\("animCartelLive", w\); \}\s*else toggleCartel\(\);/.test(twp)) v.push("toggleCartelWhilePlaying : champ à l'écran = bascule TFT seule sous onSd ; sinon un seul toggleCartel (onSd)");
+  }
+  if (!/animBg = si\.bg; animBgValid = true;/.test(rr)) v.push("runResidentAnim : animBgValid posé au démarrage");
+  if (!/animBgValid = false/.test(ap) || !/cartelVisible = false; animBgValid = false;/.test(c)) v.push("animBgValid doit retomber quand l'affiche remplace le champ d'animation (pause, nouvelle image, restauration)");
   if (!/podTouchAction\(g, animOn, animPaused\)/.test(st)) v.push("serviceTouch : actions décidées par podTouchAction");
   if (!/case PTA_TOGGLE_PAUSED:\s*toggleCartel\(\); break;/.test(st)) v.push("serviceTouch : appui court en pause = bascule du cartel SANS reprendre");
   if (!/case PTA_RESUME:[\s\S]*if \(cartelVisible\) toggleCartel\(\);[\s\S]*animPaused = false;/.test(st)) v.push("serviceTouch : appui long en pause = bandes restaurées depuis la carte PUIS reprise");
@@ -116,15 +134,19 @@ test("geste tactile : MUTANTS du sketch — chaque régression est REFUSÉE", ()
   const p = prodOf(src);
   const muts: Array<[string, string, string]> = [
     ["le démarrage de la lecture efface toujours tout l'écran (cartel perdu)", "if (cartelVisible) tft.fillRect(0, BAND_TOP_H, SCR_W, BAND_BOT_Y - BAND_TOP_H, si.bg);   // le cartel RESTE affiché : seule la zone centrale (y 40..271) est effacée\n    else tft.fillScreen(si.bg);", "tft.fillScreen(si.bg);"],
-    ["le démarrage de la lecture oublie le cartel", "    animBg = si.bg;\n", "    animBg = si.bg; cartelVisible = false;\n"],
-    ["l'appui long ne sort pas de la lecture", "if (g == PG_LONG) { drainTouch(); touchHold = 3; why = AE_TOUCH; return false; }", "if (g == PG_LONG) { drainTouch(); touchHold = 3; }"],
-    ["l'appui long ne pose pas le verrou de relâchement (appui court fantôme)", "if (g == PG_LONG) { drainTouch(); touchHold = 3; why = AE_TOUCH; return false; }", "if (g == PG_LONG) { drainTouch(); why = AE_TOUCH; return false; }"],
+    ["le démarrage de la lecture oublie le cartel", "    animBg = si.bg; animBgValid = true;\n", "    animBg = si.bg; animBgValid = true; cartelVisible = false;\n"],
+    ["l'appui long ne sort pas de la lecture", "if (g == PG_LONG) { drainTouch(); podTouchLatchArm(touchLatch); why = AE_TOUCH; return false; }", "if (g == PG_LONG) { drainTouch(); podTouchLatchArm(touchLatch); }"],
+    ["l'appui long ne pose pas le verrou de relâchement (appui court fantôme)", "if (g == PG_LONG) { drainTouch(); podTouchLatchArm(touchLatch); why = AE_TOUCH; return false; }", "if (g == PG_LONG) { drainTouch(); why = AE_TOUCH; return false; }"],
     ["l'appui court restaure l'affiche depuis la carte PENDANT la lecture", "if (cartelVisible) liveHidden++; else liveShown++; animCartelToggleLive(); }", "if (cartelVisible) liveHidden++; else liveShown++; restoreRows(0, BAND_TOP_H); animCartelToggleLive(); }"],
-    ["la bascule en direct journalise sur la pile SD", "  cartelVisible = false;\n}\nstatic bool waitTapOrTimeout", "  cartelVisible = false; logf(\"[TOUCH] cartel masqué\");\n}\nstatic bool waitTapOrTimeout"],
+    ["la bascule en direct journalise sur la pile SD", "tft.fillRect(0, BAND_BOT_Y, SCR_W, BAND_BOT_H, animBg);\n  cartelVisible = false;\n}", "tft.fillRect(0, BAND_BOT_Y, SCR_W, BAND_BOT_H, animBg);\n  cartelVisible = false; logf(\"[TOUCH] cartel masqué\");\n}"],
     ["masquer le cartel pendant la lecture écrase la zone animée", "tft.fillRect(0, 0, SCR_W, BAND_TOP_H, animBg);", "tft.fillRect(0, 0, SCR_W, BAND_TOP_H + 100, animBg);"],
     ["masquer le cartel reprend l'animation", "    cartelVisible = false; logf(\"[TOUCH] cartel masqué en %lu ms\", millis() - t0);\n", "    cartelVisible = false; logf(\"[TOUCH] cartel masqué en %lu ms\", millis() - t0); if (animOn) animPaused = false;\n"],
-    ["serviceTouch dessine directement", "  drainTouch();\n  if (g == PG_LONG) touchHold = 3;", "  drainTouch(); tft.fillScreen(C_BLACK);\n  if (g == PG_LONG) touchHold = 3;"],
-    ["serviceTouch sans verrou de relâchement", "  if (g == PG_LONG) touchHold = 3;\n", ""],
+    ["serviceTouch dessine directement", "  drainTouch();\n  if (g == PG_LONG) podTouchLatchArm(touchLatch);", "  drainTouch(); tft.fillScreen(C_BLACK);\n  if (g == PG_LONG) podTouchLatchArm(touchLatch);"],
+    ["serviceTouch sans verrou de relâchement", "  if (g == PG_LONG) podTouchLatchArm(touchLatch);\n", ""],
+    ["FIX1 : un appui court hors du lecteur met l'animation en pause", "case PTA_TOGGLE_PLAYING: toggleCartelWhilePlaying(); break;", "case PTA_TOGGLE_PLAYING: onAnimTouch(); break;"],
+    ["FIX1 : toggleCartelWhilePlaying met l'animation en pause", "  else toggleCartel();\n}", "  else toggleCartel();\n  animPaused = true;\n}"],
+    ["FIX1 : toggleCartelWhilePlaying journalise sur la pile SD", "  if (animBgValid) { auto w = [&]() { animCartelToggleLive(); }; onSd(", "  logf(\"x\"); if (animBgValid) { auto w = [&]() { animCartelToggleLive(); }; onSd("],
+    ["FIX1 : verrou « 3 tours de loop » rétabli", "  if (touchLatch.on) { (void)podTouchLatchBlocked(touchLatch, ts.touched(), millis()); return; }", "  if (touchHold > 0) { touchHold--; return; }"],
     ["interrogation du tactile à 200 ms", "millis() - lastTouchChk >= POD_TOUCH_POLL_MS", "millis() - lastTouchChk > 200UL"],
     ["la reprise par appui long ne restaure pas les bandes", "      if (cartelVisible) toggleCartel();                       // les bandes sont restaurées depuis la carte avant la reprise\n", ""],
     ["la reprise automatique de 60 s garde le cartel", "animPaused = false; cartelVisible = false; logf(\"[ANIM] reprise (60 s)\");", "animPaused = false; logf(\"[ANIM] reprise (60 s)\");"],
