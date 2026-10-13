@@ -118,11 +118,26 @@ struct SerialMock {
 static SerialMock Serial;
 
 // ── EEPROM ─────────────────────────────────────────────────────────────────────────────────────────────────
+// V4 : HarnessReset (ci-dessus) = coupure de courant / reset simulé ; l'EEPROM, elle, SURVIT
 struct EEPROMMock {
   std::vector<uint8_t> m = std::vector<uint8_t>(8192, 0xFF);
-  uint8_t read(int a) { return m[a]; }
+  int len = 8192;                         // EEPROM.length()
+  int puts = 0;                           // nombre d'appels à put() (écritures de pages)
+  int cutPut = 0, cutBytes = 0, cutMode = 0;   // coupure pendant le put n°cutPut : seuls cutBytes octets sont programmés ; cutMode 0 = reste inchangé, 1 = reste mis à 0x00 ; puis HarnessReset
+  bool noAlloc = false;                   // veeprom::read_block => UNABLE_TO_ALLOC : put() ne fait RIEN, sans erreur
+  uint8_t read(int a) { return a >= 0 && a < (int)m.size() ? m[a] : 0xFF; }
   void update(int a, uint8_t v) { m[a] = v; }
   void write(int a, uint8_t v) { m[a] = v; }
+  uint16_t length() const { return (uint16_t)len; }
+  template <class T> const T& put(int a, const T& t) {
+    puts++;
+    if (noAlloc) return t;
+    const uint8_t* q = (const uint8_t*)&t;
+    if (cutPut == puts) { for (size_t i = 0; i < sizeof(T); i++) m[a + i] = (int)i < cutBytes ? q[i] : (cutMode ? 0x00 : m[a + i]); throw HarnessReset(); }
+    for (size_t i = 0; i < sizeof(T); i++) m[a + i] = q[i];
+    return t;
+  }
+  void reset() { m.assign(8192, 0xFF); len = 8192; puts = 0; cutPut = cutBytes = cutMode = 0; noAlloc = false; }
 };
 static EEPROMMock EEPROM;
 

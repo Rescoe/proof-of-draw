@@ -8,6 +8,25 @@ export const BACKUP = "firmware-backups/2026-10-12_avant-canari-tft28/pod_uno_r4
 export const readText = (p: string) => fs.readFileSync(path.join(ROOT, p), "utf8").replace(/\r\n/g, "\n");
 
 /**
+ * LOT8B2E V4 : vue « POD_VOTE_CANARY = 0 » (la PRODUCTION et le canari d'affichage) : évalue `#if POD_VOTE_CANARY` (faux), `#if !POD_VOTE_CANARY` (vrai), `#else`, `#endif`, retire le bloc du drapeau ;
+ * les autres conditionnelles sont conservées telles quelles. Les tests de la voie de vote de production lisent CETTE vue : le code du canari de vote (épinglage, verrou) n'en fait pas partie.
+ */
+export function voteCanaryOffView(src: string): string {
+  const out: string[] = []; const st: Array<{ ours: boolean; active: boolean }> = [];
+  const keep = () => st.every((s) => !s.ours || s.active);
+  for (const line of src.replace(/\/\/ POD_VOTE_CANARY \(LOT8B2E V4\)[\s\S]*?#ifndef POD_VOTE_CANARY\n#define POD_VOTE_CANARY 0\n#endif\n/, "").split("\n")) {
+    const t = line.trim();
+    if (/^#if\s+POD_VOTE_CANARY\s*$/.test(t)) { st.push({ ours: true, active: false }); continue; }
+    if (/^#if\s+!POD_VOTE_CANARY\s*$/.test(t)) { st.push({ ours: true, active: true }); continue; }
+    if (/^#(if|ifdef|ifndef)\b/.test(t)) { st.push({ ours: false, active: true }); if (keep()) out.push(line); continue; }
+    if (/^#else\b/.test(t) && st.length && st[st.length - 1].ours) { st[st.length - 1].active = !st[st.length - 1].active; continue; }
+    if (/^#endif\b/.test(t)) { const top = st.pop(); if (top && !top.ours && keep()) out.push(line); continue; }
+    if (keep()) out.push(line);
+  }
+  return out.join("\n");
+}
+
+/**
  * « Source effective » pour une valeur de POD_CANARY : évalue les conditionnelles `#if POD_CANARY`, `#if !POD_CANARY`, `#else`, `#endif` (non imbriquées entre elles) et laisse toutes les autres lignes
  * (y compris les autres `#if`) telles quelles. POD_CANARY = 0 : le texte de PRODUCTION ; POD_CANARY = 1 : le texte du CANARI.
  */

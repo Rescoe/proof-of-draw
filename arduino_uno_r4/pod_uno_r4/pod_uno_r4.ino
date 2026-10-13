@@ -36,6 +36,27 @@
 #ifndef POD_VOTE_V1
 #define POD_VOTE_V1 0
 #endif
+// POD_VOTE_CANARY (LOT8B2E V4) : 1 = BUILD LOCAL de CANARI DE VOTE, distinct du canari d'affichage et de la production : au plus UNE tentative de vote, même après reset ou coupure (verrou EEPROM écrit AVANT le POST),
+//   candidat strictement ÉPINGLÉ (identifiant, écran tft28, taille, hash), backend ISOLÉ obligatoire (jamais la production), aucun affichage / ACK / toucher / animation, arrêt définitif après l'unique issue.
+//   Désactivé (0) dans le dépôt : NE JAMAIS COMMITER 1 (testé). Voir docs/LOT_8B2E_R4_TFT28_VOTE_V4_CANARY_2026_10_13.md.
+#ifndef POD_VOTE_CANARY
+#define POD_VOTE_CANARY 0
+#endif
+#if POD_VOTE_CANARY
+  #if __has_include("pod_vote_pins.h")
+    #include "pod_vote_pins.h"   // LOCAL (ignoré par git) : POD_VOTE_BACKEND_HOST, POD_VOTE_PIN_ID, POD_VOTE_PIN_HASH — voir pod_vote_pins.h.example
+  #endif
+  #if POD_CANARY || POD_VOTE_V1
+    #error "POD_VOTE_CANARY exige POD_CANARY = 0 et POD_VOTE_V1 = 0 : voie de vote v2 seule, build distinct du canari d'affichage"
+  #endif
+  #if !defined(POD_VOTE_BACKEND_HOST) || !defined(POD_VOTE_PIN_ID) || !defined(POD_VOTE_PIN_HASH)
+    #error "POD_VOTE_CANARY exige POD_VOTE_BACKEND_HOST (hote du backend ISOLE), POD_VOTE_PIN_ID (candidateId) et POD_VOTE_PIN_HASH (SHA-256 hexadecimal, 64 caracteres), chacun entre guillemets"
+  #endif
+  #define POD_VOTE_PIN_SCREEN "tft28"
+  #define POD_VOTE_PIN_BYTES  153600
+  static_assert(sizeof(POD_VOTE_PIN_HASH) == 65, "POD_VOTE_PIN_HASH doit faire exactement 64 caracteres hexadecimaux");
+  static_assert(sizeof(POD_VOTE_PIN_ID) >= 9 && sizeof(POD_VOTE_PIN_ID) <= 65, "POD_VOTE_PIN_ID : 8 a 64 caracteres");
+#endif
 
 #include <Arduino.h>
 #include <malloc.h>
@@ -73,7 +94,11 @@
   const char* WIFI_PASSWORD = "";
 #endif
 
+#if POD_VOTE_CANARY
+#define SERVER_HOST       POD_VOTE_BACKEND_HOST   // V4 : backend ISOLE (la production est refusee par la porte de vote)
+#else
 #define SERVER_HOST       "proof-of-draw.vercel.app"
+#endif
 #define SCREEN_TYPE       "tft28"            // profil serveur 240×320 RGB565 (lib/screenProfiles.ts)
 #define FIRMWARE_VERSION  "r4tft28-2.5"
 #define TOUCH_ENABLED     1                  // toucher = afficher / cacher le cartel
@@ -162,6 +187,13 @@ bool    keysLoaded = false;
 static bool g_edSelfTestOk = false;   // LOT8B2E V2 (R-H1) : résultat de l'auto-test Ed25519 du boot (porte du vote) ; faux tant qu'il n'a pas réussi ; jamais refait à chaque vote
 // LOT8B2E V2 : l'énumération est déclarée ICI (avant toute fonction) : le générateur de prototypes de l'IDE Arduino place les prototypes avant sa définition sinon (erreur « VoteOutcome was not declared »).
 enum VoteOutcome : uint8_t { VOTE_NOT_SENT = 0, VOTE_SENT_UNKNOWN = 1, VOTE_ACCEPTED = 2, VOTE_REFUSED_BY_SERVER = 3, VOTE_SIGNATURE_REFUSED = 4, VOTE_HASH_REFUSED = 5 };
+#if POD_VOTE_CANARY
+// V4 : types du verrou, déclarés ICI pour la même raison (prototypes générés par l'IDE).
+struct VoteLockRec { uint32_t magic; uint8_t ver, state, outcome, seq; uint32_t pin; uint32_t crc; };
+static_assert(sizeof(VoteLockRec) == 16, "VoteLockRec : 16 octets");
+enum VlSlot : uint8_t { VL_BLANK = 0, VL_VALID = 1, VL_INVALID = 2 };
+enum VlStatus : uint8_t { VLS_FREE = 0, VLS_HELD = 1, VLS_UNAVAILABLE = 2 };
+#endif
 #endif
 
 String currentBlockHash = "";
@@ -1305,6 +1337,9 @@ static bool doPull() {
   }                                                          // resp libérée ici, avant toute image
   if (st == 0) return false;
   if (st == 2) return true;
+#if POD_VOTE_CANARY
+  return true;                                               // V4 : frame, animation et banc d'essai IGNORÉS (aucun affichage, aucun ACK) ; seul le candidat annoncé est retenu
+#endif
 
   if (newFrameSource == "none" || newFrameId.length() == 0) { logf("[PULL] aucune frame"); return true; }
   if (newFrameId == lastFrameId) { logf("[PULL] frame déjà affichée"); maybeFetchAnim(newFrameId); return true; }
@@ -1325,7 +1360,9 @@ static bool doPull() {
 // le signe (Ed25519) et vote. Elle relit un candidat de N'IMPORTE QUEL écran (le serveur ne l'oblige pas à voter pour son type) ; le tampon que demandent l'OLED (1 024 o)
 // et l'e-ink 2,9" (4 736 o) est statique (la pile de la R4 est petite). Un candidat tft28 (153 600 o) est lu en flux, sans tampon d'image.
 static uint8_t g_voteChunk[256];
+#if !POD_VOTE_CANARY
 static uint8_t g_voteScratch[4736];
+#endif
 
 // ─── LOT8B2E V2 (sécurité du vote, hôte seulement) ───────────────────────────────────────────────────────────────────────────────────────────────
 // Issue TYPÉE d'un vote (R-H4) : plus aucune interprétation d'un code ou d'une sous-chaîne ambiguë.
@@ -1359,9 +1396,129 @@ static VoteOutcome __attribute__((noinline)) voteClassify(int code, const String
 static char g_voteSpentId[65] = "";
 static bool voteSpent(const String& id) { return g_voteSpentId[0] != '\0' && id == g_voteSpentId; }
 static void voteMarkSpent(const String& id) { strncpy(g_voteSpentId, id.c_str(), sizeof(g_voteSpentId) - 1); g_voteSpentId[sizeof(g_voteSpentId) - 1] = '\0'; }
+#if POD_VOTE_CANARY
+// ─── LOT8B2E V4 — CANARI DE VOTE (au plus UNE tentative) ───────────────────────────────────────────────────────────────────────────────────
+static bool g_vcHalted = false, g_vcAttempted = false;
+static uint8_t g_vcPasses = 0;
+static const char* g_vcStopWhy = nullptr;       // arrêt définitif demandé par une phase (abstention définitive)
+// Épinglage : identifiant, écran, taille ET hash annoncés doivent être exactement ceux de la compilation ; toute divergence => abstention SANS POST.
+static bool votePinMatches(const char* id, const char* screen, size_t bytes, const char* hash) {
+  return strcmp(id, POD_VOTE_PIN_ID) == 0 && strcmp(screen, POD_VOTE_PIN_SCREEN) == 0 && bytes == (size_t)POD_VOTE_PIN_BYTES && strcmp(hash, POD_VOTE_PIN_HASH) == 0;
+}
+// VERROU PERSISTANT. Deux emplacements de 16 o dans DEUX blocs de 1 Ko distincts de la flash de données (le pilote réécrit le bloc entier : une coupure ne peut pas détruire les deux), loin des clés (bloc 0).
+//   enregistrement : magic « VLK1 », version, état (ATTEMPTED / COMPLETED), issue, séquence, empreinte de l'épinglage, CRC-32. Octet vierge = 0xFF.
+//   LIBRE  = les deux emplacements ENTIÈREMENT vierges. TOUT autre contenu (valide, corrompu, tronqué, version inconnue, un seul emplacement) = PRIS (échec fermé). Aucun effacement automatique : seul l'outil
+//   manuel consensus-pod/examples/VoteLockErase le remet à zéro.
+static const uint32_t VL_MAGIC = 0x564C4B31UL;
+static const uint8_t VL_VER = 1, VL_ATTEMPTED = 0x5A, VL_COMPLETED = 0xC3;
+static const int VL_OFF_A = 5120, VL_OFF_B = 6144, VL_NEED = 7168;
+static uint32_t vlCrc(const VoteLockRec& r) {
+  const uint8_t* q = (const uint8_t*)&r; uint32_t c = 0xFFFFFFFFUL;
+  for (size_t i = 0; i < 12; i++) { c ^= q[i]; for (int k = 0; k < 8; k++) c = (c >> 1) ^ (0xEDB88320UL & (0u - (c & 1u))); }
+  return ~c;
+}
+static uint32_t vlPin() {   // FNV-1a de l'épinglage complet (lie le verrou à ce candidat, pour le diagnostic)
+  uint32_t h = 2166136261UL; const char* parts[4] = { POD_VOTE_PIN_ID, POD_VOTE_PIN_SCREEN, "153600", POD_VOTE_PIN_HASH };
+  for (int i = 0; i < 4; i++) { for (const char* c = parts[i]; *c; c++) { h ^= (uint8_t)*c; h *= 16777619UL; } h ^= '|'; h *= 16777619UL; }
+  return h;
+}
+static VlSlot vlReadSlot(int off, VoteLockRec& r) {
+  uint8_t* q = (uint8_t*)&r; bool blank = true;
+  for (size_t i = 0; i < sizeof(r); i++) { q[i] = EEPROM.read(off + (int)i); if (q[i] != 0xFF) blank = false; }
+  if (blank) return VL_BLANK;
+  if (r.magic == VL_MAGIC && r.ver == VL_VER && (r.state == VL_ATTEMPTED || r.state == VL_COMPLETED) && r.crc == vlCrc(r)) return VL_VALID;
+  return VL_INVALID;
+}
+static VlStatus voteLockStatus() {
+  if (EEPROM.length() < VL_NEED) return VLS_UNAVAILABLE;
+  VoteLockRec a, b;
+  const VlSlot sa = vlReadSlot(VL_OFF_A, a), sb = vlReadSlot(VL_OFF_B, b);
+  return (sa == VL_BLANK && sb == VL_BLANK) ? VLS_FREE : VLS_HELD;
+}
+static void vlMake(VoteLockRec& r, uint8_t state, uint8_t outcome, uint8_t seq) {
+  memset(&r, 0, sizeof(r)); r.magic = VL_MAGIC; r.ver = VL_VER; r.state = state; r.outcome = outcome; r.seq = seq; r.pin = vlPin(); r.crc = vlCrc(r);
+}
+// Écrit puis RELIT : `put` du cœur ne dit rien si la page de 1 Ko ne peut pas être allouée (read_block => UNABLE_TO_ALLOC) ; seule la relecture prouve l'écriture.
+static bool vlWriteVerified(int off, const VoteLockRec& want) {
+  EEPROM.put(off, want);
+  VoteLockRec got;
+  return vlReadSlot(off, got) == VL_VALID && memcmp(&got, &want, sizeof(got)) == 0;
+}
+// ATTEMPTED dans LES DEUX emplacements, chacun relu et vérifié, AVANT toute ouverture de connexion du POST. Vrai seulement si tout est prouvé ; sinon AUCUN POST.
+static bool voteLockCommitAttempt() {
+  if (voteLockStatus() != VLS_FREE) return false;
+  VoteLockRec r; vlMake(r, VL_ATTEMPTED, 0xFF, 1);
+  if (!vlWriteVerified(VL_OFF_A, r)) return false;
+  return vlWriteVerified(VL_OFF_B, r);
+}
+// Issue finale (meilleur effort, emplacement A seulement : une coupure ici laisse B = ATTEMPTED valide, donc le verrou reste PRIS).
+static void voteLockRecordOutcome(uint8_t outcome) { VoteLockRec r; vlMake(r, VL_COMPLETED, outcome, 2); (void)vlWriteVerified(VL_OFF_A, r); }
+
+// Instrument de pile PRINCIPALE (peinture 0x5A + marqueur « VOTE ») et de tas ; verrou silencieux si la marge descend sous 128 o. Appelé APRÈS le retour des phases (jamais depuis un corps de rapport).
+extern char __StackLimit, __StackTop;
+static const uint8_t VC_PAINT = 0x5A;
+static const uint32_t VC_MAGIC = 0x564F5445UL;
+static volatile uint32_t g_vcPaintLen = 0;
+static void vcPaint() {
+  volatile uint8_t* lo = (volatile uint8_t*)&__StackLimit;
+  volatile uint8_t* hi = (volatile uint8_t*)__builtin_frame_address(0) - 192;
+  if (hi <= lo + 16) return;
+  for (volatile uint8_t* q = lo + 8; q < hi; q++) *q = VC_PAINT;
+  *(volatile uint32_t*)lo = VC_MAGIC;
+  *(volatile uint32_t*)(lo + 4) = (uint32_t)(hi - lo);
+  g_vcPaintLen = (uint32_t)(hi - lo);
+}
+static uint32_t vcMaxBlock() {   // sonde par dichotomie malloc/free (le cœur R4 n'expose pas la plus grande plage libre)
+  uint32_t lo = 0, hi = freeHeapBytes();
+  if (hi > 30000UL) hi = 30000UL;
+  while (lo < hi) { const uint32_t mid = (lo + hi + 1) / 2; void* q = malloc(mid); if (q) { free(q); lo = mid; } else hi = mid - 1; }
+  return lo;
+}
+static void __attribute__((noinline)) vcCheck(const char* tag) {
+  volatile uint8_t* lo = (volatile uint8_t*)&__StackLimit;
+  const uint32_t magic = *(volatile uint32_t*)lo, painted = *(volatile uint32_t*)(lo + 4);
+  const bool magicOk = (magic == VC_MAGIC), paintedOk = (painted >= 16 && painted <= 1024 && painted == g_vcPaintLen);
+  volatile uint8_t* end = lo + (paintedOk ? painted : 512);
+  volatile uint8_t* q = lo + 8; while (q < end && *q == VC_PAINT) q++;
+  const uint32_t used = (uint32_t)((uint8_t*)&__StackTop - (uint8_t*)q);
+  const long margin = 1024L - (long)used;
+  const uint32_t sp = (uint32_t)(uintptr_t)__builtin_frame_address(0);
+  const bool spOk = sp > (uint32_t)(uintptr_t)&__StackLimit && sp <= (uint32_t)(uintptr_t)&__StackTop;
+  const bool alert = !magicOk || !paintedOk || margin < 128 || !spOk;
+  const uint32_t fr = freeHeapBytes(), mb = vcMaxBlock();
+  logf("[VOTE-CANARY] %s : pile principale %lu/1024 (marge %ld)%s | tas libre %lu, plus grand bloc %lu", tag, (unsigned long)used, margin, alert ? " ALERTE" : (margin < 256 ? " SOUS L'OBJECTIF 256" : ""), (unsigned long)fr, (unsigned long)mb);
+  if (alert) { g_vcHalted = true; for (;;) { __asm volatile("nop"); } }   // marge < 128 o ou marqueur détruit : verrou SILENCIEUX (jamais de suite)
+}
+static void vcHalt(const char* why) { g_vcHalted = true; logf("[VOTE-CANARY] ARRET DEFINITIF : %s — plus aucun reseau, aucun affichage, aucun ACK", why); }
+static void vcAbstain(const char* why) {   // abstention sans POST ; trois passages sans tentative arrêtent le canari
+  logf("[VOTE-CANARY] ABSTENTION : %s", why);
+  if (++g_vcPasses >= 3) vcHalt("trois passages sans tentative");
+}
+static void vcLockBoot() {
+  const VlStatus st = voteLockStatus();
+  logf("[VOTE-CANARY] verrou EEPROM au demarrage : %s", st == VLS_FREE ? "LIBRE (les deux emplacements vierges)" : st == VLS_HELD ? "PRIS" : "INDISPONIBLE");
+  if (st != VLS_FREE) vcHalt(st == VLS_HELD ? "verrou deja pris (tentative unique deja consommee ou etat non vierge) — aucun reseau" : "EEPROM indisponible — aucun reseau");
+}
+static void vcAfterVote() {
+  vcCheck("fin du vote");
+  if (g_vcAttempted) vcHalt("tentative unique effectuee");
+  else if (g_vcStopWhy) vcHalt(g_vcStopWhy);
+  else if (++g_vcPasses >= 3) vcHalt("trois passages sans tentative");
+}
+static const char* voteCanaryGateWhy() {
+  if (strcmp(SERVER_HOST, "proof-of-draw.vercel.app") == 0) return "hote = PRODUCTION (backend isole obligatoire)";
+  const VlStatus st = voteLockStatus();
+  if (st == VLS_UNAVAILABLE) return "EEPROM indisponible pour le verrou";
+  if (st != VLS_FREE) return "verrou de vote deja pris ou non vierge (tentative unique)";
+  return nullptr;
+}
+#endif
 // Porte de sécurité (R-H1) : clés chargées ET auto-test Ed25519 du boot réussi ET appareil enregistré ET appairé. Sinon : aucune lecture de candidat, aucune signature, aucun POST (journal borné).
 static bool __attribute__((noinline)) voteGate() {
   const char* why = !keysLoaded ? "cles non chargees" : !g_edSelfTestOk ? "auto-test Ed25519 non reussi" : !registered ? "appareil non enregistre" : !paired ? "appareil non appaire" : nullptr;
+#if POD_VOTE_CANARY
+  if (!why) why = voteCanaryGateWhy();
+#endif
   if (why) logf("[VOTE] porte FERMEE : %s — aucune lecture, aucune signature, aucun POST", why);
   return why == nullptr;
 }
@@ -1378,7 +1535,11 @@ static void __attribute__((noinline)) netReadCandidate(const String& candidateId
     chk.http = code;
     logf("[HTTP GET] /api/candidate-frame -> %d", code);
     if (code == 200) {
+#if POD_VOTE_CANARY
+      podCheckStream(c.rd, kind, bytes, nullptr, 0, g_voteChunk, sizeof(g_voteChunk), &chk);   // V4 : candidat épinglé tft28 => aucun tampon de travail (PodFeeder::need_ = 0), vérifié par les tests
+#else
       podCheckStream(c.rd, kind, bytes, g_voteScratch, sizeof(g_voteScratch), g_voteChunk, sizeof(g_voteChunk), &chk);
+#endif
       rdComplete = c.rd.complete(); rdFault = (int)c.client.fault();
     }
     c.client.stop();
@@ -1430,8 +1591,14 @@ static unsigned voteDigits(unsigned long v) { unsigned d = 1; while (v >= 10) { 
 static bool __attribute__((noinline)) votePhaseRead(VoteWork& w, const String& candidateId, const String& screenName, size_t bytes, const String& announcedHash) {
   PodScreenKind kind;
   if (!podKindFromName(screenName.c_str(), &kind)) { logf("[VALIDATE2] écran inconnu : %s", screenName.c_str()); return false; }
+#if POD_VOTE_CANARY
+  if (kind != POD_TFT28 || bytes != (size_t)POD_VOTE_PIN_BYTES) { logf("[VOTE-CANARY] profil / taille != epinglage : aucune lecture"); return false; }   // g_voteScratch absent : seul tft28 est lisible
+#endif
   netReadCandidate(candidateId, kind, bytes, w.chk);
   if (!w.chk.ok) { logf("[VALIDATE2] lecture/calcul impossible (http=%d, %u/%u octets)", w.chk.http, (unsigned)w.chk.bytes, (unsigned)bytes); return false; }
+#if POD_VOTE_CANARY
+  if (strcmp(announcedHash.c_str(), w.chk.hash) != 0) g_vcStopWhy = "abstention definitive : hash recu != hash epingle";
+#endif
   // D-V2 (gelée) : hash reçu ≠ hash annoncé => ABSTENTION locale (aucune signature, aucun POST) : ce n'est PAS un refus signé.
   if (strcmp(announcedHash.c_str(), w.chk.hash) != 0) { logf("[VALIDATE2] hash reçu != hash annoncé : ABSTENTION (aucun vote signé, aucun POST)"); return false; }
   w.reason = podVerdict(w.chk, announcedHash, &w.accept);
@@ -1468,21 +1635,51 @@ static VoteOutcome __attribute__((noinline)) votePhasePost(VoteWork& w, const St
   if (ok && !w.accept) ok = voteAppend(body, ",\"reason\":\"") && voteAppend(body, w.reason) && voteAppend(body, "\"");
   ok = ok && voteAppend(body, ",\"signature\":\"") && voteAppend(body, w.sigHex) && voteAppend(body, "\"}");
   if (!ok) { logf("[VALIDATE2] corps du vote incomplet (mémoire) — vote NON envoyé"); return VOTE_NOT_SENT; }
+#if POD_VOTE_CANARY
+  vcCheck("avant persistance ATTEMPTED");
+  if (!voteLockCommitAttempt()) { logf("[VOTE-CANARY] persistance ATTEMPTED impossible ou non verifiee : AUCUN POST"); return VOTE_NOT_SENT; }
+  g_vcAttempted = true;                                   // à partir d'ici la tentative est CONSOMMÉE (verrou prouvé dans les deux emplacements)
+  vcCheck("apres persistance ATTEMPTED (verrou verifie)");
+#endif
   String vResp;
   const int vCode = httpCall("POST", "/api/validation-result", &body, vResp);
+#if POD_VOTE_CANARY
+  const VoteOutcome vo = voteFinish(vCode, vResp);
+  voteLockRecordOutcome((uint8_t)vo);
+  vcCheck("apres POST et classement");
+  return vo;
+#else
   return voteFinish(vCode, vResp);
+#endif
 }
 
 static VoteOutcome __attribute__((noinline)) doValidateV2(const String& candidateId, const String& screenName, size_t bytes, const String& announcedHash) {
   g_voteMined = false;
+#if POD_VOTE_CANARY
+  vcCheck("avant VoteWork");
+#endif
   VoteWork* const w = new (std::nothrow) VoteWork();
+#if POD_VOTE_CANARY
+  if (!w) vcAbstain("VoteWork non allouable (nouvelle tentative permise)");
+#endif
   if (!w) { logf("[VALIDATE2] mémoire insuffisante (VoteWork) — aucune lecture, aucune signature, aucun POST ; nouvelle tentative permise"); return VOTE_NOT_SENT; }
   reportMem("VALIDATE2-avant");
   VoteOutcome out = VOTE_NOT_SENT;
+#if POD_VOTE_CANARY
+  vcCheck("apres VoteWork (alloue)");
+  if (votePhaseRead(*w, candidateId, screenName, bytes, announcedHash)) {
+    vcCheck("apres lecture du candidat");
+    if (votePhaseSign(*w, candidateId)) { vcCheck("apres signature"); out = votePhasePost(*w, candidateId); }
+  }
+#else
   if (votePhaseRead(*w, candidateId, screenName, bytes, announcedHash) && votePhaseSign(*w, candidateId)) out = votePhasePost(*w, candidateId);
+#endif
   memset(w, 0, sizeof(*w));            // efface signature, hash et métriques avant la libération
   delete w;                            // libéré sur TOUS les chemins (lecture, abstention, signature, corps, POST)
   reportMem("VALIDATE2-après");
+#if POD_VOTE_CANARY
+  vcAfterVote();
+#endif
   return out;
 }
 
@@ -1573,8 +1770,14 @@ static bool doValidateV1(const String& candidateId, float score);
 static bool doValidate() {
   if (pendingCandidateId.length() == 0) return false;
   // LOT8B2E V2 : porte de sécurité AVANT toute requête (R-H1) ; candidat déjà dépensé => aucune nouvelle tentative automatique. pendingCandidateId n'est effacé qu'APRÈS le classement de l'issue.
+#if POD_VOTE_CANARY
+  if (g_vcHalted) { pendingCandidateId = ""; return false; }
+#endif
   if (!voteGate()) { pendingCandidateId = ""; return false; }
   if (voteSpent(pendingCandidateId)) { logf("[VALIDATE] candidat déjà traité : son vote a PU partir — aucune nouvelle tentative automatique"); pendingCandidateId = ""; return false; }
+#if POD_VOTE_CANARY
+  if (pendingCandidateId != POD_VOTE_PIN_ID) { vcAbstain("candidat annonce != candidat epingle (aucune requete)"); pendingCandidateId = ""; return false; }
+#endif
   String candidateId, v2screen, v2hash;
   size_t v2bytes = 0;
   float score = 0.5f;
@@ -1588,6 +1791,9 @@ static bool doValidate() {
   // Validation RÉELLE : si le serveur annonce { v2 }, on revérifie le contenu au lieu de recopier son score (anciens serveurs / animations : chemin v1).
   if (mode == 1) {
     if (voteSpent(candidateId)) { logf("[VALIDATE] candidat déjà traité : son vote a PU partir — aucune nouvelle tentative automatique"); pendingCandidateId = ""; return false; }
+#if POD_VOTE_CANARY
+    if (!votePinMatches(candidateId.c_str(), v2screen.c_str(), v2bytes, v2hash.c_str())) { vcAbstain("identifiant / ecran / taille / hash annonces != epinglage (aucune lecture, aucun POST)"); pendingCandidateId = ""; return false; }
+#endif
     const VoteOutcome out = doValidateV2(candidateId, v2screen, v2bytes, v2hash);
     if (out != VOTE_NOT_SENT) voteMarkSpent(candidateId);   // la requête a PU partir : jamais de seconde tentative automatique
     pendingCandidateId = "";                                // effacé APRÈS le classement de l'issue
@@ -1596,6 +1802,9 @@ static bool doValidate() {
 #if POD_VOTE_V1
   return doValidateV1(candidateId, score);
 #else
+#if POD_VOTE_CANARY
+  vcAbstain("candidat v1 annonce (voie v1 retiree)");
+#endif
   (void)score;
   logf("[VALIDATE] candidat v1 (écho du score du serveur) : AUCUN vote (POD_VOTE_V1 = 0)");
   pendingCandidateId = "";
@@ -2050,8 +2259,31 @@ static void selfTestEd25519() {
 }
 
 // ─── SETUP / LOOP ──────────────────────────────────────────────────────────
+#if POD_VOTE_CANARY
+// Boucle du canari de vote : enregistrement, pull (candidat seulement), validation. Rien d'autre : ni toucher, ni animation, ni banc d'essai, ni observation, ni ACK. Arrêt définitif après l'unique issue.
+static void voteCanaryLoop() {
+  if (g_vcHalted) { delay(1000); return; }
+  const unsigned long now = millis();
+  if (!registered) { if (!doRegister()) { delay(5000); return; } }
+  if (!paired) { delay(1000); return; }                     // l'appairage se fait AVANT le canari (pas de redémarrage automatique)
+  if (now - lastPullMs >= nextPullIntervalMs) {
+    const String prevCand = pendingCandidateId;
+    doPull();
+    lastPullMs = millis();
+    if (pendingCandidateId.length() > 0 && pendingCandidateId != prevCand) lastValidateMs = millis();
+  }
+  if (pendingCandidateId.length() > 0 && millis() - lastValidateMs >= VALIDATE_INTERVAL) {
+    doValidate();
+    lastValidateMs = millis();
+  }
+  delay(40);
+}
+#endif
 void setup() {
   paintStack();                                         // avant tout : permet de mesurer la profondeur de pile
+#if POD_VOTE_CANARY
+  vcPaint();                                            // V4 : pile principale peinte + marqueur
+#endif
 #if POD_CANARY
   podCanaryPaint();                                     // marqueur + zone peinte de la pile principale (instrument du canari)
   g_canBallast[0] = 0xA5;                               // référencé : sinon --gc-sections retire le lest
@@ -2066,6 +2298,12 @@ void setup() {
   POD_CANARY_HEAP("au boot");
 #endif
   reportMem("boot");
+#if POD_VOTE_CANARY
+  logf("[VOTE-CANARY] BUILD LOT8B2E-V4 | POD_VOTE_CANARY=1 | hote %s | candidat epingle %s | ecran %s | taille %lu | compile %s %s", SERVER_HOST, POD_VOTE_PIN_ID, POD_VOTE_PIN_SCREEN, (unsigned long)POD_VOTE_PIN_BYTES, __DATE__, __TIME__);
+  vcCheck("boot");
+  vcLockBoot();
+  if (g_vcHalted) return;                               // verrou pris / EEPROM indisponible : AUCUN réseau, jamais
+#endif
 
   pinMode(TFT_CS, OUTPUT);   digitalWrite(TFT_CS, HIGH);
   pinMode(STMPE_CS, OUTPUT); digitalWrite(STMPE_CS, HIGH);
@@ -2099,6 +2337,9 @@ void setup() {
   else { loadKeysFromEEPROM(); logf("[KEYS] clés chargées: %s", bytesToHex(publicKey, 32).c_str()); }
   selfTestEd25519();
   POD_CANARY_CHECK("auto-test Ed25519 : retour");
+#if POD_VOTE_CANARY
+  vcCheck("apres auto-test Ed25519");
+#endif
 
   currentBlockHash = loadBlockHashFromEEPROM();
   {
@@ -2111,7 +2352,11 @@ void setup() {
   POD_CANARY_CHECK("register : retour");
   POD_CANARY_HEAP("apres le register");
   if (paired) {
+#if !POD_VOTE_CANARY
     restoreLastFrame();                                 // la dernière œuvre revient tout de suite depuis la carte SD
+#else
+    (void)restoreLastFrame;                             // V4 : jamais appelée (aucun affichage) ; référencée pour ne pas ajouter d'avertissement « defined but not used »
+#endif
     POD_CANARY_CHECK("restauration SD : retour");
     logf("[BOOT] premier pull immédiat");
     doPull();
@@ -2123,6 +2368,10 @@ void setup() {
 }
 
 void loop() {
+#if POD_VOTE_CANARY
+  voteCanaryLoop();
+  return;
+#endif
   const unsigned long now = millis();
 
   if (!registered) { if (!doRegister()) { delay(5000); return; } }

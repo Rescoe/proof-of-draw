@@ -79,6 +79,7 @@ struct VK {
   NetScript cand;                              // réponse de /api/candidate-frame
   int voteCode = 200; std::string voteBody = "{\"ok\":true,\"blockMined\":false,\"voteCount\":1,\"needed\":1}";
   bool voted = false;                          // le « serveur » a enregistré un vote 200 : validate-candidate répond alreadyVoted
+  bool voteStall = false, voteClose = false, crashOnPost = false;   // V4 : POST sans réponse (timeout), connexion fermée sans réponse, reset PENDANT le POST (la requête est partie)
   bool forgetful = false;                      // scénario « double-forgetful » : le serveur simulé NE SE SOUVIENT PAS du vote (met à nu l'absence de verrou LOCAL dans le firmware)
 };
 static VK V;
@@ -92,6 +93,8 @@ static NetScript route(const NetRequest& r) {
   NetScript s;
   if (r.path.rfind("/api/validate-candidate", 0) == 0) { s.response = http(200, V.voted ? std::string("{\"candidate\":null,\"alreadyVoted\":true}") : V.validateJson); return s; }
   if (r.path.rfind("/api/candidate-frame", 0) == 0) return V.cand;
+  if (r.path.rfind("/api/validation-result", 0) == 0 && V.crashOnPost) throw HarnessReset();   // le serveur a REÇU la requête (déjà enregistrée par le client simulé) ; la carte redémarre
+  if (r.path.rfind("/api/validation-result", 0) == 0 && (V.voteStall || V.voteClose)) { g_pendingAtPost = pendingCandidateId.length() ? pendingCandidateId.c_str() : "-"; s.response = ""; if (V.voteStall) s.stallAfter = 0; else s.closeAfter = 0; return s; }
   if (r.path.rfind("/api/validation-result", 0) == 0) { g_pendingAtPost = pendingCandidateId.length() ? pendingCandidateId.c_str() : "-"; if (V.voteCode == 200 && !V.forgetful) V.voted = true; s.response = http(V.voteCode, V.voteBody); return s; }
   if (r.path.rfind("/api/register", 0) == 0) { s.response = http(200, "{\"deviceId\":\"dev_TEST0001\",\"pairCode\":\"ABCD2345\",\"paired\":true}"); return s; }
   if (r.path.rfind("/api/pull?", 0) == 0) { s.response = http(200, "{\"frameSource\":\"none\",\"retryAfter\":300}"); return s; }
@@ -105,7 +108,7 @@ static uint8_t g_seed[32]; static bool g_keysOk = true;
 static void world() {
   g_us = 1000000; g_requests.clear(); g_route = route; g_idleHook = nullptr; V = VK();
   g_sd = SdState(); g_tft = TftState(); Serial.log.clear(); g_strFailArmed = false; g_strAllocN = 0;
-  podNetTestHook = nullptr; podNetTestFailAlloc = 0; podNetTestNested = 0; g_failNext = 0; g_failWhenLog.clear(); g_guardWhenLog.clear(); g_guardFired = 0; g_marginWhenLog.clear(); g_marginFired = 0; g_logLenAtStop = 0; g_edSelfTestOk = true; g_voteSpentId[0] = '\0'; g_pendingAtPost = "?"; g_printShort = 0; g_printShortPath.clear(); g_frameRoutes = false; g_vwFail = 0; g_vwLive = 0; g_vwAllocs = 0; g_strFailArmed = false; g_strFailAt = 0; g_strAllocN = 0;
+  podNetTestHook = nullptr; podNetTestFailAlloc = 0; podNetTestNested = 0; g_failNext = 0; g_failWhenLog.clear(); g_guardWhenLog.clear(); g_guardFired = 0; g_marginWhenLog.clear(); g_marginFired = 0; g_logLenAtStop = 0; g_edSelfTestOk = true; g_voteSpentId[0] = '\0'; g_pendingAtPost = "?"; EEPROM.reset(); g_printShort = 0; g_printShortPath.clear(); g_frameRoutes = false; g_vwFail = 0; g_vwLive = 0; g_vwAllocs = 0; g_strFailArmed = false; g_strFailAt = 0; g_strAllocN = 0;
   podEdTestHook = nullptr; podEdTestFailAlloc = 0; podEdTestNested = 0;
   std::memset(g_fakeStack, 0, sizeof g_fakeStack);
   deviceId = "dev_TEST0001"; pairCode = "ABCD2345"; registered = true; paired = true; lastFrameId = "frame-avant-vote"; lastFrameWasConsensus = false; pendingCandidateId = "";
@@ -150,6 +153,82 @@ static void classifyTable() {
   for (const Row& r : rows) std::printf("CLASS %d|%s|%s\n", r.code, r.body, voteOutcomeName(voteClassify(r.code, String(r.body))));
 }
 
+#if POD_VOTE_CANARY
+// ─── V4 : canari de vote — redémarrages simulés (l'EEPROM SURVIT, tout le reste est remis à zéro) ───────────────────────────────────────────────
+static void vcReboot() {
+  g_vcHalted = false; g_vcAttempted = false; g_vcPasses = 0; g_vcStopWhy = nullptr; g_voteSpentId[0] = '\0'; pendingCandidateId = ""; g_voteMined = false;
+  registered = true; paired = true; keysLoaded = true; g_edSelfTestOk = true;
+  vcPaint(); vcCheck("boot"); vcLockBoot();
+}
+static std::string slotHex(int off) { std::string t; for (int i = 0; i < 16; i++) { char b[4]; std::snprintf(b, sizeof b, "%02x", EEPROM.m[off + i]); t += b; } return t; }
+/** Une passe de loop() : le pull (ré)annonce le candidat, doValidate s'exécute. Retourne -2 si le courant a été coupé, -1 si le canari est arrêté, 0 sinon. */
+static int vcPass(int& crashed, int& stopped) {
+  if (g_vcHalted) return -1;
+  pendingCandidateId = V.candId.c_str();
+  try { doValidate(); } catch (HarnessReset&) { crashed = 1; return -2; } catch (HarnessStop&) { stopped = 1; g_vcHalted = true; return -2; }
+  return 0;
+}
+static void vcFacts(const char* tag, int crashed, int stopped) {
+  std::printf("FACT %s_posts=%d\n", tag, countReq("/api/validation-result"));
+  std::printf("FACT %s_validates=%d\n", tag, countReq("/api/validate-candidate"));
+  std::printf("FACT %s_reads=%d\n", tag, countReq("/api/candidate-frame"));
+  std::printf("FACT %s_halted=%d\n", tag, g_vcHalted ? 1 : 0);
+  std::printf("FACT %s_crashed=%d\n", tag, crashed);
+  std::printf("FACT %s_stopped=%d\n", tag, stopped);
+  std::printf("FACT %s_attempted=%d\n", tag, g_vcAttempted ? 1 : 0);
+}
+static void vcPreload(const std::string& variant) {
+  VoteLockRec r; vlMake(r, VL_ATTEMPTED, 0xFF, 1);
+  auto put = [&](int off, const VoteLockRec& x) { std::memcpy(&EEPROM.m[off], &x, sizeof(x)); };
+  if (variant == "blank") return;
+  if (variant == "A-attempted") put(VL_OFF_A, r);
+  else if (variant == "B-attempted") put(VL_OFF_B, r);
+  else if (variant == "both-attempted") { put(VL_OFF_A, r); put(VL_OFF_B, r); }
+  else if (variant == "completed") { VoteLockRec c; vlMake(c, VL_COMPLETED, 2, 2); put(VL_OFF_A, c); put(VL_OFF_B, r); }
+  else if (variant == "garbage-A") { for (int i = 0; i < 16; i++) EEPROM.m[VL_OFF_A + i] = (uint8_t)(i * 17 + 3); }
+  else if (variant == "garbage-B") { for (int i = 0; i < 16; i++) EEPROM.m[VL_OFF_B + i] = (uint8_t)(i * 29 + 1); }
+  else if (variant == "truncated") { std::memcpy(&EEPROM.m[VL_OFF_A], &r, 10); }                               // 10 octets puis 0xFF
+  else if (variant == "one-byte") { EEPROM.m[VL_OFF_B] = 0x00; }                                                 // un seul octet non vierge
+  else if (variant == "version2") { VoteLockRec x = r; x.ver = 2; x.crc = vlCrc(x); put(VL_OFF_A, x); put(VL_OFF_B, x); }   // CRC valide, version inconnue
+  else if (variant == "bad-magic") { VoteLockRec x = r; x.magic ^= 1; x.crc = vlCrc(x); put(VL_OFF_A, x); }
+  else if (variant == "bad-state") { VoteLockRec x = r; x.state = 0x11; x.crc = vlCrc(x); put(VL_OFF_B, x); }
+  else if (variant == "bad-crc") { VoteLockRec x = r; x.crc ^= 0x100; put(VL_OFF_A, x); }
+  else { std::printf("FACT preload_inconnu=%s\n", variant.c_str()); }
+}
+static int vcDrive(const std::string& sc) {
+  int crashed = 0, stopped = 0;
+  if (sc.rfind("vc-cut:", 0) == 0) {   // vc-cut:<put>:<octets>:<mode>
+    int a = 0, b = 0, c = 0; std::sscanf(sc.c_str() + 7, "%d:%d:%d", &a, &b, &c); EEPROM.cutPut = a; EEPROM.cutBytes = b; EEPROM.cutMode = c;
+  }
+  if (sc.rfind("vc-pre:", 0) == 0) vcPreload(sc.substr(7));
+  if (sc == "vc-eeprom-short") EEPROM.len = 4096;
+  if (sc == "vc-eeprom-noalloc") EEPROM.noAlloc = true;
+  if (sc == "vc-stack-alert") { vcReboot(); *(volatile uint32_t*)g_fakeStack = 0; }   // marqueur détruit AVANT le vote
+  else if (sc.rfind("vc-gate:", 0) == 0) { vcReboot(); vcPreload(sc.substr(8)); }          // le verrou est pris APRÈS le démarrage : la porte de vote doit le voir
+  else vcReboot();
+  std::printf("FACT boot1_halted=%d\n", g_vcHalted ? 1 : 0);
+  for (int i = 0; i < 4 && vcPass(crashed, stopped) == 0; i++) {}
+  vcFacts("b1", crashed, stopped);
+  std::printf("FACT b1_slotA=%s\nFACT b1_slotB=%s\nFACT b1_puts=%d\n", slotHex(VL_OFF_A).c_str(), slotHex(VL_OFF_B).c_str(), EEPROM.puts);
+  const bool reboot = sc.rfind("vc-cut:", 0) == 0 || sc == "vc-reset-post" || sc == "vc-reset-before" || sc == "vc-ok-reboot";
+  if (reboot) {
+    EEPROM.cutPut = 0; V.crashOnPost = false; crashed = 0; stopped = 0;
+    vcReboot();
+    std::printf("FACT boot2_halted=%d\n", g_vcHalted ? 1 : 0);
+    for (int i = 0; i < 4 && vcPass(crashed, stopped) == 0; i++) {}
+    vcFacts("b2", crashed, stopped);
+    std::printf("FACT b2_slotA=%s\nFACT b2_slotB=%s\n", slotHex(VL_OFF_A).c_str(), slotHex(VL_OFF_B).c_str());
+  }
+  std::printf("FACT lock_status=%d\n", (int)voteLockStatus());
+  std::printf("FACT deviceId=%s\nFACT candidateId=%s\nFACT pubkey=%s\n", deviceId.c_str(), V.candId.c_str(), hex(publicKey, 32).c_str());
+  for (auto& r : g_requests) if (r.path.rfind("/api/validation-result", 0) == 0) std::printf("POST %s\n", r.body.c_str());
+  std::printf("FACT vw_live=%d\n", g_vwLive); std::printf("FACT vw_allocs=%d\n", g_vwAllocs);
+  size_t pos = 0; const std::string& L = Serial.log;
+  while (pos < L.size()) { size_t e = L.find('\n', pos); if (e == std::string::npos) e = L.size(); const std::string line = L.substr(pos, e - pos); if (line.find("[VOTE") != std::string::npos || line.find("[VALIDATE") != std::string::npos) std::printf("LOG %s\n", line.c_str()); pos = e + 1; }
+  return 0;
+}
+#endif
+
 int main(int argc, char** argv) {
   if (argc >= 2 && std::string(argv[1]) == "classify") { classifyTable(); return 0; }
   if (argc < 4) { std::printf("usage : tft28_vote_harness <scenario> <graine> <hashHex> [octetsAnnoncés]\n"); return 2; }
@@ -189,6 +268,27 @@ int main(int argc, char** argv) {
   if (sc == "not-paired") paired = false;
   if (sc == "guard-on-read") { g_guardWhenLog = "[HTTP GET] /api/candidate-frame"; g_guardStackBytes = (unsigned)(POD_NET_STACK_TOTAL - POD_NET_GUARD_BYTES); podNetTestHook = smashGuardHook; }
   { const size_t colon = sc.find(':'); if (sc.rfind("strfail", 0) == 0 && colon != std::string::npos) { g_strFailArmed = true; g_strFailAt = std::atoi(sc.c_str() + colon + 1); g_strAllocN = 0; } if (sc == "strcount") { g_strFailArmed = true; g_strFailAt = 0; g_strAllocN = 0; } }
+#if POD_VOTE_CANARY
+  if (sc.rfind("vc-", 0) == 0) {
+    if (sc == "vc-reject") { V.voteCode = 422; V.voteBody = "{\"error\":\"hash ou metriques differents\"}"; }
+    if (sc == "vc-refused") { V.voteCode = 409; V.voteBody = "{\"error\":\"refuse\"}"; }
+    if (sc == "vc-sig403") { V.voteCode = 403; V.voteBody = "{\"error\":\"Signature invalide\"}"; }
+    if (sc == "vc-timeout") V.voteStall = true;
+    if (sc == "vc-lost") V.voteClose = true;
+    if (sc == "vc-partial") { g_printShort = 9; g_printShortPath = "/api/validation-result"; }
+    if (sc == "vc-reset-post") V.crashOnPost = true;
+    if (sc == "vc-reset-before") { EEPROM.cutPut = 1; EEPROM.cutBytes = 0; EEPROM.cutMode = 0; }
+    if (sc == "vc-alloc") g_vwFail = 1;
+    if (sc == "vc-other-id") { V.candId = "99999999-aaaa-bbbb-cccc-dddddddddddd"; V.validateJson = v2Json("tft28", announced, hash); }
+    if (sc == "vc-announce-other-id") { const std::string real = V.candId; V.candId = "99999999-aaaa-bbbb-cccc-dddddddddddd"; V.validateJson = v2Json("tft28", announced, hash); V.candId = real; }
+    if (sc == "vc-screen") V.validateJson = v2Json("eink27bw", announced, hash);
+    if (sc == "vc-oled") V.validateJson = v2Json("oled096", 1024, hash);
+    if (sc == "vc-bytes") V.validateJson = v2Json("tft28", announced - 2, hash);
+    if (sc == "vc-v1") V.validateJson = v1Json();
+    if (sc == "vc-altered") { std::string b2 = body; b2[1000] = (char)(b2[1000] ^ 0x01); V.cand.response = http(200, b2); }   // contenu altéré, hash ANNONCÉ = épinglé
+    return vcDrive(sc);
+  }
+#endif
   pendingCandidateId = V.candId.c_str();
   const long fills0 = g_tft.fills, bus0 = g_tft.busBytes, writes0 = g_sd.writes, opens0 = g_sd.opens; const size_t files0 = g_sd.files.size(); const std::string frame0 = lastFrameId.c_str();
   std::printf("FACT announced_hash=%s\n", hash.c_str());
