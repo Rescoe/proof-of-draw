@@ -23,7 +23,7 @@ Reprises du 2,9″ (principe, non copie aveugle) : pré-vol BearSSL avant le TLS
 
 ## 2. Ce que le canari ajoute (`#if POD_RENDER_V1 && POD_CANARY`, et rien d'autre)
 
-1. **Aucun vote** : `doValidate()` retourne `false` en tête (candidat oublié localement, ligne `AUCUN vote en build canari`), `doObsConfirm()` idem — aucun `validate-candidate`, `validation-result`, `obs-confirm`, signature ni `malloc`. Seule la frame **personnelle** est traitée.
+1. **Aucun vote** : `doValidate()` retourne `false` en tête (candidat oublié localement, ligne `AUCUN vote en build canari`), `doObsConfirm()` idem — aucun `validate-candidate`, `validation-result`, `obs-confirm`, signature ni `malloc`. Le canari reçoit, affiche et acquitte les frames qu'on lui propose (le verdict matériel a été obtenu sur une frame `source=consensus` déjà minée) ; **l'invariant exact est : aucun candidat n'est validé et aucun vote n'est envoyé en build canari** (la formulation « seule une frame personnelle est traitée » des versions précédentes était trop stricte).
 2. **Pas d'animation/banc d'essai** : `newBenchMode`, `newAnimHash`, `newAnimBytes` forcés à vide avant `podbenchesp::onPull` / `podanimesp::onPull` (ligne `IGNORES en build canari`).
 3. **Pré-vol TLS** avant le téléchargement et avant l'ACK (`REFUS pre-vol TLS` : destination libérée, aucun ACK, nouvel essai au pull suivant, sans polling accéléré).
 4. **Corps exact** : Content-Length ≠ 5 808 ou octets en surplus ⇒ `bRead = 0` ⇒ destination libérée, aucun rendu, aucun ACK.
@@ -102,3 +102,29 @@ Produit `canary-builds/stable/` (retour arrière, `POD_RENDER_V1=0`) et `canary-
 
 **Cause (pas les bibliothèques)** : le sketch et le pilote `epd2in7_V2.cpp` sont deux unités de compilation. Un `#define POD_CANARY 1` écrit dans le `.ino` est invisible du pilote, qui ne définissait donc pas les compteurs BUSY lus par le sketch (build `-D…` en ligne de commande : sans problème, d'où mes compilations vertes). Les avertissements « Multiple libraries found … ssd1306 » sont sans rapport et sans effet (l'IDE a retenu `Adafruit_GFX_Library` et `Adafruit_SSD1306`) ; rien n'a été touché dans les bibliothèques.
 **Correctif** : `pod_canary_flags.h` (0/0 au dépôt) est la source unique des deux drapeaux, incluse par le sketch (dans la zone `POD_RENDER_V1_BEGIN`) et par le pilote. **Canari dans l'IDE : passer les DEUX valeurs à 1 dans `pod_canary_flags.h` de la copie ignorée, et ne pas modifier le `.ino`.** Vérifié : build IDE-style (seul l'en-tête édité, sans `-D`) = 35 320 o de RAM / 468 920 o de flash, édition de liens réussie. Tests adaptés (identité OFF, test des pilotes).
+
+## 11. VERDICT MATÉRIEL (13/10/2026, build `b94bfb9`) — canari VERT pour l'affichage, sans vote
+
+Relevé du porteur archivé dans `docs/mesures/8B2C_27_FIX1_2026_10_13/verdict-materiel-releve-porteur-2026_10_13.md` (**transcription des chiffres reçus ; le journal série brut reste à déposer**, rien n'est reconstruit).
+
+| Critère | Observé |
+|---|---|
+| Orientation et affichage e-ink | corrects (jugement du porteur) |
+| Rendu v1 | terminé ; 182 appels du producteur, appel max 747 µs, intervalle max 3 083 µs, pile contiguë min 752 o |
+| BUSY | après Init 0 ms ; max au rafraîchissement 2 102 ms ; aucun dépassement du plafond, aucun TIMEOUT |
+| renderHash | `b6e2e298bda2aad24ac699a2ae5c60e29829d2f106e0c8aabf33361c3f2f742a` |
+| ACK `/api/ack-frame` | HTTP 200, frame `d52e9874-7bfe-4b9a-bfcd-0d3d5fc6b51b` |
+| OLED après e-ink | `reinit=OK`, contenu restauré ; animation de 9 images toujours active pendant les pulls |
+| Mémoire à l'ACK | pile contiguë min 384 o ; tas 39 456 o ; plus grand bloc 18 408 o ; fragmentation 41 % |
+| 4 pulls espacés d'environ 300 s | avant : tas 39 952 o, bloc 21 264 o, frag. 36 %, pile 384 o ; après : tas 39 512 o chaque fois, bloc 16 720 – 18 432 o, frag. 41 – 44 % ; aucune fuite progressive |
+| Resets, exceptions, REFUS, vote, `validation-result` | aucun |
+
+**Frame réellement affichée : `source=consensus`** (déjà minée), pas `personal`. Le canari n'a effectué aucun vote : il a seulement reçu, affiché et acquitté la frame. Le protocole du § 4 parlait d'une frame personnelle ; l'invariant correct est celui du § 2 (aucun candidat validé, aucun vote).
+
+**Ce que ce verdict valide** : affichage, rendu v1, ACK, coexistence e-ink/OLED, stabilité mémoire sur quatre pulls. **Il ne valide aucun vote réel.**
+
+**Réserves honnêtes**
+1. La pile contiguë ESP8266 descend à **384 o** pendant l'ACK : stable, aucun défaut observé, mais la réserve est mince.
+2. `ReadBusy()` reste **illimité en production** ; seul le canari a le plafond de 20 s. Sur le matériel testé il rend la main normalement (2,102 s).
+3. Le commentaire de `esp_eink_2.7BW_OLED.ino` (ligne du drapeau `POD_CANARY`) dit encore « frame personnelle » : volontairement non modifié (aucun changement de firmware dans ce commit documentaire).
+4. Le journal série brut n'est pas encore archivé (voir ci-dessus).
