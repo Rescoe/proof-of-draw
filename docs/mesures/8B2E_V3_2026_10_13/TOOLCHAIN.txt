@@ -1,0 +1,27 @@
+# Toolchain du harnais dynamique de vote (V3) — archivée le 13/10/2026
+
+## Commande exacte
+
+export PATH="/c/Users/thibf/tools/winlibs-14.2/mingw64/bin:$PATH"   # DLL de mingw nécessaires aux exécutables produits
+export CXX="C:/Users/thibf/tools/winlibs-14.2/mingw64/bin/g++.exe"
+# facultatifs (défauts : ~/Documents/Arduino/libraries/{Crypto,ArduinoJson}/src) : POD_CRYPTO_SRC, ARDUINOJSON_DIR
+node --import tsx --test tests/tft28VoteHarness.test.ts
+# suite complète : npm test   (même environnement)
+
+## Versions
+
+- g++.exe (MinGW-W64 x86_64-ucrt-posix-seh, built by Brecht Sanders, r2) 14.2.0
+- node v22.12.0
+- Crypto : version=0.4.0
+- ArduinoJson : version=7.4.3
+- arduino-cli : arduino-cli  Version: 1.4.1 Commit: e39419312 Date: 2026-01-19T16:12:56Z
+- arm-none-eabi-gcc : 7-2017q4 (chaîne Arduino, cœurs renesas_uno 1.5.3 et 1.6.0, répertoires ARDUINO_DIRECTORIES_DATA=…/pod-arduino/data-153 et data-160, USER=…/pod-arduino/user)
+
+## Compilation des sketches
+
+arduino-cli compile --fqbn arduino:renesas_uno:unor4wifi --warnings all --build-property "compiler.cpp.extra_flags=<flags>" --build-path <b> --output-dir <o> <copie du dossier pod_uno_r4 avec secrets.h = secrets.h.example>
+# production : flags vides ; canari : -DPOD_CANARY=1 -DPOD_RENDER_V1=1
+
+## Incompatibilité connue
+
+g++ 10.2 (environnement d'audit de Codex) ne construit pas le harnais Crypto : NON reproduit ici. Le test « V3 — PRÉ-VOL » ÉCHOUE explicitement (version < 11 ou bibliothèque Crypto non compilable) au lieu d'ignorer les scénarios dynamiques.

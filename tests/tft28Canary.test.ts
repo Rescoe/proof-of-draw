@@ -45,7 +45,7 @@ const MAY_CHANGE = new Set([
   "doFetchFrame", "netGetBenchClip", "netGetBlockClip", "maybeFetchAnim",                                                                                                    // défaut collant du client TLS borné
   "doRegister", "doPull", "doValidate", "benchPollOnce",                                                                                                   // JSON sur la pile de travail
   "doValidateV2",                                                                                                                                          // re-register différé (plus de doRegister imbriqué sous le cadre de 416 o du vote)
-  "httpCall", "netReadCandidate", "§ VALIDATION RÉELLE (vote v2) — ⚠ NON TESTÉE SUR LA CARTE",                                                              // LOT8B2E V2 : gestionnaire commun netStackFailed (R-M1) ; lecture du candidat fermée en cas d'erreur (R-H3)
+  "httpCall", "netReadCandidate", "Conn", "§ VALIDATION RÉELLE (vote v2) — ⚠ NON TESTÉE SUR LA CARTE",                                                              // LOT8B2E V2 : gestionnaire commun netStackFailed (R-M1) ; lecture du candidat fermée en cas d'erreur (R-H3)
 ]);
 const MUST_BE_IDENTICAL = [
   "static void tftStatus(", "static void pushRow(int y) {", "static void swapRowBytes() {", "static void drawCartel() {", "static void drainTouch() {", "static void serviceTouch() {",

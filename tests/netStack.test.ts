@@ -80,7 +80,12 @@ for (const sk of SKETCHES) {
     assert.equal((code.match(/podNetRun\(/g) ?? []).length, conns, "un appel podNetRun par transaction");
     // le vote : la pile réseau est fermée AVANT la signature (jamais imbriquée dans PodEd)
     const v = code.search(/static (?:bool|VoteOutcome) (?:__attribute__\(\(noinline\)\) )?doValidateV2/), end = code.indexOf("\n}\n", v), body = code.slice(v, end);
-    assert.ok(body.indexOf("netReadCandidate(candidateId, kind, bytes, chk") > 0 && body.indexOf("netReadCandidate(") < body.indexOf("PodEd::sign("), "la lecture du candidat (pile réseau, fonction à part) précède la signature");
+    if (body.includes("votePhaseRead(")) {   // LOT8B2E V3 (TFT) : phases noinline ; la lecture (pile réseau FERMÉE à son retour) précède la signature, et PodEd::sign n'existe que dans la phase de signature
+      const rd = code.indexOf("static bool __attribute__((noinline)) votePhaseRead("), sg = code.indexOf("static bool __attribute__((noinline)) votePhaseSign("), ps = code.indexOf("static VoteOutcome __attribute__((noinline)) votePhasePost(");
+      assert.ok(body.indexOf("votePhaseRead(") > 0 && body.indexOf("votePhaseRead(") < body.indexOf("votePhaseSign("), "la phase de lecture précède la phase de signature");
+      assert.ok(code.slice(rd, sg).includes("netReadCandidate(") && !code.slice(rd, sg).includes("PodEd::"), "la lecture du candidat (pile réseau, fonction à part) est dans la phase de lecture, sans signature");
+      assert.ok(code.slice(sg, ps).includes("PodEd::sign(") && !code.slice(sg, ps).includes("podNetRun("), "la signature est dans sa phase, sans transaction réseau");
+    } else assert.ok(body.indexOf("netReadCandidate(candidateId, kind, bytes, chk") > 0 && body.indexOf("netReadCandidate(") < body.indexOf("PodEd::sign("), "la lecture du candidat (pile réseau, fonction à part) précède la signature");
     assert.equal(body.includes("podNetRun("), false, "doValidateV2 ne contient plus de transaction : son cadre ne porte que la signature");
   });
 }

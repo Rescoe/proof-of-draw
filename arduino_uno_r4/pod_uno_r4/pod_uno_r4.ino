@@ -580,18 +580,34 @@ static String signED25519(const String& candidateId, float score) {
 
 // ─── HTTP (WiFiSSLClient + pod_http.h) ─────────────────────────────────────
 // PULLFRAME-BOUNDED-SSL-FIX1 : à partir d'ici le nom WiFiSSLClient désigne PodBoundedSSL (pod_ssl_bounded.h, dérivé du vrai WiFiSSLClient, réception modem bornée à 240 o). Toute lecture TLS de ce firmware (image, clips, candidat) passe par lui.
+// LOT8B2E V3 : ajout CONTRÔLÉ à une String. Une String qui ne peut plus grandir (tas épuisé) tronque EN SILENCE : on compare la longueur obtenue à la longueur attendue (tout ou rien).
+static bool __attribute__((noinline)) strAppendChecked(String& s, const char* p) {
+  const unsigned n = s.length();
+  s += p;
+  return s.length() == n + (unsigned)strlen(p);
+}
+static bool __attribute__((noinline)) strAppendNumChecked(String& s, unsigned long v) {
+  char b[12]; int i = 11; b[i] = '\0';
+  do { b[--i] = (char)('0' + (v % 10)); v /= 10; } while (v != 0);
+  return strAppendChecked(s, b + i);
+}
 #define WiFiSSLClient PodBoundedSSL
 struct Conn {
   WiFiSSLClient client;
   podhttp::Reader<WiFiSSLClient> rd;
   explicit Conn(uint32_t timeoutMs) : rd(client, timeoutMs) {}
-  /** Connecte, envoie la requête, lit les en-têtes. Retourne le code HTTP, -2 = connexion TLS impossible, -1 = réponse illisible. */
+  /** Construit la requête EN TOUT OU RIEN, se connecte, l'envoie, lit les en-têtes. Retourne le code HTTP, -2 = connexion TLS impossible, -1 = réponse illisible, -6 = requête NON construite (mémoire) : RIEN n'est émis
+   *  (V3 : une requête tronquée en silence — corps de vote absent ou coupé — n'est jamais envoyée). */
   int request(const char* method, const String& path, const String* body) {
+    String req;
+    bool ok = req.reserve(path.length() + (body ? body->length() : 0) + 224) != 0
+              && strAppendChecked(req, method) && strAppendChecked(req, " ") && strAppendChecked(req, path.c_str())
+              && strAppendChecked(req, " HTTP/1.1\r\nHost: " SERVER_HOST "\r\nUser-Agent: pod-r4/" FIRMWARE_VERSION "\r\nAccept: */*\r\nConnection: close\r\n");
+    if (ok && body) ok = strAppendChecked(req, "Content-Type: application/json\r\nContent-Length: ") && strAppendNumChecked(req, body->length()) && strAppendChecked(req, "\r\n");
+    ok = ok && strAppendChecked(req, "\r\n");
+    if (ok && body) ok = strAppendChecked(req, body->c_str());
+    if (!ok) return -6;
     if (!client.connect(SERVER_HOST, 443)) return -2;
-    String req = String(method) + " " + path + " HTTP/1.1\r\nHost: " SERVER_HOST "\r\nUser-Agent: pod-r4/" FIRMWARE_VERSION "\r\nAccept: */*\r\nConnection: close\r\n";
-    if (body) req += "Content-Type: application/json\r\nContent-Length: " + String(body->length()) + "\r\n";
-    req += "\r\n";
-    if (body) req += *body;
     client.print(req);
     return rd.readHeaders();
   }
@@ -1312,7 +1328,7 @@ static uint8_t g_voteScratch[4736];
 
 // ─── LOT8B2E V2 (sécurité du vote, hôte seulement) ───────────────────────────────────────────────────────────────────────────────────────────────
 // Issue TYPÉE d'un vote (R-H4) : plus aucune interprétation d'un code ou d'une sous-chaîne ambiguë.
-//   NOT_SENT              la requête n'a PAS été émise (porte fermée, lecture/signature impossible, abstention, httpCall -4 pile indisponible, -2 connexion TLS impossible)
+//   NOT_SENT              la requête n'a PAS été émise (porte fermée, lecture/signature impossible, abstention, httpCall -4 pile indisponible, -2 connexion TLS impossible, -6 requête non construite)
 //   SENT_UNKNOWN          la requête a PU atteindre le serveur et l'issue est INDÉTERMINÉE (-1 réponse illisible, -3 corps incomplet, -5 exécutée mais rejetée localement, HTTP >= 500)
 //   ACCEPTED              HTTP 200
 //   REFUSED_BY_SERVER     refus du serveur sans motif de signature ni de hash (autres HTTP 4xx/3xx)
@@ -1330,7 +1346,7 @@ static const char* voteOutcomeName(VoteOutcome o) {
   }
 }
 static VoteOutcome __attribute__((noinline)) voteClassify(int code, const String& resp) {
-  if (code == -4 || code == -2) return VOTE_NOT_SENT;
+  if (code == -4 || code == -2 || code == -6) return VOTE_NOT_SENT;
   if (code == 200) return VOTE_ACCEPTED;
   if (code < 0) return VOTE_SENT_UNKNOWN;
   if (code == 403 && resp.indexOf("Signature") >= 0) return VOTE_SIGNATURE_REFUSED;
@@ -1385,42 +1401,86 @@ static VoteOutcome __attribute__((noinline)) voteFinish(int vCode, const String&
     case VOTE_NOT_SENT: logf("[VALIDATE2] vote NON envoyé : la requête n'a pas été émise"); break;
     case VOTE_SENT_UNKNOWN: logf("[VALIDATE2] vote a PU atteindre le serveur, issue INDÉTERMINÉE — aucune nouvelle tentative automatique de ce candidat"); break;
     case VOTE_SIGNATURE_REFUSED:
-      // 403 « Signature » = clé publique désynchronisée côté serveur : on se ré-enregistre pour la renvoyer, le prochain cycle votera. SD-STACK-FIX1 : jamais de doRegister() imbriqué (cadre de doValidate).
-      logf("[VALIDATE2] signature refusée par le serveur — resynchronisation de la clé publique (re-register au prochain tour de loop)"); registered = false; break;
+      // 403 « Signature » = clé publique désynchronisée côté serveur : on se ré-enregistre (au tour de loop() suivant) pour préparer les PROCHAINS candidats. Le candidat COURANT reste DÉPENSÉ (voteMarkSpent) : il n'est JAMAIS revoté. SD-STACK-FIX1 : jamais de doRegister() imbriqué (cadre de doValidate).
+      logf("[VALIDATE2] signature refusée par le serveur — resynchronisation de la clé publique (re-register au prochain tour de loop ; CE candidat reste dépensé, il ne sera pas revoté)"); registered = false; break;
     case VOTE_HASH_REFUSED: logf("[VALIDATE2] hash ou métriques refusés par le serveur (422)"); break;
     default: logf("[VALIDATE2] vote refusé par le serveur (%d)", vCode); break;
   }
   return out;
 }
-static VoteOutcome __attribute__((noinline)) doValidateV2(const String& candidateId, const String& screenName, size_t bytes, const String& announcedHash) {
-  g_voteMined = false;
+// ─── LOT8B2E V3 : la voie de vote en PHASES `noinline` + structure de travail AU TAS ─────────────────────────────────────────────────────────────────
+// Objectif : marge de la pile PRINCIPALE (1 024 o) >= 256 o sur toutes les voies du vote (V2 : 152 o). Chaque phase est une fonction à part : ses String, son journal et ses temporaires disparaissent à son retour ; les
+// gros objets (PodCheck, signature, hexadécimal) vivent dans VoteWork, alloué UNE fois au tas (new nothrow) par doValidateV2 et libéré sur TOUS les chemins. Si VoteWork ne peut pas être alloué : NOT_SENT, AUCUNE
+// lecture, AUCUNE signature, AUCUN POST, nouvelle tentative permise plus tard. Aucune allocation sur la pile principale, aucun snprintf. g_voteScratch / g_voteChunk restent STATIQUES (voir docs/LOT_8B2E_R4_TFT28_VOTE_V3_*.md § 5).
+struct VoteWork {
+  PodCheck    chk;              // lecture + métriques + hash (≈ 120 o)
+  uint8_t     sig[64];
+  char        sigHex[129];
+  bool        accept;
+  const char* reason;           // littéral statique de podVerdict (jamais libéré)
+  VoteWork() { memset(this, 0, sizeof(*this)); }
+};
+// Ajoute p à s ; vrai seulement si TOUT a été ajouté (une String qui ne peut plus grandir tronque en silence : on le détecte par la longueur).
+static inline bool voteAppend(String& s, const char* p) { return strAppendChecked(s, p); }
+static inline bool voteAppendNum(String& s, unsigned long v) { return strAppendNumChecked(s, v); }
+static unsigned voteDigits(unsigned long v) { unsigned d = 1; while (v >= 10) { v /= 10; d++; } return d; }
+
+// Phase 1 : lecture FERMÉE du candidat (pile réseau fermée au retour), abstention sur hash divergent (D-V2), verdict. Retour vrai = on peut signer.
+static bool __attribute__((noinline)) votePhaseRead(VoteWork& w, const String& candidateId, const String& screenName, size_t bytes, const String& announcedHash) {
   PodScreenKind kind;
-  if (!podKindFromName(screenName.c_str(), &kind)) { logf("[VALIDATE2] écran inconnu : %s", screenName.c_str()); return VOTE_NOT_SENT; }
-  reportMem("VALIDATE2-avant");
-  PodCheck chk; memset(&chk, 0, sizeof(chk));
-  netReadCandidate(candidateId, kind, bytes, chk);
-  if (!chk.ok) { logf("[VALIDATE2] lecture/calcul impossible (http=%d, %u/%u octets)", chk.http, (unsigned)chk.bytes, (unsigned)bytes); return VOTE_NOT_SENT; }
+  if (!podKindFromName(screenName.c_str(), &kind)) { logf("[VALIDATE2] écran inconnu : %s", screenName.c_str()); return false; }
+  netReadCandidate(candidateId, kind, bytes, w.chk);
+  if (!w.chk.ok) { logf("[VALIDATE2] lecture/calcul impossible (http=%d, %u/%u octets)", w.chk.http, (unsigned)w.chk.bytes, (unsigned)bytes); return false; }
   // D-V2 (gelée) : hash reçu ≠ hash annoncé => ABSTENTION locale (aucune signature, aucun POST) : ce n'est PAS un refus signé.
-  if (strcmp(announcedHash.c_str(), chk.hash) != 0) { logf("[VALIDATE2] hash reçu != hash annoncé : ABSTENTION (aucun vote signé, aucun POST)"); return VOTE_NOT_SENT; }
+  if (strcmp(announcedHash.c_str(), w.chk.hash) != 0) { logf("[VALIDATE2] hash reçu != hash annoncé : ABSTENTION (aucun vote signé, aucun POST)"); return false; }
+  w.reason = podVerdict(w.chk, announcedHash, &w.accept);
+  logf("[VALIDATE2] %s %u o en %lu ms | e=%lu t=%lu r=%lu s=%lu | verdict=%s %s", screenName.c_str(), (unsigned)w.chk.bytes, (unsigned long)w.chk.ms,
+       (unsigned long)w.chk.m.e, (unsigned long)w.chk.m.t, (unsigned long)w.chk.m.r, (unsigned long)w.chk.m.s, w.accept ? "accept" : "reject", w.reason);
+  logf("[VALIDATE2] hash=%s", w.chk.hash);
+  return true;
+}
 
-  bool accept = false;
-  const char* reason = podVerdict(chk, announcedHash, &accept);
-  logf("[VALIDATE2] %s %u o en %lu ms | e=%lu t=%lu r=%lu s=%lu | verdict=%s %s", screenName.c_str(), (unsigned)chk.bytes, (unsigned long)chk.ms,
-       (unsigned long)chk.m.e, (unsigned long)chk.m.t, (unsigned long)chk.m.r, (unsigned long)chk.m.s, accept ? "accept" : "reject", reason);
-  logf("[VALIDATE2] hash=%s", chk.hash);
-
-  const String msg = podVoteMessage(deviceId, candidateId, chk.hash, chk.m, accept);
-  uint8_t sig[64];
+// Phase 2 : message signé + signature Ed25519 sur la pile dédiée (jamais imbriquée). Le message est contrôlé par sa LONGUEUR EXACTE (aucune troncature silencieuse). Échec => rien n'est envoyé.
+static bool __attribute__((noinline)) votePhaseSign(VoteWork& w, const String& candidateId) {
   const unsigned long ts = millis();
-  if (!PodEd::sign(sig, privateKey, publicKey, (const uint8_t*)msg.c_str(), msg.length())) { logf("[VALIDATE2] signature impossible (pile Ed25519 dédiée) — vote NON envoyé"); return VOTE_NOT_SENT; }   // POD_ED_STACK
+  {
+    const String msg = podVoteMessage(deviceId, candidateId, w.chk.hash, w.chk.m, w.accept);
+    const unsigned want = 12 + deviceId.length() + 1 + candidateId.length() + 1 + 64 + 1 + voteDigits(POD_METRICS_VERSION) + 1 + voteDigits(w.chk.m.e) + 1 + voteDigits(w.chk.m.t) + 1 + voteDigits(w.chk.m.r) + 1 + 6;
+    if (msg.length() != want) { logf("[VALIDATE2] message de vote incomplet (mémoire) — vote NON envoyé"); return false; }
+    if (!PodEd::sign(w.sig, privateKey, publicKey, (const uint8_t*)msg.c_str(), msg.length())) { logf("[VALIDATE2] signature impossible (pile Ed25519 dédiée) — vote NON envoyé"); return false; }   // POD_ED_STACK
+  }
+  static const char HX[] = "0123456789abcdef";
+  for (int i = 0; i < 64; i++) { w.sigHex[2 * i] = HX[w.sig[i] >> 4]; w.sigHex[2 * i + 1] = HX[w.sig[i] & 15]; }
+  w.sigHex[128] = '\0';
   logf("[VALIDATE2] signature en %lu ms", millis() - ts);
-  const String body = String("{\"v\":2,\"deviceId\":\"") + deviceId + "\",\"candidateId\":\"" + candidateId + "\",\"rawHash\":\"" + chk.hash + "\"," +
-                      "\"e\":" + String((unsigned long)chk.m.e) + ",\"t\":" + String((unsigned long)chk.m.t) + ",\"r\":" + String((unsigned long)chk.m.r) + "," +
-                      "\"verdict\":\"" + (accept ? "accept" : "reject") + "\"" + (accept ? String("") : String(",\"reason\":\"") + reason + "\"") +
-                      ",\"signature\":\"" + bytesToHex(sig, 64) + "\"}";
+  return true;
+}
+
+// Phase 3 : corps JSON (construit par ajouts CONTRÔLÉS, sans temporaire ni formatage printf), POST, classement et journal de l'issue. Corps incomplet (mémoire) => NOT_SENT, rien n'est envoyé.
+static VoteOutcome __attribute__((noinline)) votePhasePost(VoteWork& w, const String& candidateId) {
+  String body;
+  bool ok = body.reserve(512) != 0;
+  ok = ok && voteAppend(body, "{\"v\":2,\"deviceId\":\"") && voteAppend(body, deviceId.c_str()) && voteAppend(body, "\",\"candidateId\":\"") && voteAppend(body, candidateId.c_str())
+          && voteAppend(body, "\",\"rawHash\":\"") && voteAppend(body, w.chk.hash) && voteAppend(body, "\",\"e\":") && voteAppendNum(body, (unsigned long)w.chk.m.e)
+          && voteAppend(body, ",\"t\":") && voteAppendNum(body, (unsigned long)w.chk.m.t) && voteAppend(body, ",\"r\":") && voteAppendNum(body, (unsigned long)w.chk.m.r)
+          && voteAppend(body, ",\"verdict\":\"") && voteAppend(body, w.accept ? "accept" : "reject") && voteAppend(body, "\"");
+  if (ok && !w.accept) ok = voteAppend(body, ",\"reason\":\"") && voteAppend(body, w.reason) && voteAppend(body, "\"");
+  ok = ok && voteAppend(body, ",\"signature\":\"") && voteAppend(body, w.sigHex) && voteAppend(body, "\"}");
+  if (!ok) { logf("[VALIDATE2] corps du vote incomplet (mémoire) — vote NON envoyé"); return VOTE_NOT_SENT; }
   String vResp;
   const int vCode = httpCall("POST", "/api/validation-result", &body, vResp);
-  const VoteOutcome out = voteFinish(vCode, vResp);
+  return voteFinish(vCode, vResp);
+}
+
+static VoteOutcome __attribute__((noinline)) doValidateV2(const String& candidateId, const String& screenName, size_t bytes, const String& announcedHash) {
+  g_voteMined = false;
+  VoteWork* const w = new (std::nothrow) VoteWork();
+  if (!w) { logf("[VALIDATE2] mémoire insuffisante (VoteWork) — aucune lecture, aucune signature, aucun POST ; nouvelle tentative permise"); return VOTE_NOT_SENT; }
+  reportMem("VALIDATE2-avant");
+  VoteOutcome out = VOTE_NOT_SENT;
+  if (votePhaseRead(*w, candidateId, screenName, bytes, announcedHash) && votePhaseSign(*w, candidateId)) out = votePhasePost(*w, candidateId);
+  memset(w, 0, sizeof(*w));            // efface signature, hash et métriques avant la libération
+  delete w;                            // libéré sur TOUS les chemins (lecture, abstention, signature, corps, POST)
   reportMem("VALIDATE2-après");
   return out;
 }

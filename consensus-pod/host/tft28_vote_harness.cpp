@@ -36,6 +36,12 @@ RNGClass::~RNGClass() {}
 void RNGClass::rand(uint8_t*, size_t) { std::abort(); }
 RNGClass RNG;
 
+// LOT8B2E V3 : operator new(nothrow) / delete REMPLACÉS dans le harnais seulement. Suivi par TAILLE de VoteWork (struct unique de cette taille dans le sketch : vérifié par static_assert plus bas).
+static int g_vwFail = 0, g_vwLive = 0, g_vwAllocs = 0;
+void* operator new(size_t n, const std::nothrow_t&) noexcept { if (n == sizeof(VoteWork)) { g_vwAllocs++; if (g_vwFail) { g_vwFail = 0; return nullptr; } } void* q = std::malloc(n); if (q && n == sizeof(VoteWork)) g_vwLive++; return q; }
+void operator delete(void* q) noexcept { std::free(q); }
+void operator delete(void* q, size_t n) noexcept { if (q && n == sizeof(VoteWork)) g_vwLive--; std::free(q); }
+static_assert(sizeof(VoteWork) != sizeof(ValidateParsed) && sizeof(VoteWork) != sizeof(PodCheck), "VoteWork doit avoir une taille propre (suivi par taille)");
 static int g_failNext = 0; static std::string g_failWhenLog;      // g_failWhenLog : la PREMIÈRE allocation de pile dédiée après l'apparition de ce texte dans le journal échoue
 static std::string g_guardWhenLog; static unsigned g_guardStackBytes = 0; static int g_guardFired = 0;   // GUARD simulée : à la fin de la première pile de cette taille APRÈS l'apparition du texte
 static void smashGuardHook(uint8_t*, size_t stackBytes, uint8_t* guard) {
@@ -66,6 +72,7 @@ static std::string content(int seed) {
   for (int y = 0; y < 320; y++) for (int x = 0; x < 240; x++) { const uint16_t v = seed < 0 ? 0 : pix(x, y, seed); s.push_back((char)(v & 0xFF)); s.push_back((char)(v >> 8)); }
   return s;
 }
+static std::string oledContent() { std::string b; for (int i = 0; i < 1024; i++) b.push_back((char)((i * 37 + (i >> 3) * 11 + 5) & 0xFF)); return b; }
 struct VK {
   std::string candId = "11111111-2222-3333-4444-555555555555";
   std::string validateJson;                    // réponse de /api/validate-candidate avant le vote
@@ -95,7 +102,7 @@ static uint8_t g_seed[32]; static bool g_keysOk = true;
 static void world() {
   g_us = 1000000; g_requests.clear(); g_route = route; g_idleHook = nullptr; V = VK();
   g_sd = SdState(); g_tft = TftState(); Serial.log.clear(); g_strFailArmed = false; g_strAllocN = 0;
-  podNetTestHook = nullptr; podNetTestFailAlloc = 0; podNetTestNested = 0; g_failNext = 0; g_failWhenLog.clear(); g_guardWhenLog.clear(); g_guardFired = 0; g_marginWhenLog.clear(); g_marginFired = 0; g_logLenAtStop = 0; g_edSelfTestOk = true; g_voteSpentId[0] = '\0'; g_pendingAtPost = "?";
+  podNetTestHook = nullptr; podNetTestFailAlloc = 0; podNetTestNested = 0; g_failNext = 0; g_failWhenLog.clear(); g_guardWhenLog.clear(); g_guardFired = 0; g_marginWhenLog.clear(); g_marginFired = 0; g_logLenAtStop = 0; g_edSelfTestOk = true; g_voteSpentId[0] = '\0'; g_pendingAtPost = "?"; g_vwFail = 0; g_vwLive = 0; g_vwAllocs = 0; g_strFailArmed = false; g_strFailAt = 0; g_strAllocN = 0;
   podEdTestHook = nullptr; podEdTestFailAlloc = 0; podEdTestNested = 0;
   std::memset(g_fakeStack, 0, sizeof g_fakeStack);
   deviceId = "dev_TEST0001"; pairCode = "ABCD2345"; registered = true; paired = true; lastFrameId = "frame-avant-vote"; lastFrameWasConsensus = false; pendingCandidateId = "";
@@ -136,7 +143,7 @@ static void report(const char* sc, bool ret, long fillsBefore, long busBefore, l
 
 static void classifyTable() {
   struct Row { int code; const char* body; };
-  const Row rows[] = { {200, "{}"}, {-4, ""}, {-2, ""}, {-1, ""}, {-3, ""}, {-5, ""}, {403, "{\"error\":\"Signature invalide\"}"}, {403, "{\"error\":\"autre\"}"}, {422, "{}"}, {400, "{}"}, {409, "{}"}, {429, "{}"}, {500, "{}"}, {503, "{}"}, {302, ""}, {409, "Signature"}, {500, "Signature"}, {-5, "Signature"}, {-4, "Signature"} };
+  const Row rows[] = { {200, "{}"}, {-4, ""}, {-2, ""}, {-1, ""}, {-3, ""}, {-5, ""}, {-6, ""}, {403, "{\"error\":\"Signature invalide\"}"}, {403, "{\"error\":\"autre\"}"}, {422, "{}"}, {400, "{}"}, {409, "{}"}, {429, "{}"}, {500, "{}"}, {503, "{}"}, {302, ""}, {409, "Signature"}, {500, "Signature"}, {-5, "Signature"}, {-4, "Signature"} };
   for (const Row& r : rows) std::printf("CLASS %d|%s|%s\n", r.code, r.body, voteOutcomeName(voteClassify(r.code, String(r.body))));
 }
 
@@ -149,9 +156,10 @@ int main(int argc, char** argv) {
   g_keysOk = sc != "keys-not-loaded";
   world();
   std::string body = content(seed);
+  if (sc == "oled-candidate") body = oledContent();
   const std::string resp = http(200, body); const size_t hdr = resp.size() - body.size();
   V.cand.response = resp;
-  V.validateJson = sc == "v1-announced" ? v1Json() : sc == "unknown-screen" ? v2Json("weird", announced, hash) : v2Json("tft28", announced, hash);
+  V.validateJson = sc == "v1-announced" ? v1Json() : sc == "unknown-screen" ? v2Json("weird", announced, hash) : sc == "oled-candidate" ? v2Json("oled096", 1024, hash) : v2Json("tft28", announced, hash);
   if (sc == "truncated") V.cand.closeAfter = hdr + 100000;
   if (sc == "stalled") V.cand.stallAfter = hdr + 100000;
   if (sc == "longer") { body += std::string(1000, 'x'); V.cand.response = http(200, body); }
@@ -163,6 +171,7 @@ int main(int argc, char** argv) {
   if (sc == "mined") { V.voteBody = "{\"ok\":true,\"blockMined\":true,\"blockIndex\":96}"; }
   if (sc == "double-forgetful") V.forgetful = true;
   if (sc == "sign-fail") podEdTestFailAlloc = 1;
+  if (sc == "votework-fail" || sc == "double-vwfail") g_vwFail = 1;
   if (sc == "post-not-executed" || sc == "double-notsent") g_failWhenLog = "[VALIDATE2] signature en";
   if (sc == "post-executed-rejected" || sc == "double-unknown") { g_marginWhenLog = "[VALIDATE2] signature en"; podNetTestHook = marginHook; }   // POST EXÉCUTÉ (le « serveur » le reçoit) mais marge de pile rejetée : httpCall -5
   if (sc == "guard-on-post") { g_guardWhenLog = "[VALIDATE2] signature en"; g_guardStackBytes = (unsigned)(POD_NET_STACK_TOTAL - POD_NET_GUARD_BYTES); podNetTestHook = smashGuardHook; }   // GUARD pendant le POST => arrêt sûr
@@ -172,15 +181,19 @@ int main(int argc, char** argv) {
   if (sc == "not-registered") registered = false;
   if (sc == "not-paired") paired = false;
   if (sc == "guard-on-read") { g_guardWhenLog = "[HTTP GET] /api/candidate-frame"; g_guardStackBytes = (unsigned)(POD_NET_STACK_TOTAL - POD_NET_GUARD_BYTES); podNetTestHook = smashGuardHook; }
+  { const size_t colon = sc.find(':'); if (sc.rfind("strfail", 0) == 0 && colon != std::string::npos) { g_strFailArmed = true; g_strFailAt = std::atoi(sc.c_str() + colon + 1); g_strAllocN = 0; } if (sc == "strcount") { g_strFailArmed = true; g_strFailAt = 0; g_strAllocN = 0; } }
   pendingCandidateId = V.candId.c_str();
   const long fills0 = g_tft.fills, bus0 = g_tft.busBytes, writes0 = g_sd.writes, opens0 = g_sd.opens; const size_t files0 = g_sd.files.size(); const std::string frame0 = lastFrameId.c_str();
   std::printf("FACT announced_hash=%s\n", hash.c_str());
   bool ret = false; int stopped = 0;
   try {
     ret = doValidate();
-    if (sc == "double" || sc == "double-forgetful" || sc == "double-unknown" || sc == "double-notsent") { pendingCandidateId = V.candId.c_str(); ret = doValidate() || ret; }
+    if (sc == "double" || sc == "double-forgetful" || sc == "double-unknown" || sc == "double-notsent" || sc == "double-vwfail") { pendingCandidateId = V.candId.c_str(); ret = doValidate() || ret; }
   } catch (HarnessStop&) { stopped = 1; }
   std::printf("FACT safe_stop=%d\n", stopped);
+  std::printf("FACT vw_live=%d\n", g_vwLive);
+  std::printf("FACT vw_allocs=%d\n", g_vwAllocs);
+  std::printf("FACT str_allocs=%d\n", g_strAllocN);
   std::printf("FACT log_len_at_stop=%u\n", g_logLenAtStop);
   std::printf("FACT log_len_final=%u\n", (unsigned)Serial.log.size());
   std::printf("FACT pending_at_post=%s\n", g_pendingAtPost.c_str());

@@ -38,7 +38,7 @@ function deepest(fs_, entry, skipSet) {
 const skip = new Set(["_printf_float", "__cvt", "_dtoa_r", ...names.filter((k) => /logfEmit/.test(k))]);
 const fr = (n) => (n && funcs.get(n) ? funcs.get(n).frame : 0);
 const hal = "hal_entry", am = names.find((k) => /^_Z12arduino_mainv$/.test(k));
-const steps = ["doRegister", "doRegisterDecode", "doPull", "doPullStage", "doFetchFrame", "ackFrame", "httpCall", "doValidate", "doValidateV2", "doValidateDecode", "doObsConfirm", "benchPollOnce",
+const steps = ["doRegister", "doRegisterDecode", "doPull", "doPullStage", "doFetchFrame", "ackFrame", "httpCall", "doValidate", "doValidateV2", "votePhaseRead", "votePhaseSign", "votePhasePost", "voteFinish", "netReadCandidate", "doValidateDecode", "doObsConfirm", "benchPollOnce",
   "toggleCartel", "serviceTouch", "drawCartel", "restoreRows", "restoreLastFrame", "runResidentAnim", "fetchAnimToSd", "playBenchClip", "selfTestEd25519", "generateKeys", "displayKeyMaterialOnce", "displayOnboardingTFT", "macString", "initSD"];
 console.log(`# frames : hal_entry ${fr(hal)} + arduino_main ${fr(am)} ; setup ${fr("setup")} ; loop ${fr("loop")}`);
 console.log("| étape | cadre | pire chaîne sous l'étape | cumul depuis setup | marge (setup) | cumul depuis loop | marge (loop) | indirects |\n|---|---|---|---|---|---|---|---|");

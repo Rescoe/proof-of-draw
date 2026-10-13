@@ -1,4 +1,4 @@
-// tests/tft28VoteHarness.test.ts — LOT8B2E V1 (harnais de référence) puis V2 (sécurité de la voie de vote) : harnais de VOTE de bout en bout du firmware UNO R4 + TFT 2,8″ (PRODUCTION), HÔTE seulement.
+// tests/tft28VoteHarness.test.ts — LOT8B2E V1 (harnais de référence), V2 (sécurité de la voie de vote) puis V3 (phases + VoteWork au tas, marge de pile >= 256 o) : harnais de VOTE de bout en bout du firmware UNO R4 + TFT 2,8″ (PRODUCTION), HÔTE seulement.
 //
 //   consensus-pod/host/tft28_vote_harness.cpp exécute le sketch complet (réseau scripté, piles dédiées réelles, VRAIE bibliothèque Crypto : SHA-256 et Ed25519) et imprime des FAITS ; CE fichier rend les verdicts avec un calcul
 //   INDÉPENDANT : contenu, SHA-256 (Node), métriques (lib/podMetrics.ts), message signé (lib/podVote.ts) et vérification de la signature (lib/ed25519.ts, OpenSSL).
@@ -23,7 +23,7 @@ const cryptoCandidates = [process.env.POD_CRYPTO_SRC, path.join(os.homedir(), "D
 const cryptoSrc = cryptoCandidates.find((d) => fs.existsSync(path.join(d, "Ed25519.cpp")));
 const ajCandidates = [process.env.ARDUINOJSON_DIR, path.join(os.homedir(), "Documents", "Arduino", "libraries", "ArduinoJson", "src"), path.join(os.homedir(), "Arduino", "libraries", "ArduinoJson", "src")].filter((x): x is string => !!x);
 const ajDir = ajCandidates.find((d) => fs.existsSync(path.join(d, "ArduinoJson.h")));
-const skip = !choice.path ? `${describeChoice(choice)} — exécution hôte IGNORÉE` : !cryptoSrc ? "bibliothèque Crypto 0.4.0 introuvable (POD_CRYPTO_SRC)" : !ajDir ? "ArduinoJson introuvable (ARDUINOJSON_DIR)" : false;
+const skip = false;   // V3 : AUCUN test de ce fichier n'est ignoré silencieusement : le pré-vol « toolchain » ci-dessous ÉCHOUE explicitement si le compilateur ou Crypto sont incompatibles
 const fwd = (p: string) => p.replace(/\\/g, "/");
 const SK = path.join(ROOT, "arduino_uno_r4", "pod_uno_r4"), HOST = path.join(ROOT, "consensus-pod", "host"), MOCK = path.join(HOST, "tft28");
 const INO_SRC = readText("arduino_uno_r4/pod_uno_r4/pod_uno_r4.ino");
@@ -225,14 +225,65 @@ const CHECKS: Record<string, Check> = {
   // table des issues
   classify: (exe) => {
     const r = runProcess(fwd(exe), ["classify"], 60000); const got = (r.stdout || "").split(/\r?\n/).filter((l) => l.startsWith("CLASS "));
-    const want = ["200|{}|ACCEPTED", "-4||NOT_SENT", "-2||NOT_SENT", "-1||SENT_UNKNOWN", "-3||SENT_UNKNOWN", "-5||SENT_UNKNOWN", "403|{\"error\":\"Signature invalide\"}|SIGNATURE_REFUSED", "403|{\"error\":\"autre\"}|REFUSED_BY_SERVER",
+    const want = ["200|{}|ACCEPTED", "-4||NOT_SENT", "-2||NOT_SENT", "-1||SENT_UNKNOWN", "-3||SENT_UNKNOWN", "-5||SENT_UNKNOWN", "-6||NOT_SENT", "403|{\"error\":\"Signature invalide\"}|SIGNATURE_REFUSED", "403|{\"error\":\"autre\"}|REFUSED_BY_SERVER",
       "422|{}|HASH_REFUSED", "400|{}|REFUSED_BY_SERVER", "409|{}|REFUSED_BY_SERVER", "429|{}|REFUSED_BY_SERVER", "500|{}|SENT_UNKNOWN", "503|{}|SENT_UNKNOWN", "302||REFUSED_BY_SERVER",
       "409|Signature|REFUSED_BY_SERVER", "500|Signature|SENT_UNKNOWN", "-5|Signature|SENT_UNKNOWN", "-4|Signature|NOT_SENT"].map((x) => `CLASS ${x}`);
     return got.length === want.length && got.every((l, i) => l === want[i]) ? [] : [`table des issues : attendu ${JSON.stringify(want)}, vu ${JSON.stringify(got)}`];
   },
 };
+// ─── V3 : VoteWork au tas, nettoyage, échecs de mémoire, usage de g_voteScratch ────────────────────────────────────────────────────
+const SAFE_STOP_SCENARIOS = new Set(["guard-on-read", "guard-on-post"]);
+/** Un POST est VALIDE s'il est conforme à la référence indépendante (hash, métriques, verdict, identifiants) ET sa signature se vérifie. */
+function validPost(res: Result, p: Record<string, unknown>): boolean {
+  return p.v === 2 && p.deviceId === res.facts.deviceId && p.candidateId === res.facts.candidateId && p.rawHash === GOOD_HASH && p.e === REF.e && p.t === REF.t && p.r === REF.r && p.verdict === "accept" && !("reason" in p) && signatureOk(res, p);
+}
+CHECKS.voteWorkFail = (exe) => {
+  const v: string[] = []; const r = run(exe, "votework-fail");
+  if (n(r, "vw_allocs") !== 1) v.push("votework-fail : une seule allocation de VoteWork tentée");
+  if (n(r, "reads") !== 0 || n(r, "posts") !== 0) v.push("votework-fail : AUCUNE lecture du candidat, AUCUN POST");
+  if (n(r, "validates") !== 1) v.push("votework-fail : seule la requête validate-candidate a eu lieu");
+  if (!logHas(r, "mémoire insuffisante (VoteWork)") || outcomeOf(r).length !== 0) v.push("votework-fail : journal explicite, aucune issue de vote classée");
+  if (r.facts.spent !== "-") v.push("votework-fail : NOT_SENT => candidat NON dépensé");
+  if (n(r, "vw_live") !== 0) v.push("votework-fail : aucun objet VoteWork vivant");
+  // nouvelle tentative permise (le pull ré-annonce le candidat) : elle réussit et ne vote qu'UNE fois
+  const d = run(exe, "double-vwfail");
+  if (n(d, "vw_allocs") !== 2 || n(d, "posts") !== 1 || n(d, "reads") !== 1 || n(d, "validates") !== 2 || d.facts.spent !== SPENT || n(d, "vw_live") !== 0) v.push("double-vwfail : après un refus d'allocation, la ré-annonce réussit (2 allocations, 1 lecture, 1 POST) et rien ne reste vivant");
+  if (d.posts.length === 1 && !validPost(d, d.posts[0])) v.push("double-vwfail : le vote de la seconde tentative est conforme et signé");
+  return v;
+};
+CHECKS.cleanup = (exe) => ALL_SCENARIOS_FOR_S14.filter((sc) => !SAFE_STOP_SCENARIOS.has(sc)).flatMap((sc) => {
+  const r = run(exe, sc); const v: string[] = [];
+  if (n(r, "vw_live") !== 0) v.push(`${sc} : VoteWork non libéré (fuite) sur ce chemin`);
+  if (n(r, "vw_allocs") > 2) v.push(`${sc} : au plus UNE allocation par tentative`);
+  return v;
+});
+/** Échecs de mémoire (String) à CHAQUE point du chemin de vote : jamais un vote tronqué, mal signé ou aux mauvais identifiants ; jamais de fuite. */
+CHECKS.memoryFailures = (exe) => {
+  const v: string[] = []; const total = n(run(exe, "strcount"), "str_allocs");
+  if (!(total >= 30 && total <= 200)) return [`strcount : nombre d'allocations String inattendu (${total})`];
+  for (let k = 1; k <= total; k++) {
+    const r = run(exe, `strfail:${k}`);
+    if (n(r, "posts") > 1) v.push(`strfail:${k} : plus d'un POST`);
+    if (n(r, "posts") === 1 && !validPost(r, r.posts[0])) v.push(`strfail:${k} : un POST non conforme / mal signé est parti`);
+    if (n(r, "vw_live") !== 0) v.push(`strfail:${k} : VoteWork non libéré`);
+    if (n(r, "posts") === 0 && r.facts.spent !== "-") v.push(`strfail:${k} : aucun POST mais candidat dépensé`);
+    if (n(r, "safe_stop") !== 0) v.push(`strfail:${k} : arrêt sûr inattendu`);
+  }
+  return v;
+};
+/** g_voteScratch est UTILISÉ sur le TFT : le serveur propose n'importe quel écran (app/api/validate-candidate/route.ts) ; un candidat oled096 (1 024 o) exige le tampon de travail. */
+const OLED_RAW = Buffer.alloc(1024); for (let i = 0; i < 1024; i++) OLED_RAW[i] = (i * 37 + (i >> 3) * 11 + 5) & 0xff;
+CHECKS.scratchUsed = (exe) => {
+  const v: string[] = []; const r = run(exe, "oled-candidate", SEED, sha(OLED_RAW)); const m = metricsFromRaw("oled096", OLED_RAW);
+  const p = r.posts[0];
+  if (n(r, "posts") !== 1 || !p) return ["oled-candidate : un candidat oled096 proposé au TFT doit être voté (le tampon g_voteScratch est UTILISÉ)"];
+  if (p.rawHash !== sha(OLED_RAW) || p.e !== m.e || p.t !== m.t || p.r !== m.r) v.push("oled-candidate : hash et métriques == référence indépendante (oled096)");
+  if (!signatureOk(r, p)) v.push("oled-candidate : signature valide");
+  if (n(r, "vw_live") !== 0) v.push("oled-candidate : VoteWork libéré");
+  return v;
+};
 const ALL_SCENARIOS_FOR_S14 = ["nominal", "mined", "altered", "truncated", "stalled", "fault-midway", "fault-after-last", "longer", "sign-fail", "unknown-screen", "keys-not-loaded", "selftest-fail", "not-registered", "not-paired", "v1-announced", "post-not-executed",
-  "post-executed-rejected", "post-500", "post-409", "sig-403", "hash-422", "guard-on-read", "guard-on-post", "double", "double-unknown", "double-forgetful", "double-notsent"];
+  "post-executed-rejected", "post-500", "post-409", "sig-403", "hash-422", "guard-on-read", "guard-on-post", "double", "double-unknown", "double-forgetful", "double-notsent", "votework-fail", "double-vwfail"];
 CHECKS.s14 = (exe) => ALL_SCENARIOS_FOR_S14.flatMap((sc) => s14(sc, run(exe, sc)));
 const violationsOf = (exe: string, ids: string[]) => ids.flatMap((id) => CHECKS[id](exe));
 
@@ -257,8 +308,36 @@ function staticViolations(ino: string): string[] {
   if (!/if \(!voteGate\(\)\) \{ pendingCandidateId = ""; return false; \}/.test(ino)) v.push("doValidate : porte appelée avant toute requête");
   const gateAt = ino.indexOf("if (!voteGate())"), getAt = ino.indexOf('httpCall("GET", "/api/validate-candidate');
   if (!(gateAt > 0 && gateAt < getAt)) v.push("doValidate : la porte précède /api/validate-candidate");
+  // V3 : phases noinline, VoteWork au tas, cadre de doValidateV2 sans gros objet
+  for (const f of ["votePhaseRead", "votePhaseSign", "votePhasePost", "voteFinish", "netReadCandidate", "doValidateV2"]) if (!new RegExp(`static [A-Za-z]+ __attribute__\\(\\(noinline\\)\\) ${f}\\(`).test(ino)) v.push(`${f} doit être noinline (phase à cadre propre)`);
+  const d2 = /static VoteOutcome __attribute__\(\(noinline\)\) doValidateV2\([^)]*\) \{\n([\s\S]*?)\n\}\n/.exec(ino);
+  if (!d2) v.push("doValidateV2 introuvable");
+  else {
+    if (/PodCheck|uint8_t sig|String body|String msg|podVoteMessage|PodEd::|httpCall\(|snprintf/.test(d2[1])) v.push("doValidateV2 ne porte plus aucun gros objet ni appel profond (tout est dans VoteWork / les phases)");
+    if (!/VoteWork\* const w = new \(std::nothrow\) VoteWork\(\);\n  if \(!w\) \{[^\n]*return VOTE_NOT_SENT; \}\n/.test(d2[1])) v.push("VoteWork alloué au tas (nothrow) AVANT toute lecture ; échec => NOT_SENT");
+    if ((d2[1].match(/delete w;/g) ?? []).length !== 1 || (d2[1].match(/return /g) ?? []).length !== 2) v.push("un seul delete et deux sorties (échec d'allocation, fin) : VoteWork libéré sur tous les chemins");
+    if (d2[1].indexOf("new (std::nothrow) VoteWork") > d2[1].indexOf("votePhaseRead")) v.push("VoteWork alloué avant la phase de lecture");
+  }
+  if ((ino.match(/new \(std::nothrow\) VoteWork\(\)/g) ?? []).length !== 1) v.push("une seule allocation de VoteWork");
+  const phases = ino.slice(ino.indexOf("static bool __attribute__((noinline)) votePhaseRead("), ino.indexOf("static VoteOutcome __attribute__((noinline)) doValidateV2("));
+  if (/snprintf|sprintf|bytesToHex\(/.test(phases)) v.push("phases du vote : ni snprintf, ni String temporaire pour la signature (hexadécimal écrit dans VoteWork)");
+  if (!/if \(msg\.length\(\) != want\)/.test(phases) || !/if \(!ok\) \{ logf\("\[VALIDATE2\] corps du vote incomplet/.test(phases)) v.push("message et corps du vote contrôlés par leur longueur (aucune troncature silencieuse)");
+  if (!/static uint8_t g_voteChunk\[256\];\nstatic uint8_t g_voteScratch\[4736\];/.test(ino)) v.push("g_voteChunk / g_voteScratch restent statiques (voir § 5 du lot V3 : g_voteScratch est utilisé sur le TFT)");
+  if (!/if \(!ok\) return -6;\n    if \(!client\.connect\(SERVER_HOST, 443\)\) return -2;\n    client\.print\(req\);/.test(ino)) v.push("Conn::request : requête construite EN TOUT OU RIEN avant la connexion (-6 si non construite, rien n'est émis)");
+  if (/String req = String\(method\)/.test(ino)) v.push("Conn::request : plus de concaténation silencieuse de la requête");
+  if (/le prochain cycle votera/.test(ino)) v.push("commentaire faux : après SIGNATURE_REFUSED le candidat courant est DÉPENSÉ, il n'est pas revoté au prochain cycle");
   return v;
 }
+
+// ─── PRÉ-VOL toolchain (V3) : explicite, jamais silencieux ─────────────────────────────────────────────────────────────────
+test("V3 — PRÉ-VOL : compilateur C++ >= 11, bibliothèques Crypto 0.4.0 et ArduinoJson présentes, bibliothèque Crypto compilable — sinon ÉCHEC avec la cause (aucun test de ce fichier n'est ignoré)", () => {
+  assert.ok(choice.path, `aucun compilateur C++ trouvé. ${describeChoice(choice)} — définir CXX (ex. CXX=C:/Users/<vous>/tools/winlibs-14.2/mingw64/bin/g++.exe) et mettre son dossier bin dans PATH.`);
+  const m = /(\d+)\.(\d+)\.(\d+)/.exec(choice.version);
+  assert.ok(m && Number(m[1]) >= 11, `compilateur INCOMPATIBLE : ${choice.version} (g++ >= 11 exigé : le harnais compile la bibliothèque Crypto réelle et le sketch en gnu++17 ; g++ 10.2 échoue à construire le harnais Crypto — jamais ignoré). Installer WinLibs 14.2 et définir CXX.`);
+  assert.ok(cryptoSrc, "bibliothèque Crypto 0.4.0 introuvable : définir POD_CRYPTO_SRC (dossier src de Crypto 0.4.0)");
+  assert.ok(ajDir, "ArduinoJson 7.x introuvable : définir ARDUINOJSON_DIR (dossier src)");
+  assert.doesNotThrow(() => ensureLib(), `compilation de la bibliothèque Crypto IMPOSSIBLE avec ${choice.version} — toolchain incompatible`);
+});
 
 // ─── tests ────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 test("V2 — vérifications STATIQUES du sketch : gestionnaire commun des cinq sites de pile réseau, POD_VOTE_V1 = 0 sans reste de la voie v1, état de l'auto-test, six issues", () => {
@@ -282,7 +361,7 @@ const firstOnly = (src: string, from: string, to: string) => { const i = src.ind
 const GATE = 'const char* why = !keysLoaded ? "cles non chargees" : !g_edSelfTestOk ? "auto-test Ed25519 non reussi" : !registered ? "appareil non enregistre" : !paired ? "appareil non appaire" : nullptr;';
 const STOPLOG = '  if (ni.err == POD_NET_GUARD) logfSafeStop();\n  logf("[%s%s] pile réseau dédiée';
 const MUTANTS: Array<[string, (ino: string) => string, string[]]> = [
-  ["l'abstention sur hash divergent est supprimée (D-V2)", (i) => firstOnly(i, "if (strcmp(announcedHash.c_str(), chk.hash) != 0) {", "if (false) {"), ["altered"]],
+  ["l'abstention sur hash divergent est supprimée (D-V2)", (i) => firstOnly(i, "if (strcmp(announcedHash.c_str(), w.chk.hash) != 0) {", "if (false) {"), ["altered"]],
   ["le défaut collant du client TLS est ignoré (fault)", (i) => firstOnly(i, "else if (chk.ok && !(rdComplete && rdFault == 0)) {", "else if (chk.ok && !rdComplete) {"), ["faultSticky"]],
   ["le lecteur HTTP incomplet est ignoré (complete)", (i) => firstOnly(i, "else if (chk.ok && !(rdComplete && rdFault == 0)) {", "else if (chk.ok && rdFault != 0) {"), ["readerIncomplete"]],
   ["fault ET complete ignorés", (i) => firstOnly(i, "else if (chk.ok && !(rdComplete && rdFault == 0)) {", "else if (false) {"), ["faultSticky", "readerIncomplete"]],
@@ -293,7 +372,7 @@ const MUTANTS: Array<[string, (ino: string) => string, string[]]> = [
   ["la porte n'est plus appelée", (i) => firstOnly(i, "if (!voteGate()) {", "if (false) {"), ["gateKeys", "gateSelfTest", "gateRegistered", "gatePaired"]],
   ["la voie v1 est réactivée (POD_VOTE_V1 = 1)", (i) => firstOnly(i, "#define POD_VOTE_V1 0", "#define POD_VOTE_V1 1"), ["v1"]],
   ["SENT_UNKNOWN devient NOT_SENT", (i) => firstOnly(i, "  if (code < 0) return VOTE_SENT_UNKNOWN;", "  if (code < 0) return VOTE_NOT_SENT;"), ["classify", "postUnknown"]],
-  ["-4 n'est plus NOT_SENT", (i) => firstOnly(i, "  if (code == -4 || code == -2) return VOTE_NOT_SENT;", "  if (code == -2) return VOTE_NOT_SENT;"), ["classify", "postNotExecuted"]],
+  ["-4 n'est plus NOT_SENT", (i) => firstOnly(i, "  if (code == -4 || code == -2 || code == -6) return VOTE_NOT_SENT;", "  if (code == -2 || code == -6) return VOTE_NOT_SENT;"), ["classify", "postNotExecuted"]],
   ["HTTP 5xx n'est plus indéterminé", (i) => firstOnly(i, "  if (code >= 500) return VOTE_SENT_UNKNOWN;\n", ""), ["classify", "postUnknown"]],
   ["la ré-inscription se fonde sur la seule sous-chaîne « Signature »", (i) => firstOnly(i, '  if (code == 403 && resp.indexOf("Signature") >= 0) return VOTE_SIGNATURE_REFUSED;', '  if (resp.indexOf("Signature") >= 0) return VOTE_SIGNATURE_REFUSED;'), ["classify"]],
   ["le candidat n'est plus dépensé après un vote qui a pu partir", (i) => firstOnly(i, "    if (out != VOTE_NOT_SENT) voteMarkSpent(candidateId);", ""), ["noRepeat", "postUnknown", "nominal"]],
@@ -306,16 +385,26 @@ const MUTANTS: Array<[string, (ino: string) => string, string[]]> = [
   ["l'arrêt sûr sur GUARD est supprimé", (i) => firstOnly(i, STOPLOG, '  logf("[%s%s] pile réseau dédiée'), ["guard"]],
   ["httpCall n'utilise plus le gestionnaire commun", (i) => firstOnly(i, 'netStackFailed("HTTP ", method, ni,', 'logf("[HTTP %s] x", method); (void)('), ["guard"]],
   ["netReadCandidate n'utilise plus le gestionnaire commun", (i) => firstOnly(i, 'netStackFailed("VALIDATE2", "", ni, " — pas de vote");', 'logf("[VALIDATE2] x");'), ["guard"]],
-  ["la lecture incomplète n'empêche plus le vote", (i) => firstOnly(i, "if (!chk.ok) {", "if (false) {"), ["incomplete", "faultSticky", "readerIncomplete"]],
-  ["l'échec de la signature n'empêche plus le vote", (i) => firstOnly(i, '{ logf("[VALIDATE2] signature impossible (pile Ed25519 dédiée) — vote NON envoyé"); return VOTE_NOT_SENT; }', '{ logf("[VALIDATE2] signature impossible (pile Ed25519 dédiée) — vote NON envoyé"); }'), ["signFail"]],
-  ["le verdict envoyé est l'inverse du verdict signé", (i) => firstOnly(i, '"\\"verdict\\":\\"" + (accept ? "accept" : "reject")', '"\\"verdict\\":\\"" + (accept ? "reject" : "accept")'), ["nominal"]],
-  ["la métrique e envoyée est celle de t", (i) => firstOnly(i, '"\\"e\\":" + String((unsigned long)chk.m.e)', '"\\"e\\":" + String((unsigned long)chk.m.t)'), ["nominal"]],
+  ["la lecture incomplète n'empêche plus le vote", (i) => firstOnly(i, "if (!w.chk.ok) {", "if (false) {"), ["incomplete", "faultSticky", "readerIncomplete"]],
+  ["l'échec de la signature n'empêche plus le vote", (i) => firstOnly(i, '{ logf("[VALIDATE2] signature impossible (pile Ed25519 dédiée) — vote NON envoyé"); return false; }', '{ logf("[VALIDATE2] signature impossible (pile Ed25519 dédiée) — vote NON envoyé"); }'), ["signFail"]],
+  ["le verdict envoyé est l'inverse du verdict signé", (i) => firstOnly(i, 'voteAppend(body, w.accept ? "accept" : "reject")', 'voteAppend(body, w.accept ? "reject" : "accept")'), ["nominal"]],
+  ["la métrique e envoyée est celle de t", (i) => firstOnly(i, 'voteAppendNum(body, (unsigned long)w.chk.m.e)', 'voteAppendNum(body, (unsigned long)w.chk.m.t)'), ["nominal"]],
   ["la ré-inscription est faite DANS doValidate", (i) => firstOnly(i, "registered = false; break;", "registered = false; doRegister(); break;"), ["serverRefusals"]],
   ["la signature refusée ne déclenche plus la ré-inscription", (i) => firstOnly(i, "registered = false; break;", "break;"), ["serverRefusals"]],
   ["SENT_UNKNOWN est journalisé « vote NON envoyé »", (i) => firstOnly(i, "vote a PU atteindre le serveur, issue INDÉTERMINÉE — aucune nouvelle tentative automatique de ce candidat", "vote NON envoyé : la requête n'a pas été émise"), ["postUnknown"]],
   ["le vote déclenche un ACK", (i) => firstOnly(i, 'reportMem("VALIDATE2-après");\n  return out;', 'reportMem("VALIDATE2-après");\n  ackFrame(lastFrameId);\n  return out;'), ["s14"]],
   ["le vote touche à l'écran", (i) => firstOnly(i, 'reportMem("VALIDATE2-avant");', 'reportMem("VALIDATE2-avant"); tft.fillScreen(C_BLACK);'), ["s14"]],
   ["le vote écrit sur la carte SD", (i) => firstOnly(i, 'reportMem("VALIDATE2-avant");', 'reportMem("VALIDATE2-avant"); { File mf = SD.open("/pod/vote.txt", FILE_WRITE); if (mf) mf.close(); }'), ["s14"]],
+  // V3
+  ["la requête HTTP tronquée en silence est envoyée quand même (-6 supprimé)", (i) => firstOnly(i, "    if (!ok) return -6;\n", ""), ["memoryFailures"]],
+  ["-6 (requête non construite) n'est plus NOT_SENT", (i) => firstOnly(i, "  if (code == -4 || code == -2 || code == -6) return VOTE_NOT_SENT;", "  if (code == -4 || code == -2) return VOTE_NOT_SENT;"), ["classify"]],
+  ["VoteWork n'est plus libéré", (i) => firstOnly(i, "  delete w;", ""), ["cleanup", "voteWorkFail"]],
+  ["l'échec d'allocation de VoteWork est ignoré", (i) => firstOnly(i, "  if (!w) { logf(", "  if (false) { logf("), ["voteWorkFail"]],
+  ["la signature est tentée même si la lecture a échoué", (i) => firstOnly(i, "votePhaseRead(*w, candidateId, screenName, bytes, announcedHash) && votePhaseSign(*w, candidateId)", "(votePhaseRead(*w, candidateId, screenName, bytes, announcedHash) || true) && votePhaseSign(*w, candidateId)"), ["incomplete", "altered"]],
+  ["le contrôle de longueur du message signé est supprimé", (i) => firstOnly(i, "if (msg.length() != want) {", "if (false) {"), ["memoryFailures"]],
+  ["le contrôle de complétude du corps est supprimé", (i) => firstOnly(i, '  if (!ok) { logf("[VALIDATE2] corps du vote incomplet', '  if (false) { logf("[VALIDATE2] corps du vote incomplet'), ["memoryFailures"]],
+  ["voteAppend ne contrôle plus la longueur ajoutée", (i) => firstOnly(i, "  return s.length() == n + (unsigned)strlen(p);", "  return true;"), ["memoryFailures"]],
+  ["g_voteScratch réduit à 1 octet (le candidat OLED n'est plus votable)", (i) => firstOnly(i, "static uint8_t g_voteScratch[4736];", "static uint8_t g_voteScratch[1];"), ["scratchUsed"]],
 ];
 test(`V2 — MUTANTS exécutés (${MUTANTS.length}) : chaque protection supprimée est REFUSÉE par la vérification visée`, { skip }, () => {
   for (const [label, edit, ids] of MUTANTS) {
@@ -339,6 +428,14 @@ test("V2 — MUTANTS statiques : un site de pile réseau qui retourne à son jou
     ["doValidateV1 hors de #if POD_VOTE_V1", (i) => firstOnly(i, "#if POD_VOTE_V1\n// Ancien chemin", "#if 1\n// Ancien chemin")],
   ];
   for (const [label, f] of muts) assert.notDeepEqual(staticViolations(f(INO_SRC)), [], `mutant statique NON refusé : ${label}`);
+});
+
+test("V3 — MESURE ARCHIVÉE (analyse statique de l'ELF de production, cœur 1.6.0) : marge de la pile principale >= 256 o sur TOUTES les voies du vote, >= 320 o sur le chemin nominal ; V2 : 152 o", () => {
+  const rows = (f: string) => new Map(readText(`docs/mesures/8B2E_V3_2026_10_13/${f}`).split("\n").filter((l) => l.startsWith("| ")).map((l) => { const c = l.split("|").map((x) => x.trim()); return [c[1], Number(c[7])] as [string, number]; }));
+  const v3 = rows("pile-principale-statique-v3_off_160.txt"), v2 = rows("pile-principale-statique-v2_off_160.txt");
+  for (const f of ["doValidateV2", "votePhaseRead", "votePhaseSign", "votePhasePost", "voteFinish", "netReadCandidate", "httpCall", "doValidateDecode"]) assert.ok(v3.get(f)! >= 256, `${f} : marge ${v3.get(f)} o < 256 o`);
+  assert.ok(v3.get("doValidateV2")! >= 320, `chemin nominal du vote : marge ${v3.get("doValidateV2")} o < 320 o (objectif)`);
+  assert.equal(v2.get("doValidateV2"), 152, "référence V2 : 152 o");
 });
 
 test("V2 — la liste des écarts V1 est soldée : R-H1, R-H2, R-H3a, R-H3b, R-H4a, R-H4b, R-H5 et R-M1 sont tous corrigés (les vérifications ci-dessus le prouvent) ; R-B3 reste partiel (verrou RAM seulement)", { skip }, () => {
