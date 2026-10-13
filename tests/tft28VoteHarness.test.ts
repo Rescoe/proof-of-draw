@@ -119,17 +119,15 @@ function holdViolations(exe: string): string[] {
   // image uniforme : refus signé « blank »
   { const r = add("blank", S("nominal", -1, sha(BLANK))); const p = r.posts[0];
     if (n(r, "posts") !== 1 || p?.verdict !== "reject" || p?.reason !== "blank" || p?.e !== REF_BLANK.e || p?.t !== REF_BLANK.t || !signatureOk(r, p)) v.push("blank : refus signé, motif « blank », métriques et signature conformes"); }
-  // contenu altéré : refus signé « hash » (protocole actuel ; décision D-V2)
-  { const r = add("altered", S("altered")); const p = r.posts[0];
-    if (n(r, "posts") !== 1 || p?.verdict !== "reject" || p?.reason !== "hash" || p?.rawHash !== sha(ALTERED) || p?.rawHash === GOOD_HASH || p?.e !== REF_ALT.e || !signatureOk(r, p)) v.push("altered : hash différent de l'annoncé → refus signé « hash » portant le hash RÉEL du contenu reçu"); }
+  // (contenu altéré : voir l'écart R-H5 — la décision GELÉE D-V2 est l'ABSTENTION, le comportement actuel n'est donc plus déclaré conforme)
   // données incomplètes : AUCUN vote
   for (const sc of ["truncated", "stalled", "fault-midway"]) { const r = add(sc, S(sc)); if (n(r, "posts") !== 0 || n(r, "reads") !== 1 || r.facts.pending !== "-" || !logHas(r, "lecture/calcul impossible")) v.push(`${sc} : données incomplètes → aucun POST, lecture tentée, candidat oublié, cause journalisée`); }
   // signature impossible : AUCUN vote
   { const r = add("sign-fail", S("sign-fail")); if (n(r, "posts") !== 0 || !logHas(r, "vote NON envoyé")) v.push("sign-fail : signature impossible → aucun POST, journal « vote NON envoyé »"); }
   // écran inconnu : aucune lecture, aucun vote
   { const r = add("unknown-screen", S("unknown-screen")); if (n(r, "reads") !== 0 || n(r, "posts") !== 0) v.push("unknown-screen : écran inconnu → ni lecture ni vote"); }
-  // un seul vote même si le pull annonce de nouveau le candidat
-  { const r = add("double", S("double")); if (n(r, "posts") !== 1 || n(r, "validates") !== 2 || n(r, "reads") !== 1) v.push("double : candidat ré-annoncé → 1 seul POST, 1 seule lecture (déjà voté)"); }
+  // candidat ré-annoncé : un seul POST PARCE QUE le serveur SIMULÉ répond « alreadyVoted » au second validate-candidate. Ce n'est PAS le verrou local persistant « une seule tentative » exigé pour le canari de vote (voir l'OBSERVATION R-B3 plus bas).
+  { const r = add("double", S("double")); if (n(r, "posts") !== 1 || n(r, "validates") !== 2 || n(r, "reads") !== 1) v.push("double : candidat ré-annoncé ET serveur qui répond alreadyVoted → 1 seul POST, 1 seule lecture"); }
   // signature refusée par le serveur : ré-inscription DÉTACHÉE de doValidate
   { const r = add("sig-403", S("sig-403"));
     if (n(r, "posts") !== 1 || n(r, "registers_before_loop") !== 0) v.push("sig-403 : AUCUNE ré-inscription dans doValidate");
@@ -137,9 +135,13 @@ function holdViolations(exe: string): string[] {
     if (!logHas(r, "re-register au prochain tour de loop")) v.push("sig-403 : la ré-inscription différée est journalisée"); }
   // 422 : pas de ré-inscription
   { const r = add("hash-422", S("hash-422")); if (n(r, "posts") !== 1 || n(r, "registers") !== 0 || n(r, "registered") !== 1) v.push("hash-422 : un refus 422 ne déclenche aucune ré-inscription"); }
-  // S14 : ni affichage, ni carte, ni ACK, ni image, ni observation, œuvre courante inchangée
-  for (const [label, r] of all) if (n(r, "vote_acks") !== 0 || n(r, "vote_pullframes") !== 0 || n(r, "vote_obs") !== 0 || n(r, "vote_bus_delta") !== 0 || n(r, "vote_fills_delta") !== 0 || n(r, "vote_sd_writes_delta") !== 0 || n(r, "vote_sd_opens_delta") !== 0 || n(r, "vote_sd_files_delta") !== 0 || r.facts.vote_frame_unchanged !== "1") v.push(`${label} : le vote ne doit produire ni affichage, ni écriture de carte, ni ACK, ni téléchargement d'image, ni observation`);
+  for (const [label, r] of all) v.push(...s14(label, r));
   return v;
+}
+/** S14 : un vote ne produit ni affichage, ni écriture / ouverture de la carte, ni ACK, ni téléchargement d'image, ni observation ; l'œuvre courante est inchangée. */
+function s14(label: string, r: Result): string[] {
+  return (n(r, "vote_acks") !== 0 || n(r, "vote_pullframes") !== 0 || n(r, "vote_obs") !== 0 || n(r, "vote_bus_delta") !== 0 || n(r, "vote_fills_delta") !== 0 || n(r, "vote_sd_writes_delta") !== 0 || n(r, "vote_sd_opens_delta") !== 0 || n(r, "vote_sd_files_delta") !== 0 || r.facts.vote_frame_unchanged !== "1")
+    ? [`${label} : le vote ne doit produire ni affichage, ni écriture de carte, ni ACK, ni téléchargement d'image, ni observation`] : [];
 }
 
 /** Les ÉCARTS CONNUS : (identifiant, scénario, vrai si l'écart est observé AUJOURD'HUI). Ordre et contenu = ceux de l'audit § 4. */
@@ -150,6 +152,7 @@ const GAPS: Array<{ id: string; sc: string; seed?: number; observed: (r: Result)
   { id: "R-H3b", sc: "longer", text: "réponse plus longue que la taille annoncée : le vote part quand même", observed: (r) => n(r, "posts") === 1 },
   { id: "R-H4a", sc: "post-not-executed", text: "POST NON exécuté (-4) : le journal parle de « 403 = signature, 422 = hash »", observed: (r) => n(r, "posts") === 0 && logHas(r, "Echec vote (-4) : 403 = signature") },
   { id: "R-H4b", sc: "post-executed-rejected", text: "POST exécuté mais rejeté localement (-5) : même message trompeur ; le serveur a pourtant compté le vote", observed: (r) => n(r, "posts") === 1 && logHas(r, "Echec vote (-5) : 403 = signature") },
+  { id: "R-H5", sc: "altered", text: "hash reçu ≠ hash annoncé : D-V2 (gelée) = ABSTENTION, zéro POST ; le firmware envoie AUJOURD'HUI un refus signé « hash »", observed: (r) => n(r, "posts") === 1 && r.posts[0].verdict === "reject" && r.posts[0].reason === "hash" && r.posts[0].rawHash === sha(ALTERED) && r.posts[0].e === REF_ALT.e && signatureOk(r, r.posts[0]) },
   { id: "R-M1", sc: "guard-on-read", text: "garde de la pile réseau écrasée pendant la lecture du candidat : AUCUN arrêt sûr (le firmware journalise et continue)", observed: (r) => n(r, "guard_fired") === 1 && r.raw.length > 0 },
 ];
 
@@ -159,12 +162,32 @@ test("V1 — comportement ACTUEL du vote du TFT : conforme aux règles tenues (r
 });
 
 // ─── 2. écarts connus ─────────────────────────────────────────────────────────────────────────────────────────────────
-test("V1 — ÉCARTS CONNUS (audit § 4) : observés AUJOURD'HUI, liste exacte ; un correctif du lot V2 doit retirer l'écart ET durcir l'assertion", { skip }, () => {
+/** Écarts connus : chaque écart doit être observé AUJOURD'HUI (sinon violation) et l'invariant S14 doit tenir même dans ces scénarios. Vide = l'état documenté est exactement l'état observé. */
+function gapViolations(exe: string): string[] {
+  const v: string[] = [];
+  for (const g of GAPS) {
+    const r = run(exe, g.sc, g.seed ?? SEED);
+    if (!g.observed(r)) v.push(`${g.id} (${g.sc}) : l'écart documenté n'est plus observé — corrigé (lot V2) ? retirer l'écart de GAPS et durcir l'assertion`);
+    v.push(...s14(`${g.id} (${g.sc})`, r));
+  }
+  return v;
+}
+/** Tout ce que le harnais exige : comportement tenu + écarts exactement ceux de la liste documentée. Un mutant doit rendre cette liste NON vide. */
+const fullViolations = (exe: string) => [...holdViolations(exe), ...gapViolations(exe)];
+
+test("V1 — ÉCARTS CONNUS (audit § 4 + décision gelée D-V2) : observés AUJOURD'HUI, liste exacte ; un correctif du lot V2 doit retirer l'écart ET durcir l'assertion", { skip }, () => {
+  assert.deepEqual(gapViolations(build()), []);
+  assert.deepEqual(GAPS.map((g) => g.id), ["R-H1", "R-H2", "R-H3a", "R-H3b", "R-H4a", "R-H4b", "R-H5", "R-M1"]);
+});
+
+// ─── 2 bis. OBSERVATION : pas encore de verrou LOCAL « une seule tentative » (exigence du canari de vote, lot V4 — ce n'est PAS un des écarts R-H/R-M ci-dessus) ─────────────────────────────────────────────
+test("V1 — OBSERVATION R-B3 : le « un seul vote » actuel vient du SERVEUR (alreadyVoted) ; sans cette réponse le firmware voterait de nouveau — aucun verrou local persistant", { skip }, () => {
   const exe = build();
-  const observed: string[] = [];
-  for (const g of GAPS) if (g.observed(run(exe, g.sc, g.seed ?? SEED))) observed.push(g.id);
-  assert.deepEqual(observed, GAPS.map((g) => g.id), "écart non observé : corrigé ? (lot V2) retirer l'écart de GAPS et durcir l'assertion correspondante");
-  assert.deepEqual(GAPS.map((g) => g.id), ["R-H1", "R-H2", "R-H3a", "R-H3b", "R-H4a", "R-H4b", "R-M1"]);
+  const withServerMemory = run(exe, "double");
+  assert.equal(n(withServerMemory, "posts"), 1, "le serveur simulé répond alreadyVoted au second validate-candidate : un seul POST");
+  const forgetful = run(exe, "double-forgetful");
+  assert.equal(n(forgetful, "posts"), 2, "serveur qui ne se souvient pas du vote : le firmware lit et signe de nouveau, puis REVOTE (aucun verrou local) — à implémenter au lot V4 (drapeau « dépensé » en EEPROM)");
+  assert.equal(n(forgetful, "reads"), 2);
 });
 
 // ─── 3. mutants du sketch : chaque régression est REFUSÉE ─────────────────────────────────────────────────────────────
@@ -186,7 +209,7 @@ test("V1 — MUTANTS de la voie de vote : chaque régression est REFUSÉE par le
   for (const [label, f] of muts) {
     const [ino, hdr] = f(INO_SRC, VOTE_H);
     assert.ok(ino !== INO_SRC || hdr !== VOTE_H, `mutation sans effet : ${label}`);
-    const viol = holdViolations(build(ino, hdr));
+    const viol = fullViolations(build(ino, hdr));
     assert.notDeepEqual(viol, [], `mutant NON refusé : ${label}`);
   }
 });

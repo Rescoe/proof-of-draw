@@ -61,6 +61,7 @@ struct VK {
   NetScript cand;                              // réponse de /api/candidate-frame
   int voteCode = 200; std::string voteBody = "{\"ok\":true,\"blockMined\":false,\"voteCount\":1,\"needed\":1}";
   bool voted = false;                          // le « serveur » a enregistré un vote 200 : validate-candidate répond alreadyVoted
+  bool forgetful = false;                      // scénario « double-forgetful » : le serveur simulé NE SE SOUVIENT PAS du vote (met à nu l'absence de verrou LOCAL dans le firmware)
 };
 static VK V;
 static std::string v2Json(const std::string& screen, int bytes, const std::string& hash) {
@@ -71,7 +72,7 @@ static NetScript route(const NetRequest& r) {
   NetScript s;
   if (r.path.rfind("/api/validate-candidate", 0) == 0) { s.response = http(200, V.voted ? std::string("{\"candidate\":null,\"alreadyVoted\":true}") : V.validateJson); return s; }
   if (r.path.rfind("/api/candidate-frame", 0) == 0) return V.cand;
-  if (r.path.rfind("/api/validation-result", 0) == 0) { if (V.voteCode == 200) V.voted = true; s.response = http(V.voteCode, V.voteBody); return s; }
+  if (r.path.rfind("/api/validation-result", 0) == 0) { if (V.voteCode == 200 && !V.forgetful) V.voted = true; s.response = http(V.voteCode, V.voteBody); return s; }
   if (r.path.rfind("/api/register", 0) == 0) { s.response = http(200, "{\"deviceId\":\"dev_TEST0001\",\"pairCode\":\"ABCD2345\",\"paired\":true}"); return s; }
   if (r.path.rfind("/api/pull?", 0) == 0) { s.response = http(200, "{\"frameSource\":\"none\",\"retryAfter\":300}"); return s; }
   s.response = http(404, "{}"); return s;     // pull-frame, ack-frame, obs-confirm... : ne doivent JAMAIS être appelés par un vote
@@ -141,6 +142,7 @@ int main(int argc, char** argv) {
   if (sc == "sig-403") { V.voteCode = 403; V.voteBody = "{\"error\":\"Signature invalide\"}"; }
   if (sc == "hash-422") { V.voteCode = 422; V.voteBody = "{\"error\":\"hash ou metriques differents\"}"; }
   if (sc == "mined") { V.voteBody = "{\"ok\":true,\"blockMined\":true,\"blockIndex\":96}"; }
+  if (sc == "double-forgetful") V.forgetful = true;
   if (sc == "sign-fail") podEdTestFailAlloc = 1;
   if (sc == "post-not-executed") g_failWhenLog = "[VALIDATE2] signature en";
   if (sc == "post-executed-rejected") { g_guardWhenLog = "[VALIDATE2] signature en"; g_guardStackBytes = (unsigned)(POD_NET_STACK_TOTAL - POD_NET_GUARD_BYTES); podNetTestHook = smashGuardHook; }
@@ -149,7 +151,7 @@ int main(int argc, char** argv) {
   const long fills0 = g_tft.fills, bus0 = g_tft.busBytes, writes0 = g_sd.writes, opens0 = g_sd.opens; const size_t files0 = g_sd.files.size(); const std::string frame0 = lastFrameId.c_str();
   std::printf("FACT announced_hash=%s\n", hash.c_str());
   bool ret = doValidate();
-  if (sc == "double") { pendingCandidateId = V.candId.c_str(); ret = doValidate() || ret; }   // le pull annonce de nouveau le MÊME candidat : le serveur répond « déjà voté »
+  if (sc == "double" || sc == "double-forgetful") { pendingCandidateId = V.candId.c_str(); ret = doValidate() || ret; }   // le pull annonce de nouveau le MÊME candidat : le serveur répond « déjà voté » (sauf « forgetful »)
   // invariant S14 mesuré AVANT le tour de loop() (la ré-inscription peint un écran d'état)
   std::printf("FACT vote_bus_delta=%ld\n", g_tft.busBytes - bus0);
   std::printf("FACT vote_fills_delta=%ld\n", g_tft.fills - fills0);
