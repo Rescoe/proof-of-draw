@@ -1,0 +1,10 @@
+## WiFiSSLClient|PodBoundedSSL|podhttp
+## Ed25519|SHA256|SHA512
+   hal_entry > _Z12arduino_mainv > setup > _ZN6SHA256C1Ev
+   hal_entry > _Z12arduino_mainv > setup > _ZN6SHA2565resetEv
+   hal_entry > _Z12arduino_mainv > setup > _ZN6SHA256D1Ev
+   hal_entry > _Z12arduino_mainv > setup > _ZN6SHA2566updateEPKvj
+   hal_entry > _Z12arduino_mainv > setup > _ZN6SHA2568finalizeEPvj
+   hal_entry > _Z12arduino_mainv > setup > _ZN6SHA2566updateEPKvj > _ZN6SHA25612processChunkEv
+## sniprintf|vsniprintf
+   hal_entry > _Z12arduino_mainv > loop > doValidateV1RKN7arduino6StringEf > sniprintf
