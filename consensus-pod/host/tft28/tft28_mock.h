@@ -265,11 +265,22 @@ class Adafruit_ILI9341 {
 // ── tactile STMPE610 : scénario = nombre d'interrogations pendant lesquelles « touched() » reste vrai ───────────────────────
 struct TsPoint { int x, y, z; };
 static int g_touchPressedPolls = 0; static long g_touchPollCount = 0;
+// LOT8B2E ANIM-TOUCH-GESTURES-1 : contacts SCRIPTÉS DANS LE TEMPS (millis() virtuel) : touched() est vrai si millis() est dans un intervalle [a, b[ ; g_touchBounce : intervalles de rebond (faux) à l'intérieur d'un contact
+struct TouchSpan { unsigned long a, b; };
+static std::vector<TouchSpan> g_touchSpans;
+static std::vector<TouchSpan> g_touchGaps;
 class Adafruit_STMPE610 {
  public:
   Adafruit_STMPE610(int) {}
   bool begin() { return true; }
-  bool touched() { g_touchPollCount++; if (g_touchPressedPolls > 0) { g_touchPressedPolls--; return true; } return false; }
+  bool touched() {
+    g_touchPollCount++;
+    if (g_touchPressedPolls > 0) { g_touchPressedPolls--; return true; }
+    const unsigned long now = millis();
+    for (const auto& g : g_touchGaps) if (now >= g.a && now < g.b) return false;
+    for (const auto& s : g_touchSpans) if (now >= s.a && now < s.b) return true;
+    return false;
+  }
   bool bufferEmpty() { return true; }
   TsPoint getPoint() { return { 0, 0, 0 }; }
   void writeRegister8(uint8_t, uint8_t) {}
@@ -282,12 +293,13 @@ struct SdState {
   long writeBudget = -1;                         // octets encore acceptés en écriture (-1 = illimité) : carte pleine
   long readFailAt = -1;                          // lecture d'un fichier : échec à partir de cet offset
   long opens = 0, writes = 0, reads = 0, removes = 0;
+  long openedOk = 0, closed = 0, maxOpen = 0;    // fichiers ouverts avec succès / fermés explicitement / maximum ouverts EN MÊME TEMPS (le clip et frame.bin ne doivent jamais l'être ensemble)
 };
 static SdState g_sd;
 class File {
  public:
   File() {}
-  File(const std::string& p, int mode) : path_(p), mode_(mode), ok_(true) { if (mode == FILE_WRITE) { pos_ = g_sd.files[p].size(); } }
+  File(const std::string& p, int mode) : path_(p), mode_(mode), ok_(true) { if (mode == FILE_WRITE) { pos_ = g_sd.files[p].size(); } g_sd.openedOk++; if (g_sd.openedOk - g_sd.closed > g_sd.maxOpen) g_sd.maxOpen = g_sd.openedOk - g_sd.closed; }
   explicit operator bool() const { return ok_; }
   unsigned long size() { return ok_ ? g_sd.files[path_].size() : 0; }
   bool seek(uint32_t p) { if (!ok_ || p > g_sd.files[path_].size()) return false; pos_ = p; return true; }
@@ -305,7 +317,7 @@ class File {
   void println(const char* s) { println(String(s)); }
   void println(int v) { println(String(v)); }
   String readStringUntil(char term) { String r; auto& v = g_sd.files[path_]; while (pos_ < v.size()) { char c = (char)v[pos_++]; if (c == term) break; r += c; } return r; }
-  void close() { ok_ = false; }
+  void close() { if (ok_) g_sd.closed++; ok_ = false; }
  private:
   std::string path_; int mode_ = 0; bool ok_ = false; size_t pos_ = 0;
 };

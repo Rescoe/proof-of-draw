@@ -45,9 +45,10 @@ const MAY_CHANGE = new Set([
   "doFetchFrame", "netGetBenchClip", "netGetBlockClip", "maybeFetchAnim",                                                                                                    // défaut collant du client TLS borné
   "doRegister", "doPull", "doValidate", "benchPollOnce",                                                                                                   // JSON sur la pile de travail
   "doValidateV2",                                                                                                                                          // re-register différé (plus de doRegister imbriqué sous le cadre de 416 o du vote)
+  "serviceTouch", "loop",                                                                                                                                  // LOT8B2E ANIM-TOUCH-GESTURES-1 : appui court / long (classificateur), reprise automatique de 60 s sans cartel
 ]);
 const MUST_BE_IDENTICAL = [
-  "static void tftStatus(", "static void pushRow(int y) {", "static void swapRowBytes() {", "static void drawCartel() {", "static void drainTouch() {", "static void serviceTouch() {",
+  "static void tftStatus(", "static void pushRow(int y) {", "static void swapRowBytes() {", "static void drawCartel() {", "static void drainTouch() {",
   "static bool waitTapOrTimeout(", "static bool streamFrame(", "static bool ackFrame(", "static void fastPixels(const uint16_t* colors, uint32_t len) {", "struct FastTft {", "static String asciiFold(",
   "static void displayKeyMaterialOnce() {", "static void displayOnboardingTFT(", "static void postBenchResult(", "static void playBenchClip(", "static void doBenchPoll() {", "static unsigned long msUntilNextTask() {",
   "static void maybeFetchAnim(const String& frameId) {", "static void saveOwnedBlockHash(", "static String loadOwnedHashesJson() {", "static void saveBlockHashToEEPROM(", "static String loadBlockHashFromEEPROM() {",
@@ -66,7 +67,11 @@ test("OFF : les lignes d'origine supprimées ou modifiées appartiennent toutes 
   // les fonctions renommées « …Impl » ont EXACTEMENT le corps d'origine
   for (const [orig, impl, sig] of [["initSD", "initSDImpl", "static void"], ["restoreRows", "restoreRowsImpl", "static bool"], ["saveMeta", "saveMetaImpl", "static void"], ["restoreLastFrame", "restoreLastFrameImpl", "static void"],
     ["toggleCartel", "toggleCartelImpl", "static void"], ["animForget", "animForgetImpl", "static void"], ["animLoadMarker", "animLoadMarkerImpl", "static void"], ["onAnimTouch", "onAnimTouchImpl", "static void"]]) {
-    const a = fnBody(before, `${sig} ${orig}(`).replace(`${orig}(`, `${impl}(`), b = fnBody(prodNoHooks, `${sig} ${impl}(`);
+    let a = fnBody(before, `${sig} ${orig}(`).replace(`${orig}(`, `${impl}(`);
+    const b = fnBody(prodNoHooks, `${sig} ${impl}(`);
+    // LOT8B2E ANIM-TOUCH-GESTURES-1 : les DEUX seules modifications voulues de ces corps (masquer le cartel ne reprend plus l'animation ; message de la pause par appui long)
+    if (impl === "toggleCartelImpl") { const x = '    if (animOn && animPaused) { animPaused = false; logf("[ANIM] reprise"); }\n'; assert.equal(a.split(x).length, 2, "ligne de reprise automatique d'origine introuvable"); a = a.replace(x, ""); }
+    if (impl === "onAnimTouchImpl") { const x = 'logf("[ANIM] pause (toucher) : re-toucher ou attendre 60 s pour reprendre");'; assert.equal(a.split(x).length, 2, "message de pause d'origine introuvable"); a = a.replace(x, 'logf("[ANIM] pause (appui long) : appui court = cartel, appui long ou 60 s = reprise");'); }
     assert.ok(a.length > 20 && b.length > 20, `${orig} / ${impl} introuvable`);
     assert.equal(b, a, `${impl} : corps différent de ${orig} d'origine`);
   }

@@ -80,7 +80,7 @@ static NetScript route(const NetRequest& r) {
 // ─── remise à zéro du monde ─────────────────────────────────────────────────────────────────────────────────
 static void resetWorld(bool withSd = true, bool paintOld = true) {
   g_us = 1000000; g_requests.clear(); g_route = route; g_idleHook = nullptr; K = Knobs();
-  g_sd = SdState(); g_tft = TftState(); g_touchPressedPolls = 0; g_touchPollCount = 0; Serial.log.clear(); g_strFailArmed = false; g_strAllocN = 0;
+  g_sd = SdState(); g_tft = TftState(); g_touchPressedPolls = 0; g_touchPollCount = 0; g_touchSpans.clear(); g_touchGaps.clear(); Serial.log.clear(); g_strFailArmed = false; g_strAllocN = 0;
   podNetTestHook = nullptr; podNetTestFailAlloc = 0; podNetTestNested = 0; g_failSticky = 0; g_failNext = 0; g_failSkip = 0;
   if (paintOld) for (int i = 0; i < TFT_W * TFT_H; i++) g_tft.fb[i] = 0xBEEF;   // contenu « ancien » reconnaissable
   std::memset(g_fakeStack, 0, sizeof g_fakeStack);
@@ -320,6 +320,87 @@ int main(int argc, char** argv) {
     { resetWorld(); initSD(); g_sd.files["/pod/anim.bin"] = std::vector<uint8_t>(clip.begin(), clip.end()); std::string m = std::string(64, 'c') + "\nautre\n"; g_sd.files["/pod/anim.txt"] = std::vector<uint8_t>(m.begin(), m.end()); lastFrameId = "x";
       animLoadMarker(); CHECK(!animOn && has(Serial.log, "ne correspond pas"), "15 marqueur d'une autre œuvre : ignoré");
       m = std::string(64, 'c') + "\nx\n"; g_sd.files["/pod/anim.txt"] = std::vector<uint8_t>(m.begin(), m.end()); animLoadMarker(); CHECK(animOn && animHash == std::string(64, 'c').c_str(), "15 marqueur de l'œuvre : l'animation reprend"); }
+  }
+
+  // ═══ 15c. LOT8B2E ANIM-TOUCH-GESTURES-1 : appui COURT (cartel sur place, la lecture continue) / appui LONG (pause) ; contacts scriptés dans le temps virtuel ═══
+  if (!clipHex.empty()) {
+    const std::string clip = fromHex(clipHex); const std::string ghash(64, 'e');
+    auto setupAnim = [&](int seed) {
+      resetWorld(); initSD(); K.frame = frameOk(seed); doFetchFrame("gest", "consensus"); K.clip = clip;
+      const bool ok = fetchAnimToSd(String(ghash.c_str()), clip.size()); touchOk = true; g_requests.clear(); g_tft.busBytes = 0; g_touchSpans.clear(); g_touchGaps.clear(); return ok; };
+    auto bandSum = [&]() { uint64_t s = 1469598103934665603ULL; for (int y = 0; y < 320; y++) { if (y >= BAND_TOP_H && y < BAND_BOT_Y) continue; for (int x = 0; x < 240; x++) s = (s ^ g_tft.fb[y * TFT_W + x]) * 1099511628211ULL; } return s; };
+    auto bandsAre = [&](uint16_t c) { for (int y = 0; y < 320; y++) { if (y >= BAND_TOP_H && y < BAND_BOT_Y) continue; for (int x = 0; x < 240; x++) if (g_tft.fb[y * TFT_W + x] != c) return false; } return true; };
+    auto tick = [&](int n) { for (int i = 0; i < n; i++) { serviceTouch(); delay(40); } };   // ce que fait loop() entre deux lectures (hors réseau)
+
+    // G1 — appui COURT (100 ms) pendant la lecture : le cartel s'affiche, la lecture CONTINUE jusqu'au bout du budget, rien n'est mis en pause
+    { CHECK(setupAnim(21) && animOn, "15c clip en place pour les gestes");
+      const long opens0 = g_sd.opens; const unsigned long t = millis(); g_touchSpans.push_back({ t + 300, t + 400 });
+      const AnimEnd e = runResidentAnim(1500);
+      CHECK(e == AE_TIME && !animPaused && cartelVisible, "15c G1 appui court pendant la lecture : la lecture continue (AE_TIME), pas de pause, cartel affiché");
+      CHECK(g_tft.text.find("RESCOE") != std::string::npos && has(Serial.log, "cartel affiché 1 fois, masqué 0 fois (la lecture a continué)"), "15c G1 cartel dessiné sur place, compte rendu journalisé APRÈS la lecture");
+      CHECK(g_sd.opens - opens0 == 1 && g_sd.openedOk == g_sd.closed, "15c G1 le cartel sur place n'ouvre AUCUN fichier (seul le clip est ouvert, puis refermé)");
+      CHECK(g_requests.empty(), "15c G1 aucune requête réseau");
+      // G11 — la lecture suivante conserve le cartel : les bandes ne sont pas réécrites, seule la zone centrale l'est
+      const uint64_t b0 = bandSum(); g_tft.busBytes = 0; const AnimEnd e2 = runResidentAnim(800);
+      CHECK(e2 == AE_TIME && cartelVisible && bandSum() == b0 && g_tft.busBytes > 0, "15c G11 lecture suivante : cartel conservé, bandes y 0..39 et 272..319 INTACTES, animation en cours dans la zone centrale"); }
+
+    // G2 — second appui court : cartel masqué (bandes = fond de l'animation), lecture toujours en cours
+    { setupAnim(22); const unsigned long t = millis(); g_touchSpans.push_back({ t + 300, t + 400 }); g_touchSpans.push_back({ t + 900, t + 1000 });
+      const AnimEnd e = runResidentAnim(1800);
+      CHECK(e == AE_TIME && !cartelVisible && !animPaused && bandsAre(0x0842) && has(Serial.log, "cartel affiché 1 fois, masqué 1 fois"), "15c G2 second appui court : cartel masqué, bandes au fond de l'animation, lecture continue"); }
+
+    // G3 — appui LONG (maintenu 1,7 s) : sortie de la lecture, FICHIER FERMÉ avant toute restauration SD, puis pause + cartel ; le relâchement ne produit AUCUN second geste
+    { setupAnim(23); const unsigned long t = millis(); g_touchSpans.push_back({ t + 300, t + 2000 });
+      const AnimEnd e = runResidentAnim(5000);
+      CHECK(e == AE_TOUCH, "15c G3 appui long : sortie AE_TOUCH");
+      CHECK(g_sd.openedOk == g_sd.closed, "15c G3 le clip est FERMÉ avant la restauration depuis la carte");
+      onAnimTouch();
+      CHECK(animPaused && cartelVisible && fbIsArtwork(23, 40, 272) && g_sd.maxOpen <= 1 && g_sd.openedOk == g_sd.closed, "15c G3 pause : affiche restaurée, cartel, jamais deux fichiers ouverts à la fois");
+      tick(30);      // le doigt reste posé jusqu'à t + 2000 puis se relève : ni masquage, ni reprise
+      CHECK(animPaused && cartelVisible && !has(Serial.log, "cartel masqué en") && !has(Serial.log, "reprise (appui long)") && touchHold == 0, "15c G3 relâchement après l'appui long : AUCUNE seconde action, verrou levé"); }
+
+    // G4 — en pause, appui COURT : le cartel est masqué SANS reprendre ; second appui court : réaffiché
+    { setupAnim(24); const unsigned long t = millis(); g_touchSpans.push_back({ t + 200, t + 2500 }); (void)runResidentAnim(5000); onAnimTouch(); tick(60);
+      g_touchSpans.clear(); const unsigned long t2 = millis(); g_touchSpans.push_back({ t2 + 10, t2 + 110 }); tick(8);
+      CHECK(animOn && animPaused && !cartelVisible && fbIsArtwork(24), "15c G4 pause + appui court : cartel masqué, œuvre restaurée EXACTEMENT, l'animation reste EN PAUSE");
+      g_touchSpans.clear(); const unsigned long t3 = millis(); g_touchSpans.push_back({ t3 + 10, t3 + 110 }); tick(8);
+      CHECK(animPaused && cartelVisible, "15c G4 pause + second appui court : cartel réaffiché, toujours en pause"); }
+
+    // G5 — en pause, appui LONG : reprise, cartel masqué (bandes restaurées depuis la carte avant la reprise), puis la lecture repart plein écran
+    { setupAnim(25); const unsigned long t = millis(); g_touchSpans.push_back({ t + 200, t + 2500 }); (void)runResidentAnim(5000); onAnimTouch(); tick(60);
+      g_touchSpans.clear(); const unsigned long t2 = millis(); g_touchSpans.push_back({ t2 + 10, t2 + 1500 }); tick(5);
+      CHECK(!animPaused && !cartelVisible && fbIsArtwork(25) && has(Serial.log, "reprise (appui long)") && touchHold > 0, "15c G5 pause + appui long : reprise, cartel masqué, bandes restaurées, verrou de relâchement posé");
+      tick(60);
+      CHECK(touchHold == 0 && !animPaused && !cartelVisible, "15c G5 relâchement : aucune action de plus");
+      g_tft.busBytes = 0; const AnimEnd e = runResidentAnim(600); CHECK(e == AE_TIME && !cartelVisible && g_tft.busBytes > 0, "15c G5 la lecture repart plein écran, sans cartel"); }
+
+    // G6 — image fixe (pas d'animation) : court OU long = UNE seule bascule du cartel
+    { resetWorld(); initSD(); K.frame = frameOk(26); doFetchFrame("fixe", "personal"); touchOk = true; g_touchSpans.clear();
+      const unsigned long t = millis(); g_touchSpans.push_back({ t + 10, t + 110 }); tick(8); CHECK(cartelVisible, "15c G6 image fixe, appui court : cartel affiché");
+      const unsigned long t2 = millis(); g_touchSpans.push_back({ t2 + 10, t2 + 1500 }); tick(80);
+      CHECK(!cartelVisible && fbIsArtwork(26), "15c G6 image fixe, appui LONG : UNE bascule (masqué), pas de seconde au relâchement"); }
+
+    // G7 — seuil : 600 ms = court ; 700 ms = long (cadence d'interrogation de 20 ms : le seuil exact de 650 ms est prouvé par tests/touchGesture.test.ts)
+    { setupAnim(27); const unsigned long t = millis(); g_touchSpans.push_back({ t + 200, t + 2500 }); (void)runResidentAnim(5000); onAnimTouch(); tick(60);
+      g_touchSpans.clear(); const unsigned long a = millis(); g_touchSpans.push_back({ a + 10, a + 610 }); tick(40);
+      CHECK(animPaused && !cartelVisible, "15c G7 600 ms en pause : appui COURT (cartel masqué, toujours en pause)");
+      g_touchSpans.clear(); const unsigned long b = millis(); g_touchSpans.push_back({ b + 10, b + 710 }); tick(40);
+      CHECK(!animPaused, "15c G7 700 ms en pause : appui LONG (reprise)"); }
+
+    // G8 — rebond de 10 ms au milieu d'un contact : UNE action ; G9 — parasite de 5 ms : AUCUNE action
+    { setupAnim(28); const unsigned long t = millis(); g_touchSpans.push_back({ t + 200, t + 2500 }); (void)runResidentAnim(5000); onAnimTouch(); tick(60);
+      g_touchSpans.clear(); g_touchGaps.clear(); const unsigned long a = millis(); g_touchSpans.push_back({ a + 10, a + 200 }); g_touchGaps.push_back({ a + 100, a + 110 }); tick(12);
+      CHECK(animPaused && !cartelVisible, "15c G8 rebond de 10 ms dans un contact de 190 ms : UNE seule action (cartel masqué)");
+      g_touchSpans.clear(); g_touchGaps.clear(); g_touchPressedPolls = 1; tick(10);   // UN seul échantillon « posé » : parasite
+      CHECK(animPaused && !cartelVisible, "15c G9 parasite de 5 ms : AUCUNE action"); }
+
+    // G10 — le budget avant la prochaine tâche réseau est respecté même pendant un contact maintenu
+    { setupAnim(29); const unsigned long t = millis(); g_touchSpans.push_back({ t + 100, t + 5000 });
+      const AnimEnd e = runResidentAnim(500); const unsigned long used = millis() - t;
+      CHECK(e == AE_TIME && used <= 600, "15c G10 contact maintenu mais budget de 500 ms atteint avant l'appui long : retour dans le budget (AE_TIME), aucune pause"); }
+
+    // G13 — aucun accès SD / tas dans le geste : un appui court pendant la lecture ne fait ni allocation de pile SD supplémentaire ni requête
+    CHECK(g_sd.maxOpen <= 1, "15c fichiers SD : jamais plus d'un fichier ouvert à la fois sur tout le scénario");
   }
 
   // ═══ 15b. LOT8B2E ANIM-STREAM-FIX1 : clip de ≈ 9 Ko sur un tas FRAGMENTÉ (aucune allocation > 2 048 o) ; téléchargement vers la carte, validation et lecture EN FLUX ═══

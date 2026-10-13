@@ -49,6 +49,7 @@
 #include "podNetStack.h"   // POD_NET_STACK : transactions réseau/TLS ET journal sur PILE DÉDIÉE (connect() déborde de 456 o sous __StackLimit) — docs/LOT_8B2B2_NETSTACK_FIX1_2026_10_09.md, docs/LOT_8B2B2_NETSTACK_FIX2_2026_10_09.md
 #include <SHA256.h>
 #include "pod_http.h"
+#include "pod_touch_gesture.h"   // LOT8B2E ANIM-TOUCH-GESTURES-1 : appui court / long (classificateur pur, sans allocation)
 #include "pod_ssl_bounded.h"   // PULLFRAME-BOUNDED-SSL-FIX1 (porté au TFT 2,8″ : LOT8B2D) : client TLS dont la commande AT _SSLCLIENTRECEIVE est BORNÉE (240 o) — docs/LOT_8B2B2_PULLFRAME_BOUNDED_SSL_FIX1_2026_10_11.md
 #include <new>
 #include "pod_bench.h"
@@ -174,6 +175,8 @@ enum AnimEnd : uint8_t { AE_TIME = 0, AE_TOUCH, AE_ERROR };   // déclaré ici :
 bool   animOn = false;                            // un clip est sur la carte et correspond à l'œuvre affichée
 bool   animPaused = false;                        // en pause (toucher) : l'affiche et le cartel sont à l'écran
 unsigned long animPausedSince = 0;
+uint16_t animBg = 0;                              // fond de la zone d'animation (posé à chaque démarrage de lecture) : sert à masquer le cartel PENDANT la lecture
+uint8_t  touchHold = 0;                           // > 0 : un appui long vient d'agir, on attend un relâchement STABLE avant tout nouveau geste (jamais d'appui court fantôme)
 String animHash = "";                             // bloc dont le clip est sur la carte
 String pendingAnimHash = "";                      // pointeur reçu par le dernier pull
 size_t pendingAnimBytes = 0;
@@ -849,7 +852,6 @@ static void toggleCartelImpl() {
   const unsigned long t0 = millis();
   if (restoreRows(0, BAND_TOP_H) && restoreRows(BAND_BOT_Y, BAND_BOT_H)) {
     cartelVisible = false; logf("[TOUCH] cartel masqué en %lu ms", millis() - t0);
-    if (animOn && animPaused) { animPaused = false; logf("[ANIM] reprise"); }
   }
   else { sdFrameValid = false; sdWhy = "SD lecture"; logf("[TOUCH] lecture de /pod/frame.bin impossible : cartel conservé"); drawCartel(); }
 }
@@ -857,14 +859,13 @@ static void toggleCartel() {
   auto w = [&]() { toggleCartelImpl(); };
   onSd("toggleCartel", w);
 }
-static void serviceTouch() {
-  if (!touchOk || !ts.touched()) return;
-  const unsigned long t0 = millis();
-  while (ts.touched() && millis() - t0 < 1500UL) { delay(5); }   // attend le relâchement (anti-rebond)
-  drainTouch();
-  delay(120);
-  toggleCartel();
-  drainTouch();
+/** Appui COURT pendant la lecture : affiche / masque le cartel PAR-DESSUS le champ d'animation, sans interrompre la lecture. Appelée sur la pile SD dédiée (dans le crochet de lecture) :
+ *  TFT seulement, aucune carte SD, aucun journal (un logf direct poserait ≈ 500 o de pile sous le lecteur : le compte rendu est fait APRÈS la lecture). Les bandes (y 0..39 et 272..319) ne chevauchent jamais la zone animée (y 100..219). */
+static void __attribute__((noinline)) animCartelToggleLive() {
+  if (!cartelVisible) { drawCartel(); cartelVisible = true; return; }
+  tft.fillRect(0, 0, SCR_W, BAND_TOP_H, animBg);
+  tft.fillRect(0, BAND_BOT_Y, SCR_W, BAND_BOT_H, animBg);
+  cartelVisible = false;
 }
 static bool waitTapOrTimeout(unsigned long ms) {   // pour l'écran des clés : touché = continuer
   const unsigned long t0 = millis();
@@ -1809,6 +1810,7 @@ static AnimEnd __attribute__((noinline)) runResidentAnim(unsigned long budgetMs)
   AnimEnd why = AE_TIME;
   uint8_t st = 0;                                             // 0 lecture faite ; 1 ouverture ; 2 taille ; 3 clip refusé ; 4 lecture de la carte interrompue
   podbench::Err perr = podbench::OK;
+  uint8_t liveShown = 0, liveHidden = 0;                      // appuis courts traités PENDANT la lecture (journalisés après, hors pile SD)
   // Tout l'accès à la carte ET au TFT se fait sur la pile dédiée (SD-STACK-FIX1) ; le clip est validé en flux (même contrôle qu'avant, 2 passes) puis joué.
   auto play = [&]() {
     SdClipSource src;
@@ -1820,15 +1822,22 @@ static AnimEnd __attribute__((noinline)) runResidentAnim(unsigned long budgetMs)
     perr = podbench::validateStream(src, n, si, work, work + BENCH_FRAME);
     if (perr != podbench::OK) { st = 3; src.f.close(); return; }
     tft.setRotation(0);
-    tft.fillScreen(si.bg);
-    cartelVisible = false;
+    animBg = si.bg;
+    if (cartelVisible) tft.fillRect(0, BAND_TOP_H, SCR_W, BAND_BOT_Y - BAND_TOP_H, si.bg);   // le cartel RESTE affiché : seule la zone centrale (y 40..271) est effacée
+    else tft.fillScreen(si.bg);
     FastTft ft;
+    PodTouchClassifier tc; podTouchReset(tc);
     const unsigned long tEnd = millis() + budgetMs;
     unsigned long target = millis(), lastTouchChk = millis();
     const podbench::PlayEnd pe = podbench::playStream(src, si, work, work + BENCH_FRAME, ft, g_row, [&](uint32_t, uint16_t delayMs) -> bool {
       target += delayMs;                                      // horloge ABSOLUE : pas de dérive cumulée
       while ((long)(millis() - target) < 0) {
-        if (touchOk && millis() - lastTouchChk > 200UL) { lastTouchChk = millis(); if (ts.touched()) { drainTouch(); why = AE_TOUCH; return false; } }
+        if (touchOk && millis() - lastTouchChk >= POD_TOUCH_POLL_MS) {
+          lastTouchChk = millis();
+          const PodGesture g = podTouchStep(tc, ts.touched(), millis());
+          if (g == PG_LONG) { drainTouch(); touchHold = 3; why = AE_TOUCH; return false; }               // appui long : on sort (fichier fermé), loop() met en pause
+          if (g == PG_SHORT) { drainTouch(); if (cartelVisible) liveHidden++; else liveShown++; animCartelToggleLive(); }   // appui court : cartel sur place, la lecture continue
+        }
         if ((long)(millis() - tEnd) >= 0) return false;
         delay(1);
       }
@@ -1839,6 +1848,7 @@ static AnimEnd __attribute__((noinline)) runResidentAnim(unsigned long budgetMs)
   };
   const bool ran = onSd("animPlay", play);
   free(work);
+  if (liveShown || liveHidden) logf("[TOUCH] appui court pendant la lecture : cartel affiché %u fois, masqué %u fois (la lecture a continué)", (unsigned)liveShown, (unsigned)liveHidden);
   if (!ran) return AE_ERROR;
   if (st == 1) { logf("[ANIM] clip illisible"); return AE_ERROR; }
   if (st == 2) { logf("[ANIM] taille de clip invalide"); return AE_ERROR; }
@@ -1852,11 +1862,38 @@ static void onAnimTouchImpl() {
   animPaused = true; animPausedSince = millis();
   if (!(sdFrameValid && restoreRows(0, SCR_H))) tft.fillScreen(C_BLACK);
   drawCartel(); cartelVisible = true;
-  logf("[ANIM] pause (toucher) : re-toucher ou attendre 60 s pour reprendre");
+  logf("[ANIM] pause (appui long) : appui court = cartel, appui long ou 60 s = reprise");
 }
 static void onAnimTouch() {
   auto w = [&]() { onAnimTouchImpl(); };
   onSd("onAnimTouch", w);
+}
+
+/** Un contact = UNE action (pod_touch_gesture.h). Appelée par loop() entre deux lectures : image fixe, animation en pause, ou contact encore posé à la fin d'une lecture. Pendant une lecture, le crochet traite
+ *  lui-même l'appui court (cartel sur place) et l'appui long (sortie puis pause). Un contact vu HORS lecture alors que l'animation est « en cours » (écran de lecture figé, état inconnu) donne la pause avec cartel. */
+static void serviceTouch() {
+  if (!touchOk) return;
+  if (touchHold > 0) { if (ts.touched()) touchHold = 3; else touchHold--; return; }   // après un appui long : attendre un relâchement STABLE (≈ 3 tours de loop)
+  if (!ts.touched()) return;
+  PodTouchClassifier tc; podTouchReset(tc);
+  PodGesture g = podTouchStep(tc, true, millis());
+  const unsigned long t0 = millis();
+  while (g == PG_NONE && tc.down && millis() - t0 < 2000UL) { delay(POD_TOUCH_POLL_MS); g = podTouchStep(tc, ts.touched(), millis()); }
+  drainTouch();
+  if (g == PG_LONG) touchHold = 3;
+  switch (podTouchAction(g, animOn, animPaused)) {
+    case PTA_TOGGLE_STATIC:
+    case PTA_TOGGLE_PAUSED:  toggleCartel(); break;
+    case PTA_PAUSE:
+    case PTA_TOGGLE_PLAYING: onAnimTouch(); break;
+    case PTA_RESUME:
+      if (cartelVisible) toggleCartel();                       // les bandes sont restaurées depuis la carte avant la reprise
+      animPaused = false; cartelVisible = false;
+      logf("[ANIM] reprise (appui long)");
+      break;
+    default: break;
+  }
+  drainTouch();
 }
 
 /** Temps avant la prochaine tâche réseau (pull, vote, ré-validation) : l'animation ne la retarde jamais. */
@@ -1977,7 +2014,7 @@ void loop() {
   serviceTouch();
 
   // Animation résidente : lue depuis la carte, en boucle, entre deux tâches réseau (jamais de requête pour elle)
-  if (animOn && animPaused && millis() - animPausedSince > 60000UL) { animPaused = false; logf("[ANIM] reprise (60 s)"); }
+  if (animOn && animPaused && millis() - animPausedSince > 60000UL) { animPaused = false; cartelVisible = false; logf("[ANIM] reprise (60 s)"); }
   if (animOn && !animPaused && !benchMode) {
     const unsigned long budget = msUntilNextTask();
     if (budget > 400UL) {

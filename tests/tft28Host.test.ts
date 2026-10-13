@@ -103,7 +103,7 @@ let nBuild = 0;
 function buildFull(canary: boolean, mutate: (s: string) => string = (s) => s, mutateHdr: (s: string) => string = (s) => s): string {
   const dir = fs.mkdtempSync(path.join(tmp, `full-${nBuild++}-`));
   const sk = path.join(dir, "sk"); fs.mkdirSync(sk);
-  for (const f of ["podEdStack.h", "podNetStack.h", "pod_http.h", "pod_bench.h", "pod_bench_stream.h", "pod_vote_r4.h", "pod_metrics.h", "pod_metrics_table.h"]) fs.copyFileSync(path.join(SKETCH_DIR, f), path.join(sk, f));
+  for (const f of ["podEdStack.h", "podNetStack.h", "pod_http.h", "pod_bench.h", "pod_bench_stream.h", "pod_touch_gesture.h", "pod_vote_r4.h", "pod_metrics.h", "pod_metrics_table.h"]) fs.copyFileSync(path.join(SKETCH_DIR, f), path.join(sk, f));
   fs.writeFileSync(path.join(sk, "pod_sd_stack.h"), mutateHdr(fs.readFileSync(path.join(SKETCH_DIR, "pod_sd_stack.h"), "utf8").replace(/\r\n/g, "\n")));   // gabarits onSd / onSdDirect (hors du .ino)
   fs.copyFileSync(path.join(MOCK, "pod_ssl_bounded.h"), path.join(sk, "pod_ssl_bounded.h"));   // le client TLS SIMULÉ (le vrai est testé contre le vrai Modem.cpp par boundedSsl.test.ts)
   fs.writeFileSync(path.join(sk, "sketch_body.inc"), mutate(src));
@@ -164,6 +164,14 @@ test("HÔTE firmware complet : CONTRÔLES NÉGATIFS — ACK avant l'affichage, d
     ["CANARI : banc d'essai non ignoré", true, "#define POD_CANARY_NO_BENCH(flag) do { if (flag) { logf(\"[CANARY] banc d'essai annonce par le serveur : IGNORE en canari\"); flag = false; } } while (0)", "#define POD_CANARY_NO_BENCH(flag) ((void)0)"],
     ["FIX2 : tampon de travail de l'animation alloué AVANT le téléchargement (pic de tas)", false, "const bool got = netGetBlockClipToSd(hash, announced, writeFailed);", "uint8_t* early = (uint8_t*)malloc(2048); const bool got = netGetBlockClipToSd(hash, announced, writeFailed); free(early);"],
     ["FIX2 : échec d'allocation du tampon après le téléchargement ignoré (validation sans tampon)", false, "    if (!work) logf(", "    if (!work) { ok = animValidateAndMark(hash, announced, work, frames); } if (!work) logf("],
+    ["GESTES : l'appui court interrompt la lecture au lieu de basculer le cartel sur place", false, "liveShown++; animCartelToggleLive(); }", "liveShown++; why = AE_TOUCH; return false; }"],
+    ["GESTES : le démarrage de la lecture efface toujours tout l'écran (cartel perdu)", false, "if (cartelVisible) tft.fillRect(0, BAND_TOP_H, SCR_W, BAND_BOT_Y - BAND_TOP_H, si.bg);", "if (false) tft.fillRect(0, BAND_TOP_H, SCR_W, BAND_BOT_Y - BAND_TOP_H, si.bg);"],
+    ["GESTES : l'appui long ne sort pas de la lecture", false, "touchHold = 3; why = AE_TOUCH; return false; }", "touchHold = 3; }"],
+    ["GESTES : pas de verrou de relâchement après l'appui long (appui court fantôme)", false, "touchHold = 3; why = AE_TOUCH; return false; }", "why = AE_TOUCH; return false; }"],
+    ["GESTES : masquer le cartel en pause reprend l'animation", false, "    cartelVisible = false; logf(\"[TOUCH] cartel masqué en %lu ms\", millis() - t0);\n", "    cartelVisible = false; logf(\"[TOUCH] cartel masqué en %lu ms\", millis() - t0); if (animOn) animPaused = false;\n"],
+    ["GESTES : la reprise par appui long ne restaure pas les bandes", false, "      if (cartelVisible) toggleCartel();                       // les bandes sont restaurées depuis la carte avant la reprise\n", ""],
+    ["GESTES : masquer le cartel pendant la lecture ne remet pas le fond de l'animation", false, "tft.fillRect(0, 0, SCR_W, BAND_TOP_H, animBg);", "tft.fillRect(0, 0, SCR_W, BAND_TOP_H, C_BLACK);"],
+    ["GESTES : le seuil de l'appui long est ignoré (tout contact est un appui court)", false, "  while (g == PG_NONE && tc.down && millis() - t0 < 2000UL) {", "  while (g == PG_NONE && tc.down && millis() - t0 < 100UL) {"],
     ["pile SD : échec ignoré (opération présentée comme faite)", false, "  if (!ran) sdStackFailed(what, ni);\n  return ran;", "  if (!ran) sdStackFailed(what, ni);\n  return true;"],
     ["pile SD : exécution directe même sur la pile principale", false, "  if (!podNetOnMainStack()) { onSdDirect(f); return true; }", "  { onSdDirect(f); return true; }"],
   ];

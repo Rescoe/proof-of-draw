@@ -54,7 +54,7 @@ function violations(ino: string, hdr: string): string[] {
   const iPv = ra.indexOf("podbench::validateStream("), iPf = ra.indexOf("tft.fillScreen(si.bg)"), iPl = ra.indexOf("podbench::playStream(");
   if (!(iPv > 0 && iPv < iPf && iPf < iPl)) v.push("runResidentAnim : validation avant le premier dessin");
   if (!/if \(perr != podbench::OK\) \{ st = 3; src\.f\.close\(\); return; \}/.test(ra)) v.push("runResidentAnim : un clip refusé ne doit pas être joué");
-  if (!/free\(work\);\s*if \(!ran\) return AE_ERROR;/.test(ra)) v.push("runResidentAnim : libération du tampon avant tout retour");
+  if (!/free\(work\);\s*(if \(liveShown \|\| liveHidden\) logf\([^\n]*\n\s*)?if \(!ran\) return AE_ERROR;/.test(ra)) v.push("runResidentAnim : libération du tampon avant tout retour");
   if (!/pe == podbench::PLAY_IO\) st = 4;/.test(ra)) v.push("runResidentAnim : lecture de la carte interrompue non traitée");
   if (/\bSD\.(open|exists|remove)\(/.test(ra.replace(/auto play = \[&\]\(\) \{[\s\S]*?\n  \};\n/, ""))) v.push("runResidentAnim : accès à la carte hors de la pile dédiée");
   return v;
