@@ -133,7 +133,7 @@ for (const s of SKETCHES) {
 
 test("pilotes modifiés : seuls des AJOUTS balisés (DisplayStream / displayStream) — la vue sans ajout est identique au pilote d'avant", () => {
   for (const s of SKETCHES) for (const [driver, backup] of s.drivers) {
-    const src = read(driver);
+    const src = read(driver).replace(/#include "pod_canary_flags\.h"[^\n]*\n/, "");   // FIX2 : en-tête des drapeaux du 2,7″ + OLED (source unique, partagée avec le sketch)
     assert.equal((src.match(/POD_RENDER_V1_BEGIN/g) ?? []).length, 1, driver);
     assert.equal(offView(src), plain(read(backup)), `${driver} : modification hors des blocs balisés`);
   }

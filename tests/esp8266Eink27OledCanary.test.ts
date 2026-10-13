@@ -16,7 +16,8 @@ const DIR = "esp8266/esp_eink_2.7BW_OLED";
 const INO = `${DIR}/esp_eink_2.7BW_OLED.ino`;
 const DRV = `${DIR}/epd2in7_V2.cpp`;
 const BK = "firmware-backups/2026-10-13_avant-canari-esp8266-eink27-oled";
-const trimEnds = (s: string) => s.replace(/[ 	]+$/gm, "");   // la sauvegarde est normalisée (espaces finaux) : on compare sans eux
+const INC_RE = /#include "pod_canary_flags\.h"[^\n]*\n/;   // FIX2 : en-tête des drapeaux (source unique, partagée par le sketch et le pilote)
+const trimEnds = (s: string) => s.replace(INC_RE, "").replace(/[ 	]+$/gm, "");   // la sauvegarde est normalisée (espaces finaux) : on compare sans eux
 const readBk = (p: string) => trimEnds(read(`${BK}/${p}`));
 const CANARY_RE = /#if POD_RENDER_V1 && POD_CANARY\n[\s\S]*?\n#endif\n/g;
 const stripLine = (s: string) => s.replace(/\/\*[\s\S]*?\*\//g, "").replace(/("(?:[^"\\\n]|\\.)*")|\/\/.*$/gm, (_m, str?: string) => str ?? "");
@@ -46,6 +47,14 @@ test("OFF : retirer les blocs de canari et le drapeau redonne le firmware d'avan
   const s = read(INO).replace(CANARY_RE, "").replace(/#ifndef POD_CANARY\n#define POD_CANARY 0 [^\n]*\n#endif\n/, "");
   assert.equal(trimEnds(s), readBk(`esp_eink_2.7BW_OLED.ino`));
   assert.equal(trimEnds(read(DRV).replace(CANARY_RE, "")), readBk(`epd2in7_V2.cpp`));
+});
+
+test("FIX2 : les drapeaux ont UNE source (pod_canary_flags.h, 0/0), incluse par le sketch ET par le pilote ; le pilote ne définit aucun drapeau", () => {
+  const h = read(`${DIR}/pod_canary_flags.h`);
+  assert.equal(h.replace(/^\/\/.*\n/gm, ""), "#ifndef POD_RENDER_V1\n#define POD_RENDER_V1 0\n#endif\n#ifndef POD_CANARY\n#define POD_CANARY 0\n#endif\n");
+  assert.match(read(INO), /\/\/ POD_RENDER_V1_BEGIN\n#include "pod_canary_flags\.h"/);
+  assert.match(read(DRV), /#include "epd2in7_V2\.h"\n#include "pod_canary_flags\.h"/);
+  assert.doesNotMatch(read(DRV), /#define POD_(RENDER_V1|CANARY)\b/);
 });
 
 test("tout le code du canari est sous « #if POD_RENDER_V1 && POD_CANARY » ; chaînes du sketch en flash (F / PSTR)", () => {

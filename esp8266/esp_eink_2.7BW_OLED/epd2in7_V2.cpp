@@ -26,6 +26,7 @@
 
 #include <stdlib.h>
 #include "epd2in7_V2.h"
+#include "pod_canary_flags.h"   // FIX2 : mêmes drapeaux que le sketch (source unique)
 
 static const unsigned char LUT_DATA_4Gray[159] =
 {

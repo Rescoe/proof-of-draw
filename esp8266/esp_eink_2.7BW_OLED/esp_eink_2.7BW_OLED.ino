@@ -67,6 +67,7 @@
 #include "pod_vote_esp.h"  // validation réelle (vote v2) : SHA-256 + métriques entières en flux — ⚠ NON TESTÉ sur le matériel
 
 // POD_RENDER_V1_BEGIN
+#include "pod_canary_flags.h"   // FIX2 : source unique des drapeaux (le pilote .cpp ne voit pas un #define du .ino)
 // ─── Rendu v1 EN FLUX (lot 8B-2A / 8B-2B-1) — INACTIF PAR DÉFAUT ──────────────────────────────────────────────────────────────────────────────────────────
 // 0 (défaut) : comportement d'avant, octet pour octet (cartel gravé en place dans le tampon, affichage du tampon complet).
 // 1 : l'image reçue (plan unique, JAMAIS modifié) est rendue par le noyau gelé consensus-pod/src/podRenderStream.h (layoutVersion 1 : cartel, fit) et remise au pilote PAR MORCEAUX de 32 octets (DisplayStream) ;

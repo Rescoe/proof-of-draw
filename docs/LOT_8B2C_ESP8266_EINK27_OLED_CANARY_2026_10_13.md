@@ -97,3 +97,8 @@ Préparation : build local `-DPOD_RENDER_V1=1 -DPOD_CANARY=1` dans `canary-build
 bash scripts/esp8266-eink27-oled-canary-build.sh "<chemin vers TON secrets.h>"
 ```
 Produit `canary-builds/stable/` (retour arrière, `POD_RENDER_V1=0`) et `canary-builds/canary/` (`1/1`, sans vote), vérifiés avec le `secrets.h.example` : RAM 35 200 / 35 320 o, flash 473 820 / 468 920 o. Les `.bin` embarquent le Wi-Fi : dossier ignoré par git, ne jamais partager. **Flasher seulement après le verdict de l'audit GPT sur FIX1**, puis suivre le protocole du § 4.
+
+## 10. FIX2 — « undefined reference to g_pcBusyCalls » dans l'IDE Arduino (13/10/2026)
+
+**Cause (pas les bibliothèques)** : le sketch et le pilote `epd2in7_V2.cpp` sont deux unités de compilation. Un `#define POD_CANARY 1` écrit dans le `.ino` est invisible du pilote, qui ne définissait donc pas les compteurs BUSY lus par le sketch (build `-D…` en ligne de commande : sans problème, d'où mes compilations vertes). Les avertissements « Multiple libraries found … ssd1306 » sont sans rapport et sans effet (l'IDE a retenu `Adafruit_GFX_Library` et `Adafruit_SSD1306`) ; rien n'a été touché dans les bibliothèques.
+**Correctif** : `pod_canary_flags.h` (0/0 au dépôt) est la source unique des deux drapeaux, incluse par le sketch (dans la zone `POD_RENDER_V1_BEGIN`) et par le pilote. **Canari dans l'IDE : passer les DEUX valeurs à 1 dans `pod_canary_flags.h` de la copie ignorée, et ne pas modifier le `.ino`.** Vérifié : build IDE-style (seul l'en-tête édité, sans `-D`) = 35 320 o de RAM / 468 920 o de flash, édition de liens réussie. Tests adaptés (identité OFF, test des pilotes).
