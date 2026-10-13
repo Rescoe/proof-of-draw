@@ -90,3 +90,10 @@ Préparation : build local `-DPOD_RENDER_V1=1 -DPOD_CANARY=1` dans `canary-build
 3. **Hygiène** : espaces finaux de la sauvegarde `firmware-backups/2026-10-13_…` supprimés ; les tests comparent sans espaces finaux. `git diff --check e059db3..HEAD` propre.
 4. **Preuves** : harnais +scénarios S4c (−1 refusé), S4e (exact accepté), B2 (BUSY plafonné ⇒ 0 ACK, rien d'acquitté, OLED remis, plan libéré), B4 (BUSY 9 s ⇒ refus), B5 (7,5 s ⇒ succès), B6 (compteurs antérieurs ignorés) : 111 / 157 / 236 vérifications sans vote, 252 avec vote en canari ; 24 mutants refusés (4 nouveaux : refus BUSY supprimé, seul le plafonnement refuse, compteurs non remis à zéro, Content-Length −1 accepté). `tsc` propre. Compilation ESP8266 3.1.2 : OFF 35 200 o / 473 820 o, ON 35 316 o / 476 956 o, canari 35 320 o / 468 920 o ; avertissements identiques dans les trois (`docs/mesures/8B2C_27_FIX1_2026_10_13/`).
 5. **Suite globale, même environnement (g++ WinLibs 14.2, `CXX`, caches `consensus-pod/host/wifis3/.cache` copiés), `e059db3` puis HEAD** : base 794 tests / 2 échecs ; HEAD 833 tests / 2 échecs. Les deux échecs sont **strictement identiques** : `boundedSsl` « cœur Renesas 1.5.3 » et « 1.6.0 (VRAI code) » (code de sortie 3221226356 = 0xC0000374, corruption de tas du harnais hôte sous Windows) ; ils viennent de la base, pas du lot, et ne sont PAS corrigés ici. La suite n'est donc pas « propre » ; le différentiel base → HEAD est +39 tests, 0 échec nouveau. (Le test 8B1 `renderStream`, rouge avant FIX1 à cause de la liste blanche des harnais, est corrigé depuis `6a988a1`+FIX1 : la liste inclut `esp27_frame_harness.cpp`.)
+
+## 9. Démarrage rapide du build local (outillage, sans flash)
+
+```bash
+bash scripts/esp8266-eink27-oled-canary-build.sh "<chemin vers TON secrets.h>"
+```
+Produit `canary-builds/stable/` (retour arrière, `POD_RENDER_V1=0`) et `canary-builds/canary/` (`1/1`, sans vote), vérifiés avec le `secrets.h.example` : RAM 35 200 / 35 320 o, flash 473 820 / 468 920 o. Les `.bin` embarquent le Wi-Fi : dossier ignoré par git, ne jamais partager. **Flasher seulement après le verdict de l'audit GPT sur FIX1**, puis suivre le protocole du § 4.
