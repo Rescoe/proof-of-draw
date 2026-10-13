@@ -218,3 +218,93 @@ Chaque lot doit conserver les chemins d'écran/vote existants et s'arrêter pour
 - utiliser ensuite un petit OLED I²C comme premier adaptateur commun ;
 - réserver l'e-ink au nœud bonsaï une fois les données et l'interface stabilisées ;
 - ne pas brancher les MQ-5/MQ-7 sur ce premier nœud : alimentation, chauffe, calibration et sécurité méritent un banc séparé.
+
+## 10. Vision produit — configurateur matériel dans « Apprendre »
+
+À terme, la page **Apprendre** pourrait proposer un configurateur guidé plutôt qu'une liste de sketches indépendants.
+
+### Parcours envisagé
+
+1. choisir une carte, avec **UNO R4 WiFi comme seule cible initialement supportée** ;
+2. choisir un écran principal ;
+3. choisir éventuellement un écran secondaire OLED ;
+4. choisir un ou plusieurs capteurs ;
+5. ajouter les dépendances nécessaires : carte SD, relais, résistances, alimentation, câbles ;
+6. obtenir une configuration déclarée compatible, son câblage, ses limites et son firmware.
+
+La page doit produire :
+
+- une nomenclature des pièces ;
+- un schéma de câblage et une table des broches ;
+- les conflits éventuels de tension, bus, broches, mémoire ou alimentation ;
+- un fichier de configuration lisible ;
+- un sketch ou paquet de firmware construit depuis le noyau commun ;
+- les bibliothèques et versions requises ;
+- une procédure de compilation, d'appairage, de test et de retour arrière ;
+- un statut honnête par combinaison : `simulé`, `compilé`, `canari matériel`, `production`.
+
+### Éviter l'explosion combinatoire
+
+Le système ne doit pas entretenir un `.ino` copié pour chaque panier. Chaque composant fournit un manifeste de capacités :
+
+```text
+carte : RAM, flash, bus, broches, tensions
+écran : pilote, résolution, framebuffer, bus, broches, SD éventuelle
+capteur : bus, cadence, chauffe, compensation, alimentation
+fonction : art fixe, animation, mesures, vote, archive locale
+```
+
+Un solveur simple filtre les assemblages impossibles. La CI compile ensuite une **matrice finie de profils officiellement supportés**, pas toutes les permutations théoriques. Une combinaison non canarisée peut être proposée comme expérimentale, mais jamais comme prête à l'emploi.
+
+### Écran principal + OLED
+
+Le double affichage est possible lorsque les broches, le bus et la mémoire le permettent. Rôles recommandés :
+
+- écran principal : œuvre, animation ou tableau de bord complet ;
+- OLED secondaire : état réseau, dernière mesure, alerte, progression d'une mise à jour ou code d'appairage.
+
+Le configurateur doit refuser ou adapter le double écran si les deux modules utilisent les mêmes broches de contrôle, dépassent le budget mémoire ou rendent impossible une pile dédiée déjà nécessaire au réseau.
+
+## 11. Profil hybride proposé — UNO R4 WiFi + TFT 1,8″ + SD + capteurs
+
+Ce profil est plus intéressant que de finaliser immédiatement le canari de l'ancien montage ESP8266 + TFT 1,8″ si l'écran doit être déplacé physiquement sur une UNO R4 WiFi.
+
+### Expérience utilisateur
+
+- l'œuvre reste l'affichage principal ;
+- toutes les deux minutes, une page de mesures apparaît pendant 10 à 20 secondes ;
+- l'œuvre est ensuite restaurée depuis la carte SD, sans téléchargement réseau ;
+- une alerte importante peut prolonger la page de mesures ;
+- un bouton ou un toucher peut afficher les mesures à la demande ;
+- l'acquisition continue indépendamment de ce qui est affiché.
+
+La cadence d'affichage n'est pas la cadence des capteurs :
+
+- SGP40 : calcul interne du VOC Index chaque seconde ;
+- DHT22 : toutes les 2 à 5 secondes pour la compensation ;
+- sol : toutes les 30 minutes avec alimentation temporaire ;
+- résumé visible : toutes les 2 minutes ;
+- envoi PoD : lot horaire au départ, après chiffrage Redis.
+
+### Pourquoi la carte SD est importante
+
+Une image RGB565 de 128 × 160 représente environ 40 960 octets, davantage que la RAM disponible pour un cache complet confortable sur R4. La SD permet de conserver l'œuvre et de la restaurer après le tableau de bord sans refaire une requête ni garder un framebuffer complet en RAM.
+
+Si le module TFT 1,8″ ne possède pas de carte SD utilisable, deux replis seulement sont raisonnables : réserver des bandes permanentes aux mesures, ou réduire fortement/cache-partiellement l'image. Retélécharger l'œuvre toutes les deux minutes serait coûteux et fragile.
+
+### Ordre de réalisation
+
+1. identifier précisément le contrôleur du TFT 1,8″, la présence de la SD et le brochage ;
+2. compiler le firmware R4 TFT 1,8″ actuel sans l'activer ;
+3. valider DHT22 + SGP40 sans écran ;
+4. valider le capteur de sol et son relais séparément ;
+5. ajouter le tableau de bord TFT ;
+6. ajouter le cache/restauration SD ;
+7. seulement ensuite réunir art, mesures et réseau PoD ;
+8. canari sans vote, puis vote dans le chantier commun lorsqu'il sera prêt.
+
+## 12. Priorité par rapport aux firmwares existants
+
+L'ancien **ESP8266 + TFT 1,8″** reste compilé mais non canarisé. Si son écran est destiné au nœud R4 hybride, son canari est reporté afin de ne pas valider une configuration appelée à être démontée.
+
+L'**ESP8266 + e-ink 2,7″ + OLED** reste en revanche un canari utile : il couvre un vrai montage multiscreen, la contrainte mémoire ESP8266 et la coexistence e-ink/OLED. Il pourra être testé après la clôture du canari tactile TFT 2,8″, sans être bloqué par le futur nœud de mesures.
