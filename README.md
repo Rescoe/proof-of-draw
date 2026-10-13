@@ -1,352 +1,284 @@
 # Proof of Draw
 
-> Un réseau artistique distribué où des écrans e-ink ESP8266 valident collectivement des dessins via consensus, gravant chaque œuvre dans une chaîne légère.
+> Un réseau artistique expérimental dans lequel des dessins numériques deviennent des œuvres physiques, vérifiables et rejouables sur des écrans embarqués.
+
+[Application](https://proof-of-draw.vercel.app) · [Dessiner](https://proof-of-draw.vercel.app/draw) · [Galerie](https://proof-of-draw.vercel.app/gallery) · [Réseau](https://proof-of-draw.vercel.app/network) · [Documentation interactive](https://proof-of-draw.vercel.app/learn)
+
+## English summary
+
+Proof of Draw is an experimental art network connecting a web drawing studio, a serverless coordination layer and physical ESP8266 / Arduino UNO R4 WiFi displays. Artworks can be drawn or animated in the browser, converted into deterministic screen payloads, proposed to a pool of devices, signed and acknowledged by embedded clients, then rendered on e-paper, OLED or TFT screens.
+
+The project explores verifiable digital-to-physical art, constrained rendering, embedded signatures, device consensus, local SD archives and environmental measurements. It is active research software: display and acknowledgement paths have been validated on selected hardware, while real multi-device voting and remote firmware updates are still under validation.
+
+This repository is public for transparency and research. **No software licence has been granted yet**; see [Licence and reuse](#licence-et-réutilisation) before reusing the code.
 
 ---
 
-## Vision
+## Pourquoi ce projet ?
 
-Proof of Draw est un réseau artistique embarqué qui relie des artistes, des ESP8266, et des écrans physiques e-ink/OLED. Un dessin est soumis depuis une interface web Next.js, propagé à une pool d'ESP du même type d'écran, validé localement selon des métriques simples de complexité visuelle, puis affiché et archivé dans une chaîne légère stockée dans Redis.
+Une image envoyée vers un écran connecté est généralement traitée comme un simple fichier à afficher. Proof of Draw expérimente une autre approche : conserver la relation entre le geste, sa représentation binaire, les appareils qui l’observent et l’objet physique qui l’affiche.
 
-Le serveur Next.js / Vercel reste coordinateur et archiveur. Redis / Upstash gère l'état, les locks, les files, les bans, les devices et les pools. Les ESP ne font pas que afficher — ils participent à un protocole de validation distribué.
+Le projet associe ainsi :
 
----
+- un atelier de dessin et d’animation dans le navigateur ;
+- une conversion déterministe vers les formats réels des écrans ;
+- des appareils embarqués qui s’enregistrent, téléchargent, vérifient et acquittent les œuvres ;
+- des signatures Ed25519 et des hashes SHA-256 ;
+- un protocole de candidat, vote, quorum et bloc ;
+- une visualisation publique des artistes, œuvres, appareils et événements du réseau ;
+- des expériences autour des capteurs et de la preuve de mesure.
 
-## Stack
+Proof of Draw n’est pas, à ce stade, une blockchain autonome. Le serveur coordonne encore le réseau et Redis conserve son état opérationnel. La recherche porte précisément sur ce qui peut être vérifié, calculé, affiché ou archivé par les appareils eux-mêmes.
 
-| Composant | Technologie |
-|-----------|-------------|
-| Frontend | Next.js 14 (App Router) — Vercel |
-| Backend | Next.js API Routes — Vercel Edge/Serverless |
-| Storage | Upstash Redis (KV, TTL natif, pas de DB) |
-| Firmware | ESP8266 Arduino — e-ink Waveshare 2.9" BWR + 2.7" BW/OLED |
-| Auth | Session HMAC + blacklist Redis |
-| Crypto | ED25519 (clés en EEPROM ESP), SHA-256 (hashes blocs) |
+## État du projet — octobre 2026
 
----
+Le dépôt évolue par petits lots audités, compilés sur l’hôte, puis validés par des canaris matériels. Une fonctionnalité présente dans le code n’est donc pas automatiquement considérée comme validée sur toutes les cartes.
 
-## Statut actuel — v1 (16/05/2026)
+### Chemins validés matériellement
 
-| Composant | État |
-|-----------|------|
-| Enregistrement ESP (register + pairing QR) | ✅ fonctionnel |
-| Dessin web → candidat | ✅ fonctionnel |
-| Vote ESP → quorum → bloc miné | ✅ fonctionnel |
-| Affichage post-mining sur e-ink 2.9" BWR | ✅ fonctionnel |
-| Personal frame | ✅ logique implémentée |
-| Rate limiting / blacklist / strikes | ✅ préservé |
-| Intégrité chaîne (blockHash EEPROM, parentHash) | ✅ fonctionnel |
-| Multi-ESP en pool (quorum > 1) | 🔜 à tester |
-| Firmware e-ink 2.7" BW + OLED | 🔜 à porter |
+| Installation | Réception et affichage | ACK | Stabilité observée | Vote réel |
+|---|---:|---:|---:|---:|
+| UNO R4 WiFi + e-ink 2,9″ BWR | oui | oui | canari mémoire et TLS validé | non validé |
+| ESP8266 + e-ink 2,9″ BWR | oui | oui | rendu v1 validé, marge TLS mesurée | non validé |
+| ESP8266 + e-ink 2,7″ BW + OLED | oui | oui | coexistence e-ink/OLED et pulls répétés validés sur branche de recherche | non validé |
+| UNO R4 WiFi + TFT 2,8″ tactile + SD | image fixe et animation validées sur branche de recherche | oui | cache SD et lecture d’animation observés | non validé |
+| UNO R4 WiFi + DHT22 | mesure et envoi validés | n/a | lecture toutes les 30 min, envoi horaire | n/a |
 
-Commit de référence firmware ESP + eink 2.9" BWR : `43aac8f`
+Les autres firmwares présents dans le dépôt ont des niveaux de maturité différents : certains sont compilés seulement, d’autres attendent une carte de test. Le vote matériel multi-appareils et l’OTA ne doivent pas être considérés comme déployés.
 
----
+### Ce qui fonctionne dans l’application
 
-## Flux complet
+- atelier de dessin avec historique et replay déterministe ;
+- atelier d’animation et génération de clips ;
+- galerie d’œuvres, galerie d’animations et profils d’artistes ;
+- appairage et gestion des appareils ;
+- envoi d’une œuvre vers un écran particulier ;
+- carte du réseau, activité et écrans en direct ;
+- pipeline candidat → validation → bloc → diffusion ;
+- réception de mesures environnementales et visualisation ;
+- conversion vers plusieurs profils e-ink, OLED et TFT ;
+- budget et limitation des accès Redis ;
+- protections HMAC, rate limiting et listes de blocage.
 
-```
-[Web] Artiste dessine sur /draw
-        ↓
-POST /api/draw → POST /api/submit-candidate
-        ↓
-[ESP] GET /api/pull (léger, ~300B) — détecte candidat
-        ↓ wait VALIDATE_INTERVAL (30s)
-GET /api/validate-candidate (~121B) — récupère metadata + score_server
-        ↓
-POST /api/validation-result — vote ESP
-        ↓ quorum atteint → bloc miné → broadcast frame:{deviceId} Redis
-GET /api/pull (léger) — détecte nouveau frameId
-        ↓
-GET /api/pull-frame?fmt=bin — 9472 bytes binaires (blackBuf + redBuf)
-        ↓ readFull() loop garantit réception complète
-epd.Display(blackBuf, redBuf) → ✅ affiché sur e-ink
-```
+## Fonctionnement
 
----
-
-## Architecture serveur
-
-### Routes API
-
-| Route | Méthode | Rôle |
-|-------|---------|------|
-| `/api/register` | POST | Enregistrement ESP par MAC. Idempotent. Retourne deviceId + pairCode. Gère les pools Redis. |
-| `/api/ping` | POST | Met à jour lastPing/lastSeen du device. |
-| `/api/pull` | GET | Retourne metadata légère (~300B) : frameSource, frameId, chain summary, pendingValidation. Rate limit : 2/15min. |
-| `/api/pull-frame` | GET | Retourne les buffers pixel en binaire brut (`?fmt=bin`) : blackBuf[4736] + redBuf[4736] concaténés. |
-| `/api/validate-candidate` | GET | Retourne metadata du candidat courant (sans payload). Rate limit : 4/min. |
-| `/api/validation-result` | POST | Enregistre le vote ESP. Si quorum → finalizeBlock → broadcast → clearCandidate. |
-| `/api/draw` | POST | Soumet un dessin depuis l'app web (auth HMAC). |
-| `/api/submit-candidate` | POST | Crée le candidat Redis à partir du dessin. |
-| `/api/onboard` | POST | Associe un pairCode à un artistName. |
-| `/api/ack-frame` | POST | ESP confirme l'affichage d'un frame. |
-| `/api/personal-frame` | POST | Stocke un frame personnel pour un device spécifique. |
-
-### Librairies serveur
-
-| Fichier | Rôle |
-|---------|------|
-| `lib/chain.ts` | Logique chaîne : Block, Candidate, VoteMap, castVote(), finalizeBlock(), clearCandidate(), getChainSummary() |
-| `lib/deviceStore.ts` | CRUD devices Redis. TTL 48h. |
-| `lib/queue.ts` | Store/retrieve frames depuis Redis. FramePayload typé par écran. |
-| `lib/canvasToScreen.ts` | Conversion canvas → buffers écran selon profil (encodeur pur `rgbaToScreenPayload`, testé). |
-| `lib/drawEngine/` | Moteur de dessin pur (pixel-exact, historique par deltas, replay v2, score) — voir `docs/ARCHITECTURE_DESSIN.md`. |
-| `lib/rateLimit.ts` | Rate limiting, blacklist, strike system Redis. |
-| `lib/crypto.ts` | SHA-256, computeDisplayTime (score → durée affichage). |
-| `lib/screenProfiles.ts` | Profils d'écrans : dimensions, formats, BUF_SIZE. |
-| `lib/session.ts` | Gestion sessions HMAC pour l'app web. |
-
-### Clés Redis
-
-| Clé | Valeur |
-|-----|--------|
-| `chain:head` | JSON(Block) — dernier bloc validé |
-| `chain:block:{hash}` | JSON(Block) — archive par hash |
-| `chain:index:{n}` | blockHash — index séquentiel |
-| `candidate:current` | JSON(Candidate) — dessin en attente |
-| `candidate:votes` | JSON(VoteMap) — votes reçus |
-| `pool:screen:{screenId}` | Set(deviceId) — membres de la pool |
-| `frame:{deviceId}` | JSON — frame à afficher (TTL = displayTime) |
-
----
-
-## Architecture firmware ESP8266
-
-### Boot flow
-
-```
-WiFi connect
-→ POST /api/register (MAC → deviceId + pairCode)
-→ Génération/chargement clés ED25519 EEPROM
-→ malloc blackBuf + redBuf (BUF_SIZE × 2 = ~9.5KB)
-→ doPull() immédiat
-→ loop : pull toutes les 60s / validate toutes les 30s
+```text
+Artiste
+  │
+  │ dessin ou animation
+  ▼
+Application Next.js
+  │
+  │ conversion déterministe + candidat
+  ▼
+Coordination Vercel / Redis
+  │                         ▲
+  │ metadata, payload       │ vote signé, observation, ACK
+  ▼                         │
+Pool d’appareils ESP8266 / UNO R4 WiFi
+  │
+  │ rendu vérifié
+  ▼
+Écrans e-ink / OLED / TFT et archives SD
 ```
 
-### Contraintes mémoire critiques
+Le trafic est initié par les appareils vers le serveur : le serveur n’essaie jamais de joindre une adresse IP locale. Cette architecture évite l’ancien modèle de commande directe et les risques de SSRF associés.
 
-L'ESP8266 dispose de ~47KB de heap après WiFi. Chaque connexion TLS (BearSSL) consomme ~16KB de manière fragmentée. Toute la gestion mémoire repose sur ces invariants :
+### Cycle d’une œuvre
 
-- `blackBuf`/`redBuf` toujours `free()` avant toute connexion TLS, toujours `malloc()` après
-- `DynamicJsonDocument` pour les petits JSON alloué après fermeture TLS (scope HTTP fermé)
-- `http.useHTTP10(true)` obligatoire — Vercel utilise chunked encoding en HTTP/1.1, incompatible avec `getStream()`
-- `/api/validate-candidate` ne retourne PAS le payload image (uniquement metadata + score_server)
-- Lecture binaire directe pour les buffers pixel : zéro JSON, zéro base64 côté firmware
+1. L’artiste dessine ou anime dans l’application.
+2. Le moteur produit une représentation rejouable et des buffers adaptés au profil d’écran.
+3. Le serveur publie un candidat pour les appareils éligibles.
+4. Les firmwares compatibles peuvent récupérer ses métadonnées, calculer leurs observations et signer un résultat.
+5. Lorsque la politique de quorum est satisfaite, un bloc est finalisé.
+6. Chaque écran récupère son payload binaire, le rend, puis envoie un ACK uniquement après succès.
 
-### Fichiers firmware
+Le code du protocole de vote existe et dispose de harnais hôte, mais le vote réel contrôlé sur le matériel fait encore partie du chantier de validation.
 
-| Fichier | Cible |
-|---------|-------|
-| `esp8266/esp_eink_2.9BWR/esp_eink_2.9BWR.ino` | Waveshare 2.9" BWR (noir/blanc/rouge) ✅ |
-| `esp8266/esp_eink_2.7BW_OLED/esp_eink_2.7BW_OLED.ino` | 2.7" BW + OLED 🔜 |
+## Architecture technique
 
-### EEPROM layout
+| Couche | Technologies et rôle |
+|---|---|
+| Web | Next.js 16, React 19, TypeScript, Tailwind CSS 4 |
+| API | Route Handlers Next.js déployables sur Vercel |
+| État | Upstash Redis : appareils, pools, candidats, votes, blocs, frames, locks et TTL |
+| Firmware | Arduino C++ pour ESP8266 et Arduino UNO R4 WiFi |
+| Crypto | Ed25519 pour l’identité et les signatures, SHA-256 pour les contenus et blocs |
+| Affichage | e-ink BWR/BW, OLED SSD1306, TFT ST7735/ILI9341, stockage microSD selon la cible |
+| Tests | `node:test`, harnais C++ extraits du firmware, tests de mutation et compilations Arduino |
 
-```
-[0..31]   clé privée ED25519 (32 bytes)
-[32..63]  blockHash courant (16 premiers bytes du hash = 32 hex chars)
-[64]      keyGenerated flag (0x01 = généré)
-[65..96]  clé publique (32 bytes)
-[97]      onboardingShown flag (0x01 = déjà affiché)
-```
+### Routes principales
 
----
+| Route | Rôle |
+|---|---|
+| `POST /api/register` | enregistrement idempotent et appairage d’un appareil |
+| `GET /api/pull` | état léger : bloc, frame et candidat éventuel |
+| `GET /api/pull-frame` | payload binaire adapté au profil d’écran |
+| `GET /api/validate-candidate` | métadonnées nécessaires au contrôle d’un candidat |
+| `POST /api/validation-result` | résultat signé, quorum et finalisation éventuelle |
+| `POST /api/ack-frame` | confirmation d’un affichage réussi |
+| `POST /api/send-to-screen` | envoi personnel vers un écran précis |
+| `GET /api/block-clip` | clip d’animation associé à un bloc |
+| `POST /api/sensor` | ingestion de mesures issues des appareils |
 
-## Problèmes résolus (session 15-16/05/2026)
+Le dépôt contient davantage de routes pour les artistes, galeries, appareils, animations, preuves, transferts et outils de diagnostic.
 
-### P1 — validate-candidate retournait 13KB
+## Arborescence
 
-**Symptôme :** heap TLS ESP épuisé, GET → -1, candidateId vide.  
-**Cause :** payload base64 inclus dans la réponse, DynamicJsonDocument(4096) épuisé.  
-**Fix :** suppression du payload de la réponse. L'ESP vote avec score_server uniquement.
-
-### P2 — candidateId toujours vide après P1
-
-**Cause :** DynamicJsonDocument trop grand alloué après TLS fragmenté → pas de bloc contigu.  
-**Fix :** réécriture doValidate() avec DynamicJsonDocument(512).
-
-### P3 — Pull + validate back-to-back : second TLS impossible
-
-**Cause :** loop() déclenchait validate immédiatement après pull.  
-**Fix :** reset lastValidateMs = now à chaque nouveau candidat → délai VALIDATE_INTERVAL avant premier vote.
-
-### P4 — voteCount=0, needed=0 → vote ignoré silencieusement
-
-**Cause :** castVote() retourne zeros quand voteMap absent/expiré de Redis.  
-**Fix :** détection 409 + log warn côté serveur.
-
-### P5 — JSON error IncompleteInput après bloc miné
-
-**Cause :** getString() ne peut pas allouer une String de 12.8KB sur heap fragmenté post-TLS.  
-**Fix :** réécriture doPull() avec http.getStream() → ArduinoJson lit directement le stream.
-
-### P6 — JSON error InvalidInput sur le stream
-
-**Cause :** Vercel utilise Transfer-Encoding: chunked (HTTP/1.1). getStream() reçoit `1ea\r\n{...}`.  
-**Fix :** `http.useHTTP10(true)` avant chaque GET.
-
-### P7 — JSON error NoMemory persistant après bloc miné
-
-**Cause :** DynamicJsonDocument(15360) alloué après http.GET() → heap fragmenté par BearSSL → malloc échoue malgré 29KB free total (maxBlock = 19KB).  
-**Fix :** séparation en deux routes + lecture binaire directe (voir P8).
-
-### P8 — Architecture pull/fetch séparée (fix définitif)
-
-**Problème :** même avec l'allocation du doc avant TLS, le maxBlock tombait à ~23KB après le pull léger, insuffisant pour un DynamicJsonDocument(16384) dans doFetchFrame.  
-**Fix :** `/api/pull-frame?fmt=bin` retourne les buffers en **binaire brut** (9472 bytes, pas de JSON, pas de base64). Le firmware lit directement dans blackBuf et redBuf avec une boucle robuste :
-
-```cpp
-auto readFull = [](WiFiClient* s, uint8_t* dst, size_t len) -> size_t {
-  size_t total = 0;
-  unsigned long t0 = millis();
-  while (total < len && millis() - t0 < 15000) {
-    if (s->available()) {
-      size_t got = s->readBytes(dst + total, len - total);
-      if (got > 0) total += got;
-    } else {
-      delay(10);
-    }
-  }
-  return total;
-};
+```text
+app/                  interface web et routes API Next.js
+lib/                  consensus, chaîne, rendu, sécurité et accès Redis
+consensus-pod/        noyau partagé et harnais hôte
+arduino_uno_r4/       firmwares Arduino UNO R4 WiFi
+esp8266/              firmwares ESP8266
+docs/                 architecture, audits, protocoles et mesures
+tests/                tests TypeScript, structurels et harnais C++
+scripts/              outils de compilation, inventaire et analyse
+public/               ressources statiques de l’application
 ```
 
-**Pourquoi readFull est nécessaire :** `stream->readBytes()` sur TLS peut retourner moins que demandé si les données arrivent en plusieurs paquets TCP → buffers partiels → image hachée.
+## Profils matériels
 
----
+| Profil | Format | Taille logique | État général |
+|---|---|---:|---|
+| e-ink 2,9″ BWR | noir, blanc, rouge | 296 × 128 | chemins d’affichage validés sur ESP8266 et UNO R4 |
+| e-ink 2,7″ BW | monochrome | 264 × 176 | validé avec OLED sur ESP8266 ; R4 en attente de matériel |
+| OLED 0,96″ | monochrome | 128 × 64 | écran auxiliaire et animation testés avec l’e-ink 2,7″ |
+| TFT 1,8″ | couleur | 160 × 128 | firmware présent, validation matérielle à reprendre |
+| TFT 2,8″ tactile + SD | RGB565 | 240 × 320 | image, cache SD et animation validés sur branche de recherche |
+| DHT22 sur UNO R4 | température / humidité | — | acquisition matérielle validée |
 
-## Généralisation à d'autres types d'écrans
+Consulter [`docs/COMPATIBILITE_ECRANS.md`](docs/COMPATIBILITE_ECRANS.md) pour les brochages et contraintes connues. Les verdicts récents restent volontairement isolés sur leurs branches tant que leur intégration dans `main` n’a pas été auditée.
 
-### Côté serveur — `/api/pull-frame`
+## Démarrage local
 
-Le endpoint lit le profil d'écran depuis `screenProfiles.ts` pour déterminer :
-- le nombre de buffers (`bw` = 1 buffer, `bwr` = 2 buffers concaténés)
-- la `BUF_SIZE` correspondante
+### Prérequis
 
-Pour les écrans monochrome : envoyer uniquement `blackBuf` (pas de concaténation rouge).  
-Ajouter un header `X-Screen-Type` dans la réponse pour validation côté ESP.
+- Node.js 20 LTS ou plus récent ;
+- npm ;
+- une instance Redis compatible avec l’API REST Upstash pour exécuter les parcours réseau ;
+- Arduino IDE ou `arduino-cli` uniquement si vous compilez les firmwares.
 
-### Côté firmware — `doFetchFrame`
-
-`SCREEN_TYPE` et `BUF_SIZE` sont des constantes définies en tête de fichier.  
-Pour les écrans BW (un seul buffer) : lire `BUF_SIZE` bytes, appeler `epd.Display(blackBuf)`.  
-Pour les écrans BWR : conserver la lecture `black + red` actuelle.
-
-### Côté `screenProfiles.ts`
-
-Chaque profil déclare :
-- `BUF_SIZE` : taille d'un buffer en bytes
-- `bufferCount` : 1 (BW/OLED) ou 2 (BWR)
-- `format` : `"bw"` ou `"bwr"`
-- dimensions logiques
-
----
-
-## Écrans supportés
-
-| ID | Nom | Résolution logique driver | BUF_SIZE | Format |
-|----|-----|--------------------------|----------|--------|
-| `eink29bwr` | E-Ink 2.9" BWR Waveshare V4 | 128×296 | 4736 | BWR (2 buffers) |
-| `eink27bw` | E-Ink 2.7" BW Waveshare V2 | 176×264 | 5808 | BW (1 buffer) |
-| `oled096` | OLED 0.96" SSD1306 | 128×64 | 1024 | BW (1 buffer) |
-
-### Conversions canvas → buffer (référence)
-
-#### E-Ink 2.9" BWR (296×128 canvas → 128×296 driver, rotation 90° CCW)
-
-```typescript
-const bufCol = y;        // 0..127
-const bufRow = 295 - x;  // 0..295
-const byteIndex = bufRow * 16 + Math.floor(bufCol / 8);
-const bit = 7 - (bufCol % 8);
-// 0xFF = blanc, bit à 0 = coloré
-```
-
-#### E-Ink 2.7" BW (264×176 canvas → 176×264 driver, rotation 90° CCW)
-
-```typescript
-const bufCol = y;        // 0..175
-const bufRow = 263 - x;  // 0..263
-const byteIndex = bufRow * 22 + Math.floor(bufCol / 8);
-const bit = 7 - (bufCol % 8);
-```
-
-#### OLED 0.96" (128×64, page-major)
-
-```typescript
-const page = Math.floor(y / 8);
-const bit = y % 8;
-buffer[page * 128 + x] |= (1 << bit);
-// 0x00 = éteint, bit à 1 = allumé
-```
-
----
-
-## Consensus — Proof of Presence V1
-
-L'ESP vote sur présence dans la pool. Le score serveur (`score_server`) sert de référence.  
-Le quorum est `ceil(poolSize × 0.51)`.
-
-**V2 prévu :** l'ESP calcule ses propres métriques depuis `/api/candidate-payload` (binaire) :
-- Entropie Shannon
-- Densité de transitions horizontales
-- RLE complexity
-- Score composite : entropie 40% + transitions 40% + RLE 20%
-
----
-
-## Sécurité
-
-- Cookie session HMAC-SHA256
-- Rate limiting par device (Redis)
-- Blacklist IP/device/MAC automatique (après PULL_MAX × 10 dépassements)
-- Lock draw atomique SET NX
-- TTL sur devices (48h) et frames (displayTime calculé depuis score)
-- Pas d'état critique en mémoire Vercel (serverless-safe)
-- Pas de fetch sortant vers IP locale (plus de SSRF possible)
-
----
-
-## Démarrage rapide
+### Application web
 
 ```bash
-npm install
-cp .env.local.example .env.local
-# Renseigner UPSTASH_REDIS_REST_URL et UPSTASH_REDIS_REST_TOKEN
+git clone https://github.com/Rescoe/proof-of-draw.git
+cd proof-of-draw
+npm ci
+```
+
+Créer ensuite `.env.local` sans jamais le commiter :
+
+```dotenv
+KV_REST_API_URL=
+KV_REST_API_TOKEN=
+SESSION_SECRET=
+INTERNAL_API_SECRET=
+NEXT_PUBLIC_BASE_URL=http://localhost:3000
+```
+
+Puis lancer :
+
+```bash
 npm run dev
 ```
 
-→ http://localhost:3000
+L’application est disponible sur [http://localhost:3000](http://localhost:3000).
 
-### Flow d'onboarding ESP
+### Vérifications
 
-1. Flasher le firmware `esp_eink_2.9BWR.ino` avec WIFI_SSID, WIFI_PASSWORD, SERVER_URL
-2. L'ESP démarre, s'enregistre sur `/api/register`, affiche le pairCode sur l'écran
-3. Ouvrir `/onboard` sur le web, saisir le pairCode et artistName
-4. Dessiner sur `/draw` — le dessin circule vers la pool
+```bash
+npm test
+npx tsc --noEmit
+npx eslint .
+npm run build
+```
+
+Certains harnais firmware nécessitent également un compilateur C++ récent et les bibliothèques Arduino indiquées par leurs lots de documentation.
+
+## Compiler un firmware
+
+1. Choisir le dossier correspondant exactement à la carte et à l’écran.
+2. Copier `secrets.h.example` en `secrets.h` dans ce même dossier.
+3. Renseigner le Wi-Fi et l’URL du serveur dans la copie locale.
+4. Installer le cœur Arduino et les bibliothèques documentés pour la cible.
+5. Compiler le **dossier du sketch tel quel** : le générateur de prototypes Arduino fait partie de la chaîne à vérifier.
+6. Ne jamais commiter `secrets.h`, un binaire de canari ou des identifiants de production.
+
+Exemple de point de départ validé sur `main` :
+
+```text
+arduino_uno_r4/pod_uno_r4_eink29/
+```
+
+Les drapeaux `POD_RENDER_V1` et `POD_CANARY` restent désactivés dans les sources commitées. Les protocoles de canari décrivent explicitement quand et comment les activer dans une copie locale.
+
+## Contraintes embarquées importantes
+
+Les microcontrôleurs visés ont peu de RAM et les bibliothèques TLS, JSON, crypto, SD et graphiques ont parfois des pics importants. Le projet applique notamment :
+
+- des piles dédiées et mesurées pour Ed25519, le réseau, certains appels Wi-Fi et les travaux JSON sur UNO R4 ;
+- une lecture TLS bornée sur les chemins sensibles ;
+- des gardes, filigranes et marges minimales contrôlées par les canaris ;
+- la fermeture du client TLS avant les allocations ou rendus volumineux ;
+- un comportement fermé : pas d’ACK, de vote ou de succès annoncé après une lecture incomplète ou une erreur mémoire ;
+- des téléchargements en flux vers la SD ou l’écran lorsque le payload ne tient pas raisonnablement en RAM ;
+- des tests de mutation pour vérifier que les garde-fous ne sont pas accidentellement supprimés.
+
+Ces protections sont spécifiques aux chemins et aux cibles. Une réussite sur un firmware ne valide pas automatiquement les autres.
+
+## Sécurité et modèle de confiance
+
+- sessions web signées par HMAC ;
+- identités d’appareils et signatures Ed25519 ;
+- hashes SHA-256 des rendus et blocs ;
+- rate limiting et blocage des abus dans Redis ;
+- TTL sur les états temporaires ;
+- aucune connexion initiée par le serveur vers une IP locale ;
+- résultats de vote classés afin d’éviter un second envoi lorsque le premier a peut-être atteint le serveur ;
+- ACK envoyé uniquement après un chemin d’affichage considéré comme réussi.
+
+Le projet est expérimental et n’a pas fait l’objet d’un audit de sécurité indépendant complet. Ne l’utilisez pas comme infrastructure critique ou comme preuve juridique sans analyse adaptée.
+
+## Documentation de recherche
+
+Quelques points d’entrée :
+
+- [Architecture du moteur de dessin](docs/ARCHITECTURE_DESSIN.md)
+- [Plan de validation du consensus](docs/PLAN_DE_TRAVAIL_CONSENSUS_FINAL_2026_10_06.md)
+- [Compatibilité des écrans](docs/COMPATIBILITE_ECRANS.md)
+- [Pipeline des animations](docs/ANIMATIONS_PIPELINE.md)
+- [Faisabilité des animations](docs/ANIMATIONS_FAISABILITE_ESP_ET_COULEUR.md)
+- [Capteur DHT22 sur UNO R4](docs/CAPTEUR_TEMPERATURE_R4_DHT22.md)
+- [Verdict du client SSL borné sur R4 e-ink 2,9″](docs/CANARY_R4_EINK29_BOUNDED_SSL_FIX1_VERDICT_2026_10_11.md)
+- [Journal de validation réelle](docs/CHANTIER_VALIDATION_REELLE.md)
+
+Les documents datés conservent l’historique de la recherche. Ils peuvent décrire une étape dépassée ; les verdicts les plus récents et le code de `main` priment.
+
+## Contribuer
+
+Le projet est en phase de recherche active. Avant de proposer un changement :
+
+1. ouvrir une issue décrivant la carte, l’écran et le chemin concerné ;
+2. isoler un seul lot fonctionnel par branche ;
+3. conserver les invariants réseau, mémoire et sécurité ;
+4. fournir tests, compilation et mesures proportionnés au risque ;
+5. distinguer clairement « compilé », « testé sur l’hôte » et « validé matériellement ».
+
+Les contributions ne doivent contenir aucun secret, dump privé, clé, `.env`, `secrets.h` ou binaire configuré.
+
+## Licence et réutilisation
+
+**Aucune licence logicielle n’est actuellement accordée par ce dépôt.** Le code est visible publiquement pour documenter la recherche et permettre son examen, mais cette visibilité ne constitue pas une autorisation générale de copier, modifier, distribuer ou exploiter commercialement le projet.
+
+Sauf mention contraire applicable à un composant tiers, tous les droits sur le code et les contenus propres à Proof of Draw sont réservés. Pour une expérimentation, une contribution, une intégration ou une licence commerciale, ouvrez une issue afin de discuter du périmètre et des conditions.
+
+Les dépendances et bibliothèques tierces conservent leurs licences respectives.
+
+## Avertissement
+
+Proof of Draw combine logiciel web, cryptographie expérimentale, firmwares et matériel physique. Les canaris peuvent volontairement arrêter une carte lorsqu’une marge de sécurité est franchie. Sauvegardez vos données, vérifiez le firmware correspondant exactement à votre matériel et ne flashez pas un build expérimental sans lire son protocole.
 
 ---
 
-## Variables d'environnement
-
-```
-UPSTASH_REDIS_REST_URL=
-UPSTASH_REDIS_REST_TOKEN=
-PULL_WINDOW_SEC=900
-PULL_LIMIT_PER_WINDOW=2
-BLACKLIST_TTL_SECONDS=604800
-DRAW_LOCK_TTL=900
-SESSION_SECRET=
-```
-
----
-
-## Roadmap V2
-
-- `/api/candidate-payload` : payload binaire pour calcul local des métriques ESP
-- Signature ED25519 réelle (clé privée EEPROM déjà générée)
-- Score composite local : entropie + transitions + RLE
-- Multi-pool par résolution/couleur d'écran
-- Port firmware vers e-ink 2.7" BW et OLED 0.96"
-- Mint on-chain (hors scope V1)
+Proof of Draw est autant une œuvre en construction qu’un laboratoire : le réseau, ses écrans et ses mesures deviennent une partie visible du processus artistique.
