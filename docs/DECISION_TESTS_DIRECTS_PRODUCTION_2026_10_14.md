@@ -4,11 +4,11 @@ Décision opérationnelle **du porteur, validée par GPT**. Elle change l'**envi
 
 ## 1. Décision
 - **Production directe jusqu'à nouvel ordre.** Les canaris autorisés (dont le vote unique V4 du TFT 2,8″, lot `TFT28-PROD-VOTE-CANARY-1`) s'exécutent directement contre **`proof-of-draw.vercel.app`** et la **base principale** (Redis de production).
-- **Pourquoi** : Proof-of-Draw est encore **expérimental**, **sans utilisateurs externes**, et un **reset global des données est prévu** avant toute exploitation réelle. Rien d'irremplaçable n'est en jeu ; la vitesse prime sur l'isolation à ce stade.
+- **Pourquoi** : Proof-of-Draw est encore **expérimental**, **sans utilisateurs externes**, et (au 14/10/2026 matin) un reset global était prévu — **abandonné le soir même, voir § 2**. Rien d'irremplaçable n'est en jeu ; la vitesse prime sur l'isolation à ce stade.
 - On ne crée plus, on n'exige plus de **backend Preview** ni de **Redis isolé** pour la campagne actuelle ; le mini-firmware d'appairage Preview n'est **pas** utilisé pour cette campagne.
 
-## 2. Reset global prévu
-Les données de la base principale (chaîne, appareils, profils, candidats, mesures) seront **réinitialisées globalement avant l'exploitation réelle**. Tout bloc miné pendant la campagne de canaris disparaîtra à ce reset ; c'est accepté.
+## 2. ~~Reset global prévu~~ — ABANDONNÉ le 14/10/2026 (soir) : la chaîne est conservée à jamais
+**Décision du porteur** : il n'y aura **pas de reset global**. La chaîne est propre et **tout ce qui y est miné est gardé à jamais**. Si une évolution incompatible devient nécessaire un jour, ce sera un **FORK** (nouvelle chaîne qui repart de celle-ci), jamais une remise à zéro. Conséquences : (1) un bloc miné est **permanent** — la prudence sur ce qui est miné s'applique à partir de maintenant (pas de blocs de test jetables sans y penser) ; (2) la première phrase de ce document (« reset global prévu ») est **périmée** ; (3) le plan de reset de `docs/RESTE_A_FAIRE_2026_10_14.md` est supprimé ; (4) les données de la base principale (chaîne, appareils, profils, mesures) ne sont pas à préparer pour un effacement.
 
 ## 3. L'infrastructure Preview est « prête mais mise en sommeil » — jamais supprimée, jamais dépréciée
 Sont **conservés tels quels** et restent valides :
