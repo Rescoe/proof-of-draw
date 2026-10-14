@@ -5,6 +5,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { redis } from "@/lib/redis";
 import { getDevice, getGlobalActiveCount, getPoolSnapshot } from "@/lib/deviceStore";
 import { getChainHead } from "@/lib/chain";
+import { archiveOnCreate, reconcileLostCandidate, type ArchiveKV } from "@/lib/rejectedArchive";
 import { committeeEnforceBlockedByGuard, committeeModeFromEnv, planCandidateCommittee, waveDelayMsFromEnv, type CandidateCommittee } from "@/lib/committee";
 import { blockReceiptsEnabled } from "@/lib/blockReceipts";
 import { animV3EnforceRequested, animV3ModeFromEnv } from "@/lib/animV3Mode";
@@ -266,7 +267,10 @@ export async function POST(req: NextRequest) {
     warning,
   };
 
+  // REJECTED-CANDIDATE-ARCHIVE-1 : si le candidat précédent a été perdu (expiré / remplacé sans quorum), il entre dans « Rejetés » (copie complète conservée) ; puis copie du nouveau. Au mieux, jamais bloquant.
+  await reconcileLostCandidate(redis as unknown as ArchiveKV).catch((e) => console.error("[submit-candidate] réconciliation de l'archive échouée:", e));
   await setCandidate(candidate);
+  await archiveOnCreate(redis as unknown as ArchiveKV, candidate).catch((e) => console.error("[submit-candidate] archive du candidat échouée:", e));
   // pod-anim-v3 (lot 6B-2) : mode « shadow » = la référence v3 de l'animation est calculée et JOURNALISÉE, sans AUCUN effet (0 commande Redis, rien d'écrit, aucun vote ni bloc modifié). « off » (défaut) : rien.
   if (candidate.anim && animV3ModeFromEnv() === "shadow") {
     if (animV3EnforceRequested()) console.warn("[anim-v3] ANIM_V3_MODE=enforce IMPOSSIBLE (non implémenté : lot 8, capacités firmware) : ramené à SHADOW");
