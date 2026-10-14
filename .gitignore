@@ -73,3 +73,5 @@ esp8266/**/secrets.h
 
 # canari de vote (LOT8B2E V4) : épinglage LOCAL (hôte du backend isolé, candidat, hash) — jamais commité
 arduino_uno_r4/**/pod_vote_pins.h
+# hôte du backend Preview pour le build d'appairage (TFT28-PREVIEW-ENROLL-1) : local, jamais commité
+arduino_uno_r4/**/pod_preview_host.h

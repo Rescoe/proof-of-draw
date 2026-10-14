@@ -14,10 +14,10 @@ export const readText = (p: string) => fs.readFileSync(path.join(ROOT, p), "utf8
 export function voteCanaryOffView(src: string): string {
   const out: string[] = []; const st: Array<{ ours: boolean; active: boolean }> = [];
   const keep = () => st.every((s) => !s.ours || s.active);
-  for (const line of src.replace(/\/\/ POD_VOTE_CANARY \(LOT8B2E V4\)[\s\S]*?#ifndef POD_VOTE_CANARY\n#define POD_VOTE_CANARY 0\n#endif\n/, "").split("\n")) {
+  for (const line of src.replace(/\/\/ POD_VOTE_CANARY \(LOT8B2E V4\)[\s\S]*?#ifndef POD_VOTE_CANARY\n#define POD_VOTE_CANARY 0\n#endif\n/, "").replace(/\/\/ POD_PREVIEW_ENROLL \(LOT TFT28-PREVIEW-ENROLL-1\)[\s\S]*?#define POD_NOHW 0\n#endif\n\n/, "").split("\n")) {
     const t = line.trim();
-    if (/^#if\s+POD_VOTE_CANARY\s*$/.test(t)) { st.push({ ours: true, active: false }); continue; }
-    if (/^#if\s+!POD_VOTE_CANARY\s*$/.test(t)) { st.push({ ours: true, active: true }); continue; }
+    if (/^#if\s+(POD_VOTE_CANARY|POD_NOHW|POD_PREVIEW_ENROLL)\s*$/.test(t)) { st.push({ ours: true, active: false }); continue; }
+    if (/^#if\s+!(POD_VOTE_CANARY|POD_NOHW|POD_PREVIEW_ENROLL)\s*$/.test(t)) { st.push({ ours: true, active: true }); continue; }
     if (/^#(if|ifdef|ifndef)\b/.test(t)) { st.push({ ours: false, active: true }); if (keep()) out.push(line); continue; }
     if (/^#else\b/.test(t) && st.length && st[st.length - 1].ours) { st[st.length - 1].active = !st[st.length - 1].active; continue; }
     if (/^#endif\b/.test(t)) { const top = st.pop(); if (top && !top.ours && keep()) out.push(line); continue; }

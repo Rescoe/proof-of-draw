@@ -1,71 +1,69 @@
-# Phase « backend Preview isolé » du vote unique TFT 2,8″ — préparation (14/10/2026)
+# Phase « backend Preview isolé » du vote unique TFT 2,8″ — protocole (révision du 14/10/2026 après l'audit de `4e6f548`)
 
-Suite de `docs/CANARY_R4_TFT28_AFFICHAGE_FIX2_VERDICT_2026_10_14.md` (transport revalidé, VERT). **Préparation seulement : aucun flash du canari de vote, aucun vote, aucun déploiement, aucune écriture serveur par Claude.** Tout ce qui touche Vercel, Upstash et la carte est fait par le porteur. Compléments : `docs/PROTOCOLE_ISOLATION_ET_VERROU_VOTE_TFT28_2026_10_14.md` (preuves d'isolation, `pod_vote_pins.h`, `VoteLockErase`).
+Suite de `docs/CANARY_R4_TFT28_AFFICHAGE_FIX2_VERDICT_2026_10_14.md` (transport revalidé, VERT). **Préparation seulement : aucun flash, aucun vote, aucun déploiement.** Compléments : `docs/PROTOCOLE_ISOLATION_ET_VERROU_VOTE_TFT28_2026_10_14.md` (preuves d'isolation, `pod_vote_pins.h`, `VoteLockErase`) et `docs/LOT_TFT28_PREVIEW_ENROLL_1_2026_10_14.md` (build d'appairage).
 
-## 0. Constats issus du code (à connaître avant de commencer)
-1. **Redis = deux variables : `KV_REST_API_URL` et `KV_REST_API_TOKEN`** (`lib/redis.ts`). **Neon n'est utilisé nulle part dans `lib/` ni `app/`** (recherche `DATABASE_URL`/`POSTGRES`/`neon` : aucun résultat) : le § 4 « Neon » du protocole d'isolation se réduit à constater l'absence de variable de base SQL sur le déploiement Preview.
-2. **Le build de vote ne montre ni ne journalise le code d'appairage** (`registerLog` n'écrit que `deviceId` et `paired` ; aucun écran). Sur un Preview neuf, `register` crée une fiche **non appairée** (clé = adresse MAC) ⇒ le canari s'arrête (« appareil NON appairé ») **avant** tout pull, tout verrou, tout vote. L'appairage Preview ne peut donc pas se faire « par le canari ». Voir § 3.
-3. **`candidate:current` est une clé unique et globale** (un seul candidat à la fois), **TTL 1 800 s** (`CANDIDATE_TTL_SEC`). Les épingles (`candidateId`, hash) doivent être connues **à la compilation** : le candidat doit exister **avant** de compiler et rester valable jusqu'au pull de la carte (§ 5).
-4. Quorum : `poolSize` = nombre de profils/ESP actifs (`max(1, …)`) ; avec `ELIGIBILITY_MODE` et `COMMITTEE_MODE` à `off` (défauts), un seul appareil actif ⇒ quorum de 1 ⇒ **le vote mine un bloc dans CE backend**. `COMMITTEE_MODE=enforce` est refusé sans `COMMITTEE_GRINDING_ACK`.
-5. La carte de production reste **inchangée** : le canari de vote est un binaire distinct, `SERVER_HOST` = hôte Preview ; le binaire stable (production) est conservé pour le retour arrière.
+## 0. Décisions de l'audit (14/10/2026)
+- **Option B′ REFUSÉE telle qu'écrite** : elle était **circulaire**. Elle exigeait un vrai candidat pour compiler le premier binaire, or `/api/draw` exige que la session possède l'appareil ; l'appareil doit donc être appairé **avant** de pouvoir créer normalement un candidat.
+- **Option retenue** : un **mini-firmware d'appairage Preview**, sans écran et sans vote (`POD_PREVIEW_ENROLL`, lot `TFT28-PREVIEW-ENROLL-1`).
+- `STRICT_SIGNATURE=true` : **accepté**. `CANDIDATE_TTL_SEC=7200` : **accepté, Preview seulement**.
+- Captures Vercel / Upstash : **faites par le porteur** ; auditées par Claude et par GPT.
 
-## 1. Portes (chaque porte exige la précédente ; consigner captures datées)
-| # | Porte | Preuve exigée |
+## 1. Ordre sûr (chaque étape exige la précédente ; aucune n'est exécutée par Claude)
+1. **Prouver l'isolation Preview / Redis** (§ 3 et protocole d'isolation § 1 à 4).
+2. **Flasher le mini-firmware d'appairage** (`POD_PREVIEW_ENROLL = 1`, hôte Preview dans le fichier local `pod_preview_host.h`).
+3. **Récupérer le `pairCode`** (journal série) **et appairer sur Preview** (`https://<hôte Preview>/onboard?code=…`, avec un profil Preview). Reflasher le binaire stable.
+4. **Créer le candidat depuis Preview** (§ 5).
+5. **Relever son identifiant et son hash** (§ 5).
+6. **Compiler le vrai canari de vote** (`pod_vote_pins.h`, § 6).
+7. **Vérifier le verrou vierge** (`VoteLockErase`, § 7).
+8. **Obtenir l'autorisation finale** (GPT / Codex et porteur).
+9. **Effectuer le vote unique.**
+
+## 2. Constats issus du code
+1. **Redis = deux variables : `KV_REST_API_URL` et `KV_REST_API_TOKEN`** (`lib/redis.ts`). **Neon n'est utilisé nulle part dans `lib/` ni `app/`.**
+2. **Le build de vote ne montre ni ne journalise le code d'appairage** ; sur un Preview neuf, `register` crée une fiche **non appairée** (clé = adresse MAC) et le canari de vote s'arrête avant tout pull, tout verrou, tout vote. D'où le mini-firmware d'appairage, qui **journalise** `deviceId` et `pairCode`.
+3. **`candidate:current` est une clé unique et globale**, **TTL `CANDIDATE_TTL_SEC`** (1 800 s par défaut). Les épingles doivent être connues **à la compilation** : le candidat doit exister avant de compiler et rester valable jusqu'au pull de la carte.
+4. Quorum : `poolSize` = `max(1, profils actifs)` ; avec `ELIGIBILITY_MODE` et `COMMITTEE_MODE` à `off` (défauts), un seul appareil actif ⇒ quorum de 1 ⇒ **le vote mine un bloc dans CE backend**.
+5. **Appels internes entre routes (faille d'isolation possible)** : `/api/draw` appelle `${base}/api/submit-candidate` (`app/api/draw/route.ts`, `getBaseUrl`), et `/api/validation-result` appelle `${base}/api/submit-candidate` pour traiter la file d'attente (`app/api/validation-result/route.ts`). **Dans les deux cas `base` = `NEXT_PUBLIC_BASE_URL` s'il est défini, sinon l'hôte courant.** Si cette variable Preview pointe vers la production, un dessin ou la file d'attente du vote peut appeler la **mauvaise** production. Deux détails : une valeur **vide** n'est **pas** « absente » (dans `validation-result` elle donne une base vide et un appel qui échoue) ; et comme le nom commence par `NEXT_PUBLIC_`, Next.js peut **l'inliner au build** : toute modification exige un **redéploiement**. Seconde protection : ces appels portent `x-internal-secret` = `INTERNAL_API_SECRET` ; avec un secret **propre** à Preview, un appel mal dirigé vers la production serait refusé.
+
+## 3. Variables critiques à relever et fixer sur le déploiement Preview
+| Variable | Valeur exigée | Pourquoi |
 |---|---|---|
-| G0 | Audit GPT/Codex de cette phase | acceptation écrite |
-| G1 | Déploiement Preview dédié | identifiant de déploiement, environnement = Preview, branche notée |
-| G2 | Isolation Redis (protocole d'isolation § 1 à 3) | variables `KV_REST_API_URL` / `KV_REST_API_TOKEN` propres à Preview (hôte Upstash différent de la production), sonde croisée `nil` dans les deux sens |
-| G3 | Réglages Preview figés (§ 2) | tableau des variables relevées sur le déploiement |
-| G4 | Carte enregistrée et appairée sur Preview (§ 3) | fiche dans la base Preview, `paired=true`, absente de la production |
-| G5 | Candidat créé et relevé (§ 5) | `candidateId`, `v2.screen = tft28`, `v2.rawBytes = 153600`, `v2.rawHash` lus dans la base Preview ; absents de la production |
-| G6 | `pod_vote_pins.h` + contrôle (§ 6) | `node scripts/check-vote-pins.js` : OK |
-| G7 | Verrou vérifié vierge (§ 7) | sortie de `VoteLockErase` « A vierge, B vierge » |
-| G8 | Autorisation explicite du flash du canari de vote | **hors de ce document** |
-
-## 2. Variables à relever et fixer sur le déploiement Preview (valeurs proposées, à valider à l'audit)
-| Variable | Valeur proposée | Pourquoi |
-|---|---|---|
-| `KV_REST_API_URL`, `KV_REST_API_TOKEN` | **propres à Preview** | isolation (G2) ; jamais « All Environments » |
-| `ELIGIBILITY_MODE` | `off` (défaut) | pas de quorum de profils : un appareil ⇒ quorum 1 |
-| `COMMITTEE_MODE` | `off` (défaut) | idem ; `BLOCK_RECEIPTS` non défini |
-| `ANIM_V3_MODE` | `off` | aucune animation dans ce test |
+| `KV_REST_API_URL`, `KV_REST_API_TOKEN` | **propres à Preview** | isolation Redis ; jamais « All Environments » |
+| **`NEXT_PUBLIC_BASE_URL`** | **ABSENTE** (hôte courant) **ou égale exactement à l'URL du déploiement Preview**, jamais à la production, **jamais vide** | appels internes `/api/draw` → `submit-candidate` et `/api/validation-result` → `submit-candidate` (§ 2.5) |
+| `INTERNAL_API_SECRET` | **propre à Preview** | protège ces appels internes |
+| `SESSION_SECRET`, `NETWORK_ID_SECRET`, `CLIP_TICKET_SECRET`, `PIN_DEVICE_KEY` | **propres à Preview** | aucun cookie ni jeton valable d'un environnement à l'autre |
+| `ELIGIBILITY_MODE`, `COMMITTEE_MODE` | `off` (défauts) ; `BLOCK_RECEIPTS` non défini | quorum de 1 |
+| `ANIM_V3_MODE` | `off` | aucune animation |
 | `BYPASS_VALIDATION` | **non défini** | le vote doit être réellement compté |
-| `STRICT_SIGNATURE` | `true` (**décision d'audit**) | rend le critère « signature valide » vérifiable ; risque : un refus consomme l'unique tentative |
-| `ENFORCE_V2_REJECTIONS`, `MIN_V2_APPROVALS` | défauts (`false`, `0`) | ne pas durcir ce premier test sans décision |
-| `CANDIDATE_TTL_SEC` | `7200` (**Preview seulement, noté**) | laisse le temps de compiler et de flasher (le défaut est 1 800 s) |
-| `SESSION_SECRET`, `NETWORK_ID_SECRET`, `INTERNAL_API_SECRET`, `CLIP_TICKET_SECRET`, `PIN_DEVICE_KEY` | **valeurs propres à Preview** (jamais celles de la production) | pas de cookie / jeton valable d'un environnement à l'autre |
-| `ANA_ART_FEED_SECRET`, `ANA_API_URL` | non définis ou propres | éviter d'importer le flux externe en test |
-| `MAX_ACTIVE_DEVICES`, limites de débit | défauts | noter les valeurs |
-Toute variable modifiée exige un **redéploiement**, puis un nouveau relevé (G3).
+| **`STRICT_SIGNATURE`** | **`true`** (accepté) | rend le critère « signature valide » vérifiable ; un refus consommerait l'unique tentative |
+| **`CANDIDATE_TTL_SEC`** | **`7200`, Preview seulement** (accepté) | temps de compiler et de flasher |
+| `ENFORCE_V2_REJECTIONS`, `MIN_V2_APPROVALS` | défauts (`false`, `0`) | ne pas durcir ce premier test |
+| `ANA_ART_FEED_SECRET`, `ANA_API_URL` | non définis ou propres | pas d'import du flux externe |
+Toute variable modifiée exige un **redéploiement**, puis un nouveau relevé. **Vérification des appels internes** : après le déploiement, constater dans les journaux Preview (Vercel → Logs) qu'un dessin de test (ou la soumission du candidat, § 5) n'apparaît que dans les journaux du déploiement Preview, jamais dans ceux de la production.
 
-## 3. Appairage de la carte sur Preview (point à trancher à l'audit)
-Le canari de vote ne peut pas être appairé par lui-même (§ 0.2). Options :
-- **Aucune option sans flash n'existe aujourd'hui** : le canari d'affichage a l'hôte de production codé en dur, et le build de vote exige des épingles valides.
-- **Option A (nouveau mini-lot, recommandé)** : un build local « appairage Preview » = build d'affichage dont `SERVER_HOST` vient de `pod_vote_pins.h` (drapeau `POD_PREVIEW_HOST`, **absent de la production**, jamais commité à 1), **sans vote** (`POD_VOTE_CANARY = 0`, pas d'épingle de candidat), qui affiche le QR / code d'appairage normal. Procédure : flasher, appairer sur le site Preview (`/onboard?code=…`, avec un profil Preview), vérifier G4, **reflasher le stable**. **À faire dans un lot dédié, après audit** : cela modifie `pod_uno_r4.ino`, donc nouvelle revalidation de l'identité de production.
-- **Option B′ (sans nouveau code)** : flasher le **canari de vote complet** une première fois, **avec les pins du vrai candidat**, **avant** l'appairage : la carte s'enregistre sur Preview, s'arrête « non appairé » (aucun pull, aucun verrou, aucun vote — testé), le porteur lit `pairCode` dans la base Preview (`GET device:<deviceId>` → champ `pairCode`), appaire sur le site Preview, puis **un reset** relance le même binaire, désormais appairé. Contrainte : le candidat doit déjà exister (§ 5) et le TTL couvrir cette étape ; **c'est un flash du canari de vote : G8 requis**.
-Ne rien faire sans la décision A ou B′ du porteur et de l'audit. (Une option « B » avec épingles factices n'existe pas : la porte de vote refuserait un candidat différent, mais un build de vote exige de toute façon des épingles bien formées.)
+## 4. Portes (preuves exigées, captures datées faites par le porteur)
+| # | Porte | Preuve |
+|---|---|---|
+| G0 | Audit de ce protocole et du lot d'appairage | acceptation écrite |
+| G1 | Déploiement Preview dédié | identifiant, environnement = Preview, branche |
+| G2 | Isolation Redis | variables `KV_REST_API_*` propres, sonde croisée `nil` dans les deux sens |
+| G3 | Variables du § 3 relevées | tableau + captures (dont `NEXT_PUBLIC_BASE_URL` : absente ou égale à l'URL Preview) |
+| G4 | Appairage (étapes 2 – 3) | `[ENROLL]` dans le journal ; fiche `paired=true` dans la base Preview, absente de la production |
+| G5 | Candidat créé et relevé (étapes 4 – 5) | `candidateId`, `v2.screen = tft28`, `v2.rawBytes = 153600`, `v2.rawHash`, `poolSize = 1` ; absents de la production |
+| G6 | `pod_vote_pins.h` | `node scripts/check-vote-pins.js` : OK |
+| G7 | Verrou vierge | `VoteLockErase` : « A vierge, B vierge » |
+| G8 | Autorisation finale du vote | hors de ce document |
 
-## 4. Après l'appairage : vérifications Preview (lecture seule)
-Fiche de la carte dans la base **Preview** (`mac`, `screens=["tft28"]`, `artistId` renseigné) ; **absence** de toute nouvelle fiche dans `devices:all` de la **production** ; `GET pair:<code>` n'existe que côté Preview.
-
-## 5. Créer le candidat épinglé (backend Preview uniquement)
-1. Depuis le **site Preview** (profil Preview, ESP appairé), dessiner une œuvre pour l'écran `tft28` et l'envoyer (`/api/draw` → `submit-candidate`). Un seul candidat à la fois.
-2. Dans la console de la base **Preview** : `GET candidate:current` → relever `candidateId`, `v2.screen` (= `tft28`), `v2.rawBytes` (= `153600`), `v2.rawHash` (64 hexadécimaux = **`POD_VOTE_PIN_HASH`**), `poolSize` (= 1 attendu), `createdAt`. Refuser si l'un diffère. Recoupement : `GET /api/candidate-frame` (authentifié) ou journal d'un passage — le SHA-256 des 153 600 octets doit égaler `rawHash`.
-3. Dans la base **production** : l'identifiant doit être introuvable (protocole d'isolation § 3).
-4. **Horloge** : le candidat expire (7 200 s proposé). Compiler, vérifier, flasher et laisser la carte tirer **dans ce délai** ; sinon le candidat est perdu : recommencer en § 5.1 avec un **nouvel** identifiant (nouvelles épingles, nouvelle compilation).
-5. Aucun autre validateur ne doit être actif sur Preview.
+## 5. Appairage puis candidat (backend Preview uniquement)
+**Appairage (étapes 2 – 3)** : `pod_preview_host.h` (hôte Preview) → `node scripts/check-vote-pins.js arduino_uno_r4/pod_uno_r4/pod_preview_host.h` → compilation locale `-DPOD_PREVIEW_ENROLL=1` (voir le lot d'appairage) → flash → lecture de `[ENROLL] NON appaire sur <hôte> : deviceId=… pairCode=… -> ouvrir https://<hôte>/onboard?code=…` → appairage sur le site Preview. Le build s'arrête alors définitivement (aucun pull) : **reflasher le binaire stable**. Un code d'appairage expire (`pair:<code>` suit le TTL de la fiche) : appairer sans attendre.
+**Candidat (étapes 4 – 5)** : depuis le **site Preview** (profil Preview, ESP appairé), dessiner pour `tft28` et envoyer (`/api/draw` → `submit-candidate`). Console de la base **Preview** : `GET candidate:current` → `candidateId`, `v2.screen` (= `tft28`), `v2.rawBytes` (= `153600`), `v2.rawHash` (= `POD_VOTE_PIN_HASH`), `poolSize` (= 1). Base **production** : l'identifiant doit être introuvable. **Horloge** : le candidat expire (7 200 s) ; compiler, vérifier le verrou, flasher et laisser la carte tirer dans ce délai, sinon recommencer avec un **nouvel** identifiant.
 
 ## 6. `pod_vote_pins.h` (checklist)
-`cp pod_vote_pins.h.example pod_vote_pins.h` → hôte Preview (domaine seul), `candidateId`, `rawHash` relevés au § 5 → `node scripts/check-vote-pins.js` (doit répondre OK) → relecture croisée avec les captures → `sha256sum pod_vote_pins.h` consigné → compilation locale `-DPOD_VOTE_CANARY=1` (jamais commitée ; `POD_CANARY=0`, `POD_RENDER_V1=0`). Détails : protocole d'isolation § 6.
+`cp pod_vote_pins.h.example pod_vote_pins.h` → hôte Preview, `candidateId`, `rawHash` → `node scripts/check-vote-pins.js` (OK) → relecture croisée avec les captures → `sha256sum` consigné → compilation locale `-DPOD_VOTE_CANARY=1` (jamais commitée). Détails : protocole d'isolation § 6.
 
 ## 7. Contrôle du verrou avant le flash
-Flasher `VoteLockErase`, relever « A vierge, B vierge » (sinon : archiver le journal de l'essai précédent, puis `ERASE-VOTE-LOCK`), retirer l'outil. Ce contrôle suit **immédiatement** la compilation, avant le canari de vote. Il ne touche pas aux clés (octets 0 – 96).
+`VoteLockErase` : « A vierge, B vierge » (sinon : archiver le journal précédent, puis `ERASE-VOTE-LOCK`), puis retirer l'outil. Ne touche pas aux clés (octets 0 – 96).
 
-## 8. Arrêts immédiats de la phase
-Hôte Preview ≠ déploiement relevé ; variable Redis commune à la production ; sonde croisée ≠ `nil` ; candidat trouvé en production ; `poolSize` ≠ 1 ; `rawBytes` ≠ 153 600 ou écran ≠ `tft28` ; `BYPASS_VALIDATION` défini ; secret commun aux deux environnements ; candidat expiré ; verrou non vierge sans journal archivé.
-
-## 9. Questions ouvertes pour l'audit
-1. Option d'appairage : A (mini-lot `POD_PREVIEW_HOST`) ou B′ (premier flash du canari de vote avant appairage) ?
-2. `STRICT_SIGNATURE=true` sur Preview : oui / non ?
-3. `CANDIDATE_TTL_SEC=7200` sur Preview : accepté ?
-4. Qui relève les variables du déploiement et signe les captures (G2 / G3) ?
+## 8. Arrêts immédiats
+Hôte Preview ≠ déploiement relevé ; variable Redis ou secret commun à la production ; **`NEXT_PUBLIC_BASE_URL` pointant la production ou vide** ; sonde croisée ≠ `nil` ; candidat trouvé en production ; `poolSize` ≠ 1 ; `rawBytes` ≠ 153 600 ou écran ≠ `tft28` ; `BYPASS_VALIDATION` défini ; candidat expiré ; verrou non vierge sans journal archivé ; un dessin de test visible dans les journaux de la production.

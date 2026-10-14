@@ -125,10 +125,10 @@ test("V4 — PRÉ-VOL : compilateur C++ >= 11, Crypto 0.4.0 et ArduinoJson prés
 function offView(src: string): string {
   const out: string[] = []; const st: Array<{ ours: boolean; active: boolean }> = [];
   const keep = () => st.every((s) => !s.ours || s.active);
-  for (const line of src.replace(/\/\/ POD_VOTE_CANARY \(LOT8B2E V4\)[\s\S]*?#ifndef POD_VOTE_CANARY\n#define POD_VOTE_CANARY 0\n#endif\n/, "").split("\n")) {
+  for (const line of src.replace(/\/\/ POD_VOTE_CANARY \(LOT8B2E V4\)[\s\S]*?#ifndef POD_VOTE_CANARY\n#define POD_VOTE_CANARY 0\n#endif\n/, "").replace(/\/\/ POD_PREVIEW_ENROLL \(LOT TFT28-PREVIEW-ENROLL-1\)[\s\S]*?#define POD_NOHW 0\n#endif\n\n/, "").split("\n")) {
     const t = line.trim();
-    if (/^#if\s+POD_VOTE_CANARY\s*$/.test(t)) { st.push({ ours: true, active: false }); continue; }
-    if (/^#if\s+!POD_VOTE_CANARY\s*$/.test(t)) { st.push({ ours: true, active: true }); continue; }
+    if (/^#if\s+(POD_VOTE_CANARY|POD_NOHW|POD_PREVIEW_ENROLL)\s*$/.test(t)) { st.push({ ours: true, active: false }); continue; }
+    if (/^#if\s+!(POD_VOTE_CANARY|POD_NOHW|POD_PREVIEW_ENROLL)\s*$/.test(t)) { st.push({ ours: true, active: true }); continue; }
     if (/^#(if|ifdef|ifndef)\b/.test(t)) { st.push({ ours: false, active: true }); if (keep()) out.push(line); continue; }
     if (/^#else\b/.test(t) && st.length && st[st.length - 1].ours) { st[st.length - 1].active = !st[st.length - 1].active; continue; }
     if (/^#endif\b/.test(t)) { const top = st.pop(); if (top && !top.ours && keep()) out.push(line); continue; }
@@ -151,7 +151,7 @@ function staticViolations(ino: string): string[] {
   if (!inCanary(/#if !defined\(POD_VOTE_BACKEND_HOST\) \|\| !defined\(POD_VOTE_PIN_ID\) \|\| !defined\(POD_VOTE_PIN_HASH\)\n    #error/)) v.push("hôte du backend et épinglage obligatoires (#error)");
   if (!inCanary(/static_assert\(sizeof\(POD_VOTE_PIN_HASH\) == 65/) || !inCanary(/static_assert\(sizeof\(POD_VOTE_PIN_ID\) >= 9 && sizeof\(POD_VOTE_PIN_ID\) <= 65/)) v.push("hash épinglé de 64 caractères et identifiant de 8 à 64 caractères vérifiés à la compilation");
   if (!inCanary(/#define POD_VOTE_PIN_SCREEN "tft28"\n  #define POD_VOTE_PIN_BYTES  153600/)) v.push("profil épinglé tft28, taille 153 600");
-  if (!inCanary(/#if POD_VOTE_CANARY\n#define SERVER_HOST       POD_VOTE_BACKEND_HOST[^\n]*\n#else\n#define SERVER_HOST       "proof-of-draw\.vercel\.app"\n#endif/)) v.push("SERVER_HOST = backend isolé en canari de vote");
+  if (!inCanary(/#if POD_VOTE_CANARY\n#define SERVER_HOST       POD_VOTE_BACKEND_HOST[^\n]*\n#else\n#if POD_PREVIEW_ENROLL\n#define SERVER_HOST       POD_PREVIEW_HOST[^\n]*\n#else\n#define SERVER_HOST       "proof-of-draw\.vercel\.app"\n#endif\n#endif/)) v.push("SERVER_HOST = backend isolé en canari de vote");
   if (!inCanary(/if \(strcmp\(SERVER_HOST, "proof-of-draw\.vercel\.app"\) == 0\) return "hote = PRODUCTION/)) v.push("la porte refuse l'hôte de production");
   if (!inCanary(/if \(!why\) why = voteCanaryGateWhy\(\);/)) v.push("la porte de vote inclut le verrou et l'hôte");
   // verrou : deux blocs de 1 Ko distincts, hors du bloc 0 (clés), relecture vérifiée, aucun effacement
@@ -178,7 +178,7 @@ function staticViolations(ino: string): string[] {
   else if (/serviceTouch|drainTouch|runResidentAnim|doBenchPoll|doObsConfirm|ackFrame|doFetchFrame|maybeFetchAnim|restoreLastFrame|tft\./.test(loop[1])) v.push("voteCanaryLoop : aucun toucher / animation / banc d'essai / observation / ACK / affichage");
   if (!/void loop\(\) \{\n#if POD_VOTE_CANARY\n  voteCanaryLoop\(\);\n#else/.test(ino)) v.push("loop() délègue à voteCanaryLoop() en tout premier");
   if (!/#if !POD_VOTE_CANARY\n    restoreLastFrame\(\);/.test(ino)) v.push("setup : pas de restoration d'image en canari de vote");
-  if (!/#if POD_VOTE_CANARY\n  return true;[^\n]*\n#else/.test(ino)) v.push("doPull : frame / animation / banc d'essai ignorés en canari de vote");
+  if (!/#if POD_NOHW\n  return true;[^\n]*\n#else/.test(ino)) v.push("doPull : frame / animation / banc d'essai ignorés en canari de vote");
   if (!/vcLockBoot\(\);\n  if \(g_vcHalted\) return;/.test(ino)) v.push("verrou pris au démarrage : setup() s'arrête AVANT le Wi-Fi");
   if (!/if \(g_vcAttempted\) vcHalt\("tentative unique effectuee"\);/.test(ino)) v.push("arrêt définitif après la tentative");
   if (!/if \(alert\) \{ g_vcHalted = true; for \(;;\)/.test(ino)) v.push("marge de pile < 128 o : verrou silencieux");
@@ -195,7 +195,7 @@ function reachViolations(ino: string): string[] {
   const v = r.hits.map((h) => `${h.fn} : ${h.what}`);
   for (const must of ["setup", "voteCanaryLoop", "doRegister", "doPull", "doValidate", "doValidateV2", "votePhasePost", "voteLockCommitAttempt", "httpCall", "selfTestEd25519", "vcLockBoot"]) if (!r.funcs.includes(must)) v.push(`l'analyse n'atteint pas ${must} (analyse vide de sens)`);
   if (r.funcs.length < 60) v.push(`seulement ${r.funcs.length} fonctions atteignables : analyse suspecte`);
-  if (!/pinMode\(TFT_CS, OUTPUT\);   digitalWrite\(TFT_CS, HIGH\);\n  pinMode\(STMPE_CS, OUTPUT\); digitalWrite\(STMPE_CS, HIGH\);\n  pinMode\(SD_CS, OUTPUT\);    digitalWrite\(SD_CS, HIGH\);\n\n#if POD_VOTE_CANARY\n  logf\("\[VOTE-CANARY\] ecran, tactile et carte SD NON initialises/.test(ino)) v.push("les trois CS restent à HIGH (contention évitée) puis AUCUNE initialisation d'écran / tactile / SD");
+  if (!/pinMode\(TFT_CS, OUTPUT\);   digitalWrite\(TFT_CS, HIGH\);\n  pinMode\(STMPE_CS, OUTPUT\); digitalWrite\(STMPE_CS, HIGH\);\n  pinMode\(SD_CS, OUTPUT\);    digitalWrite\(SD_CS, HIGH\);\n\n#if POD_NOHW\n#if POD_PREVIEW_ENROLL\n  logf\("\[ENROLL\] ecran[^\n]*\n#else\n  logf\("\[VOTE-CANARY\] ecran, tactile et carte SD NON initialises/.test(ino)) v.push("les trois CS restent à HIGH (contention évitée) puis AUCUNE initialisation d'écran / tactile / SD");
   if (!/if \(!paired\) vcHalt\("appareil NON appaire/.test(ino)) v.push("carte non appairée => arrêt définitif (aucun QR, aucun onboarding)");
   return v;
 }
@@ -212,7 +212,7 @@ test("V4-FIX1 — PORTÉE, mutants : réintroduire tft.begin(), initSD(), un des
     ["register échoué dessiné", (i) => firstOnly(i, 'logf("[REGISTER] echec HTTP (journal seulement, aucun dessin) : nouvel essai dans 5 s"); return false; }', "registerShowFailure(); return false; }")],
     ["register appairé dessiné (Connecté)", (i) => firstOnly(i, "  if (!paired) vcHalt(", "  registerShowConnected();\n  if (!paired) vcHalt(")],
     ["carte non appairée : onboarding / QR affiché", (i) => firstOnly(i, "  if (!paired) vcHalt(", "  if (!paired) registerShowOnboarding();\n  if (!paired) vcHalt(")],
-    ["doPull traite de nouveau les frames", (i) => firstOnly(i, "#if POD_VOTE_CANARY\n  return true;", "#if 0\n  return true;")],
+    ["doPull traite de nouveau les frames", (i) => firstOnly(i, "#if POD_NOHW\n  return true;", "#if 0\n  return true;")],
     ["loop() reprend le corps d'origine", (i) => firstOnly(i, "  voteCanaryLoop();\n#else", "  voteCanaryLoop();\n#endif\n#if 1")],
     ["voteCanaryLoop appelle serviceTouch", (i) => firstOnly(i, "static void voteCanaryLoop() {\n", "static void voteCanaryLoop() {\n  serviceTouch();\n")],
     ["voteCanaryLoop restaure l'image", (i) => firstOnly(i, "static void voteCanaryLoop() {\n", "static void voteCanaryLoop() {\n  restoreLastFrame();\n")],
@@ -445,7 +445,7 @@ test("V4 — MUTANTS statiques : verrou après le POST, g_voteScratch réintrodu
     ["les deux emplacements dans le même bloc de 1 Ko", (i) => firstOnly(i, "VL_OFF_B = 6144", "VL_OFF_B = 5200")],
     ["emplacement dans le bloc 0 (clés)", (i) => firstOnly(i, "VL_OFF_A = 5120", "VL_OFF_A = 600")],
     ["effacement automatique du verrou", (i) => firstOnly(i, "static void voteLockRecordOutcome(", "static void voteLockWipe() { EEPROM.update(VL_OFF_A, 0xFF); }\nstatic void voteLockRecordOutcome(")],
-    ["doPull traite les frames en canari de vote (retour anticipé désactivé)", (i) => firstOnly(i, "#if POD_VOTE_CANARY\n  return true;", "#if 0\n  return true;")],
+    ["doPull traite les frames en canari de vote (retour anticipé désactivé)", (i) => firstOnly(i, "#if POD_NOHW\n  return true;", "#if 0\n  return true;")],
     ["restoreLastFrame() actif en canari de vote", (i) => firstOnly(i, "#if !POD_VOTE_CANARY\n    restoreLastFrame();", "#if 1\n    restoreLastFrame();")],
   ];
   for (const [label, f] of muts) assert.notDeepEqual(staticViolations(f(INO_SRC)), [], `mutant statique NON refusé : ${label}`);

@@ -9,7 +9,8 @@ const fs = require("fs");
 const path = require("path");
 const { parse } = require(path.join(__dirname, "stack-callgraph.js"));
 const dis = process.argv[2];
-if (!dis) { console.error("usage : vote-canary-elf-reach.js <fichier.dis>"); process.exit(2); }
+const enroll = process.argv[3] === "--enroll";   // TFT28-PREVIEW-ENROLL-1 : build d'appairage (POD_PREVIEW_ENROLL = 1) : en plus, AUCUNE fonction de pull / candidat / vote / verrou ne doit être atteignable
+if (!dis) { console.error("usage : vote-canary-elf-reach.js <fichier.dis> [--enroll]"); process.exit(2); }
 const funcs = parse(fs.readFileSync(dis, "utf8"));
 const names = [...funcs.keys()];
 const plain = (n) => { const m = /^_ZL?(\d+)(.*)$/.exec(n); if (!m) return n; const len = Number(m[1]); return m[2].slice(0, len); };
@@ -35,6 +36,7 @@ const FAM = [
   ["CARTE SD (SD / fichiers / onSd)", /SDLib|SdFile|SdVolume|Sd2Card|SDClass|initSD|onSd|restoreRows|restoreLastFrame|toggleCartel|saveMeta|animForget|animLoadMarker|animValidateAndMark|netGetBlockClipToSd|fetchAnimToSd|runResidentAnim/],
   ["ANIMATION / BANC D'ESSAI / ACK / IMAGE", /playBenchClip|doBenchPoll|maybeFetchAnim|doFetchFrame|ackFrame|streamFrame|doObsConfirm/],
 ];
+if (enroll) FAM.push(["PULL / CANDIDAT / VOTE / VERROU (build d'appairage)", /doPull|doValidate|voteCanaryLoop|votePhase|voteLock|voteGate|voteFinish|voteClassify|netReadCandidate|netGetBlockClipToSd|vcLockBoot|vcHalt|podCheckStream|doPullStage/]);
 const entry = ["setup", "loop"].filter((n) => funcs.has(n));
 const start = reach(entry);
 console.log(`# portée ELF depuis ${entry.join(" + ")} : ${start.seen.size} fonctions atteignables par appels directs (+ lambdas rattachées), ${start.indirect} appels indirects non suivis`);

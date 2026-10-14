@@ -58,6 +58,31 @@
   static_assert(sizeof(POD_VOTE_PIN_ID) >= 9 && sizeof(POD_VOTE_PIN_ID) <= 65, "POD_VOTE_PIN_ID : 8 a 64 caracteres");
 #endif
 
+// POD_PREVIEW_ENROLL (LOT TFT28-PREVIEW-ENROLL-1) : 1 = BUILD LOCAL d'APPAIRAGE sur un backend Preview isolé : Wi-Fi puis /api/register UNIQUEMENT ; journal série du deviceId et du pairCode ; arrêt définitif. Aucun écran, tactile ni carte SD,
+//   aucun pull, aucune lecture de candidat, aucun vote, aucun ACK. Hôte fourni par le fichier LOCAL pod_preview_host.h (ignoré par git, distinct de pod_vote_pins.h) ; la production est refusée. Désactivé (0) dans le dépôt : NE JAMAIS COMMITER 1 (testé).
+#ifndef POD_PREVIEW_ENROLL
+#define POD_PREVIEW_ENROLL 0
+#endif
+#if POD_PREVIEW_ENROLL
+  #if __has_include("pod_preview_host.h")
+    #include "pod_preview_host.h"   // LOCAL (ignoré par git) : POD_PREVIEW_HOST — voir pod_preview_host.h.example
+  #endif
+  #if POD_CANARY || POD_VOTE_V1 || POD_VOTE_CANARY
+    #error "POD_PREVIEW_ENROLL exige POD_CANARY = 0, POD_VOTE_V1 = 0 et POD_VOTE_CANARY = 0 : build d'appairage distinct de tous les canaris"
+  #endif
+  #ifndef POD_PREVIEW_HOST
+    #error "POD_PREVIEW_ENROLL exige POD_PREVIEW_HOST (hote du deploiement Preview, entre guillemets) : copier pod_preview_host.h.example en pod_preview_host.h"
+  #endif
+  // AUCUNE fonction avant les #include : le générateur de prototypes de l'IDE Arduino y insérerait tous les prototypes (comme pour les types, voir plus bas).
+  static_assert(__builtin_strcmp(POD_PREVIEW_HOST, "proof-of-draw.vercel.app") != 0, "POD_PREVIEW_HOST = PRODUCTION : refuse");
+  static_assert(sizeof(POD_PREVIEW_HOST) >= 5 && sizeof(POD_PREVIEW_HOST) <= 65, "POD_PREVIEW_HOST : 4 a 64 caracteres");
+#endif
+#if POD_VOTE_CANARY || POD_PREVIEW_ENROLL
+#define POD_NOHW 1   // aucun écran, tactile ni carte SD : ni initialisation ni dessin (builds de vote et d'appairage)
+#else
+#define POD_NOHW 0
+#endif
+
 #include <Arduino.h>
 #include <malloc.h>
 #include <stdarg.h>
@@ -97,7 +122,11 @@
 #if POD_VOTE_CANARY
 #define SERVER_HOST       POD_VOTE_BACKEND_HOST   // V4 : backend ISOLE (la production est refusee par la porte de vote)
 #else
+#if POD_PREVIEW_ENROLL
+#define SERVER_HOST       POD_PREVIEW_HOST        // appairage Preview : backend ISOLE (la production est refusee)
+#else
 #define SERVER_HOST       "proof-of-draw.vercel.app"
+#endif
 #endif
 #define SCREEN_TYPE       "tft28"            // profil serveur 240×320 RGB565 (lib/screenProfiles.ts)
 #define FIRMWARE_VERSION  "r4tft28-2.5"
@@ -1132,6 +1161,14 @@ static uint8_t __attribute__((noinline)) registerExchange() {
   return REGX_OK;
 }
 static void __attribute__((noinline)) registerLog() { logf("[REGISTER] deviceId=%s paired=%s", deviceId.c_str(), paired ? "oui" : "non"); }
+#if POD_PREVIEW_ENROLL
+static bool g_enrollHalted = false;
+static void __attribute__((noinline)) enrollHalt(const char* why) { g_enrollHalted = true; logf("[ENROLL] ARRET DEFINITIF : %s — plus aucun reseau, aucun pull, aucun vote, aucun ACK", why); }
+static void __attribute__((noinline)) enrollReport() {
+  if (paired) logf("[ENROLL] appareil DEJA appaire sur %s : deviceId=%s (rien a faire)", SERVER_HOST, deviceId.c_str());
+  else logf("[ENROLL] NON appaire sur %s : deviceId=%s pairCode=%s -> ouvrir https://%s/onboard?code=%s avec la session Preview", SERVER_HOST, deviceId.c_str(), pairCode.c_str(), SERVER_HOST, pairCode.c_str());
+}
+#endif
 // Écran d'état sur la pile dédiée : si elle est indisponible, l'écran n'est PAS redessiné (journal), l'inscription reste valable.
 static void __attribute__((noinline)) registerStatusOnDedicatedStack(const char* l1, const char* l2, uint16_t bg) {
   auto w = [&]() { tftStatus(String(l1), String(l2), bg); };
@@ -1154,11 +1191,15 @@ static void __attribute__((noinline)) registerShowConnected() {
 }
 static bool doRegister() {
   const uint8_t x = registerExchange();
-#if POD_VOTE_CANARY
+#if POD_NOHW
   if (x == REGX_HTTP) { logf("[REGISTER] echec HTTP (journal seulement, aucun dessin) : nouvel essai dans 5 s"); return false; }
   if (x != REGX_OK) return false;
   registerLog();
+#if POD_PREVIEW_ENROLL
+  enrollReport();
+#else
   if (!paired) vcHalt("appareil NON appaire : le canari de vote exige une carte DEJA appairee (aucun QR, aucun ecran d'onboarding)");
+#endif
   return true;
 #else
   if (x == REGX_HTTP) { registerShowFailure(); return false; }
@@ -1346,7 +1387,7 @@ static bool doPull() {
   }                                                          // resp libérée ici, avant toute image
   if (st == 0) return false;
   if (st == 2) return true;
-#if POD_VOTE_CANARY
+#if POD_NOHW
   return true;                                               // V4 : frame, animation et banc d'essai IGNORÉS (aucun affichage, aucun ACK) ; seul le candidat annoncé est retenu
 #else
 
@@ -2308,6 +2349,10 @@ void setup() {
   POD_CANARY_HEAP("au boot");
 #endif
   reportMem("boot");
+#if POD_PREVIEW_ENROLL
+  logf("[ENROLL] BUILD TFT28-PREVIEW-ENROLL-1 | POD_PREVIEW_ENROLL=1 | hote %s | AUCUN vote, aucun pull, aucun affichage | compile %s %s", SERVER_HOST, __DATE__, __TIME__);
+  if (strcasecmp(SERVER_HOST, "proof-of-draw.vercel.app") == 0) { enrollHalt("hote = PRODUCTION (refuse)"); return; }
+#endif
 #if POD_VOTE_CANARY
   logf("[VOTE-CANARY] BUILD LOT8B2E-V4 | POD_VOTE_CANARY=1 | hote %s | candidat epingle %s | ecran %s | taille %lu | compile %s %s", SERVER_HOST, POD_VOTE_PIN_ID, POD_VOTE_PIN_SCREEN, (unsigned long)POD_VOTE_PIN_BYTES, __DATE__, __TIME__);
   vcCheck("boot");
@@ -2319,8 +2364,12 @@ void setup() {
   pinMode(STMPE_CS, OUTPUT); digitalWrite(STMPE_CS, HIGH);
   pinMode(SD_CS, OUTPUT);    digitalWrite(SD_CS, HIGH);
 
-#if POD_VOTE_CANARY
+#if POD_NOHW
+#if POD_PREVIEW_ENROLL
+  logf("[ENROLL] ecran, tactile et carte SD NON initialises (les trois CS restent a HIGH) : aucun dessin, aucun acces SD");
+#else
   logf("[VOTE-CANARY] ecran, tactile et carte SD NON initialises (les trois CS restent a HIGH) : aucun dessin, aucun acces SD");
+#endif
 #else
   tft.begin();
   tft.setRotation(0);
@@ -2334,7 +2383,7 @@ void setup() {
   initSD();
 #endif
 
-#if POD_VOTE_CANARY
+#if POD_NOHW
   if (wifiStatusT("status (module present ?)") == WL_NO_MODULE) { logf("[WIFI] module absent : arret (aucun dessin)"); while (true) delay(1000); }
 #else
   if (wifiStatusT("status (module present ?)") == WL_NO_MODULE) { tftStatus("Module WiFi absent", "", C_RED); while (true) delay(1000); }
@@ -2345,13 +2394,13 @@ void setup() {
     wifiBegin();
     for (int i = 0; i < 20 && wifiStatus() != WL_CONNECTED; i++) delay(500);
   }
-#if POD_VOTE_CANARY
+#if POD_NOHW
   if (wifiStatus() != WL_CONNECTED) { logf("[WIFI] échec (aucun dessin) : redemarrage"); delay(3000); NVIC_SystemReset(); }
 #else
   if (wifiStatus() != WL_CONNECTED) { logf("[WIFI] échec"); tftStatus("WiFi FAIL", "Redemarrage...", C_RED); delay(3000); NVIC_SystemReset(); }
 #endif
   logf("[WIFI] IP: %s", wifiIpString().c_str());
-#if !POD_VOTE_CANARY
+#if !POD_NOHW
   tftStatus("WiFi OK", wifiIpString());
 #endif
   POD_CANARY_CHECK("wifi : connecte");
@@ -2372,6 +2421,10 @@ void setup() {
     if (!ok) currentBlockHash = "";
   }
 
+#if POD_PREVIEW_ENROLL
+  for (int att = 0; !registered && att < 6; att++) { if (doRegister()) break; delay(15000); }   // 6 essais espaces de 15 s : sous la limite de 5 register / min / IP du serveur
+  enrollHalt(registered ? "appairage a faire ou deja fait : lire la ligne [ENROLL] ci-dessus" : "register impossible apres 6 essais (voir les lignes [REGISTER] et [HTTP])");
+#else   // build d'appairage : la suite de setup() (pull, restauration, faux « [BOOT] pret ») N'EXISTE PAS
   while (!registered) { if (doRegister()) break; delay(5000); }
 #if POD_VOTE_CANARY
   if (g_vcHalted) return;                               // V4-FIX2 : carte non appairee = arret definitif ; ni pull, ni faux « [BOOT] pret »
@@ -2390,11 +2443,15 @@ void setup() {
   }
   lastPullMs = millis(); lastValidateMs = millis();
   logf("[BOOT] prêt — pull toutes les %lu s", PULL_INTERVAL / 1000UL);
+#endif   // POD_PREVIEW_ENROLL
 }
 
 void loop() {
 #if POD_VOTE_CANARY
   voteCanaryLoop();
+#else
+#if POD_PREVIEW_ENROLL
+  delay(1000);                                          // arret definitif : ni reseau, ni peripherique
 #else
   const unsigned long now = millis();
 
@@ -2448,8 +2505,9 @@ void loop() {
   }
   delay(40);
 #endif
+#endif
 }
-#if POD_VOTE_CANARY
+#if POD_NOHW
 // V4-FIX1 : les fonctions d'affichage, de toucher, de SD, d'animation et d'ACK ne sont PAS atteignables dans ce build (tests/tft28VoteCanary.test.ts et scripts/vote-canary-elf-reach.js) : elles restent définies mais jamais appelées.
 // GCC 7 ignore le pragma -Wunused-function pour cet avertissement (émis en fin d'unité) : cette fonction JAMAIS APPELÉE (ni depuis setup(), ni depuis loop() : elle n'est donc pas « atteignable ») prend leur adresse pour ne pas ajouter d'avertissement au build de vote ;
 // statique et sans appelant, elle est éliminée à l'édition de liens. La preuve de non-atteignabilité est faite sur les points d'entrée, pas sur cette fonction.
@@ -2468,5 +2526,9 @@ static void __attribute__((unused)) voteCanaryNeverCalledRefs() {
   (void)&registerShowOnboarding;
   (void)&restoreLastFrame;
   (void)&serviceTouch;
+#if POD_PREVIEW_ENROLL
+  (void)&doPull;       // build d'appairage : jamais appelés (setup() s'arrête après le register, loop() n'a que delay())
+  (void)&doValidate;
+#endif
 }
 #endif
