@@ -49,6 +49,19 @@
   #if POD_CANARY || POD_VOTE_V1
     #error "POD_VOTE_CANARY exige POD_CANARY = 0 et POD_VOTE_V1 = 0 : voie de vote v2 seule, build distinct du canari d'affichage"
   #endif
+  #if POD_PREVIEW_ENROLL
+    #error "POD_VOTE_CANARY exige POD_PREVIEW_ENROLL = 0 : builds distincts"
+  #endif
+  // LOT TFT28-PROD-VOTE-CANARY-1 : consentement LOCAL et EXPLICITE au vote REEL contre proof-of-draw.vercel.app (ligne `#define POD_VOTE_ALLOW_PRODUCTION 1` de pod_vote_pins.h). Absent ou 0 : la production reste REFUSEE.
+  #if defined(POD_VOTE_ALLOW_PRODUCTION) && POD_VOTE_ALLOW_PRODUCTION != 0 && POD_VOTE_ALLOW_PRODUCTION != 1
+    #error "POD_VOTE_ALLOW_PRODUCTION vaut 0 (ou absent) ou exactement 1"
+  #endif
+  #ifndef POD_VOTE_ALLOW_PRODUCTION
+    #define POD_VOTE_ALLOW_PRODUCTION 0
+  #endif
+  #if POD_VOTE_ALLOW_PRODUCTION && (POD_CANARY || POD_RENDER_V1 || POD_VOTE_V1 || POD_PREVIEW_ENROLL)
+    #error "POD_VOTE_ALLOW_PRODUCTION = 1 exige POD_CANARY = 0, POD_RENDER_V1 = 0, POD_VOTE_V1 = 0 et POD_PREVIEW_ENROLL = 0"
+  #endif
   #if !defined(POD_VOTE_BACKEND_HOST) || !defined(POD_VOTE_PIN_ID) || !defined(POD_VOTE_PIN_HASH)
     #error "POD_VOTE_CANARY exige POD_VOTE_BACKEND_HOST (hote du backend ISOLE), POD_VOTE_PIN_ID (candidateId) et POD_VOTE_PIN_HASH (SHA-256 hexadecimal, 64 caracteres), chacun entre guillemets"
   #endif
@@ -56,6 +69,9 @@
   #define POD_VOTE_PIN_BYTES  153600
   static_assert(sizeof(POD_VOTE_PIN_HASH) == 65, "POD_VOTE_PIN_HASH doit faire exactement 64 caracteres hexadecimaux");
   static_assert(sizeof(POD_VOTE_PIN_ID) >= 9 && sizeof(POD_VOTE_PIN_ID) <= 65, "POD_VOTE_PIN_ID : 8 a 64 caracteres");
+  #if POD_VOTE_ALLOW_PRODUCTION
+    static_assert(__builtin_strcmp(POD_VOTE_BACKEND_HOST, "proof-of-draw.vercel.app") == 0, "POD_VOTE_ALLOW_PRODUCTION = 1 n'est valable QUE pour proof-of-draw.vercel.app (consentement incoherent avec l'hote)");
+  #endif
 #endif
 
 // POD_PREVIEW_ENROLL (LOT TFT28-PREVIEW-ENROLL-1) : 1 = BUILD LOCAL d'APPAIRAGE sur un backend Preview isolé : Wi-Fi puis /api/register UNIQUEMENT ; journal série du deviceId et du pairCode ; arrêt définitif. Aucun écran, tactile ni carte SD,
@@ -1557,7 +1573,11 @@ static void vcAfterVote() {
   else if (++g_vcPasses >= 3) vcHalt("trois passages sans tentative");
 }
 static const char* voteCanaryGateWhy() {
-  if (strcmp(SERVER_HOST, "proof-of-draw.vercel.app") == 0) return "hote = PRODUCTION (backend isole obligatoire)";
+#if POD_VOTE_ALLOW_PRODUCTION
+  if (strcmp(SERVER_HOST, "proof-of-draw.vercel.app") != 0) return "consentement production avec un autre hote (incoherent)";   // deja refuse a la compilation : ceinture et bretelles
+#else
+  if (strcasecmp(SERVER_HOST, "proof-of-draw.vercel.app") == 0) return "hote = PRODUCTION (backend isole obligatoire)";   // sans consentement local : refus (casse comprise : le DNS l'ignore)
+#endif
   const VlStatus st = voteLockStatus();
   if (st == VLS_UNAVAILABLE) return "EEPROM indisponible pour le verrou";
   if (st != VLS_FREE) return "verrou de vote deja pris ou non vierge (tentative unique)";
@@ -2355,6 +2375,9 @@ void setup() {
 #endif
 #if POD_VOTE_CANARY
   logf("[VOTE-CANARY] BUILD LOT8B2E-V4 | POD_VOTE_CANARY=1 | hote %s | candidat epingle %s | ecran %s | taille %lu | compile %s %s", SERVER_HOST, POD_VOTE_PIN_ID, POD_VOTE_PIN_SCREEN, (unsigned long)POD_VOTE_PIN_BYTES, __DATE__, __TIME__);
+#if POD_VOTE_ALLOW_PRODUCTION
+  logf("[VOTE-CANARY] ATTENTION : VOTE REEL SUR PRODUCTION (POD_VOTE_ALLOW_PRODUCTION=1) : si le candidat epingle est accepte, un bloc est mine dans la chaine principale");
+#endif
   vcCheck("boot");
   vcLockBoot();
   if (g_vcHalted) return;                               // verrou pris / EEPROM indisponible : AUCUN réseau, jamais

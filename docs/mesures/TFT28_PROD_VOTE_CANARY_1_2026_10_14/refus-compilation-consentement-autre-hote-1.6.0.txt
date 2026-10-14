@@ -1,0 +1,3 @@
+# REFUS À LA COMPILATION (cœur 1.6.0) : consentement POD_VOTE_ALLOW_PRODUCTION 1 avec l'hôte iso.example.test
+pv_neg_160 exit 1
+pod_uno_r4.ino:73:5: error: static assertion failed: POD_VOTE_ALLOW_PRODUCTION = 1 n'est valable QUE pour proof-of-draw.vercel.app (consentement incoherent avec l'hote)

@@ -61,8 +61,9 @@ const OTHER_HASH = "0".repeat(64);
 let nBuild = 0;
 const exeCache = new Map<string, string>();
 /** Compile le sketch COMPLET (production + POD_VOTE_CANARY) contre le harnais d'hôte. `ino` peut être muté ; `host` = hôte du backend. */
-function build(ino: string = INO_SRC, host = "iso.example.test", canary = true): string {
-  const key = `${createHash("sha1").update(ino).digest("hex")}|${host}|${canary}`;
+interface BuildOpts { allowProd?: boolean; extra?: string[] }   // TFT28-PROD-VOTE-CANARY-1 : consentement local (pod_vote_pins.h : POD_VOTE_ALLOW_PRODUCTION 1) et drapeaux supplémentaires (appliqués EN DERNIER)
+function build(ino: string = INO_SRC, host = "iso.example.test", canary = true, opts: BuildOpts = {}): string {
+  const key = `${createHash("sha1").update(ino).digest("hex")}|${host}|${canary}|${opts.allowProd ? "P" : ""}|${(opts.extra ?? []).join(" ")}`;
   const hit = exeCache.get(key); if (hit) return hit;
   const dir = path.join(tmp, `vc-${nBuild++}`), sk = path.join(dir, "sk"); fs.mkdirSync(sk, { recursive: true });
   for (const f of ["podEdStack.h", "podNetStack.h", "pod_http.h", "pod_bench.h", "pod_bench_stream.h", "pod_metrics.h", "pod_metrics_table.h", "pod_vote_r4.h", "pod_sd_stack.h"]) fs.copyFileSync(path.join(SK, f), path.join(sk, f));
@@ -73,6 +74,7 @@ function build(ino: string = INO_SRC, host = "iso.example.test", canary = true):
   compileHarness(choice.path!, fwd(path.join(HOST, "tft28_vote_harness.cpp")), fwd(exe), [
     "-std=gnu++17", "-O1", "-w", "-fno-strict-aliasing", "-DPOD_CANARY=0", "-DPOD_RENDER_V1=0", "-DPOD_HOST_REAL_CRYPTO=1",
     ...(canary ? ["-DPOD_VOTE_CANARY=1", `-DPOD_VOTE_BACKEND_HOST="${host}"`, `-DPOD_VOTE_PIN_ID="${PIN_ID}"`, `-DPOD_VOTE_PIN_HASH="${GOOD_HASH}"`] : []),
+    ...(opts.allowProd ? ["-DPOD_VOTE_ALLOW_PRODUCTION=1"] : []), ...(opts.extra ?? []),
     `-I${fwd(sk)}`, `-I${fwd(cryptoSrc!)}`, `-I${fwd(MOCK)}`, "-isystem", fwd(ajDir!),
     "-DARDUINOJSON_ENABLE_ARDUINO_STRING=1", "-DARDUINOJSON_ENABLE_ARDUINO_STREAM=0", "-DARDUINOJSON_ENABLE_ARDUINO_PRINT=0", "-DARDUINOJSON_ENABLE_PROGMEM=0", ...ensureLib().map(fwd)]);
   const out = exe + (process.platform === "win32" ? ".exe" : "");
@@ -152,7 +154,7 @@ function staticViolations(ino: string): string[] {
   if (!inCanary(/static_assert\(sizeof\(POD_VOTE_PIN_HASH\) == 65/) || !inCanary(/static_assert\(sizeof\(POD_VOTE_PIN_ID\) >= 9 && sizeof\(POD_VOTE_PIN_ID\) <= 65/)) v.push("hash épinglé de 64 caractères et identifiant de 8 à 64 caractères vérifiés à la compilation");
   if (!inCanary(/#define POD_VOTE_PIN_SCREEN "tft28"\n  #define POD_VOTE_PIN_BYTES  153600/)) v.push("profil épinglé tft28, taille 153 600");
   if (!inCanary(/#if POD_VOTE_CANARY\n#define SERVER_HOST       POD_VOTE_BACKEND_HOST[^\n]*\n#else\n#if POD_PREVIEW_ENROLL\n#define SERVER_HOST       POD_PREVIEW_HOST[^\n]*\n#else\n#define SERVER_HOST       "proof-of-draw\.vercel\.app"\n#endif\n#endif/)) v.push("SERVER_HOST = backend isolé en canari de vote");
-  if (!inCanary(/if \(strcmp\(SERVER_HOST, "proof-of-draw\.vercel\.app"\) == 0\) return "hote = PRODUCTION/)) v.push("la porte refuse l'hôte de production");
+  if (!inCanary(/if \(strcasecmp\(SERVER_HOST, "proof-of-draw\.vercel\.app"\) == 0\) return "hote = PRODUCTION/)) v.push("la porte refuse l'hôte de production");
   if (!inCanary(/if \(!why\) why = voteCanaryGateWhy\(\);/)) v.push("la porte de vote inclut le verrou et l'hôte");
   // verrou : deux blocs de 1 Ko distincts, hors du bloc 0 (clés), relecture vérifiée, aucun effacement
   const offs = /static const int VL_OFF_A = (\d+), VL_OFF_B = (\d+), VL_NEED = (\d+);/.exec(ino);
@@ -415,7 +417,7 @@ const MUTANTS: Array<[string, (i: string) => string, string[]]> = [
   ["seul un enregistrement VALIDE prend le verrou", (i) => firstOnly(i, "return (sa == VL_BLANK && sb == VL_BLANK) ? VLS_FREE : VLS_HELD;", "return (sa != VL_VALID && sb != VL_VALID) ? VLS_FREE : VLS_HELD;"), ["lockStates", "cutMatrix"]],
   ["la porte n'exige plus le verrou LIBRE", (i) => firstOnly(i, '  if (st != VLS_FREE) return "verrou de vote deja pris ou non vierge (tentative unique)";\n', ""), ["lockStates"]],
   ["le démarrage ne s'arrête plus quand le verrou est pris", (i) => firstOnly(i, "  if (st != VLS_FREE) vcHalt(", "  if (false) vcHalt("), ["lockStates", "eeprom"]],
-  ["l'hôte de production n'est plus refusé", (i) => firstOnly(i, 'if (strcmp(SERVER_HOST, "proof-of-draw.vercel.app") == 0) return', 'if (false) return'), ["productionHost"]],
+  ["l'hôte de production n'est plus refusé", (i) => firstOnly(i, 'if (strcasecmp(SERVER_HOST, "proof-of-draw.vercel.app") == 0) return', 'if (false) return'), ["productionHost"]],
   ["l'identifiant épinglé n'est plus contrôlé", (i) => firstOnly(i, "return strcmp(id, POD_VOTE_PIN_ID) == 0 && ", "return "), ["pins"]],
   ["l'écran épinglé n'est plus contrôlé", (i) => firstOnly(i, " && strcmp(screen, POD_VOTE_PIN_SCREEN) == 0", ""), ["pins"]],
   ["la taille épinglée n'est plus contrôlée", (i) => firstOnly(i, " && bytes == (size_t)POD_VOTE_PIN_BYTES && strcmp(hash,", " && strcmp(hash,"), ["pins"]],
@@ -449,4 +451,61 @@ test("V4 — MUTANTS statiques : verrou après le POST, g_voteScratch réintrodu
     ["restoreLastFrame() actif en canari de vote", (i) => firstOnly(i, "#if !POD_VOTE_CANARY\n    restoreLastFrame();", "#if 1\n    restoreLastFrame();")],
   ];
   for (const [label, f] of muts) assert.notDeepEqual(staticViolations(f(INO_SRC)), [], `mutant statique NON refusé : ${label}`);
+});
+
+// ── 7. LOT TFT28-PROD-VOTE-CANARY-1 : consentement LOCAL au vote réel contre la production ───────────────────────────────────────────
+const PROD_HOST = "proof-of-draw.vercel.app";
+const prodConsentExe = () => build(INO_SRC, PROD_HOST, true, { allowProd: true });
+const throwsWith = (fn: () => unknown, re: RegExp, what: string) => { let msg = ""; try { fn(); } catch (e) { msg = String((e as Error).message ?? e); } assert.ok(msg, `${what} : la compilation aurait dû ÉCHOUER`); assert.match(msg, re, `${what} : échec pour une autre raison que le garde-fou attendu`); };
+
+test("PRODUCTION (consentement) — drapeau absent par défaut, jamais commité à 1 (sketch ni modèle), erreurs de compilation présentes", () => {
+  assert.doesNotMatch(INO_SRC, /^[ \t]*#define POD_VOTE_ALLOW_PRODUCTION 1/m);
+  assert.match(INO_SRC, /#ifndef POD_VOTE_ALLOW_PRODUCTION\n    #define POD_VOTE_ALLOW_PRODUCTION 0\n  #endif/);
+  for (const re of [/#error "POD_VOTE_ALLOW_PRODUCTION vaut 0 \(ou absent\) ou exactement 1"/, /#error "POD_VOTE_ALLOW_PRODUCTION = 1 exige POD_CANARY = 0, POD_RENDER_V1 = 0, POD_VOTE_V1 = 0 et POD_PREVIEW_ENROLL = 0"/, /#error "POD_VOTE_CANARY exige POD_PREVIEW_ENROLL = 0/, /static_assert\(__builtin_strcmp\(POD_VOTE_BACKEND_HOST, "proof-of-draw\.vercel\.app"\) == 0, "POD_VOTE_ALLOW_PRODUCTION = 1/]) assert.match(INO_SRC, re);
+  const ex = readText("arduino_uno_r4/pod_uno_r4/pod_vote_pins.h.example");
+  assert.doesNotMatch(ex, /^[ \t]*#define POD_VOTE_ALLOW_PRODUCTION/m, "le modèle ne doit proposer le consentement qu'en commentaire");
+});
+test("PRODUCTION (consentement) — SANS consentement : la production est refusée, MAJUSCULES comprises (le DNS ignore la casse) : aucune requête de vote, aucun POST, verrou intact", () => {
+  for (const host of [PROD_HOST, "PROOF-OF-DRAW.VERCEL.APP", "Proof-Of-Draw.Vercel.App"]) {
+    const r = run(build(INO_SRC, host), "vc-ok");
+    assert.equal(n(r, "b1_validates"), 0, host); assert.equal(n(r, "b1_posts"), 0, host); assert.equal(n(r, "lock_status"), 0, host);
+    assert.ok(logHas(r, "hote = PRODUCTION"), host); assert.ok(!logHas(r, "VOTE REEL SUR PRODUCTION"), host);
+  }
+});
+test("PRODUCTION (consentement) — AVEC le consentement local : la production est acceptée, avertissement « VOTE REEL SUR PRODUCTION », et le vote unique se déroule comme avant (verrou avant POST, un seul POST, arrêt)", () => {
+  const exe = prodConsentExe();
+  assert.deepEqual(CHECKS.success(exe), []);
+  const r = run(exe, "vc-boot:vote");   // vrai setup() : le bandeau est écrit au démarrage
+  assert.ok(logHas(r, "ATTENTION : VOTE REEL SUR PRODUCTION"), "bandeau de vote réel absent");
+  assert.ok(!logHas(r, "hote = PRODUCTION"), "la porte ne doit plus refuser la production avec consentement");
+  assert.equal(n(r, "b1_posts"), 1, "un seul POST, depuis le démarrage complet");
+  const iso = run(build(), "vc-boot:vote");
+  assert.ok(!logHas(iso, "VOTE REEL SUR PRODUCTION"), "aucun bandeau de production sur un hôte isolé sans consentement");
+});
+test("PRODUCTION (consentement) — les garanties du vote unique tiennent AUSSI sur la production : issues, verrou, reset, démarrage, états du verrou, alerte de pile", () => {
+  const exe = prodConsentExe();
+  for (const id of ["outcomes", "resetDuringPost", "resetBeforePost", "allocFail", "eeprom", "lockStates", "pins", "stackAlert", "bootNominal", "bootRegisterFail", "bootUnpaired"]) assert.deepEqual(CHECKS[id](exe), [], id);
+});
+test("PRODUCTION (consentement) — la matrice de coupures du verrou tient sur la production (jamais plus d'un POST)", () => {
+  assert.deepEqual(CHECKS.cutMatrix(prodConsentExe()), []);
+});
+test("PRODUCTION (consentement) — le consentement avec un AUTRE hôte, une valeur invalide ou un autre drapeau de build est REFUSÉ À LA COMPILATION", () => {
+  throwsWith(() => build(INO_SRC, "iso.example.test", true, { allowProd: true }), /POD_VOTE_ALLOW_PRODUCTION = 1 n'est valable QUE/, "consentement + hôte isolé");
+  throwsWith(() => build(INO_SRC, "PROOF-OF-DRAW.VERCEL.APP", true, { allowProd: true }), /POD_VOTE_ALLOW_PRODUCTION = 1 n'est valable QUE/, "consentement + hôte en majuscules");
+  throwsWith(() => build(INO_SRC, "preview.proof-of-draw.vercel.app", true, { allowProd: true }), /POD_VOTE_ALLOW_PRODUCTION = 1 n'est valable QUE/, "consentement + alias");
+  for (const bad of ["2", "-1", "10"]) throwsWith(() => build(INO_SRC, PROD_HOST, true, { extra: [`-DPOD_VOTE_ALLOW_PRODUCTION=${bad}`] }), /POD_VOTE_ALLOW_PRODUCTION vaut 0|invalid|non défini|not defined|undeclared/i, `valeur ${bad}`);
+  for (const flag of ["POD_CANARY", "POD_RENDER_V1", "POD_VOTE_V1", "POD_PREVIEW_ENROLL"]) throwsWith(() => build(INO_SRC, PROD_HOST, true, { allowProd: true, extra: [`-D${flag}=1`] }), /POD_VOTE_ALLOW_PRODUCTION = 1 exige|POD_VOTE_CANARY exige/, `consentement + ${flag} = 1`);
+});
+test("PRODUCTION (consentement) — DÉFENSE EN PROFONDEUR : sans le static_assert, la porte d'EXÉCUTION refuse encore le consentement avec un autre hôte ; sans les deux, le vote partirait (le test détecte ce mutant)", () => {
+  const noAssert = firstOnly(INO_SRC, '"proof-of-draw.vercel.app") == 0, "POD_VOTE_ALLOW_PRODUCTION = 1 n\'est valable', '"proof-of-draw.vercel.app") >= -1000, "POD_VOTE_ALLOW_PRODUCTION = 1 n\'est valable');
+  const r = run(build(noAssert, "iso.example.test", true, { allowProd: true }), "vc-ok");
+  assert.equal(n(r, "b1_posts"), 0); assert.equal(n(r, "lock_status"), 0); assert.ok(logHas(r, "consentement production avec un autre hote"));
+  const noGate = firstOnly(noAssert, 'return "consentement production avec un autre hote (incoherent)";', 'return nullptr;');
+  const m = run(build(noGate, "iso.example.test", true, { allowProd: true }), "vc-ok");
+  assert.notEqual(n(m, "b1_posts"), 0, "mutant : sans la porte d'exécution, un vote partirait — le test précédent le détecte");
+});
+test("PRODUCTION (consentement) — PORTÉE : le build de production avec consentement n'atteint, depuis setup() / loop(), aucun écran, tactile, carte SD, animation ni ACK", () => {
+  const r = reachFrom(INO_SRC, ["setup", "loop", "voteCanaryLoop"]);
+  assert.deepEqual(r.hits, []);
+  for (const must of ["doRegister", "doValidateV2", "votePhasePost", "voteCanaryGateWhy"]) assert.ok(r.funcs.includes(must), `l'analyse n'atteint pas ${must}`);
 });

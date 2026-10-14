@@ -4,3 +4,6 @@
 #define POD_VOTE_BACKEND_HOST "<hote-du-backend-isole>.vercel.app"          // déploiement de prévisualisation avec Redis dédié
 #define POD_VOTE_PIN_ID       "<candidateId : UUID de 36 caracteres>"        // identifiant du candidat connu
 #define POD_VOTE_PIN_HASH     "<sha256 hexadecimal minuscule, 64 caracteres>"  // SHA-256 des 153 600 octets bruts du candidat
+// VOTE REEL SUR LA PRODUCTION (lot TFT28-PROD-VOTE-CANARY-1, decision du 14/10/2026) : par defaut la production est REFUSEE. Pour l'autoriser, mettre l'hote ci-dessus a "proof-of-draw.vercel.app" ET decommenter la ligne suivante
+// (consentement LOCAL et EXPLICITE ; refuse a la compilation avec un autre hote ; exige POD_CANARY = POD_RENDER_V1 = POD_VOTE_V1 = POD_PREVIEW_ENROLL = 0) :
+// #define POD_VOTE_ALLOW_PRODUCTION 1

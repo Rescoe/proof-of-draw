@@ -9,7 +9,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
-import { BACKUP, INO, ROOT, effective, fnBody, readText, stripBlock, stripHooks, stripLine, topLevelName } from "./helpers/tft28Source";
+import { BACKUP, INO, ROOT, effective, fnBody, readText, stripBlock, stripHooks, stripLine, topLevelName, voteCanaryOffView } from "./helpers/tft28Source";
 
 const src = readText(INO), before = readText(BACKUP);
 const prod = effective(src, false), can = effective(src, true);
@@ -23,7 +23,7 @@ test("sauvegarde figée d'avant le lot : empreinte SHA-256 (= sketch de origin/m
 test("drapeaux : POD_CANARY = 0 et POD_RENDER_V1 = 0 par défaut, jamais commités à 1 ; POD_RENDER_V1 sans AUCUN effet sur ce firmware (pas de rasteriseur v1)", () => {
   assert.match(src, /#ifndef POD_RENDER_V1\n#define POD_RENDER_V1 0\n#endif\n#ifndef POD_CANARY\n#define POD_CANARY 0\n#endif/);
   assert.doesNotMatch(src, /#define POD_(RENDER_V1|CANARY) 1\b/);
-  const uses = code(src).match(/POD_RENDER_V1/g) ?? [];
+  const uses = code(voteCanaryOffView(src)).match(/POD_RENDER_V1/g) ?? [];   // vue production : le bloc du canari de vote (garde-fous de consentement) cite POD_RENDER_V1 dans ses #error
   assert.equal(uses.length, 2, "POD_RENDER_V1 n'apparaît que dans sa définition par défaut (#ifndef + #define)");
   assert.doesNotMatch(src, /podRender|PodTftRenderer|PodEinkRenderer|podRenderStream|#include "podRender/);
   assert.equal(effective(src, false).includes("POD_RENDER_V1 1"), false);
