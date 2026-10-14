@@ -31,3 +31,15 @@ Sources : journaux série des 4 appareils (transmis par le porteur) et export `r
 ## 5. À regarder dans les prochains journaux (envoi d'un nouveau dessin)
 - Dans Redis : `SET candidate:current`, puis les écritures de `candidate:votes` (script `EVAL`) à chaque vote, et la création du bloc.
 - Sur chaque appareil : `[VALIDATE…]`/`[VALIDATE2]`, lecture du candidat, `vote envoyé` (ou l'erreur : 403 signature, 422 métriques). Dans l'app : `v2 vérifié×N` avec N ≥ 1.
+
+## 6. PREMIER CONSENSUS v2 SUR MATÉRIEL (journal Redis, 15h56 – 16h04) — résultat positif
+Candidat « Vote fleur » dessiné sur l'OLED du multiscreen (`dev_KAD6PKC4`), écran `oled096`, contenu brut 1 024 o, spécification v2 du serveur : entropie 906 828, transitions 103 446, RLE 323 818, score 468 873 (ppm). `poolSize = 3` ⇒ quorum **2** (`ceil(0,51 × 3)`).
+| Heure | Événement |
+|---|---|
+| 15:56:52 | `SET candidate:current` (candidat v2) et `candidate:votes` vide |
+| 15:57:34 | **vote v2 du R4 e-ink 2,9″** (`dev_W29I1TW7`, 42 s après le candidat) : `v:2`, `verdict:accept`, entropie / transitions / RLE / score **identiques à ceux du serveur**, signature présente |
+| 16:01:32 | **vote v2 du TFT 2,8″** (`dev_7B4L17N3`) : mêmes métriques exactes, signature présente ⇒ quorum atteint |
+| 16:01:33 | **bloc #100 miné** (`minerDeviceId` = TFT, `validatorIds` = TFT + R4 e-ink 2,9″), `parentHash` = bloc #99 ; image, actions, rejeu et chaîne écrits ; réobservation de 5 blocs mise en file (`chain:obs:queue`) |
+| 16:01:33 – 35 | frame du bloc diffusée aux écrans des pools : e-ink 2,9″ ×3, e-ink 2,7″, TFT 1,8″, TFT 2,8″, OLED ×5 ; `candidate:current` / `votes` supprimés ; images personnelles des OLED effacées |
+**Deux appareils de deux familles différentes (R4 e-ink 2,9″ et R4 TFT 2,8″) ont chacun recalculé de leur côté, sur 1 024 octets reçus, exactement les mêmes entiers que le serveur, les ont signés, et le serveur a miné le bloc.** C'est le premier vote v2 vérifié sur matériel.
+**Pas encore démontré** : (1) aucun vote d'un **ESP8266** (`dev_MN67OG7R` n'a tiré qu'après la création du bloc, `dev_KAD6PKC4` est l'auteur) ; (2) la validité cryptographique stricte n'est pas observable dans Redis (à lire dans les logs Vercel / le fil d'activité `v2 vérifié×N`) ; (3) le TFT a voté ≈ 2 min 40 s après avoir vu le candidat (cause à lire dans son journal série) ; (4) réception de la frame sur l'OLED en cours au moment du relevé. D'autres appareils (`dev_WZ0U0514`, `dev_VIRBQRV1`, `dev_V0VR30AY`, `dev_9MN414IJ`, `dev_R8Q69GOH`, `dev_YIALM6LG`, `dev_0HWXIKJM`, `dev_HF615EF9`) sont dans les pools : à classer (à eux / ami, firmware) avant la fusion.
