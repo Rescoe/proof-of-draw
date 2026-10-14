@@ -1,0 +1,12 @@
+# f1_erase_153 (arduino-cli, cœur 153, --warnings all, secrets.h factice
+Le croquis utilise 57116 octets (21%) de l'espace de stockage de programmes. Le maximum est de 262144 octets.
+Les variables globales utilisent 7176 octets (21%) de mémoire dynamique, ce qui laisse 25592 octets pour les variables locales. Le maximum est de 32768 octets.
+--- avertissements (normalisés)
+      2 IRQManager.cpp: warning: comparison between signed and unsigned integer expressions [-Wsign-compare]
+      3 IRQManager.cpp: warning: unused parameter 'ch' [-Wunused-parameter]
+      3 IRQManager.cpp: warning: unused parameter 'li' [-Wunused-parameter]
+      1 IRQManager.cpp: warning: unused variable 'mcfg' [-Wunused-variable]
+      1 IRQManager.cpp: warning: unused variable 'scfg' [-Wunused-variable]
+      1 Interrupts.cpp: warning: comparison between signed and unsigned integer expressions [-Wsign-compare]
+      3 cm_backtrace.c: warning: assignment discards 'const' qualifier from pointer target type [-Wdiscarded-qualifiers]
+      1 dcd_rusb2.c: warning: 'return' with a value, in function returning void

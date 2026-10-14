@@ -239,6 +239,7 @@ struct TftState {
   uint8_t odd = 0, hi = 0;                      // octet haut en attente
 };
 static TftState g_tft;
+static long g_hwTft = 0, g_hwTouch = 0, g_hwSd = 0, g_hwOnSd = 0;   // V4-FIX1 : accès à l'écran, au tactile, à la carte SD, appels à onSd
 static bool (*g_onMainStackHook)() = nullptr;   // renseigné par le harnais : « SP est-il sur la pile principale ? »
 static long g_busNow() { return g_tft.busBytes; }
 struct SPIMock {
@@ -265,19 +266,19 @@ class Adafruit_GFX {};
 class Adafruit_ILI9341 {
  public:
   Adafruit_ILI9341(int, int) {}
-  void begin() {}
-  void setRotation(int) {}
-  void startWrite() {}
+  void begin() { g_hwTft++; }
+  void setRotation(int) { g_hwTft++; }
+  void startWrite() { g_hwTft++; }
   void endWrite() { g_tft.inWindow = false; }
-  void setAddrWindow(int x, int y, int w, int h) { g_tft.wx = x; g_tft.wy = y; g_tft.ww = w; g_tft.wh = h; g_tft.wpos = 0; g_tft.inWindow = true; g_tft.odd = 0; g_tft.windows++; }
-  void fillRect(int x, int y, int w, int h, uint16_t c) { g_tft.fills++; if (g_onMainStackHook && g_onMainStackHook()) g_tft.fillsMain++; for (int j = y; j < y + h; j++) for (int i = x; i < x + w; i++) if (i >= 0 && i < TFT_W && j >= 0 && j < TFT_H) g_tft.fb[j * TFT_W + i] = c; }
+  void setAddrWindow(int x, int y, int w, int h) { g_hwTft++; g_tft.wx = x; g_tft.wy = y; g_tft.ww = w; g_tft.wh = h; g_tft.wpos = 0; g_tft.inWindow = true; g_tft.odd = 0; g_tft.windows++; }
+  void fillRect(int x, int y, int w, int h, uint16_t c) { g_hwTft++; g_tft.fills++; if (g_onMainStackHook && g_onMainStackHook()) g_tft.fillsMain++; for (int j = y; j < y + h; j++) for (int i = x; i < x + w; i++) if (i >= 0 && i < TFT_W && j >= 0 && j < TFT_H) g_tft.fb[j * TFT_W + i] = c; }
   void fillScreen(uint16_t c) { fillRect(0, 0, TFT_W, TFT_H, c); }
   void drawFastHLine(int x, int y, int w, uint16_t c) { fillRect(x, y, w, 1, c); }
   void setTextSize(int s) { g_tft.size = s; }
   void setTextColor(uint16_t f) { g_tft.fg = f; g_tft.bg = f; }
   void setTextColor(uint16_t f, uint16_t b) { g_tft.fg = f; g_tft.bg = b; }
   void setCursor(int x, int y) { g_tft.cx = x; g_tft.cy = y; }
-  void print(const char* s) { g_tft.texts++; g_tft.text += s; for (; *s; s++) { const int s_ = g_tft.size; fillRect(g_tft.cx, g_tft.cy, 6 * s_, 8 * s_, g_tft.bg); fillRect(g_tft.cx + s_, g_tft.cy + s_, 4 * s_, 6 * s_, g_tft.fg); g_tft.cx += 6 * s_; } }
+  void print(const char* s) { g_hwTft++; g_tft.texts++; g_tft.text += s; for (; *s; s++) { const int s_ = g_tft.size; fillRect(g_tft.cx, g_tft.cy, 6 * s_, 8 * s_, g_tft.bg); fillRect(g_tft.cx + s_, g_tft.cy + s_, 4 * s_, 6 * s_, g_tft.fg); g_tft.cx += 6 * s_; } }
   void print(const String& s) { print(s.c_str()); }
 };
 
@@ -287,10 +288,10 @@ static int g_touchPressedPolls = 0; static long g_touchPollCount = 0;
 class Adafruit_STMPE610 {
  public:
   Adafruit_STMPE610(int) {}
-  bool begin() { return true; }
-  bool touched() { g_touchPollCount++; if (g_touchPressedPolls > 0) { g_touchPressedPolls--; return true; } return false; }
+  bool begin() { g_hwTouch++; return true; }
+  bool touched() { g_hwTouch++; g_touchPollCount++; if (g_touchPressedPolls > 0) { g_touchPressedPolls--; return true; } return false; }
   bool bufferEmpty() { return true; }
-  TsPoint getPoint() { return { 0, 0, 0 }; }
+  TsPoint getPoint() { g_hwTouch++; return { 0, 0, 0 }; }
   void writeRegister8(uint8_t, uint8_t) {}
 };
 
@@ -329,12 +330,12 @@ class File {
   std::string path_; int mode_ = 0; bool ok_ = false; size_t pos_ = 0;
 };
 struct SDMock {
-  bool begin(int) { return g_sd.beginOk; }
-  bool exists(const char* p) { return g_sd.files.count(p) || std::find(g_sd.dirs.begin(), g_sd.dirs.end(), p) != g_sd.dirs.end(); }
-  bool mkdir(const char* p) { g_sd.dirs.push_back(p); return true; }
-  bool remove(const char* p) { g_sd.removes++; if (g_sd.failRemove) return false; return g_sd.files.erase(p) > 0; }
+  bool begin(int) { g_hwSd++; return g_sd.beginOk; }
+  bool exists(const char* p) { g_hwSd++; return g_sd.files.count(p) || std::find(g_sd.dirs.begin(), g_sd.dirs.end(), p) != g_sd.dirs.end(); }
+  bool mkdir(const char* p) { g_hwSd++; g_sd.dirs.push_back(p); return true; }
+  bool remove(const char* p) { g_hwSd++; g_sd.removes++; if (g_sd.failRemove) return false; return g_sd.files.erase(p) > 0; }
   File open(const char* p, int mode = FILE_READ) {
-    g_sd.opens++;
+    g_hwSd++; g_sd.opens++;
     if (mode == FILE_READ) { if (!g_sd.files.count(p)) return File(); return File(p, FILE_READ); }
     if (g_sd.failOpenWrite) return File();
     g_sd.files[p];                                // création

@@ -15,6 +15,7 @@ import os from "node:os";
 import path from "node:path";
 import { compileHarness, describeChoice, findCompiler, runProcess } from "./helpers/cppHarness";
 import { ROOT, readText } from "./helpers/tft28Source";
+import { reachFrom } from "./helpers/voteCanaryReach";
 import { voteMessageV2 } from "../lib/podVote";
 import { verifyEd25519 } from "../lib/ed25519";
 
@@ -64,6 +65,7 @@ function build(ino: string = INO_SRC, host = "iso.example.test", canary = true):
   const hit = exeCache.get(key); if (hit) return hit;
   const dir = path.join(tmp, `vc-${nBuild++}`), sk = path.join(dir, "sk"); fs.mkdirSync(sk, { recursive: true });
   for (const f of ["podEdStack.h", "podNetStack.h", "pod_http.h", "pod_bench.h", "pod_bench_stream.h", "pod_metrics.h", "pod_metrics_table.h", "pod_vote_r4.h", "pod_sd_stack.h"]) fs.copyFileSync(path.join(SK, f), path.join(sk, f));
+  fs.writeFileSync(path.join(sk, "pod_sd_stack.h"), fs.readFileSync(path.join(SK, "pod_sd_stack.h"), "utf8").replace("static bool onSd(const char* what, F& f) {", "static bool onSd(const char* what, F& f) { ++g_hwOnSd;"));   // V4-FIX1 : compte les appels à onSd (copie de test)
   fs.copyFileSync(path.join(MOCK, "pod_ssl_bounded.h"), path.join(sk, "pod_ssl_bounded.h"));
   fs.writeFileSync(path.join(sk, "sketch_body.inc"), ino);
   const exe = path.join(dir, "vh");
@@ -173,9 +175,9 @@ function staticViolations(ino: string): string[] {
   const loop = /static void voteCanaryLoop\(\) \{\n([\s\S]*?)\n\}\n#endif/.exec(ino);
   if (!loop) v.push("voteCanaryLoop introuvable");
   else if (/serviceTouch|drainTouch|runResidentAnim|doBenchPoll|doObsConfirm|ackFrame|doFetchFrame|maybeFetchAnim|restoreLastFrame|tft\./.test(loop[1])) v.push("voteCanaryLoop : aucun toucher / animation / banc d'essai / observation / ACK / affichage");
-  if (!/void loop\(\) \{\n#if POD_VOTE_CANARY\n  voteCanaryLoop\(\);\n  return;\n#endif/.test(ino)) v.push("loop() délègue à voteCanaryLoop() en tout premier");
+  if (!/void loop\(\) \{\n#if POD_VOTE_CANARY\n  voteCanaryLoop\(\);\n#else/.test(ino)) v.push("loop() délègue à voteCanaryLoop() en tout premier");
   if (!/#if !POD_VOTE_CANARY\n    restoreLastFrame\(\);/.test(ino)) v.push("setup : pas de restoration d'image en canari de vote");
-  if (!/#if POD_VOTE_CANARY\n  return true;[^\n]*\n#endif/.test(ino)) v.push("doPull : frame / animation / banc d'essai ignorés en canari de vote");
+  if (!/#if POD_VOTE_CANARY\n  return true;[^\n]*\n#else/.test(ino)) v.push("doPull : frame / animation / banc d'essai ignorés en canari de vote");
   if (!/vcLockBoot\(\);\n  if \(g_vcHalted\) return;/.test(ino)) v.push("verrou pris au démarrage : setup() s'arrête AVANT le Wi-Fi");
   if (!/if \(g_vcAttempted\) vcHalt\("tentative unique effectuee"\);/.test(ino)) v.push("arrêt définitif après la tentative");
   if (!/if \(alert\) \{ g_vcHalted = true; for \(;;\)/.test(ino)) v.push("marge de pile < 128 o : verrou silencieux");
@@ -184,6 +186,42 @@ function staticViolations(ino: string): string[] {
 }
 test("V4 — règles STATIQUES : backend isolé, épinglage, verrou à deux emplacements écrit et relu AVANT le POST, g_voteScratch absent, boucle sans affichage / ACK / toucher / animation, arrêt définitif", () => {
   assert.deepEqual(staticViolations(INO_SRC), []);
+});
+
+/** V4-FIX1 : TOUT ce qui est atteignable depuis setup() et loop() / voteCanaryLoop() dans le build de vote : aucune fonction ni aucun accès d'écran, de tactile, de carte SD, d'animation, d'ACK. */
+function reachViolations(ino: string): string[] {
+  const r = reachFrom(ino, ["setup", "loop", "voteCanaryLoop"]);
+  const v = r.hits.map((h) => `${h.fn} : ${h.what}`);
+  for (const must of ["setup", "voteCanaryLoop", "doRegister", "doPull", "doValidate", "doValidateV2", "votePhasePost", "voteLockCommitAttempt", "httpCall", "selfTestEd25519", "vcLockBoot"]) if (!r.funcs.includes(must)) v.push(`l'analyse n'atteint pas ${must} (analyse vide de sens)`);
+  if (r.funcs.length < 60) v.push(`seulement ${r.funcs.length} fonctions atteignables : analyse suspecte`);
+  if (!/pinMode\(TFT_CS, OUTPUT\);   digitalWrite\(TFT_CS, HIGH\);\n  pinMode\(STMPE_CS, OUTPUT\); digitalWrite\(STMPE_CS, HIGH\);\n  pinMode\(SD_CS, OUTPUT\);    digitalWrite\(SD_CS, HIGH\);\n\n#if POD_VOTE_CANARY\n  logf\("\[VOTE-CANARY\] ecran, tactile et carte SD NON initialises/.test(ino)) v.push("les trois CS restent à HIGH (contention évitée) puis AUCUNE initialisation d'écran / tactile / SD");
+  if (!/if \(!paired\) vcHalt\("appareil NON appaire/.test(ino)) v.push("carte non appairée => arrêt définitif (aucun QR, aucun onboarding)");
+  return v;
+}
+test("V4-FIX1 — PORTÉE : aucune fonction d'affichage, de tactile, de carte SD, d'animation ou d'ACK n'est atteignable depuis setup() / loop() / voteCanaryLoop() dans le build de vote (analyse sur TOUT le chemin atteignable, pas seulement la boucle)", () => {
+  assert.deepEqual(reachViolations(INO_SRC), []);
+});
+test("V4-FIX1 — PORTÉE, mutants : réintroduire tft.begin(), initSD(), un dessin d'erreur ou d'onboarding dans register, la fin de doPull ou l'ancien loop() est REFUSÉ", () => {
+  const muts: Array<[string, (i: string) => string]> = [
+    ["setup initialise l'écran (tft.begin)", (i) => firstOnly(i, '  logf("[VOTE-CANARY] ecran, tactile et carte SD NON initialises (les trois CS restent a HIGH) : aucun dessin, aucun acces SD");', "  tft.begin();")],
+    ["setup initialise la carte SD", (i) => firstOnly(i, '  logf("[VOTE-CANARY] ecran, tactile et carte SD NON initialises (les trois CS restent a HIGH) : aucun dessin, aucun acces SD");', "  initSD();")],
+    ["setup initialise le tactile", (i) => firstOnly(i, '  logf("[VOTE-CANARY] ecran, tactile et carte SD NON initialises (les trois CS restent a HIGH) : aucun dessin, aucun acces SD");', "  touchOk = ts.begin();")],
+    ["erreur Wi-Fi dessinée (module absent)", (i) => firstOnly(i, 'logf("[WIFI] module absent : arret (aucun dessin)");', 'tftStatus("Module WiFi absent", "", C_RED);')],
+    ["erreur Wi-Fi dessinée (échec)", (i) => firstOnly(i, 'logf("[WIFI] échec (aucun dessin) : redemarrage");', 'tftStatus("WiFi FAIL", "Redemarrage...", C_RED);')],
+    ["register échoué dessiné", (i) => firstOnly(i, 'logf("[REGISTER] echec HTTP (journal seulement, aucun dessin) : nouvel essai dans 5 s"); return false; }', "registerShowFailure(); return false; }")],
+    ["register appairé dessiné (Connecté)", (i) => firstOnly(i, "  if (!paired) vcHalt(", "  registerShowConnected();\n  if (!paired) vcHalt(")],
+    ["carte non appairée : onboarding / QR affiché", (i) => firstOnly(i, "  if (!paired) vcHalt(", "  if (!paired) registerShowOnboarding();\n  if (!paired) vcHalt(")],
+    ["doPull traite de nouveau les frames", (i) => firstOnly(i, "#if POD_VOTE_CANARY\n  return true;", "#if 0\n  return true;")],
+    ["loop() reprend le corps d'origine", (i) => firstOnly(i, "  voteCanaryLoop();\n#else", "  voteCanaryLoop();\n#endif\n#if 1")],
+    ["voteCanaryLoop appelle serviceTouch", (i) => firstOnly(i, "static void voteCanaryLoop() {\n", "static void voteCanaryLoop() {\n  serviceTouch();\n")],
+    ["voteCanaryLoop restaure l'image", (i) => firstOnly(i, "static void voteCanaryLoop() {\n", "static void voteCanaryLoop() {\n  restoreLastFrame();\n")],
+    ["doValidate acquitte (ACK)", (i) => firstOnly(i, "    pendingCandidateId = \"\";                                // effacé APRÈS le classement de l'issue\n", "    pendingCandidateId = \"\";\n    ackFrame(lastFrameId);\n")],
+  ];
+  for (const [label, f] of muts) {
+    const mutated = f(INO_SRC);
+    assert.notEqual(mutated, INO_SRC, `mutation sans effet : ${label}`);
+    assert.notDeepEqual(reachViolations(mutated), [], `mutant de portée NON refusé : ${label}`);
+  }
 });
 
 // ── 3. scénarios dynamiques ───────────────────────────────────────────────────────────────────────────────────────────────────────────
@@ -286,6 +324,35 @@ const CHECKS: Record<string, Chk> = {
     return n(r, "b1_validates") === 0 && n(r, "b1_posts") === 0 && n(r, "lock_status") === 0 && logHas(r, "hote = PRODUCTION") ? [] : ["hôte de production : la porte de vote doit refuser (aucune requête, aucun POST, verrou intact)"];
   },
 };
+/** Compteurs d'accès matériel : TOUS à zéro (écran, tactile, SD, onSd) + aucune requête d'image, d'ACK, d'observation, de banc d'essai. */
+function zeroHardware(tag: string, r: Result): string[] {
+  const v: string[] = [];
+  for (const k of ["hw_tft", "hw_touch", "hw_sd", "hw_onsd", "tft_bus", "tft_fills", "tft_texts", "tft_windows", "touch_polls", "sd_opens", "sd_writes", "sd_reads", "sd_removes", "acks", "pullframes", "obs", "bench"]) if (n(r, `b1_${k}`) !== 0) v.push(`${tag} : ${k} = ${r.facts[`b1_${k}`]} (attendu 0)`);
+  return v;
+}
+CHECKS.bootNominal = (exe) => {   // vrai setup() puis vraie boucle, candidat épinglé annoncé avec une frame, une animation, un banc d'essai et une observation (tous ignorés)
+  const r = run(exe, "vc-boot:vote"); const v = zeroHardware("vc-boot:vote", r);
+  if (n(r, "b1_posts") !== 1 || n(r, "b1_validates") !== 1 || n(r, "b1_reads") !== 1 || n(r, "b1_halted") !== 1 || n(r, "registers") !== 1 || n(r, "paired") !== 1) v.push("vc-boot:vote : démarrage nominal puis UN vote, canari arrêté");
+  const p = r.posts[0]; if (!p || p.candidateId !== PIN_ID || !signatureOk(r, p)) v.push("vc-boot:vote : POST conforme et signé");
+  if (n(r, "lock_status") !== 1) v.push("vc-boot:vote : verrou pris");
+  return v;
+};
+CHECKS.bootRegisterFail = (exe) => {   // register échoue deux fois (HTTP 500) puis réussit : journal seulement, aucun dessin
+  const r = run(exe, "vc-boot:regfail"); const v = zeroHardware("vc-boot:regfail", r);
+  if (n(r, "registers") !== 3 || n(r, "b1_posts") !== 1) v.push("vc-boot:regfail : 2 échecs de register journalisés puis le démarrage aboutit (3 requêtes), un vote");
+  if (!logHas(r, "echec HTTP (journal seulement, aucun dessin)")) v.push("vc-boot:regfail : échec journalisé par la liaison série seulement");
+  return v;
+};
+CHECKS.bootUnpaired = (exe) => {   // carte NON appairée : arrêt définitif, aucun périphérique, aucune requête de vote
+  const r = run(exe, "vc-boot:unpaired"); const v = zeroHardware("vc-boot:unpaired", r);
+  if (n(r, "b1_halted") !== 1 || n(r, "b1_posts") !== 0 || n(r, "b1_validates") !== 0 || n(r, "b1_reads") !== 0 || n(r, "pulls") !== 0 || n(r, "lock_status") !== 0 || n(r, "paired") !== 0) v.push("vc-boot:unpaired : arrêt définitif, 0 pull, 0 validate, 0 lecture, 0 POST, verrou intact");
+  if (!logHas(r, "appareil NON appaire") || !logHas(r, "aucun QR, aucun ecran d'onboarding")) v.push("vc-boot:unpaired : cause journalisée");
+  return v;
+};
+CHECKS.hwSanity = (exe) => {   // sensibilité : appeler directement les fonctions d'affichage / SD / toucher incrémente bien les compteurs
+  const r = run(exe, "vc-sanity");
+  return n(r, "san_hw_tft") > 0 && n(r, "san_hw_touch") > 0 && n(r, "san_hw_sd") > 0 && n(r, "san_hw_onsd") > 0 ? [] : ["vc-sanity : les compteurs (écran, tactile, SD, onSd) doivent s'incrémenter quand on appelle ces fonctions (sinon les zéros ne prouvent rien)"];
+};
 for (const id of Object.keys(CHECKS)) {
   test(`V4 — scénarios « ${id} » sur le canari de vote : aucune violation`, () => { assert.deepEqual(CHECKS[id](exeV4()), []); });
 }
@@ -331,6 +398,10 @@ test("V4 — g_voteScratch retiré : même avec l'épinglage d'écran et le cont
 // ── 6. mutants ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 const firstOnly = (src: string, from: string, to: string) => { const i = src.indexOf(from); assert.ok(i >= 0, `motif obsolète : ${from.slice(0, 90)}`); assert.equal(src.indexOf(from, i + 1), -1, `motif ambigu : ${from.slice(0, 90)}`); return src.slice(0, i) + to + src.slice(i + from.length); };
 const MUTANTS: Array<[string, (i: string) => string, string[]]> = [
+  ["setup initialise l'écran (tft.begin)", (i) => firstOnly(i, '  logf("[VOTE-CANARY] ecran, tactile et carte SD NON initialises (les trois CS restent a HIGH) : aucun dessin, aucun acces SD");', "  tft.begin();"), ["bootNominal"]],
+  ["setup initialise la carte SD (initSD, onSd)", (i) => firstOnly(i, '  logf("[VOTE-CANARY] ecran, tactile et carte SD NON initialises (les trois CS restent a HIGH) : aucun dessin, aucun acces SD");', "  initSD();"), ["bootNominal"]],
+  ["register échoué dessiné", (i) => firstOnly(i, 'logf("[REGISTER] echec HTTP (journal seulement, aucun dessin) : nouvel essai dans 5 s"); return false; }', "registerShowFailure(); return false; }"), ["bootRegisterFail"]],
+  ["carte non appairée : onboarding affiché", (i) => firstOnly(i, "  if (!paired) vcHalt(", "  if (!paired) registerShowOnboarding();\n  if (!paired) vcHalt("), ["bootUnpaired"]],
   ["la persistance ATTEMPTED qui échoue n'empêche plus le POST", (i) => firstOnly(i, "  if (!voteLockCommitAttempt()) {", "  if (false) {"), ["eeprom", "cutMatrix"]],
   ["l'écriture du verrou n'est pas relue", (i) => firstOnly(i, "  return vlReadSlot(off, got) == VL_VALID && memcmp(&got, &want, sizeof(got)) == 0;", "  (void)got; return true;"), ["eeprom"]],
   ["ATTEMPTED n'est écrit que dans l'emplacement A", (i) => firstOnly(i, "  return vlWriteVerified(VL_OFF_B, r);", "  return true;"), ["success", "cutMatrix"]],

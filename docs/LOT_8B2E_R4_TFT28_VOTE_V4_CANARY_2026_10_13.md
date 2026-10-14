@@ -33,7 +33,7 @@
 
 ## 3. Comportement du canari
 
-- `loop()` délègue à `voteCanaryLoop()` : enregistrement, pull (candidat seulement), validation. **Ni toucher, ni animation, ni banc d'essai, ni observation, ni ACK, ni `restoreLastFrame`** ; `doPull` ignore frame, animation et banc d'essai (le pull ne sert qu'à découvrir le candidat). Les écrans d'état du démarrage (« Connexion WiFi… », etc.) restent affichés : ce ne sont pas des œuvres.
+- `loop()` délègue à `voteCanaryLoop()` : enregistrement, pull (candidat seulement), validation. **Ni toucher, ni animation, ni banc d'essai, ni observation, ni ACK, ni `restoreLastFrame`** ; `doPull` ignore frame, animation et banc d'essai (le pull ne sert qu'à découvrir le candidat). **Correction V4-FIX1** : la version initiale de ce lot affirmait à tort « aucun affichage » alors que `setup()` appelait encore `tft.begin()`, `ts.begin()`, `initSD()` et `tftStatus()`, et que `doRegister()` dessinait ses états. Désormais **rien n'est dessiné ni initialisé** : voir `docs/LOT_8B2E_R4_TFT28_VOTE_V4_FIX1_2026_10_14.md`.
 - Une **abstention** (pin, v1, VoteWork non allouable, lecture impossible) compte un passage ; **trois passages sans tentative arrêtent** le canari. Une abstention **définitive** (contenu dont le hash ≠ hash épinglé) l'arrête aussitôt. La tentative effectuée l'arrête quel que soit le résultat (`ACCEPTED`, refus, `SENT_UNKNOWN`…).
 - Arrêt = `g_vcHalted` : la boucle n'a plus que `delay(1000)`. Après un reset, le verrou PRIS arrête le canari au démarrage.
 - Instrument de pile principale (peinture 0x5A + marqueur « VOTE ») et de tas (libre, plus grand bloc par dichotomie malloc/free) ; marge < 128 o ou marqueur détruit ⇒ **verrou silencieux** (aucun vote après).
@@ -70,9 +70,9 @@
 |---|---:|---:|---|
 | production (V4 présent, drapeau 0) | 158 740 o | 21 532 o | identiques à V3-FIX1 |
 | canari d'affichage (`POD_CANARY = 1`) | 149 704 o | 21 464 o | identiques à V3-FIX1 |
-| **canari de vote** (`POD_VOTE_CANARY = 1`) | **145 708 o** | **15 836 o** | identiques à la production |
+| **canari de vote** (`POD_VOTE_CANARY = 1`) | **134 264 o** (V4-FIX1 ; 145 708 o avant) | **15 824 o** (15 836 avant) | identiques à la production |
 
-Production et canari d'affichage : **tailles identiques à V3-FIX1 à l'octet** (aucun octet de plus). Le build de vote est plus petit : le code d'affichage, d'animation, de toucher, de banc d'essai et de carte SD n'y est plus référencé (éliminé par l'éditeur de liens). `nm` : `g_voteScratch` = 0x1280 = **4 736 o** présent en production, **absent** du build de vote.
+Production et canari d'affichage : **tailles identiques à V3-FIX1 à l'octet** (aucun octet de plus). Le build de vote est plus petit (chiffres corrigés par V4-FIX1 : 134 264 o de flash, 15 824 o de RAM statique). Cette différence N'EST PAS la preuve qu'aucun accès matériel n'est possible : la preuve est l'analyse de portée depuis `setup()` / `loop()` (V4-FIX1). `nm` : `g_voteScratch` = 0x1280 = **4 736 o** présent en production, **absent** du build de vote.
 **Pile principale (analyse statique, build de vote 1.6.0 ; pile de 1 024 o ; `loop` 112 o, `setup` 232 o)** : `doValidateV2` marge **568 o** ; phases de lecture / signature / POST : 672 / 648 / 608 o ; `voteFinish` 712 o ; `httpCall` 664 o ; décodage 736 o ; `doRegister` depuis `setup` 312 o. ⚠ Statique : ni interruptions, ni appels indirects ; la mesure réelle est celle de l'instrument sur carte (§ 7).
 
 ## 6. `g_voteScratch` : retiré uniquement du build de vote — preuve
@@ -83,7 +83,7 @@ Production et canari d'affichage : **tailles identiques à V3-FIX1 à l'octet** 
 
 ## 7. Protocole du futur essai matériel (par le porteur, après audit GPT/Codex de ce commit)
 
-**Pré-conditions** : (a) audit accepté ; (b) transport modifié revalidé sur carte avec le **canari d'affichage** : une frame personnelle **et** une animation (le correctif `Conn::request` de V3 et `-7` de FIX1 touchent tous les téléchargements) ; (c) **backend isolé** disponible (déploiement de prévisualisation, Redis dédié ; modes d'éligibilité / comité / reçus fixés ; un seul appareil actif ⇒ quorum 1 ⇒ **le vote minera un bloc dans CE backend**) ; (d) candidat `tft28` connu (153 600 o), son identifiant et son SHA-256 notés, **relevés auprès du backend isolé** (réponse de `validate-candidate` : `candidate.candidateId`, `candidate.v2.hash`) ; (e) carte appairée, clés présentes (démarrage normal déjà fait) ; (f) binaire de production (`stable`) conservé pour le retour arrière.
+**Pré-conditions** : (0) **PRÉCONDITION NON LOGICIELLE — isolation du backend prouvée HORS du firmware** : un nom d'hôte différent ne prouve RIEN. Avant tout flash, le porteur doit vérifier et consigner (captures de console) que le domaine de prévisualisation utilise un **Redis dédié** (variables d'environnement du déploiement : URL / jeton Upstash propres, distincts de la production ; aucune variable partagée entre environnements), que ce backend a ses propres Neon / secrets si utilisés, que le **candidat épinglé n'existe QUE sur ce backend** (introuvable côté production) et que le bloc miné par le vote y restera. Le firmware ne peut ni vérifier ni remplacer cette preuve ; (a) audit accepté ; (b) transport modifié revalidé sur carte avec le **canari d'affichage** : une frame personnelle **et** une animation (le correctif `Conn::request` de V3 et `-7` de FIX1 touchent tous les téléchargements) ; (c) **backend isolé** disponible (déploiement de prévisualisation, Redis dédié ; modes d'éligibilité / comité / reçus fixés ; un seul appareil actif ⇒ quorum 1 ⇒ **le vote minera un bloc dans CE backend**) ; (d) candidat `tft28` connu (153 600 o), son identifiant et son SHA-256 notés, **relevés auprès du backend isolé** (réponse de `validate-candidate` : `candidate.candidateId`, `candidate.v2.hash`) ; (e) carte appairée, clés présentes (démarrage normal déjà fait) ; (f) binaire de production (`stable`) conservé pour le retour arrière.
 1. **Verrou vierge** : flasher `VoteLockErase`, relever « A vierge, B vierge » (sinon taper `ERASE-VOTE-LOCK`), retirer l'outil.
 2. Créer `arduino_uno_r4/pod_uno_r4/pod_vote_pins.h` (copie de `.example`) : hôte isolé, identifiant, hash. Compiler **localement** (jamais commité) :
    `arduino-cli compile --fqbn arduino:renesas_uno:unor4wifi --build-property "compiler.cpp.extra_flags=-DPOD_VOTE_CANARY=1" <dossier pod_uno_r4>` (`secrets.h` local). `POD_CANARY` et `POD_RENDER_V1` restent à 0.
@@ -101,7 +101,7 @@ En **production**, `doFetchFrame` ignore le résultat de l'ACK (`ackFrame(frameI
 1. Aucune mesure sur carte : le verrou n'a jamais écrit la flash réelle ; le comportement exact de `EEPROM.put` (page de 1 Ko allouée au tas, effacement/programmation) est celui lu dans le cœur 1.6.0 — la relecture vérifiée couvre l'échec d'allocation silencieux ; une déchirure d'écriture est modélisée octet par octet, pas électriquement.
 2. Un verrou PRIS à la suite d'une coupure pendant le **premier** `put` (A déchiré) interdit le vote tant que l'opérateur ne l'a pas effacé : choix délibéré (échec fermé).
 3. Le moniteur de pile est un instrument de mesure : son propre cadre (≈ 40 o) est inclus dans les marges (pessimiste).
-4. Le build de vote n'a pas d'écran d'œuvre : les écrans d'état du démarrage restent.
+4. Le build de vote n'initialise ni écran, ni tactile, ni carte SD (V4-FIX1) : le TFT reste tel qu'à la mise sous tension ; seules la liaison série et le Wi-Fi sont utilisés.
 5. `FIRMWARE_VERSION` inchangé ; le canari de vote s'annonce comme `r4tft28-2.5` au backend isolé.
 6. Le correctif `Conn::request` (V3 / FIX1) touche aussi le chemin d'affichage : à revalider au prochain canari d'affichage (voir pré-condition b).
 

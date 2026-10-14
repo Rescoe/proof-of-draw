@@ -193,6 +193,7 @@ struct VoteLockRec { uint32_t magic; uint8_t ver, state, outcome, seq; uint32_t 
 static_assert(sizeof(VoteLockRec) == 16, "VoteLockRec : 16 octets");
 enum VlSlot : uint8_t { VL_BLANK = 0, VL_VALID = 1, VL_INVALID = 2 };
 enum VlStatus : uint8_t { VLS_FREE = 0, VLS_HELD = 1, VLS_UNAVAILABLE = 2 };
+static void vcHalt(const char* why);   // arrêt définitif (défini plus bas)
 #endif
 #endif
 
@@ -1153,11 +1154,19 @@ static void __attribute__((noinline)) registerShowConnected() {
 }
 static bool doRegister() {
   const uint8_t x = registerExchange();
+#if POD_VOTE_CANARY
+  if (x == REGX_HTTP) { logf("[REGISTER] echec HTTP (journal seulement, aucun dessin) : nouvel essai dans 5 s"); return false; }
+  if (x != REGX_OK) return false;
+  registerLog();
+  if (!paired) vcHalt("appareil NON appaire : le canari de vote exige une carte DEJA appairee (aucun QR, aucun ecran d'onboarding)");
+  return true;
+#else
   if (x == REGX_HTTP) { registerShowFailure(); return false; }
   if (x != REGX_OK) return false;
   registerLog();
   if (!paired) registerShowOnboarding(); else registerShowConnected();
   return true;
+#endif
 }
 
 // ─── PULL ──────────────────────────────────────────────────────────────────
@@ -1339,7 +1348,7 @@ static bool doPull() {
   if (st == 2) return true;
 #if POD_VOTE_CANARY
   return true;                                               // V4 : frame, animation et banc d'essai IGNORÉS (aucun affichage, aucun ACK) ; seul le candidat annoncé est retenu
-#endif
+#else
 
   if (newFrameSource == "none" || newFrameId.length() == 0) { logf("[PULL] aucune frame"); return true; }
   if (newFrameId == lastFrameId) { logf("[PULL] frame déjà affichée"); maybeFetchAnim(newFrameId); return true; }
@@ -1352,6 +1361,7 @@ static bool doPull() {
   }
   reportMem("après pull");
   return true;
+#endif
 }
 
 #if !POD_CANARY
@@ -2309,6 +2319,9 @@ void setup() {
   pinMode(STMPE_CS, OUTPUT); digitalWrite(STMPE_CS, HIGH);
   pinMode(SD_CS, OUTPUT);    digitalWrite(SD_CS, HIGH);
 
+#if POD_VOTE_CANARY
+  logf("[VOTE-CANARY] ecran, tactile et carte SD NON initialises (les trois CS restent a HIGH) : aucun dessin, aucun acces SD");
+#else
   tft.begin();
   tft.setRotation(0);
 #if TOUCH_ENABLED
@@ -2319,17 +2332,28 @@ void setup() {
 #endif
   tftStatus("Proof-of-Draw", "Connexion WiFi...");
   initSD();
+#endif
 
+#if POD_VOTE_CANARY
+  if (wifiStatusT("status (module present ?)") == WL_NO_MODULE) { logf("[WIFI] module absent : arret (aucun dessin)"); while (true) delay(1000); }
+#else
   if (wifiStatusT("status (module present ?)") == WL_NO_MODULE) { tftStatus("Module WiFi absent", "", C_RED); while (true) delay(1000); }
+#endif
   logf("[WIFI] firmware du module: %s", wifiFirmware().c_str());
   int tries = 0;
   while (wifiStatus() != WL_CONNECTED && tries++ < 4) {
     wifiBegin();
     for (int i = 0; i < 20 && wifiStatus() != WL_CONNECTED; i++) delay(500);
   }
+#if POD_VOTE_CANARY
+  if (wifiStatus() != WL_CONNECTED) { logf("[WIFI] échec (aucun dessin) : redemarrage"); delay(3000); NVIC_SystemReset(); }
+#else
   if (wifiStatus() != WL_CONNECTED) { logf("[WIFI] échec"); tftStatus("WiFi FAIL", "Redemarrage...", C_RED); delay(3000); NVIC_SystemReset(); }
+#endif
   logf("[WIFI] IP: %s", wifiIpString().c_str());
+#if !POD_VOTE_CANARY
   tftStatus("WiFi OK", wifiIpString());
+#endif
   POD_CANARY_CHECK("wifi : connecte");
   POD_CANARY_HEAP("apres le Wi-Fi");
 
@@ -2354,8 +2378,6 @@ void setup() {
   if (paired) {
 #if !POD_VOTE_CANARY
     restoreLastFrame();                                 // la dernière œuvre revient tout de suite depuis la carte SD
-#else
-    (void)restoreLastFrame;                             // V4 : jamais appelée (aucun affichage) ; référencée pour ne pas ajouter d'avertissement « defined but not used »
 #endif
     POD_CANARY_CHECK("restauration SD : retour");
     logf("[BOOT] premier pull immédiat");
@@ -2370,8 +2392,7 @@ void setup() {
 void loop() {
 #if POD_VOTE_CANARY
   voteCanaryLoop();
-  return;
-#endif
+#else
   const unsigned long now = millis();
 
   if (!registered) { if (!doRegister()) { delay(5000); return; } }
@@ -2423,4 +2444,26 @@ void loop() {
     if (mined) { delay(2000); doPull(); lastPullMs = millis(); }
   }
   delay(40);
+#endif
 }
+#if POD_VOTE_CANARY
+// V4-FIX1 : les fonctions d'affichage, de toucher, de SD, d'animation et d'ACK ne sont PAS atteignables dans ce build (tests/tft28VoteCanary.test.ts et scripts/vote-canary-elf-reach.js) : elles restent définies mais jamais appelées.
+// GCC 7 ignore le pragma -Wunused-function pour cet avertissement (émis en fin d'unité) : cette fonction JAMAIS APPELÉE (ni depuis setup(), ni depuis loop() : elle n'est donc pas « atteignable ») prend leur adresse pour ne pas ajouter d'avertissement au build de vote ;
+// statique et sans appelant, elle est éliminée à l'édition de liens. La preuve de non-atteignabilité est faite sur les points d'entrée, pas sur cette fonction.
+static void __attribute__((unused)) voteCanaryNeverCalledRefs() {
+  (void)&runResidentAnim;
+  (void)&doFetchFrame;
+  (void)&doObsConfirm;
+  (void)&msUntilNextTask;
+  (void)&animForget;
+  (void)&doBenchPoll;
+  (void)&initSD;
+  (void)&maybeFetchAnim;
+  (void)&onAnimTouch;
+  (void)&registerShowConnected;
+  (void)&registerShowFailure;
+  (void)&registerShowOnboarding;
+  (void)&restoreLastFrame;
+  (void)&serviceTouch;
+}
+#endif

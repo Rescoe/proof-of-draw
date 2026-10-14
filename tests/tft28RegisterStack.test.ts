@@ -2,9 +2,9 @@
 // Preuves STATIQUES (structure, ordre, échec fermé, mutants). Le comportement exécuté est dans tests/tft28Host.test.ts (section « 17b »). Rien ici ne prouve une marge sur la carte.
 import test from "node:test";
 import assert from "node:assert/strict";
-import { INO, effective, fnBody, readText, stripBlock, stripHooks, stripLine } from "./helpers/tft28Source";
+import { INO, effective, fnBody, readText, stripBlock, stripHooks, stripLine, voteCanaryOffView } from "./helpers/tft28Source";
 
-const src = readText(INO);
+const src = voteCanaryOffView(readText(INO));
 const prod = stripHooks(effective(src, false)), can = stripHooks(effective(src, true));
 const code = (s: string) => stripBlock(stripLine(s));
 const body = (s: string, head: string) => code(fnBody(s, head));

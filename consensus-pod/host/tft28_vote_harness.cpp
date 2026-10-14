@@ -79,6 +79,8 @@ struct VK {
   NetScript cand;                              // réponse de /api/candidate-frame
   int voteCode = 200; std::string voteBody = "{\"ok\":true,\"blockMined\":false,\"voteCount\":1,\"needed\":1}";
   bool voted = false;                          // le « serveur » a enregistré un vote 200 : validate-candidate répond alreadyVoted
+  std::string registerJson = "{\"deviceId\":\"dev_TEST0001\",\"pairCode\":\"ABCD2345\",\"paired\":true}"; int registerFails = 0;   // V4-FIX1 : register scénarisé
+  std::string pullJson = "{\"frameSource\":\"none\",\"retryAfter\":300}";
   bool voteStall = false, voteClose = false, crashOnPost = false;   // V4 : POST sans réponse (timeout), connexion fermée sans réponse, reset PENDANT le POST (la requête est partie)
   bool forgetful = false;                      // scénario « double-forgetful » : le serveur simulé NE SE SOUVIENT PAS du vote (met à nu l'absence de verrou LOCAL dans le firmware)
 };
@@ -96,8 +98,8 @@ static NetScript route(const NetRequest& r) {
   if (r.path.rfind("/api/validation-result", 0) == 0 && V.crashOnPost) throw HarnessReset();   // le serveur a REÇU la requête (déjà enregistrée par le client simulé) ; la carte redémarre
   if (r.path.rfind("/api/validation-result", 0) == 0 && (V.voteStall || V.voteClose)) { g_pendingAtPost = pendingCandidateId.length() ? pendingCandidateId.c_str() : "-"; s.response = ""; if (V.voteStall) s.stallAfter = 0; else s.closeAfter = 0; return s; }
   if (r.path.rfind("/api/validation-result", 0) == 0) { g_pendingAtPost = pendingCandidateId.length() ? pendingCandidateId.c_str() : "-"; if (V.voteCode == 200 && !V.forgetful) V.voted = true; s.response = http(V.voteCode, V.voteBody); return s; }
-  if (r.path.rfind("/api/register", 0) == 0) { s.response = http(200, "{\"deviceId\":\"dev_TEST0001\",\"pairCode\":\"ABCD2345\",\"paired\":true}"); return s; }
-  if (r.path.rfind("/api/pull?", 0) == 0) { s.response = http(200, "{\"frameSource\":\"none\",\"retryAfter\":300}"); return s; }
+  if (r.path.rfind("/api/register", 0) == 0) { if (V.registerFails > 0) { V.registerFails--; s.response = http(500, "{\"error\":\"boom\"}"); return s; } s.response = http(200, V.registerJson); return s; }
+  if (r.path.rfind("/api/pull?", 0) == 0) { s.response = http(200, V.pullJson); return s; }
   if (r.path.rfind("/api/pull-frame", 0) == 0 && g_frameRoutes) return V.cand;   // V3-FIX1 : scénarios frame-* seulement
   if (r.path.rfind("/api/ack-frame", 0) == 0 && g_frameRoutes) { s.response = http(200, "{\"ok\":true}"); return s; }
   s.response = http(404, "{}"); return s;     // pull-frame, ack-frame, obs-confirm... : ne doivent JAMAIS être appelés par un vote
@@ -195,7 +197,46 @@ static void vcPreload(const std::string& variant) {
   else if (variant == "bad-crc") { VoteLockRec x = r; x.crc ^= 0x100; put(VL_OFF_A, x); }
   else { std::printf("FACT preload_inconnu=%s\n", variant.c_str()); }
 }
+static void hwFacts(const char* tag) {
+  std::printf("FACT %s_hw_tft=%ld\nFACT %s_hw_touch=%ld\nFACT %s_hw_sd=%ld\nFACT %s_hw_onsd=%ld\n", tag, g_hwTft, tag, g_hwTouch, tag, g_hwSd, tag, g_hwOnSd);
+  std::printf("FACT %s_tft_bus=%ld\nFACT %s_tft_fills=%ld\nFACT %s_tft_texts=%ld\nFACT %s_tft_windows=%ld\nFACT %s_touch_polls=%ld\n", tag, g_tft.busBytes, tag, g_tft.fills, tag, g_tft.texts, tag, g_tft.windows, tag, g_touchPollCount);
+  std::printf("FACT %s_sd_opens=%ld\nFACT %s_sd_writes=%ld\nFACT %s_sd_reads=%ld\nFACT %s_sd_removes=%ld\n", tag, g_sd.opens, tag, g_sd.writes, tag, g_sd.reads, tag, g_sd.removes);
+  std::printf("FACT %s_acks=%d\nFACT %s_pullframes=%d\nFACT %s_obs=%d\nFACT %s_bench=%d\n", tag, countReq("/api/ack-frame"), tag, countReq("/api/pull-frame"), tag, countReq("/api/obs-confirm"), tag, countReq("/api/bench"));
+}
+/** Démarrage COMPLET : le vrai setup() puis la vraie loop() (voteCanaryLoop), temps virtuel. Compteurs de TOUT accès à l'écran, au tactile, à la carte SD et à onSd. */
+static int vcBootDrive(const std::string& sc) {
+  const std::string variant = sc.substr(8);   // après « vc-boot: »
+  EEPROM.m[64] = 0xED; for (int i = 0; i < 32; i++) { EEPROM.m[i] = privateKey[i]; EEPROM.m[65 + i] = publicKey[i]; }   // clés déjà générées et cohérentes
+  EEPROM.m[97] = 0x01;                                                                                                // onboarding déjà montré (sinon la production dessinerait des clés)
+  g_hwTft = g_hwTouch = g_hwSd = g_hwOnSd = 0; g_touchPollCount = 0;
+  g_tft.busBytes = g_tft.fills = g_tft.texts = g_tft.windows = 0; g_sd.opens = g_sd.writes = g_sd.reads = g_sd.removes = 0;
+  if (variant == "regfail") V.registerFails = 2;
+  if (variant == "unpaired") V.registerJson = "{\"deviceId\":\"dev_TEST0002\",\"pairCode\":\"WXYZ2345\",\"paired\":false}";
+  if (variant == "vote" || variant == "regfail") V.pullJson = std::string("{\"frameSource\":\"consensus\",\"frameId\":\"f-ignore\",\"retryAfter\":60,\"pendingValidation\":{\"candidateId\":\"") + V.candId + "\"},\"pendingObservation\":{\"blockHashes\":[\"h1\"],\"targetBlockHash\":\"" + std::string(64, 't') + "\"},\"benchMode\":true,\"animHash\":\"" + std::string(64, 'a') + "\",\"animBytes\":1234}";
+  registered = false; paired = false; deviceId = ""; lastFrameId = "";
+  int crashed = 0, stopped = 0;
+  try {
+    tft28_setup();
+    for (int i = 0; i < 200 && !g_vcHalted; i++) { g_us += 15 * 1000000ull; tft28_loop(); }
+  } catch (HarnessReset&) { crashed = 1; } catch (HarnessStop&) { stopped = 1; }
+  vcFacts("b1", crashed, stopped); hwFacts("b1");
+  std::printf("FACT registered=%d\nFACT paired=%d\nFACT registers=%d\nFACT pulls=%d\nFACT lock_status=%d\nFACT lastFrameId=%s\nFACT benchMode=%d\n", registered ? 1 : 0, paired ? 1 : 0, countReq("/api/register"), countReq("/api/pull?"), (int)voteLockStatus(), lastFrameId.c_str(), benchMode ? 1 : 0);
+  std::printf("FACT deviceId=%s\nFACT candidateId=%s\nFACT pubkey=%s\n", deviceId.c_str(), V.candId.c_str(), hex(publicKey, 32).c_str());
+  for (auto& r : g_requests) if (r.path.rfind("/api/validation-result", 0) == 0) std::printf("POST %s\n", r.body.c_str());
+  size_t pos = 0; const std::string& L = Serial.log;
+  while (pos < L.size()) { size_t e = L.find('\n', pos); if (e == std::string::npos) e = L.size(); const std::string line = L.substr(pos, e - pos); if (line.find("[VOTE") != std::string::npos || line.find("[REGISTER") != std::string::npos || line.find("[WIFI") != std::string::npos) std::printf("LOG %s\n", line.c_str()); pos = e + 1; }
+  return 0;
+}
+/** Sensibilité des compteurs : les fonctions d'affichage, de SD et de toucher EXISTENT dans le binaire hôte du canari de vote ; les appeler incrémente bien les compteurs. */
+static int vcSanity() {
+  g_hwTft = g_hwTouch = g_hwSd = g_hwOnSd = 0;
+  tftStatus(String("x"), String("y")); initSD(); ts.begin(); ts.touched();
+  std::printf("FACT san_hw_tft=%ld\nFACT san_hw_touch=%ld\nFACT san_hw_sd=%ld\nFACT san_hw_onsd=%ld\n", g_hwTft, g_hwTouch, g_hwSd, g_hwOnSd);
+  return 0;
+}
 static int vcDrive(const std::string& sc) {
+  if (sc.rfind("vc-boot:", 0) == 0) return vcBootDrive(sc);
+  if (sc == "vc-sanity") return vcSanity();
   int crashed = 0, stopped = 0;
   if (sc.rfind("vc-cut:", 0) == 0) {   // vc-cut:<put>:<octets>:<mode>
     int a = 0, b = 0, c = 0; std::sscanf(sc.c_str() + 7, "%d:%d:%d", &a, &b, &c); EEPROM.cutPut = a; EEPROM.cutBytes = b; EEPROM.cutMode = c;
