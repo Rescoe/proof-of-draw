@@ -5,7 +5,7 @@ import { ACTIVE_WINDOW_MS } from "@/lib/pullBudget";
 //
 // Principe : un appareil dont le firmware déclaré (champ `firmware` de /api/register) NE SAIT PAS faire le vote v2 (recalcul du hash et des métriques, signature Ed25519) :
 //   - n'est plus compté dans le quorum (getGlobalActiveCount / getPoolSnapshot) ;
-//   - ne reçoit plus rien de /api/pull (ni image, ni bloc, ni candidat) ;
+//   - continue de RECEVOIR les images et les blocs de /api/pull (réception maintenue, décision du 14/10/2026 soir), mais n'est jamais invité à valider un candidat ;
 //   - ne vote plus (/api/validation-result et /api/validate-candidate le refusent : 403).
 // Les capteurs seuls (screens = ["sensor"]) sont HORS de ce mécanisme : ils n'ont jamais voté.
 // Source de vérité = la version envoyée par l'appareil lui-même ; liste = les firmwares du dépôt qui contiennent `doValidateV2` (vote v2). Une version PLUS ANCIENNE ou inconnue est exclue.
