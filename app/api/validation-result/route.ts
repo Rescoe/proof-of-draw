@@ -40,6 +40,7 @@ import { committeeGate, committeeModeFromEnv, committeeOutcome, currentWave, rej
 import { applyReputation, reputationEntries } from "@/lib/reputation";
 import { blockReceiptsEnabled } from "@/lib/blockReceipts";
 import { voteAdmission } from "@/lib/voteCapability";
+import { dropArchive, recordRejected, type ArchiveKV } from "@/lib/rejectedArchive";
 
 const DEVICE_ID_REGEX = /^dev_[A-Z0-9]{8}$/;
 const BLACKLIST_TTL = parseInt(process.env.BLACKLIST_TTL_SECONDS ?? "604800");
@@ -215,6 +216,7 @@ export async function POST(req: NextRequest) {
         if (!(await claimFinalization(candidate.candidateId))) return json({ ok: true, blockMined: false, alreadyFinalized: true }, 200);
         console.log(`[committee] candidat REFUSÉ par le comité candidate=${candidate.candidateId} refus=${outcome.decision.rejects}/${candidate.committee.K}`);
         await applyReputation(redis as unknown as { eval(s: string, k: string[], a: string[]): Promise<unknown> }, reputationEntries(candidate, outcome));
+        await recordRejected(redis as unknown as ArchiveKV, candidate, `refusé par le comité (${outcome.decision.rejects}/${candidate.committee.K} refus)`).catch((e) => console.error("[validation-result] archive du refus échouée:", e));   // REJECTED-CANDIDATE-ARCHIVE-1
         await clearCandidate();
         return json({ ok: true, blockMined: false, rejected: true, rejectCount: outcome.decision.rejects, voteCount, needed, committee: true }, 200);
       }
@@ -228,6 +230,7 @@ export async function POST(req: NextRequest) {
     const rejectionsWouldBlock = !committeeEnforced && !quorumReached && rejectCount !== undefined && rejectCount > 0 && candidate.poolSize - rejectCount < Math.max(1, needed);
     if (rejectionsWouldBlock && enforceRejections) {
       console.log(`[validation-result] candidat REFUSÉ par le réseau candidate=${candidate.candidateId} refus=${rejectCount}/${candidate.poolSize}`);
+      await recordRejected(redis as unknown as ArchiveKV, candidate, `refusé par le réseau (${rejectCount}/${candidate.poolSize} refus)`).catch((e) => console.error("[validation-result] archive du refus échouée:", e));   // REJECTED-CANDIDATE-ARCHIVE-1
       await clearCandidate();
       return json({ ok: true, blockMined: false, rejected: true, rejectCount, voteCount, needed }, 200);
     }
@@ -270,6 +273,7 @@ export async function POST(req: NextRequest) {
         await broadcastValidatedFrame(candidate.poolScreen, candidate.payload, frameId, block.displayTime, block.blockIndex, candidate.artistName, block.blockHash);
       }
       await clearCandidate();
+      await dropArchive(redis as unknown as ArchiveKV, candidate.candidateId).catch((e) => console.error("[validation-result] suppression de la copie d'archive échouée:", e));   // bloc miné : la copie n'a plus d'objet
       invalidateNetworkSnapshot();   // un bloc vient d'être miné : la vue réseau se reconstruit à la prochaine visite
       markHot().catch(() => {});   // un bloc vient d'être miné : le réseau est actif, les écrans restent à 5 min de pull
       // Invalider le cache Next.js → la BlockGallery se rechargera immédiatement
