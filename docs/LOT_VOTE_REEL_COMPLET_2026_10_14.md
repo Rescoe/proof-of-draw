@@ -27,11 +27,12 @@ Nouveau module `lib/voteCapability.ts` (pur, testé). Un appareil est **capable 
 - **ne s'exprime plus** : `/api/validation-result` et `/api/validate-candidate` répondent **403** (`firmware-not-vote-capable`).
 Les **capteurs seuls** (`screens = ["sensor"]`) sont hors de ce mécanisme.
 Valeurs par défaut du **vote réel** (variables Vercel facultatives, retour arrière instantané) :
-| Réglage | Nouveau défaut | Avant | Retour arrière |
+| Réglage | Nouveau défaut (dans le code) | Avant | Valeur qui DÉSACTIVE (interrupteur d'arrêt : NE PAS l'ajouter, sauf retour arrière) |
 |---|---|---|---|
 | `VOTE_ONLY_NETWORK` | actif | (n'existait pas) | `false` |
 | `MIN_V2_APPROVALS` | **1** : un bloc exige au moins une approbation v2 (vote recalculé) ; un « écho » v1 ne suffit plus | 0 | `0` |
 | `STRICT_SIGNATURE` | **strict** : signature Ed25519 invalide = vote refusé | permissif | `false` |
+⚠ **Variables Vercel à ajouter MAINTENANT (avant la fusion dans `main`, ancien serveur) : `MIN_V2_APPROVALS=1` et `STRICT_SIGNATURE=true`, puis redéployer.** Les valeurs `false` / `0` de la dernière colonne désactivent le vote réel : ne les ajouter qu'en cas de retour arrière. Voir `docs/NOTE_POUR_GPT_ETAT_VOTE_REEL_2026_10_14.md` § 6.
 Coût Redis : **aucune commande ajoutée** (les contrôles utilisent le `MGET` déjà fait).
 
 ## 4. Ordre de mise en service (important)

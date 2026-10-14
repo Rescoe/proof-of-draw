@@ -18,6 +18,9 @@ Copie **exacte** des 4 sketches de la branche `claude/integration-vote-reel-2026
 - ESP8266 2,9″ BWR : ArduinoJson, Crypto (Ed25519), QRCode.
 - R4 e-ink 2,9″ : ArduinoJson, Crypto (Ed25519, SHA256), QRCode.
 
+## 2bis. Variables Vercel (avant ou pendant le téléversement)
+Ajouter dans Vercel (environnement **Production**) : `MIN_V2_APPROVALS` = `1` et `STRICT_SIGNATURE` = `true`, puis **Redeploy**. Ne PAS ajouter `VOTE_ONLY_NETWORK`, ni mettre `false` / `0` : ces valeurs-là sont les interrupteurs d'arrêt du vote réel.
+
 ## 3. Déroulé (par appareil)
 1. Ouvrir le `.ino` du tableau (l'IDE ouvre tout le dossier). Onglet `secrets.h` : vérifier le Wi-Fi.
 2. Choisir la carte et le port ; ouvrir le moniteur série à **115200**.
