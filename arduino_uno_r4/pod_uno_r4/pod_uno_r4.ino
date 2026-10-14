@@ -925,12 +925,14 @@ static bool doFetchFrame(const String& frameId, const String& frameSource) {
 #if POD_CANARY
   return doFetchTailCanary(frameId, frameSource, t0);
 #else
+  // TFT28-ACK-STATE-FIX1 : l'ACK DÉCIDE du succès (même règle que le canari d'affichage, validé sur la carte le 14/10/2026). Avant : l'état local (lastFrameId, métadonnées SD) était écrit AVANT l'ACK dont le résultat était ignoré ;
+  // un ACK perdu laissait l'écran « acquitté » alors que le serveur n'avait rien enregistré. Désormais : ACK refusé ou impossible => frame NON marquée acquittée, rien d'écrit sur la carte SD, nouvel essai au prochain pull.
+  if (!ackFrame(frameId)) { logf("[FRAME] image COMPLETE a l'ecran mais ACK non confirme par le serveur : frame NON marquee acquittee (lastFrameId inchange, metadonnees SD non ecrites), nouvel essai au prochain pull"); return false; }
   lastFrameId = frameId;
   lastFrameWasConsensus = (frameSource == "consensus");
   pendingCandidateId = "";
   if (sdFrameValid) saveMeta(frameId);
-  logf("[FRAME] OK en %lu ms (frameId=%s source=%s, cache SD: %s)", millis() - t0, frameId.c_str(), frameSource.c_str(), sdFrameValid ? "oui" : "non");
-  ackFrame(frameId);
+  logf("[FRAME] OK en %lu ms (frameId=%s source=%s, cache SD: %s) — ACK recu (HTTP 200)", millis() - t0, frameId.c_str(), frameSource.c_str(), sdFrameValid ? "oui" : "non");
   return true;
 #endif
 }

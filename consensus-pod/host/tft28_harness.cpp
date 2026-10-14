@@ -223,10 +223,10 @@ int main(int argc, char** argv) {
   { resetWorld(); initSD(); K.frame = frameOk(11); K.ackCode = 500; const bool ok = doFetchFrame("ack500", "personal");
     CHECK(countReq("/api/ack-frame") == 1, "11 ACK refusé : UNE seule requête (aucune boucle)"); CHECK(fbIsArtwork(11), "11 ACK refusé : l'image est complète à l'écran");
     if (CAN) { CHECK(!ok && lastFrameId == "" && !sdHas("/pod/meta.txt"), "11 CANARI : ACK refusé => false, frame NON acquittée, métadonnées SD non écrites"); CHECK(has(Serial.log, "ECHEC ACK") && !has(Serial.log, "ACK recu"), "11 CANARI : échec journalisé, jamais « ACK reçu »"); CHECK(sdFrameValid && sdFile("/pod/frame.bin") == imageBytes(11), "11 CANARI : le cache d'image reste valide (cartel masquable)"); }
-    else CHECK(ok && lastFrameId == "ack500", "11 production : comportement d'origine conservé (résultat de l'ACK ignoré)"); }
+    else { CHECK(!ok && lastFrameId == "" && !sdHas("/pod/meta.txt"), "11 production (ACK-STATE-FIX1) : ACK refusé => false, frame NON acquittée, métadonnées SD non écrites"); CHECK(has(Serial.log, "ACK non confirme"), "11 production : échec d'ACK journalisé"); } }
   { resetWorld(); initSD(); K.frame = frameOk(11); K.ackConnect = false; const bool ok = doFetchFrame("ackdown", "personal");
     CHECK(countReq("/api/ack-frame") == 1 && fbIsArtwork(11), "11 ACK impossible (connexion TLS refusée) : une tentative, image complète");
-    if (CAN) CHECK(!ok && lastFrameId == "" && has(Serial.log, "ECHEC ACK"), "11 CANARI : ACK impossible => false, frame non acquittée"); else CHECK(ok && lastFrameId == "ackdown", "11 production : inchangé"); }
+    if (CAN) CHECK(!ok && lastFrameId == "" && has(Serial.log, "ECHEC ACK"), "11 CANARI : ACK impossible => false, frame non acquittée"); else CHECK(!ok && lastFrameId == "" && !sdHas("/pod/meta.txt") && has(Serial.log, "ACK non confirme"), "11 production (ACK-STATE-FIX1) : ACK impossible => false, frame non acquittée"); }
   if (!CAN) { resetWorld(); initSD(); g_failNext = 1; const bool acked = ackFrame("fx"); CHECK(!acked && g_requests.empty() && has(Serial.log, "pile réseau dédiée"), "11 pile réseau indisponible pour l'ACK : requête NON émise, ACK faux, cause journalisée"); }
   { resetWorld(); initSD(); const bool acked = ackFrame(""); CHECK(!acked && g_requests.empty(), "11 ackFrame(\"\") : refusé sans requête"); }
 
