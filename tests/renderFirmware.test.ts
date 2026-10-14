@@ -65,7 +65,7 @@ for (const s of SKETCHES) {
     assert.match(src, new RegExp(`#if POD_RENDER_V1\\n#include "podRenderStream.h"\\n#include "${s.crypto.replace(".", "\\.")}"\\n(#include <new>\\n)?#endif`));
     assert.equal((src.match(/#include "podRender(Stream)?\.h"/g) ?? []).length, 1);
     // chemin désactivé == avant
-    assert.equal(offView(src), plain(read(s.backup)), `${s.name} : la vue POD_RENDER_V1=0 diffère du firmware d'origine`);
+    assert.equal(offView(src), plain(read(s.backup).replace('\\"firmware\\":\\"2.2\\"', '\\"firmware\\":\\"eink29bwr-2.3\\"')), `${s.name} : la vue POD_RENDER_V1=0 diffère du firmware d'origine`);
     // aucun symbole du noyau hors des blocs actifs seulement avec 1
     const offOnly = offView(src);
     assert.doesNotMatch(offOnly, /PodEinkRenderer|PodTftRenderer|PodFrameHasher|PodPassHasher|podRender|POD_R_/);

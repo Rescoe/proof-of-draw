@@ -13,6 +13,8 @@ import { undoFix2 } from "./helpers/pullIdleFix";
 // Rien ici n'est une mesure sur carte : BearSSL réel, tas réel, durées réelles et chien de garde matériel restent à observer (docs/LOT_8B2C_ESP8266_EINK29_CANARY_2026_10_12.md).
 const root = path.join(__dirname, "..");
 const read = (p: string) => fs.readFileSync(path.join(root, p), "utf8").replace(/\r\n/g, "\n");
+// 14/10/2026 : la version déclarée « 2.2 » devient « eink29bwr-2.3 » (reconnue par lib/voteCapability.ts) : les sauvegardes d'avant reçoivent la MÊME substitution avant comparaison.
+const readBackup = (p: string) => read(p).replace('\\"firmware\\":\\"2.2\\"', '\\"firmware\\":\\"eink29bwr-2.3\\"');
 const INO = "esp8266/esp_eink_2.9BWR/esp_eink_2.9BWR.ino";
 const DRV = "esp8266/esp_eink_2.9BWR/epd2in9b_V4.cpp";
 const BACKUP = "firmware-backups/2026-10-12_avant-canari-esp8266-eink29/esp_eink_2.9BWR.ino";
@@ -41,7 +43,7 @@ test("dépôt : POD_RENDER_V1 = 0 et POD_CANARY = 0 ; aucun drapeau à 1", () =>
 });
 
 test("OFF : retirer les blocs de canari et le drapeau redonne le firmware d'avant AU TEXTE PRÈS (aucun octet de production n'a bougé)", () => {
-  const now = undoFix2(read(INO)), before = read(BACKUP);   // FIX2 (doPull) annulé : tests/helpers/pullIdleFix.ts
+  const now = undoFix2(read(INO)), before = readBackup(BACKUP);   // FIX2 (doPull) annulé : tests/helpers/pullIdleFix.ts
   const s = now.replace(CANARY_RE, "").replace(/#ifndef POD_CANARY\n#define POD_CANARY 0 [^\n]*\n#endif\n/, "");
   assert.equal(s, before);
 });
@@ -70,7 +72,7 @@ test("R4/WiFiS3 non copié : ni PodBoundedSSL, ni podNetStack, ni podWifiRun, ni
 });
 
 test("canari : aucun vote — doValidate et doObsConfirm retournent avant tout réseau ; aucune route nouvelle ; routes de production inchangées", () => {
-  const src = read(INO), before = read(BACKUP);
+  const src = read(INO), before = readBackup(BACKUP);
   const routes = (s: string) => [...stripLine(s).matchAll(/"(\/api\/[a-z-]+)/g)].map((m) => m[1]).sort();
   assert.deepEqual(routes(src.replace(CANARY_RE, "")), routes(before), "routes de production inchangées");
   assert.deepEqual(routes(src), routes(before), "le canari n'ajoute aucune route");
@@ -96,11 +98,11 @@ test("pas d'accélération du polling : doPull retourne true après un échec de
   const s = read(INO);
   assert.match(s, /bool fetchOk = doFetchFrame\(newFrameId, newFrameSource\);[\s\S]*?if \(!fetchOk\) \{[\s\S]*?prochaine tentative dans 60s[\s\S]*?\}\s*return true;/);
   assert.match(s, /#define PULL_INTERVAL   60000UL/);
-  assert.equal(s.split("nextPullIntervalMs").length, read(BACKUP).split("nextPullIntervalMs").length);
+  assert.equal(s.split("nextPullIntervalMs").length, readBackup(BACKUP).split("nextPullIntervalMs").length);
 });
 
 test("FIX2 : seule modification de production = l'intervalle de pull d'une frame déjà affichée (aucune route, requête, ACK, vote ni constante nouvelle)", () => {
-  const s = read(INO), prev = read("firmware-backups/2026-10-12_avant-fix2-esp8266-eink29/esp_eink_2.9BWR.ino");
+  const s = read(INO), prev = readBackup("firmware-backups/2026-10-12_avant-fix2-esp8266-eink29/esp_eink_2.9BWR.ino");
   assert.equal(undoFix2(s), prev, "annuler FIX2 doit redonner exactement le sketch de 6ccb729");
   assert.equal((s.match(/sameFrameIdle/g) ?? []).length, 2);
   assert.match(s, /#define PULL_INTERVAL   60000UL/);

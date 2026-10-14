@@ -234,7 +234,8 @@ test("crochets : sans effet en production (macros vides), un seul bloc de défin
 
 test("aucun secret, binaire ni bibliothèque installée dans le dossier du sketch ; aucune propagation aux autres firmwares", () => {
   const dir = path.join(ROOT, "arduino_uno_r4", "pod_uno_r4");
-  for (const f of fs.readdirSync(dir)) {
+  // Fichiers SUIVIS par git seulement : un secrets.h LOCAL (ignoré par git) existe légitimement dans le dossier de travail du porteur.
+  for (const f of execFileSync("git", ["ls-files", "--", "arduino_uno_r4/pod_uno_r4"], { cwd: ROOT, encoding: "utf8" }).split(/\r?\n/).filter(Boolean).map((x) => path.basename(x))) {
     assert.ok(!/^secrets\.h$/.test(f) && !/\.(bin|hex|elf|uf2)$/.test(f), f);
   }
   for (const other of ["pod_uno_r4_eink27", "pod_uno_r4_eink27_oled", "pod_uno_r4_tft18", "pod_uno_r4_dht22"]) {

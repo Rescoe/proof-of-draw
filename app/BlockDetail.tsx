@@ -14,6 +14,7 @@ import { floodFill, drawLine, drawRect, drawEllipse } from "@/lib/canvasPrimitiv
 import { Replayer, isReplayV2, modeForProfile, scoreTimeline, textureLabel } from "@/lib/drawEngine";
 import { SCREEN_PROFILES } from "@/lib/screenProfiles";
 import { validationLabel } from "@/lib/validationWording";
+import { describeSummary } from "@/lib/validationSummary";
 import { OBS_BADGE, OBS_FIELD_LABEL, OBS_FIELD_VALUE, OBS_NOTE, OBS_ROW_CONFIRMED, OBS_ROW_PENDING, OBS_SECTION_TITLE } from "@/lib/observationWording";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -152,6 +153,7 @@ function TabDetails({ block }: { block: BlockWithImage }) {
         <MetaRow label="Complexité" value={(block.score * 100).toFixed(1) + "%"} />
         <MetaRow label="Affichage"  value={`${block.displayTime}s`} />
         <MetaRow label="Validateurs" value={block.validatorIds.length.toString()} />
+        {block.votesSummary && <MetaRow label="Votes" value={describeSummary(block.votesSummary)} sub="v2 vérifié = l'appareil a recalculé le dessin et signé ; écho = score du serveur renvoyé, non vérifié" />}
         {block.validation && <MetaRow label="Validation" value={validationLabel(block.validation).value} sub={validationLabel(block.validation).note} />}
         {block.obsConfirmed && <MetaRow label={OBS_FIELD_LABEL} value={OBS_FIELD_VALUE} sub={OBS_NOTE} />}
         {/* Propriété du bloc */}
