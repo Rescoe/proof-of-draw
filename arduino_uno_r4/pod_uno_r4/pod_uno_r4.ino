@@ -2373,6 +2373,9 @@ void setup() {
   }
 
   while (!registered) { if (doRegister()) break; delay(5000); }
+#if POD_VOTE_CANARY
+  if (g_vcHalted) return;                               // V4-FIX2 : carte non appairee = arret definitif ; ni pull, ni faux « [BOOT] pret »
+#endif
   POD_CANARY_CHECK("register : retour");
   POD_CANARY_HEAP("apres le register");
   if (paired) {

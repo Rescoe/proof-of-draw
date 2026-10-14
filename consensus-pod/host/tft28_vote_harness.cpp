@@ -224,7 +224,7 @@ static int vcBootDrive(const std::string& sc) {
   std::printf("FACT deviceId=%s\nFACT candidateId=%s\nFACT pubkey=%s\n", deviceId.c_str(), V.candId.c_str(), hex(publicKey, 32).c_str());
   for (auto& r : g_requests) if (r.path.rfind("/api/validation-result", 0) == 0) std::printf("POST %s\n", r.body.c_str());
   size_t pos = 0; const std::string& L = Serial.log;
-  while (pos < L.size()) { size_t e = L.find('\n', pos); if (e == std::string::npos) e = L.size(); const std::string line = L.substr(pos, e - pos); if (line.find("[VOTE") != std::string::npos || line.find("[REGISTER") != std::string::npos || line.find("[WIFI") != std::string::npos) std::printf("LOG %s\n", line.c_str()); pos = e + 1; }
+  while (pos < L.size()) { size_t e = L.find('\n', pos); if (e == std::string::npos) e = L.size(); const std::string line = L.substr(pos, e - pos); if (line.find("[VOTE") != std::string::npos || line.find("[REGISTER") != std::string::npos || line.find("[WIFI") != std::string::npos || line.find("[BOOT") != std::string::npos) std::printf("LOG %s\n", line.c_str()); pos = e + 1; }
   return 0;
 }
 /** Sensibilité des compteurs : les fonctions d'affichage, de SD et de toucher EXISTENT dans le binaire hôte du canari de vote ; les appeler incrémente bien les compteurs. */

@@ -15,6 +15,7 @@ import os from "node:os";
 import path from "node:path";
 import { compileHarness, describeChoice, findCompiler, runProcess } from "./helpers/cppHarness";
 import { ROOT, readText } from "./helpers/tft28Source";
+import { ownTmp } from "./helpers/ownTmp";
 import { reachFrom } from "./helpers/voteCanaryReach";
 import { voteMessageV2 } from "../lib/podVote";
 import { verifyEd25519 } from "../lib/ed25519";
@@ -29,7 +30,7 @@ const fwd = (p: string) => p.replace(/\\/g, "/");
 const SK = path.join(ROOT, "arduino_uno_r4", "pod_uno_r4"), HOST = path.join(ROOT, "consensus-pod", "host"), MOCK = path.join(HOST, "tft28");
 const INO_SRC = readText("arduino_uno_r4/pod_uno_r4/pod_uno_r4.ino");
 const BACKUP = readText("firmware-backups/2026-10-13_avant-vote-v4-canary/pod_uno_r4.ino");
-const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "tft28vc-"));
+const tmp = ownTmp("tft28vc-");   // supprimé à la sortie du processus (tests/helpers/ownTmp.ts)
 
 let libObjs: string[] | null = null;
 function ensureLib(): string[] {
@@ -347,6 +348,8 @@ CHECKS.bootUnpaired = (exe) => {   // carte NON appairée : arrêt définitif, a
   const r = run(exe, "vc-boot:unpaired"); const v = zeroHardware("vc-boot:unpaired", r);
   if (n(r, "b1_halted") !== 1 || n(r, "b1_posts") !== 0 || n(r, "b1_validates") !== 0 || n(r, "b1_reads") !== 0 || n(r, "pulls") !== 0 || n(r, "lock_status") !== 0 || n(r, "paired") !== 0) v.push("vc-boot:unpaired : arrêt définitif, 0 pull, 0 validate, 0 lecture, 0 POST, verrou intact");
   if (!logHas(r, "appareil NON appaire") || !logHas(r, "aucun QR, aucun ecran d'onboarding")) v.push("vc-boot:unpaired : cause journalisée");
+  if (logHas(r, "[BOOT] pr") || logHas(r, "premier pull imm")) v.push("vc-boot:unpaired : setup() sort immédiatement après l'arrêt définitif : aucun faux « [BOOT] prêt », aucun « premier pull immédiat »");
+  if (!logHas(r, "ARRET DEFINITIF")) v.push("vc-boot:unpaired : l'arrêt définitif est journalisé");
   return v;
 };
 CHECKS.hwSanity = (exe) => {   // sensibilité : appeler directement les fonctions d'affichage / SD / toucher incrémente bien les compteurs
@@ -401,6 +404,7 @@ const MUTANTS: Array<[string, (i: string) => string, string[]]> = [
   ["setup initialise l'écran (tft.begin)", (i) => firstOnly(i, '  logf("[VOTE-CANARY] ecran, tactile et carte SD NON initialises (les trois CS restent a HIGH) : aucun dessin, aucun acces SD");', "  tft.begin();"), ["bootNominal"]],
   ["setup initialise la carte SD (initSD, onSd)", (i) => firstOnly(i, '  logf("[VOTE-CANARY] ecran, tactile et carte SD NON initialises (les trois CS restent a HIGH) : aucun dessin, aucun acces SD");', "  initSD();"), ["bootNominal"]],
   ["register échoué dessiné", (i) => firstOnly(i, 'logf("[REGISTER] echec HTTP (journal seulement, aucun dessin) : nouvel essai dans 5 s"); return false; }', "registerShowFailure(); return false; }"), ["bootRegisterFail"]],
+  ["V4-FIX2 : setup() continue après l'arrêt définitif (faux « [BOOT] prêt »)", (i) => firstOnly(i, "  if (g_vcHalted) return;                               // V4-FIX2", "  // V4-FIX2"), ["bootUnpaired"]],
   ["carte non appairée : onboarding affiché", (i) => firstOnly(i, "  if (!paired) vcHalt(", "  if (!paired) registerShowOnboarding();\n  if (!paired) vcHalt("), ["bootUnpaired"]],
   ["la persistance ATTEMPTED qui échoue n'empêche plus le POST", (i) => firstOnly(i, "  if (!voteLockCommitAttempt()) {", "  if (false) {"), ["eeprom", "cutMatrix"]],
   ["l'écriture du verrou n'est pas relue", (i) => firstOnly(i, "  return vlReadSlot(off, got) == VL_VALID && memcmp(&got, &want, sizeof(got)) == 0;", "  (void)got; return true;"), ["eeprom"]],

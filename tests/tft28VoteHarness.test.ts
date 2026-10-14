@@ -13,6 +13,7 @@ import os from "node:os";
 import path from "node:path";
 import { compileHarness, describeChoice, findCompiler, runProcess } from "./helpers/cppHarness";
 import { ROOT, readText, voteCanaryOffView } from "./helpers/tft28Source";
+import { ownTmp } from "./helpers/ownTmp";
 import { metricsFromRaw } from "../lib/podMetrics";
 import { voteMessageV2 } from "../lib/podVote";
 import { verifyEd25519 } from "../lib/ed25519";
@@ -27,7 +28,7 @@ const skip = false;   // V3 : AUCUN test de ce fichier n'est ignoré silencieuse
 const fwd = (p: string) => p.replace(/\\/g, "/");
 const SK = path.join(ROOT, "arduino_uno_r4", "pod_uno_r4"), HOST = path.join(ROOT, "consensus-pod", "host"), MOCK = path.join(HOST, "tft28");
 const INO_SRC = voteCanaryOffView(readText("arduino_uno_r4/pod_uno_r4/pod_uno_r4.ino"));   // V4 : la production (POD_VOTE_CANARY = 0) ; le canari de vote a ses propres tests (tft28VoteCanary.test.ts)
-const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "tft28vote-"));
+const tmp = ownTmp("tft28vote-");   // supprimé à la sortie du processus (tests/helpers/ownTmp.ts)
 
 // ─── bibliothèque Crypto réelle, compilée une fois ───────────────────────────────────────────────────────────────────
 let libObjs: string[] | null = null;
