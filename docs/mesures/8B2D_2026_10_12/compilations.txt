@@ -1,0 +1,12 @@
+# LOT8B2D — compilations Renesas (arduino-cli, cœurs 1.5.3 et 1.6.0, -std=gnu++14, --warnings all) — base = sketch d'origine (origin/main 3239d2e)
+# cible; flash; RAM statique
+base  1.5.3  | 158388 bytes (60%) | 21676 bytes (66%)
+base  1.6.0  | 158388 bytes (60%) | 21676 bytes (66%)
+off   1.5.3  | 163452 bytes (62%) | 21676 bytes (66%)
+off   1.6.0  | 163452 bytes (62%) | 21676 bytes (66%)
+can   1.5.3  | 155552 bytes (59%) | 21672 bytes (66%)
+can   1.6.0  | 155552 bytes (59%) | 21672 bytes (66%)
+
+# off = POD_CANARY 0 ; can = -DPOD_RENDER_V1=1 -DPOD_CANARY=1 (le canari ne compile pas le vote : -7,9 Ko de flash ; le lest g_canBallast[5416] garde sa RAM statique à 4 o de la production)
+
+# FIX1 : les chiffres ci-dessus viennent de l'enveloppe de compilation de cab924b (aucun générateur de prototypes). Références à retenir : arduino-reel/ (dossier du sketch tel quel) : production 163 460 / 21 676, canari 155 560 / 21 672 (cœurs 1.5.3 et 1.6.0).

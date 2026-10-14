@@ -11,7 +11,7 @@ import { compileHarness, describeChoice, findCompiler, runProcess } from "./help
 const root = path.resolve(__dirname, "..");
 const read = (p: string) => fs.readFileSync(path.join(root, p), "utf8").replace(/\r\n/g, "\n");
 const INO = "arduino_uno_r4/pod_uno_r4_eink29/pod_uno_r4_eink29.ino";
-const OTHERS = ["pod_uno_r4_eink27", "pod_uno_r4_eink27_oled", "pod_uno_r4_tft18", "pod_uno_r4"];
+const OTHERS = ["pod_uno_r4_eink27", "pod_uno_r4_eink27_oled", "pod_uno_r4_tft18"];   // pod_uno_r4 (TFT 2,8″) migré par LOT8B2D : tests/tft28Canary.test.ts
 const noCanary = (s: string) => s.replace(/#if POD_RENDER_V1 && POD_CANARY\n[\s\S]*?\n#endif\n/g, "");
 const stripLine = (s: string) => s.replace(/("(?:[^"\\\n]|\\.)*")|\/\/.*$/gm, (_m, str?: string) => str ?? "");   // un « // » dans un littéral n'est pas un commentaire
 const stripStr = (s: string) => s.replace(/"(?:[^"\\]|\\.)*"/g, '""');

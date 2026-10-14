@@ -1,0 +1,54 @@
+# Pile principale STATIQUE (cœur 1.6.0, canari), REGISTER-STACK-FIX2 — base: hal_entry 8 + arduino_main 16 + setup 224
+^_ZL16registerExchange cadre 24 chaine 356 cumul(setup) 604 marge 420
+    _ZL16registerExchangev(24) > _ZL12registerPostRN7arduino6StringE(32) > _ZL17registerBuildBodyRN7arduino6StringE(80) > _ZL10bytesToHexPKhj.constprop.0(40) > _ZN7arduino6StringC1Ehh(24) > _ZN7arduino6StringaSEPKc(16) > _ZN7arduino6String4copyEPKcj(16) > _ZN7arduino6String7reserveEj(8) > _ZN7arduino6String12changeBufferEj(16) > realloc(4) > _realloc_r(24) > _malloc_r(32) > sbrk_aligned(16) > _sbrk_r(16) > _sbrk(8)
+^_ZL12registerPost cadre 32 chaine 332 cumul(setup) 580 marge 444
+    _ZL12registerPostRN7arduino6StringE(32) > _ZL17registerBuildBodyRN7arduino6StringE(80) > _ZL10bytesToHexPKhj.constprop.0(40) > _ZN7arduino6StringC1Ehh(24) > _ZN7arduino6StringaSEPKc(16) > _ZN7arduino6String4copyEPKcj(16) > _ZN7arduino6String7reserveEj(8) > _ZN7arduino6String12changeBufferEj(16) > realloc(4) > _realloc_r(24) > _malloc_r(32) > sbrk_aligned(16) > _sbrk_r(16) > _sbrk(8)
+^_ZL17registerBuildBody cadre 80 chaine 300 cumul(setup) 548 marge 476
+    _ZL17registerBuildBodyRN7arduino6StringE(80) > _ZL10bytesToHexPKhj.constprop.0(40) > _ZN7arduino6StringC1Ehh(24) > _ZN7arduino6StringaSEPKc(16) > _ZN7arduino6String4copyEPKcj(16) > _ZN7arduino6String7reserveEj(8) > _ZN7arduino6String12changeBufferEj(16) > realloc(4) > _realloc_r(24) > _malloc_r(32) > sbrk_aligned(16) > _sbrk_r(16) > _sbrk(8)
+^_ZL21registerShowConnected cadre 40 chaine 80 cumul(setup) 328 marge 696
+    _ZL21registerShowConnectedv(40) > _ZN6PodNet8runSizedEPFvPvES0_jP10PodNetInfo(40 barriere)
+^_ZL19registerShowFailure cadre 0 chaine 96 cumul(setup) 344 marge 680
+    _ZL19registerShowFailurev(0) > _ZL30registerStatusOnDedicatedStackPKcS0(56) > _ZN6PodNet8runSizedEPFvPvES0_jP10PodNetInfo(40 barriere)
+^_ZL22registerShowOnboarding cadre 80 chaine 448 cumul(setup) 696 marge 328
+    _ZL22registerShowOnboardingv(80) > _ZL20displayOnboardingTFTRKN7arduino6Str(112) > qrcode_initText(32) > qrcode_initBytes(144) > drawFinderPattern(56) > setFunctionModule(16) > bb_setBit(8)
+^_ZL10doRegisterv cadre 8 chaine 456 cumul(setup) 704 marge 320
+    _ZL10doRegisterv(8) > _ZL22registerShowOnboardingv(80) > _ZL20displayOnboardingTFTRKN7arduino6Str(112) > qrcode_initText(32) > qrcode_initBytes(144) > drawFinderPattern(56) > setFunctionModule(16) > bb_setBit(8)
+
+# AVANT (30dc304, canari 1.6.0)
+^_ZL10doRegisterv cadre 144 chaine 512 cumul(setup) 760 marge 264
+    _ZL10doRegisterv(144) > _ZL20displayOnboardingTFTRKN7arduino6Str(112) > qrcode_initText(32) > qrcode_initBytes(144) > drawFinderPattern(56) > setFunctionModule(16) > bb_setBit(8)
+^_ZL8httpCall cadre 88 chaine 268 cumul(setup) 516 marge 508
+    _ZL8httpCallPKcRKN7arduino6StringEPS3_RS(88) > _ZNK7arduino6String9substringEjj(24) > _ZN7arduino6StringC1EPKc(16) > _ZN7arduino6String4copyEPKcj(16) > _ZN7arduino6String7reserveEj(8) > _ZN7arduino6String12changeBufferEj(16) > realloc(4) > _realloc_r(24) > _malloc_r(32) > sbrk_aligned(16) > _sbrk_r(16) > _sbrk(8)
+^_ZL10bytesToHex cadre 40 chaine 220 cumul(setup) 468 marge 556
+    _ZL10bytesToHexPKhj.constprop.0(40) > _ZN7arduino6StringC1Ehh(24) > _ZN7arduino6StringaSEPKc(16) > _ZN7arduino6String4copyEPKcj(16) > _ZN7arduino6String7reserveEj(8) > _ZN7arduino6String12changeBufferEj(16) > realloc(4) > _realloc_r(24) > _malloc_r(32) > sbrk_aligned(16) > _sbrk_r(16) > _sbrk(8)
+
+# Rapport complet
+# frames : hal_entry 8 + arduino_main 16 ; setup 224 ; loop 280
+| étape | cadre | pire chaîne sous l'étape | cumul depuis setup | marge (setup) | cumul depuis loop | marge (loop) | indirects |
+|---|---|---|---|---|---|---|---|
+| doRegister | 8 | 456 | 704 | 320 | 760 | 264 | 50 |
+| doRegisterDecode | 40 | 192 | 440 | 584 | 496 | 528 | 25 |
+| doPull | 88 | 448 | 696 | 328 | 752 | 272 | 38 |
+| doPullStage | 80 | 360 | 608 | 416 | 664 | 360 | 32 |
+| doFetchFrame | (absente du binaire) | | | | | | |
+| ackFrame | (absente du binaire) | | | | | | |
+| httpCall | 88 | 264 | 512 | 512 | 568 | 456 | 23 |
+| doValidate | (absente du binaire) | | | | | | |
+| doValidateV2 | (absente du binaire) | | | | | | |
+| doValidateDecode | (absente du binaire) | | | | | | |
+| doObsConfirm | (absente du binaire) | | | | | | |
+| benchPollOnce | 48 | 312 | 560 | 464 | 616 | 408 | 25 |
+| toggleCartel | (absente du binaire) | | | | | | |
+| serviceTouch | (absente du binaire) | | | | | | |
+| drawCartel | 64 | 264 | 512 | 512 | 568 | 456 | 5 |
+| restoreRows | 64 | 104 | 352 | 672 | 408 | 616 | 30 |
+| restoreLastFrame | (absente du binaire) | | | | | | |
+| runResidentAnim | (absente du binaire) | | | | | | |
+| fetchAnimToSd | (absente du binaire) | | | | | | |
+| playBenchClip | (absente du binaire) | | | | | | |
+| selfTestEd25519 | (absente du binaire) | | | | | | |
+| generateKeys | (absente du binaire) | | | | | | |
+| displayKeyMaterialOnce | (absente du binaire) | | | | | | |
+| displayOnboardingTFT | 112 | 368 | 616 | 408 | 672 | 352 | 7 |
+| macString | (absente du binaire) | | | | | | |
+| initSD | (absente du binaire) | | | | | | |

@@ -1,0 +1,86 @@
+# Journal série brut du canari d'AFFICHAGE (TFT 2,8", UNO R4 WiFi) — build local basé sur 4800451 (POD_CANARY=1, POD_RENDER_V1=1, POD_VOTE_CANARY=0)
+# Transmis par le porteur le 14/10/2026 en trois extraits ; archivé tel quel, SANS modification (extraits : la ligne « BUILD » du démarrage n'y figure pas). Aucun secret : la « clé » affichée est la clé PUBLIQUE de l'appareil.
+
+## Extrait 1 — démarrage sans nouvel envoi
+[KEYS] clés chargées: e5d255caf8dbd94f08ae1e0eab84cce709796613cc05fc30a5f1b82c610b993a
+[CANARY] pile ed25519 sign : utilisee 1316 o, marge 924 o (objectif >= 256 : OK), erreur 0, statut 0 | tas libre 8260
+[CANARY] pile ed25519 verify : utilisee 1532 o, marge 708 o (objectif >= 256 : OK), erreur 0, statut 0 | tas libre 8260
+[SELFTEST] Ed25519 signature 178 ms, vérification 278 ms -> OK
+[MEM] après Ed25519: tas libre 9804 o, zone 0xA5 sous la pile 1024 o (INDICATIF : NON fiable des la 1re pile temporaire)
+[ED25519] pile dédiée (utilisé/marge, o) : sign 1316/924, verify 1532/708 ; erreurs sign=0 verify=0 (0 = aucune) ; alloué 2304 o (garde 64 o, marge minimale exigée 128 o)
+[CANARY] auto-test Ed25519 : retour : pile principale utilisee au plus 788 o / 1024 (marge 236 o, SOUS L'OBJECTIF 256) | tas libre 8260
+[CANARY] pile wifi macAddress : utilisee 520 o, marge 952 o (objectif >= 256 : OK), erreur 0, statut 0 | tas libre 8228
+[CANARY] pile reseau http : utilisee 1128 o, marge 856 o (objectif >= 256 : OK), erreur 0, statut 0 | tas libre 7860
+[HTTP POST] /api/register -> 200
+[CANARY] pile travail register JSON : utilisee 496 o, marge 1488 o (objectif >= 256 : OK), erreur 0, statut 1 | tas libre 8020
+[REGISTER] deviceId=dev_7B4L17N3 paired=oui
+[CANARY] register : retour : pile principale utilisee au plus 788 o / 1024 (marge 236 o, SOUS L'OBJECTIF 256) | tas libre 8208
+[CANARY] tas apres le register : libre 8208 o, plus grand bloc 4264 o, fragmentation 49 %
+[SD] dernière œuvre réaffichée en 917 ms (frameId=ff8b6411-fe92-4885-b16c-b6cbea40a0f2)
+[ANIM] clip trouvé sur la carte (bloc d5070c5c720e…) : lecture en boucle
+[CANARY] restauration SD : retour : pile principale utilisee au plus 788 o / 1024 (marge 236 o, SOUS L'OBJECTIF 256) | tas libre 8092
+[BOOT] premier pull immédiat
+[CANARY] pile reseau http : utilisee 1128 o, marge 856 o (objectif >= 256 : OK), erreur 0, statut 0 | tas libre 8004
+[HTTP GET] /api/pull?deviceId=dev_7B4L17N3 -> 200
+[CANARY] pile travail pull JSON : utilisee 772 o, marge 1212 o (objectif >= 256 : OK), erreur 0, statut 1 | tas libre 6816
+[PULL] nouveau bloc #98
+[PULL] frame déjà affichée
+[CANARY] pull : retour (premier pull) : pile principale utilisee au plus 796 o / 1024 (marge 228 o, SOUS L'OBJECTIF 256) | tas libre 7996
+[CANARY] tas apres le premier pull : libre 7996 o, plus grand bloc 4884 o, fragmentation 39 %
+[BOOT] prêt — pull toutes les 60 s
+
+## Extrait 2 — envoi d'une frame fixe (personnelle)
+[CANARY] pull : retour : pile principale utilisee au plus 816 o / 1024 (marge 208 o, SOUS L'OBJECTIF 256) | tas libre 7984
+[CANARY] tas apres le pull : libre 7984 o, plus grand bloc 4884 o, fragmentation 39 %
+[CANARY] pile sd/tft animPlay : utilisee 828 o, marge 644 o (objectif >= 256 : OK), erreur 0, statut 0 | tas libre 5940
+[CANARY] pile reseau http : utilisee 1156 o, marge 828 o (objectif >= 256 : OK), erreur 0, statut 0 | tas libre 7896
+[HTTP GET] /api/pull?deviceId=dev_7B4L17N3 -> 200
+[CANARY] pile travail pull JSON : utilisee 772 o, marge 1212 o (objectif >= 256 : OK), erreur 0, statut 1 | tas libre 6872
+[PULL] cartel: Fleur a motifs / Roubzi (bloc 92)
+[PULL] nouvelle frame a77be622-f491-4bb1-a41d-b13836623ac3 (personal)
+[HTTP GET] /api/pull-frame -> 200 (contenu 153600)
+[FRAME] 80/320 lignes
+[FRAME] 160/320 lignes
+[FRAME] 240/320 lignes
+[FRAME] 320/320 lignes
+[CANARY] pile reseau pull-frame (reseau + SD + TFT) : utilisee 1200 o, marge 784 o (objectif >= 256 : OK), erreur 0, statut 0 | tas libre 7912
+[CANARY] pull-frame/affichage : retour de la transaction : pile principale utilisee au plus 832 o / 1024 (marge 192 o, SOUS L'OBJECTIF 256) | tas libre 7912
+[CANARY] tas apres la transaction pull-frame : libre 7912 o, plus grand bloc 4884 o, fragmentation 39 %
+[CANARY] pile reseau http : utilisee 1128 o, marge 856 o (objectif >= 256 : OK), erreur 0, statut 0 | tas libre 7788
+[HTTP POST] /api/ack-frame -> 200
+[ACK] a77be622-f491-4bb1-a41d-b13836623ac3 -> OK
+[CANARY] ACK : retour de la requete : pile principale utilisee au plus 832 o / 1024 (marge 192 o, SOUS L'OBJECTIF 256) | tas libre 7912
+[CANARY] tas apres l'ACK : libre 7912 o, plus grand bloc 4884 o, fragmentation 39 %
+[FRAME] OK en 23957 ms (frameId=a77be622-f491-4bb1-a41d-b13836623ac3 source=personal, cache SD: oui) — ACK recu (HTTP 200)
+[ANIM] arrêt : nouvelle image fixe
+[MEM] après pull: tas libre 9456 o, zone 0xA5 sous la pile 3072 o (INDICATIF : NON fiable des la 1re pile temporaire)
+[CANARY] pull : retour : pile principale utilisee au plus 832 o / 1024 (marge 192 o, SOUS L'OBJECTIF 256) | tas libre 7984
+[CANARY] tas apres le pull : libre 7984 o, plus grand bloc 4884 o, fragmentation 39 %
+
+## Extrait 3 — animation (image fixe puis clip), toucher
+[CANARY] pile reseau http : utilisee 1128 o, marge 856 o (objectif >= 256 : OK), erreur 0, statut 0 | tas libre 7788
+[HTTP POST] /api/ack-frame -> 200
+[ACK] a9b7ffe6-8bb7-4bc5-a8f0-1030eaab9ca4 -> OK
+[CANARY] ACK : retour de la requete : pile principale utilisee au plus 832 o / 1024 (marge 192 o, SOUS L'OBJECTIF 256) | tas libre 7912
+[CANARY] tas apres l'ACK : libre 7912 o, plus grand bloc 4884 o, fragmentation 39 %
+[FRAME] OK en 24359 ms (frameId=a9b7ffe6-8bb7-4bc5-a8f0-1030eaab9ca4 source=personal, cache SD: oui) — ACK recu (HTTP 200)
+[HTTP GET] /api/block-clip -> 200 (contenu 5632)
+[CANARY] pile reseau block-clip (reseau + SD) : utilisee 1168 o, marge 816 o (objectif >= 256 : OK), erreur 0, statut 0 | tas libre 7912
+[CANARY] block-clip : retour de la transaction : pile principale utilisee au plus 832 o / 1024 (marge 192 o, SOUS L'OBJECTIF 256) | tas libre 7912
+[CANARY] pile sd/tft animValidate : utilisee 788 o, marge 684 o (objectif >= 256 : OK), erreur 0, statut 0 | tas libre 5856
+[ANIM] clip reçu en 2238 ms, 18 images, rangé sur la carte (5632 o) : lecture en boucle
+[MEM] après pull: tas libre 9456 o, zone 0xA5 sous la pile 3072 o (INDICATIF : NON fiable des la 1re pile temporaire)
+[CANARY] pull : retour : pile principale utilisee au plus 832 o / 1024 (marge 192 o, SOUS L'OBJECTIF 256) | tas libre 7984
+[CANARY] tas apres le pull : libre 7984 o, plus grand bloc 4884 o, fragmentation 39 %
+[CANARY] pile sd/tft animPlay : utilisee 828 o, marge 644 o (objectif >= 256 : OK), erreur 0, statut 0 | tas libre 5940
+[ANIM] pause (toucher) : re-toucher ou attendre 60 s pour reprendre
+[TOUCH] cartel masqué en 262 ms
+[ANIM] reprise
+[CANARY] pile sd/tft animPlay : utilisee 828 o, marge 644 o (objectif >= 256 : OK), erreur 0, statut 0 | tas libre 5940
+[ANIM] pause (toucher) : re-toucher ou attendre 60 s pour reprendre
+[TOUCH] cartel masqué en 262 ms
+[ANIM] reprise
+[CANARY] pile sd/tft animPlay : utilisee 828 o, marge 644 o (objectif >= 256 : OK), erreur 0, statut 0 | tas libre 5940
+[ANIM] pause (toucher) : re-toucher ou attendre 60 s pour reprendre
+[TOUCH] cartel masqué en 262 ms
+[ANIM] reprise

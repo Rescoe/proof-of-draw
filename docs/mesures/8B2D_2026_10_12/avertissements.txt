@@ -1,0 +1,17 @@
+# avertissements normalisés (sans numéros de ligne), cœur 1.5.3 : base | off | canari — différences UNIQUEMENT
+## base -> off
+7c7
+<      15 FifoBuffer.h: warning: control reaches end of non-void function [-Wreturn-type]
+---
+>      20 FifoBuffer.h: warning: control reaches end of non-void function [-Wreturn-type]
+## base -> can
+7c7
+<      15 FifoBuffer.h: warning: control reaches end of non-void function [-Wreturn-type]
+---
+>      20 FifoBuffer.h: warning: control reaches end of non-void function [-Wreturn-type]
+21a22,24
+>       2 body.h: warning: array subscript 'volatile uint32_t {aka volatile long unsigned int}[0]' is partly outside array bounds of 'char [1]' [-Warray-bounds=]
+>       2 body.h: warning: array subscript 1 is outside array bounds of 'char [1]' [-Warray-bounds=]
+>       1 body.h: warning: array subscript 16 is outside array bounds of 'char [1]' [-Warray-bounds=]
+## fichiers du projet (pod_uno_r4*, pod_*.h, podNetStack, podEdStack) cités par un avertissement : off
+(aucun)

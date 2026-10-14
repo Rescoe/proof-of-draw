@@ -6,12 +6,12 @@ const fs = require("fs");
 const path = require("path");
 const root = path.join(__dirname, "..");
 const SKETCHES = ["pod_uno_r4_eink29", "pod_uno_r4_eink27", "pod_uno_r4_eink27_oled", "pod_uno_r4_tft18", "pod_uno_r4"];
-const WORK = /^(pullParseWork|registerParseWork|validateParseWork)$/;
+const WORK = /^(pullParseWork|registerParseWork|validateParseWork|benchPollParseWork)$/;
 const PLAN = {
   doValidate: "à migrer après validation matérielle (DOVALIDATE-JSON-STACK-FIX1 du e-ink 2,9″)",
   doRegister: "à migrer après validation matérielle (REGISTER-JSON-STACK-FIX1 du e-ink 2,9″)",
   doPull: "à migrer après validation matérielle (DOPULL-JSON-STACK-FIX1 du e-ink 2,9″)",
-  benchPollOnce: "banc d'essai TFT 2,8″ : firmware bloqué pour tout flash",
+  benchPollOnce: "banc d'essai TFT 2,8″ : migré par LOT8B2D (benchPollParseWork)",
 };
 function enclosing(lines, idx) {
   for (let i = idx; i >= 0; i--) {

@@ -1,5 +1,6 @@
 // LOT8B2B2 NETSTACK-WIFI-CALLS-FIX1 (09/10/2026) — tout appel DIRECT au module Wi-Fi des cinq firmwares UNO R4 s'exécute sur une pile dédiée (podWifiRun, 1 536 o), résultats chez l'appelant, échec fermé.
 // Cause matérielle (canari FIX3-R1) : WiFi.macAddress() appelé depuis doRegister détruisait le marqueur de pile (24 o sous __StackLimit).
+import { readSketch } from "./helpers/tftLot";
 import test from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
@@ -11,7 +12,6 @@ const root = path.resolve(__dirname, "..");
 const read = (p: string) => fs.readFileSync(path.join(root, p), "utf8").replace(/\r\n/g, "\n");
 const strip = (s: string) => s.replace(/\/\/[^\n]*/g, "");   // commentaires de ligne
 const SKETCHES = ["pod_uno_r4_eink29", "pod_uno_r4_eink27", "pod_uno_r4_eink27_oled", "pod_uno_r4_tft18", "pod_uno_r4"];
-const ino = (sk: string) => `arduino_uno_r4/${sk}/${sk}.ino`;
 const METHODS = ["status", "firmwareVersion", "begin", "macAddress", "RSSI", "localIP"];
 const WRAPPERS = ["wifiStatusT", "wifiStatus", "wifiFirmware", "wifiBegin", "wifiMac", "wifiRssi", "wifiIpString"];
 const BLOCK_START = "// ─── MODULE Wi-Fi sur PILE DÉDIÉE";
@@ -26,7 +26,7 @@ function braced(code: string, open: number): string {
 
 for (const sk of SKETCHES) {
   test(`${sk} : AUCUN appel direct au module Wi-Fi hors des enveloppes sur pile dédiée ; chaque méthode une seule fois ; jamais dans une transaction PodNet`, () => {
-    const src = read(ino(sk)), code = strip(src);
+    const src = readSketch(root, sk), code = strip(src);
     const lines = code.split("\n").filter((l) => /\bWiFi\.[A-Za-z]+\(/.test(l));
     for (const l of lines) assert.match(l, /^\s*auto wx = \[&\]\(\) \{ [^\n]*\};$/, `${sk} : appel direct au module hors d'une enveloppe : ${l.trim()}`);
     const used = lines.map((l) => /WiFi\.([A-Za-z]+)\(/.exec(l)![1]).sort();
@@ -48,7 +48,7 @@ for (const sk of SKETCHES) {
   });
 
   test(`${sk} : échec fermé aux sites d'appel — statut inconnu, firmware/IP « ? », MAC vide, clés non générées, aucune inscription`, () => {
-    const full = read(ino(sk));
+    const full = readSketch(root, sk);
     const code = strip(full);
     const blk = strip(full.slice(full.indexOf(BLOCK_START), full.indexOf(BLOCK_END)));
     // chaque enveloppe : si l'appel a échoué (NOMEM, NESTED, GUARD, MARGIN), AUCUN résultat partiel n'est rendu
@@ -74,10 +74,19 @@ for (const sk of SKETCHES) {
     assert.match(code, /if \(wifiStatus\(\) != WL_CONNECTED\) \{ logf\("\[WIFI\] échec/);
     // MAC : chaîne vide si le module échoue ; doRegister n'inscrit pas
     assert.match(code, /static String macString\(\) \{\s*uint8_t m\[6\] = \{0\};\s*if \(!wifiMac\(m\)\) return String\(\);/);
+    if (sk === "pod_uno_r4") {   // TFT 2,8″ (REGISTER-STACK-FIX2) : inscription en phases noinline — la MAC (registerReadMac) est lue et vérifiée AVANT toute requête (registerPost)
+      const ex = code.slice(code.indexOf("static uint8_t __attribute__((noinline)) registerExchange()"));
+      const rm = code.slice(code.indexOf("static bool __attribute__((noinline)) registerReadMac()"));
+      assert.match(rm, /const String mac = macString\(\);\s*if \(mac\.length\(\) == 0\) return false;/);
+      const iR = ex.indexOf("if (!registerReadMac())"), iP = ex.indexOf("registerPost(resp)");
+      assert.ok(iR >= 0 && iR < iP, "registerExchange : la MAC vide est refusée AVANT toute requête d'inscription");
+      assert.match(ex.slice(iR, iR + 260), /inscription ANNULÉE"\); return REGX_NO_MAC; \}/);
+    } else {
     const dr = code.slice(code.indexOf("static bool doRegister()"));
     const iMac = dr.indexOf("const String mac = macString();"), iChk = dr.indexOf("if (mac.length() == 0) { logf(\"[REGISTER] adresse MAC indisponible"), iHttp = dr.indexOf("httpCall(\"POST\", \"/api/register\"");
     assert.ok(iMac >= 0 && iMac < iChk && iChk < iHttp, "doRegister : la MAC vide est refusée AVANT toute requête d'inscription");
     assert.match(dr.slice(iChk, iChk + 200), /inscription ANNULÉE"\); return false; \}/);
+    }
     // clés : entropie par le module ; échec → génération annulée, AUCUNE clé enregistrée
     const ge = code.slice(code.indexOf("static bool gatherEntropy(uint8_t out[32]) {"), code.indexOf("static void generateKeys()"));
     assert.match(ge, /if \(!wifiMac\(mac\) \|\| !wifiRssi\(rssi\)\) \{ memset\(out, 0, 32\); return false; \}/);
@@ -89,7 +98,7 @@ for (const sk of SKETCHES) {
   });
 
   test(`${sk} : l'adresse MAC est encodée par un hexadécimal manuel borné dans char[18] — plus de snprintf pour la MAC`, () => {
-    const code = strip(read(ino(sk)));
+    const code = strip(readSketch(root, sk));
     assert.match(code, /static char macHexDigit\(uint8_t v\) \{ return \(char\)\(v < 10 \? '0' \+ v : 'a' \+ \(v - 10\)\); \}/);
     const fn = /static String macString\(\) \{[\s\S]*?\n\}\n/.exec(code)![0];
     assert.doesNotMatch(fn, /snprintf|sprintf|WiFi\./);
@@ -115,7 +124,7 @@ const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "wificalls-"));
 const exe = path.join(tmp, process.platform === "win32" ? "wifi_calls_harness.exe" : "wifi_calls_harness");
 
 function extractWifi(sk: string): string {
-  const src = read(ino(sk));
+  const src = readSketch(root, sk);
   const blk = src.slice(src.indexOf(BLOCK_START), src.indexOf(BLOCK_END));
   const helper = /static char macHexDigit\(uint8_t v\) \{[^\n]*\n/.exec(src)![0];
   const mac = /static String macString\(\) \{[\s\S]*?\n\}\n/.exec(src)![0];

@@ -1,6 +1,7 @@
 // DOPULL-PHASE-AUDIT1 (09/10/2026) puis DOPULL-JSON-STACK-FIX1 (10/10/2026) — sondes de phase silencieuses autour de doPull (canari e-ink 2,9″ seulement), rapport APRÈS le retour, production inchangée.
 // Contexte matériel (canari b03c0b4) : phases 1 à 3 saines, première phase fautive = 4 (deserializeJson). Depuis DOPULL-JSON-STACK-FIX1 le décodage vit sur une pile de travail dédiée : les neuf sondes restantes surveillent
 // la pile PRINCIPALE autour de l'étage réseau (doPull), de l'analyse (doPullApply) et de l'application de l'état ; elles doivent rester muettes (aucune E/S, allocation ni appel).
+import { readSketch } from "./helpers/tftLot";
 import test from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
@@ -114,7 +115,7 @@ test("sondes SILENCIEUSES — la macro ne lit que deux mots de la pile et un oct
 
 for (const sk of SKETCHES.filter((s) => s !== "pod_uno_r4_eink29")) {
   test(`${sk} : aucune sonde de doPull ni statique de canari (inchangé)`, () => {
-    assert.doesNotMatch(read(`arduino_uno_r4/${sk}/${sk}.ino`), /POD_DP_PROBE|g_podDpPhase|g_podPaintLen|podCanaryDoPull/);
+    assert.doesNotMatch(readSketch(root, sk), /POD_DP_PROBE|g_podDpPhase|g_podPaintLen|podCanaryDoPull/);
   });
 }
 

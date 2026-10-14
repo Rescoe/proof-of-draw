@@ -1,0 +1,34 @@
+# frames : hal_entry 8 + arduino_main 16 ; setup 232 ; loop 112
+| étape | cadre | pire chaîne sous l'étape | cumul depuis setup | marge (setup) | cumul depuis loop | marge (loop) | indirects |
+|---|---|---|---|---|---|---|---|
+| doRegister | 8 | 312 | 568 | 456 | 448 | 576 | 25 |
+| doRegisterDecode | 24 | 136 | 392 | 632 | 272 | 752 | 24 |
+| doPull | 56 | 368 | 624 | 400 | 504 | 520 | 33 |
+| doPullStage | 80 | 312 | 568 | 456 | 448 | 576 | 33 |
+| doFetchFrame | (absente du binaire) | | | | | | |
+| ackFrame | (absente du binaire) | | | | | | |
+| httpCall | 80 | 224 | 480 | 544 | 360 | 664 | 23 |
+| doValidate | (absente du binaire) | | | | | | |
+| doValidateV2 | 40 | 320 | 576 | 448 | 456 | 568 | 35 |
+| votePhaseRead | 72 | 224 | 480 | 544 | 360 | 664 | 23 |
+| votePhaseSign | 48 | 240 | 496 | 528 | 376 | 648 | 24 |
+| votePhasePost | 56 | 280 | 536 | 488 | 416 | 608 | 33 |
+| voteFinish | 32 | 176 | 432 | 592 | 312 | 712 | 23 |
+| netReadCandidate | 56 | 152 | 408 | 616 | 288 | 736 | 23 |
+| doValidateDecode | 40 | 152 | 408 | 616 | 288 | 736 | 24 |
+| doObsConfirm | (absente du binaire) | | | | | | |
+| benchPollOnce | (absente du binaire) | | | | | | |
+| toggleCartel | (absente du binaire) | | | | | | |
+| serviceTouch | (absente du binaire) | | | | | | |
+| drawCartel | (absente du binaire) | | | | | | |
+| restoreRows | (absente du binaire) | | | | | | |
+| restoreLastFrame | (absente du binaire) | | | | | | |
+| runResidentAnim | (absente du binaire) | | | | | | |
+| fetchAnimToSd | (absente du binaire) | | | | | | |
+| playBenchClip | (absente du binaire) | | | | | | |
+| selfTestEd25519 | (absente du binaire) | | | | | | |
+| generateKeys | (absente du binaire) | | | | | | |
+| displayKeyMaterialOnce | (absente du binaire) | | | | | | |
+| displayOnboardingTFT | (absente du binaire) | | | | | | |
+| macString | (absente du binaire) | | | | | | |
+| initSD | (absente du binaire) | | | | | | |

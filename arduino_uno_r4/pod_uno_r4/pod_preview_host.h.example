@@ -1,0 +1,4 @@
+// pod_preview_host.h.example — modèle du fichier LOCAL pod_preview_host.h du BUILD D'APPAIRAGE PREVIEW (POD_PREVIEW_ENROLL = 1), lot TFT28-PREVIEW-ENROLL-1.
+// Copier en pod_preview_host.h (IGNORÉ par git, ne jamais le commiter), renseigner l'hôte, puis compiler avec -DPOD_PREVIEW_ENROLL=1 (POD_CANARY = 0, POD_VOTE_CANARY = 0).
+// Ce fichier est DISTINCT de pod_vote_pins.h : l'appairage n'a besoin d'aucun candidat. Vérification hors ligne : node scripts/check-vote-pins.js arduino_uno_r4/pod_uno_r4/pod_preview_host.h
+#define POD_PREVIEW_HOST "<hote-du-deploiement-preview>.vercel.app"   // domaine seul, jamais proof-of-draw.vercel.app

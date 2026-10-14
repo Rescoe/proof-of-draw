@@ -1,0 +1,50 @@
+# frames : hal_entry 8 + arduino_main 16 ; setup 224 ; loop 0
+| étape | cadre | pire chaîne sous l'étape | cumul depuis setup | marge (setup) | cumul depuis loop | marge (loop) | indirects |
+|---|---|---|---|---|---|---|---|
+| doRegister | (absente du binaire) | | | | | | |
+| doRegisterDecode | 24 | 136 | 384 | 640 | 160 | 864 | 24 |
+| doPull | (absente du binaire) | | | | | | |
+| doPullStage | (absente du binaire) | | | | | | |
+| doFetchFrame | (absente du binaire) | | | | | | |
+| ackFrame | (absente du binaire) | | | | | | |
+| httpCall | (absente du binaire) | | | | | | |
+| doValidate | (absente du binaire) | | | | | | |
+| doValidateV2 | (absente du binaire) | | | | | | |
+| votePhaseRead | (absente du binaire) | | | | | | |
+| votePhaseSign | (absente du binaire) | | | | | | |
+| votePhasePost | (absente du binaire) | | | | | | |
+| voteFinish | (absente du binaire) | | | | | | |
+| netReadCandidate | (absente du binaire) | | | | | | |
+| doValidateDecode | (absente du binaire) | | | | | | |
+| doObsConfirm | (absente du binaire) | | | | | | |
+| benchPollOnce | (absente du binaire) | | | | | | |
+| toggleCartel | (absente du binaire) | | | | | | |
+| serviceTouch | (absente du binaire) | | | | | | |
+| drawCartel | (absente du binaire) | | | | | | |
+| restoreRows | (absente du binaire) | | | | | | |
+| restoreLastFrame | (absente du binaire) | | | | | | |
+| runResidentAnim | (absente du binaire) | | | | | | |
+| fetchAnimToSd | (absente du binaire) | | | | | | |
+| playBenchClip | (absente du binaire) | | | | | | |
+| selfTestEd25519 | (absente du binaire) | | | | | | |
+| generateKeys | (absente du binaire) | | | | | | |
+| displayKeyMaterialOnce | (absente du binaire) | | | | | | |
+| displayOnboardingTFT | (absente du binaire) | | | | | | |
+| macString | (absente du binaire) | | | | | | |
+| initSD | (absente du binaire) | | | | | | |
+# chaîne la plus profonde sous setup (584 o) :
+  setup(224)
+  > _ZL16registerExchangev(24)
+  > _ZL12registerPostRN7arduino6StringE(88)
+  > _ZL17registerBuildBodyRN7arduino6StringE(80)
+  > _ZL10bytesToHexPKhj.constprop.122(40)
+  > _ZN7arduino6StringC1Ehh(24)
+  > _ZN7arduino6StringaSEPKc.part.4(tail)
+  > _ZN7arduino6String4copyEPKcj(16)
+  > _ZN7arduino6String7reserveEj(8)
+  > _ZN7arduino6String12changeBufferEj(16)
+  > realloc(tail)
+  > _realloc_r(24)
+  > _malloc_r(16)
+  > _sbrk_r(16)
+  > _sbrk(8)

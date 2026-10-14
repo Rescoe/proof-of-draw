@@ -1,3 +1,4 @@
+import { readSketch } from "./helpers/tftLot";
 import test from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
@@ -175,7 +176,7 @@ test("NETSTACK-FIX3-R1 : sous-phases de macString() — silencieuses (aucune E/S
   // le texte dit que R1 seul ne prouve pas le module Wi-Fi
   assert.match(src, /R1: apres macString \(silencieux ; ne prouve PAS a lui seul le module Wi-Fi/);
   // aucun autre firmware ne porte ces sondes
-  for (const sk of ["pod_uno_r4_eink27", "pod_uno_r4_eink27_oled", "pod_uno_r4_tft18", "pod_uno_r4"]) assert.doesNotMatch(read(`arduino_uno_r4/${sk}/${sk}.ino`), /macPh|podCanaryMacPhase/);
+  for (const sk of ["pod_uno_r4_eink27", "pod_uno_r4_eink27_oled", "pod_uno_r4_tft18", "pod_uno_r4"]) assert.doesNotMatch(readSketch(root, sk), /macPh|podCanaryMacPhase/);
 });
 
 test("NETSTACK-FIX3-R1 : CONTRÔLES NÉGATIFS des sous-phases de macString — sonde supprimée, sonde qui écrase la première, rapport qui ne s'arrête pas : REFUSÉS par le harnais hôte", { skip }, () => {
@@ -214,7 +215,7 @@ test("NETSTACK-WIFI-CALLS-FIX1 : le canari relève la pile Wi-Fi dédiée à cha
   assert.match(pr, /if \(!c\.ran \|\| ni\.err != POD_NET_OK\) \{[^}]*podCanaryHalt\(c\.tag\);/, "l'échec de la pile Wi-Fi pose le verrou");
   assert.doesNotMatch(fn + pr, /logf\(|String\b|WiFi|Conn\b|httpCall|delay\(/);
   // aucun autre firmware ne porte le relevé
-  for (const sk of ["pod_uno_r4_eink27", "pod_uno_r4_eink27_oled", "pod_uno_r4_tft18", "pod_uno_r4"]) assert.doesNotMatch(read(`arduino_uno_r4/${sk}/${sk}.ino`), /podCanaryWifi/);
+  for (const sk of ["pod_uno_r4_eink27", "pod_uno_r4_eink27_oled", "pod_uno_r4_tft18", "pod_uno_r4"]) assert.doesNotMatch(readSketch(root, sk), /podCanaryWifi/);
 });
 
 test("NETSTACK-WIFI-CALLS-FIX2 : critères fatals du canari = marqueur / longueur invalides, SP hors pile, marge principale < 128 o ; la zone 0xA5 sous la limite n'est plus fatale et n'est plus présentée comme une mesure valide ; 144 o = « sous l'objectif 256 » sans arrêt", () => {
@@ -229,13 +230,13 @@ test("NETSTACK-WIFI-CALLS-FIX2 : critères fatals du canari = marqueur / longueu
   assert.match(pr, /zone 0xA5 sous la limite \(INDICATIF seulement, NON fiable depuis les piles temporaires allouees dans le tas\)/);
   // reportMem (production, cinq firmwares) ne présente plus stackDepthBytes() comme une « pile max » valide
   for (const sk of ["pod_uno_r4_eink29", "pod_uno_r4_eink27", "pod_uno_r4_eink27_oled", "pod_uno_r4_tft18", "pod_uno_r4"]) {
-    const rm = /static void reportMem\(const char\* tag\) \{[^\n]*\n/.exec(read(`arduino_uno_r4/${sk}/${sk}.ino`))![0];
+    const rm = /static void reportMem\(const char\* tag\) \{[^\n]*\n/.exec(readSketch(root, sk))![0];
     assert.doesNotMatch(rm, /pile max/, `${sk} : reportMem parle encore de « pile max »`);
     assert.match(rm, /zone 0xA5 sous la pile %lu o \(INDICATIF : NON fiable des la 1re pile temporaire\)/);
   }
   // wifiFailed : sur GUARD, arrêt sûr AVANT tout journal (le tas voisin peut être corrompu, logf alloue)
   for (const sk of ["pod_uno_r4_eink29", "pod_uno_r4_eink27", "pod_uno_r4_eink27_oled", "pod_uno_r4_tft18", "pod_uno_r4"]) {
-    const wf = strip(/static void __attribute__\(\(noinline\)\) wifiFailed[\s\S]*?\n\}\n/.exec(read(`arduino_uno_r4/${sk}/${sk}.ino`))![0]);
+    const wf = strip(/static void __attribute__\(\(noinline\)\) wifiFailed[\s\S]*?\n\}\n/.exec(readSketch(root, sk))![0]);
     assert.ok(wf.indexOf("if (ni.err == POD_NET_GUARD) logfSafeStop();") > 0 && wf.indexOf("if (ni.err == POD_NET_GUARD) logfSafeStop();") < wf.indexOf("logf("), `${sk} : logfSafeStop doit précéder logf`);
   }
 });
@@ -283,5 +284,5 @@ test("NETSTACK-WIFI-CALLS-FIX3 : le contrôle B sort de podCanaryNet et suit son
   assert.doesNotMatch(src, /Toute ANOMALIE \(marqueur détruit, marge < 128 o, écriture sous __StackLimit/);
   assert.match(src, /Toute ANOMALIE \(marqueur ou longueur détruits, marge PRINCIPALE < 128 o, SP hors de la pile — PAS la zone 0xA5 peinte sous __StackLimit/);
   // aucun autre firmware ne porte ces contrôles, et le build de production (canari éteint) est inchangé : les blocs gardés sont retirés avant comparaison par netStack.test.ts
-  for (const sk of ["pod_uno_r4_eink27", "pod_uno_r4_eink27_oled", "pod_uno_r4_tft18", "pod_uno_r4"]) assert.doesNotMatch(read(`arduino_uno_r4/${sk}/${sk}.ino`), /podCanaryCheck/);
+  for (const sk of ["pod_uno_r4_eink27", "pod_uno_r4_eink27_oled", "pod_uno_r4_tft18", "pod_uno_r4"]) assert.doesNotMatch(readSketch(root, sk), /podCanaryCheck/);
 });

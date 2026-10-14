@@ -1,0 +1,3 @@
+# f1ref_off_160 : sketch du commit FIX1 (ead25cd), mêmes conditions que f2_off_160
+Le croquis utilise 158620 octets (60%) de l'espace de stockage de programmes. Le maximum est de 262144 octets.
+Les variables globales utilisent 21532 octets (65%) de mémoire dynamique, ce qui laisse 11236 octets pour les variables locales. Le maximum est de 32768 octets.

@@ -1,0 +1,24 @@
+## _ZL12doValidateV2RKN7arduino6StringES2_jS2_ cadre 112, appels indirects 0
+    360  _ZL13votePhasePostRKN7arduino6StringEPK8VoteWorkPKhRb
+    240  _ZL13votePhaseSignRKN7arduino6StringEPK8VoteWorkPh
+    176  _ZL13votePhaseReadRKN7arduino6StringES2_jS2_P8VoteWork
+     88  _ZL4logfPKcz
+     56  _ZnwjRKSt9nothrow_t
+     16  _ZdlPvj
+      0  memset
+## _ZL13votePhasePostRKN7arduino6StringEPK8VoteWorkPKhRb cadre 144, appels indirects 0
+    216  _ZL8httpCallPKcRKN7arduino6StringEPS3_RS2_
+    184  _ZL10bytesToHexPKhj
+    168  _ZN7arduino6StringC1Emh
+    136  _ZN7arduinoplERKNS_15StringSumHelperEPKc
+    120  _ZN7arduino6StringC1EPKc
+    120  _ZN7arduino6StringC1ERKS0_
+    120  _ZN7arduinoplERKNS_15StringSumHelperERKNS_6StringE
+     28  _ZNK7arduino6String7indexOfERKS0_
+     24  _ZN7arduino6StringD1Ev
+## _ZL13votePhaseSignRKN7arduino6StringEPK8VoteWorkPh cadre 32, appels indirects 0
+    208  _Z14podVoteMessageRKN7arduino6StringES2_PKcRK13PodMetricsOutb
+     88  _ZL4logfPKcz
+     56  [BARRIERE] _ZN5PodEd4signEPhPKhS2_PKvjP9PodEdInfo
+     24  _ZN7arduino6StringD1Ev
+_ZL11votePhaseRead absente

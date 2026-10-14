@@ -1,0 +1,45 @@
+# LOT8B2D — preuves sur l'ELF compilé (cœurs Renesas 1.5.3 et 1.6.0). Routes et symboles de VOTE : production | canari
+
+## cœur 1.5.3
+validate-candidate       production=1 canari=0
+validation-result        production=1 canari=0
+candidate-frame          production=2 canari=0
+obs-confirm              production=1 canari=0
+pod-vote-v2              production=1 canari=0
+api/ack-frame            production=1 canari=1
+api/pull-frame           production=2 canari=2
+api/pull?                production=1 canari=1
+api/register             production=1 canari=1
+api/block-clip           production=2 canari=2
+bench/poll               production=1 canari=1
+symbole doValidate           production=3 canari=0
+symbole signED25519          production=0 canari=0
+symbole netReadCandidate     production=2 canari=0
+symbole podVoteMessage       production=1 canari=0
+symbole podCheckStream       production=5 canari=0
+symbole doObsConfirm         production=0 canari=0
+symbole validateParseWork    production=1 canari=0
+symbole doValidateDecode     production=1 canari=0
+PodEd::sign / verify / derivePublicKey (symboles) production=3 canari=3  (le canari ne signe que le message fixe de l'auto-test du boot)
+
+## cœur 1.6.0
+validate-candidate       production=1 canari=0
+validation-result        production=1 canari=0
+candidate-frame          production=2 canari=0
+obs-confirm              production=1 canari=0
+pod-vote-v2              production=1 canari=0
+api/ack-frame            production=1 canari=1
+api/pull-frame           production=2 canari=2
+api/pull?                production=1 canari=1
+api/register             production=1 canari=1
+api/block-clip           production=2 canari=2
+bench/poll               production=1 canari=1
+symbole doValidate           production=3 canari=0
+symbole signED25519          production=0 canari=0
+symbole netReadCandidate     production=2 canari=0
+symbole podVoteMessage       production=1 canari=0
+symbole podCheckStream       production=5 canari=0
+symbole doObsConfirm         production=0 canari=0
+symbole validateParseWork    production=1 canari=0
+symbole doValidateDecode     production=1 canari=0
+PodEd::sign / verify / derivePublicKey (symboles) production=3 canari=3  (le canari ne signe que le message fixe de l'auto-test du boot)
