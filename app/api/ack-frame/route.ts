@@ -12,6 +12,7 @@ import { frameKey, parseStoredFrame, type StoredFrame } from "@/lib/queue";
 import { getIP, forbidden } from "@/lib/rateLimit";
 import { redis } from "@/lib/redis";
 import { SCREEN_IDS } from "@/lib/screenProfiles";
+import { personalFrameSupersededBy } from "@/lib/personalFrame";
 import { recordDisplayed, sanitizeRenderReport, DISPLAYS_CACHE_TAG, type DisplayKV } from "@/lib/displayState";
 
 const personalKey = (deviceId: string) => `personal:frame:${deviceId}`;
@@ -57,7 +58,7 @@ export async function POST(req: NextRequest) {
     await Promise.all([
       t ? redis.del(frameKey(deviceId, t.screen)) : Promise.resolve(0),
       // 14/10/2026 : une frame du consensus affichée REMPLACE le dessin privé précédent (sinon il réapparaît au prochain Reset et masque l'écran dans les vues publiques). 0 commande s'il n'y en a pas.
-      t && raws[3 + FRAME_IDS.length] ? redis.del(personalKey(deviceId)) : Promise.resolve(0),
+      t && personalFrameSupersededBy(raws[3 + FRAME_IDS.length], t.screen) ? redis.del(personalKey(deviceId)) : Promise.resolve(0),   // MÊME écran seulement (appareil multi-écran)
       writeDeviceKey(device),
     ]);
 
