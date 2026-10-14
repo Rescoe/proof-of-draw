@@ -49,7 +49,7 @@ Pile principale du build de vote (analyse statique, 1.6.0) : `doValidateV2` marg
 4. Suite complète : voir § 7.
 
 ## 7. Suite globale
-(complétée à la livraison)
+Suite complète : 853 tests, 851 réussis, **2 échecs préexistants** (`boundedSsl` cœurs Renesas 1.5.3 / 1.6.0, identiques à la base `448bc759`). Une première exécution montrait 2 échecs supplémentaires (`tft28RegisterStack`, production et canari) : ce test lisait le texte brut du sketch, désormais via la vue « POD_VOTE_CANARY = 0 » comme les autres ; corrigé, 25/25 avec `wifiCalls`. Tests ciblés (`tft28VoteCanary`, `tft28VoteHarness`, `podHeaderCopies`, `tft28Canary`, `netStack`, `tft28Host`) : 136/136. `tsc --noEmit`, eslint, `git diff --check` propres. Note d'environnement : le PATH doit placer WinLibs 14.2 avant le `mingw64` de Git (sinon sortie `0xC0000139` des exécutables du harnais).
 
 ## 8. Rollback
 `git revert` du commit : retour exact à `448bc759` (V4).
