@@ -96,3 +96,17 @@ GPT a rejoué 144 tests ciblés (144/144) et `tsc`, confirmé les blocs #100 et 
 - **À confirmer par le porteur dans Vercel** : `STRICT_SIGNATURE=true`, `MIN_V2_APPROVALS=1`, et **pas** de `VOTE_ONLY_NETWORK=false` (non lisible depuis ici).
 - **À observer au prochain dessin** (journal Redis + journaux série) : (1) un ancien vote v1 / un firmware hors liste reçoit 403 et ne compte plus ; (2) les firmwares v2 continuent à tirer et à voter ; (3) une frame personnelle d'un appareil multi-écran n'est pas supprimée par l'ACK de l'autre écran ; (4) les pages réseau et bloc affichent la ligne « Votes ». Attendu : bloc miné **uniquement avec des votes v2** (c'est ce test qui clôt le chantier serveur).
 - **Rollback fonctionnel immédiat** (sans revert) : variable Vercel `VOTE_ONLY_NETWORK=false` + redéploiement. Rollback complet : tag `avant-vote-reel-2026-10-14`.
+
+## 14. TEST FINAL APRÈS DÉPLOIEMENT — bloc #103, 100 % votes v2 (journal Redis 21:00 – 21:21, serveur « réseau de vote réel » en production)
+| Heure | Événement |
+|---|---|
+| 21:01:47 | candidat « Bagdad le 17 octobre » (e-ink 2,9″), auteur = ESP8266 e-ink 2,9″ (`dev_MN67OG7R`), **`poolSize = 4` ⇒ quorum 3** (le dénominateur ne compte plus que les 4 appareils capables de voter) |
+| 21:03:48 | vote **v2** du **TFT 2,8″** |
+| 21:05:40 | vote **v2** du **R4 e-ink 2,9″** |
+| 21:06:10 | vote **v2** du **multiscreen** — **premier vote du multiscreen sur le matériel** (réveil par Reset, vote ≈ 35 s après son pull) |
+| 21:06:11 | **bloc #103 miné** : mineur = TFT, validateurs = TFT + R4 e-ink + multiscreen, **`votesSummary {v2:3, v1:0, rejects:0}`** ; `obsConfirmed:true` à 21:08:30 |
+| 21:06:19 – 21:11:55 | **les 4 appareils ont accusé l'affichage** (multiscreen OLED 21:06:19 puis e-ink 2,7″ 21:07:27, ESP 2,9″ 21:08:27, TFT 21:09:42, R4 e-ink 21:11:55) |
+- **Tout le matériel concerné a maintenant voté en v2 sur la carte** : R4 e-ink 2,9″, R4 TFT 2,8″, ESP8266 e-ink 2,9″ (#101) et multiscreen ESP8266 (#103). Aucun vote écho dans le #103 ; chaque vote porte les chiffres recalculés (identiques à ceux du serveur) et une signature.
+- **Exclusion des appareils non capables observée** : `dev_1Z175056`, `dev_VIRBQRV1`, `dev_WZ0U0514` et `dev_T46HBXG1` (ancien firmware `2.0`) ont continué à tirer **mais n'ont aucune écriture de présence, aucun accusé d'affichage et aucun vote** ; ils ne sont pas comptés dans `poolSize`.
+- Constats mineurs : (1) le serveur écrit encore les frames d'un bloc pour **tous** les membres de chaque pool, y compris les appareils exclus (≈ 13 `SET` par bloc, dont ≈ 9 inutiles ; elles expirent) — optimisation possible : ne diffuser qu'aux appareils capables ; (2) l'ESP 2,9″, auteur du candidat, n'a pas voté (non requis) ; (3) la suppression des frames personnelles observée au 21:06:13 vient de la finalisation du bloc, pas d'un ACK (rien à comparer pour le cas multi-écran, non exercé).
+- **Chantier serveur « vote réel » : critères de GPT remplis** (« un nouveau dessin et un bloc miné uniquement avec des votes v2 »).
