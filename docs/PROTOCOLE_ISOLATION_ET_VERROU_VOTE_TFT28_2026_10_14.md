@@ -22,7 +22,7 @@ Le vote unique minera un bloc (quorum 1) dans le backend ciblé. Il ne doit donc
 3. Vérifier sur le site de **production** (galerie, vue réseau) que ni le candidat ni son futur bloc n'y apparaissent.
 
 ## 4. Autres canaux
-- **Neon** : la chaîne de connexion du déploiement Preview pointe une **branche / base distincte** de la production (même relevé qu'au § 1).
+- **Neon / base SQL** : aucune variable de base SQL n'est lue par `lib/` ni `app/` (recherche `DATABASE_URL`, `POSTGRES`, `neon` : aucun résultat) ; le Redis est désigné par `KV_REST_API_URL` et `KV_REST_API_TOKEN`. Constater que le déploiement Preview ne définit aucune variable de base SQL inattendue.
 - **Appareil** : le canari de vote exige une carte **déjà appairée sur le backend Preview** (sinon `register` répond non appairé ⇒ arrêt définitif, voir FIX1). Le `register` du build de vote crée la fiche de la carte dans la base Preview ; l'appairage (profil Preview) se fait AVANT, avec le binaire stable ou le canari d'affichage pointé vers Preview. Vérifier que la fiche de l'appareil est dans la base Preview et que `devices:all` de la production n'a pas changé. Le canari d'affichage de transport peut tourner sur le backend de production ou sur Preview selon le `secrets.h` du porteur : le consigner dans le rapport.
 - **Alias** : l'hôte de `pod_vote_pins.h` est l'URL propre du déploiement Preview, jamais un alias qui pourrait être réaffecté à la production.
 

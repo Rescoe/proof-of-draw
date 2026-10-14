@@ -37,7 +37,10 @@ Suite complète sur la révision de travail : 853 tests, 851 réussis, **2 éche
 ## 7bis. Prochain canari d'affichage — quoi préparer
 `bash scripts/prepare-local-canary-tft28.sh` (déjà exécuté ici) → `canary-builds/tft28-display-canary/pod_uno_r4/pod_uno_r4.ino` ; y copier SOI-MÊME `secrets.h` ; configuration : `POD_CANARY = 1`, `POD_RENDER_V1 = 1`, `POD_VOTE_V1 = 0`, `POD_VOTE_CANARY = 0`, **pas de `pod_vote_pins.h`** ; conserver le binaire stable pour le retour arrière.
 
-## 8. Limites et ordre
+## 8. Suite (14/10/2026)
+Canari d'affichage **VERT** sur la carte : `docs/CANARY_R4_TFT28_AFFICHAGE_FIX2_VERDICT_2026_10_14.md` ; préparation de la phase Preview : `docs/PHASE_BACKEND_PREVIEW_ISOLE_VOTE_TFT28_2026_10_14.md`.
+
+## 8bis. Limites et ordre
 Rien de ce lot n'a tourné sur une carte. Ordre recommandé du porteur, après audit : canari d'affichage (frame personnelle puis animation) → preuves d'isolation → pins + `VoteLockErase` → vote unique (protocole V4 § 7). Le défaut d'ACK de la production reste pour le lot `TFT28-ACK-STATE-FIX1`.
 
 ## 9. Rollback
