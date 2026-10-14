@@ -293,7 +293,7 @@ CHECKS.connPaths = (exe) => {
   if (n(f, "ret") !== 0 || n(f, "acks") !== 0 || n(f, "bus_delta") !== 0 || f.facts.frame_unchanged !== "1") v.push("frame-partial : écriture partielle de la requête d'image => AUCUN affichage, AUCUN ACK, œuvre courante inchangée");
   if (!logHas(f, "pull-frame -> -7") || !f.facts.last_log.includes("image incomplète — pas d'ACK")) v.push("frame-partial : journal honnête (-7, « image incomplète — pas d'ACK »)");
   const a = run(exe, "ack-partial");
-  if (!a.facts.last_log.includes("-> FAIL") || logHas(a, "[ACK] frame-nouvelle -> OK")) v.push("ack-partial : l'ACK partiellement écrit est journalisé FAIL, jamais OK");
+  if (!logHas(a, "/api/ack-frame -> -7") || !a.facts.last_log.includes("ACK non confirme") || logHas(a, "ACK recu") || logHas(a, "[ACK] frame-nouvelle -> OK") || n(a, "ret") !== 0) v.push("ack-partial : l'ACK partiellement écrit est journalisé en échec (-7), la frame n'est PAS déclarée acquittée (ACK-STATE-FIX1), jamais OK");
   return v;
 };
 /** g_voteScratch est UTILISÉ sur le TFT : le serveur propose n'importe quel écran (app/api/validate-candidate/route.ts) ; un candidat oled096 (1 024 o) exige le tampon de travail. */

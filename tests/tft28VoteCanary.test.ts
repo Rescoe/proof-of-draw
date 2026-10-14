@@ -14,7 +14,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { compileHarness, describeChoice, findCompiler, runProcess } from "./helpers/cppHarness";
-import { ROOT, readText } from "./helpers/tft28Source";
+import { ROOT, readText, undoAckStateFix, ACK_FIX_NEW } from "./helpers/tft28Source";
 import { ownTmp } from "./helpers/ownTmp";
 import { reachFrom } from "./helpers/voteCanaryReach";
 import { voteMessageV2 } from "../lib/podVote";
@@ -142,7 +142,8 @@ test("V4 — PRODUCTION INCHANGÉE : POD_VOTE_CANARY = 0 par défaut (jamais com
   assert.match(INO_SRC, /#ifndef POD_VOTE_CANARY\n#define POD_VOTE_CANARY 0\n#endif/);
   assert.doesNotMatch(INO_SRC, /#define POD_VOTE_CANARY 1\b/);
   assert.match(INO_SRC, /#define POD_CANARY 0\b/); assert.match(INO_SRC, /#define POD_RENDER_V1 0\b/); assert.match(INO_SRC, /#define POD_VOTE_V1 0\b/);
-  assert.equal(offView(INO_SRC), BACKUP);
+  assert.equal(undoAckStateFix(offView(INO_SRC)), BACKUP, "identique à V3-FIX1 modulo le SEUL delta TFT28-ACK-STATE-FIX1 (queue de doFetchFrame)");
+  assert.ok(offView(INO_SRC).includes(ACK_FIX_NEW), "le delta documenté est bien présent dans la production");
 });
 
 // ── 2. règles statiques du canari ─────────────────────────────────────────────────────────────────────────────────────────────────────
