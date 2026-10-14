@@ -57,7 +57,8 @@ export type VoteAdmission = { ok: true } | { ok: false; status: 403 | 404; reaso
  *   - un capteur seul ne vote jamais ;
  *   - le firmware déclaré doit savoir voter en v2 (déclaratif : la preuve cryptographique reste la signature v2, vérifiée par la route) ;
  *   - tout vote v1 (écho du score serveur, sans recalcul) est REFUSÉ ;
- *   - l'appareil doit être appairé ET actif (ping ou présence sous ACTIVE_WINDOW_MS).
+ *   - l'appareil doit être appairé ET actif au sens CANONIQUE du quorum : `now - lastPing < ACTIVE_WINDOW_MS` (même définition que getGlobalActiveCount, getPoolSnapshot et /api/validate-candidate ;
+ *     `lastSeen`, que /api/register rafraîchit seul, ne compte PAS — VOTE-NETWORK-GATE-FIX2).
  * `VOTE_ONLY_NETWORK=false` : comportement historique (tout est admis ici ; les contrôles de la route restent).
  */
 export function voteAdmission(
@@ -72,7 +73,7 @@ export function voteAdmission(
   if (!voteV2Capable(device.firmware)) return { ok: false, status: 403, reason: "firmware-not-vote-capable", error: "Firmware sans vote v2 : mise à jour requise" };
   if (!isV2) return { ok: false, status: 403, reason: "v1-vote-refused", error: "Vote v1 (écho du score) refusé : vote v2 requis" };
   if (!(device.artistId || device.artistName)) return { ok: false, status: 403, reason: "device-not-paired", error: "Appareil non appairé" };
-  const lastActivity = Math.max(Number(device.lastPing) || 0, Number(device.lastSeen) || 0);
-  if (now - lastActivity >= ACTIVE_WINDOW_MS) return { ok: false, status: 403, reason: "device-inactive", error: "Appareil inactif" };
+  const lastPing = Number(device.lastPing) || 0;
+  if (now - lastPing >= ACTIVE_WINDOW_MS) return { ok: false, status: 403, reason: "device-inactive", error: "Appareil inactif" };
   return { ok: true };
 }

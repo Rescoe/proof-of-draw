@@ -53,10 +53,12 @@ test("admission : appareil non appairé refusé ; appairé par artistId OU artis
   assert.equal(reason(voteAdmission(dev({ artistId: undefined }), true, NOW, on)), "ok");
   assert.equal(reason(voteAdmission(dev({ artistName: undefined }), true, NOW, on)), "ok");
 });
-test("admission : appareil inactif refusé (ping et présence anciens) ; une présence récente suffit", () => {
+test("admission : appareil inactif refusé (même définition que le quorum : lastPing seul) — RÉGRESSION VOTE-NETWORK-GATE-FIX2 : lastSeen récent + lastPing ancien => refusé", () => {
   assert.equal(reason(voteAdmission(dev({ lastPing: NOW - 46 * MIN, lastSeen: NOW - 46 * MIN }), true, NOW, on)), "device-inactive");
   assert.equal(reason(voteAdmission(dev({ lastPing: NOW - 44 * MIN, lastSeen: NOW - 44 * MIN }), true, NOW, on)), "ok");
-  assert.equal(reason(voteAdmission(dev({ lastPing: NOW - 600 * MIN, lastSeen: NOW - 2 * MIN }), true, NOW, on)), "ok");
+  assert.equal(reason(voteAdmission(dev({ lastPing: NOW - 600 * MIN, lastSeen: NOW - 2 * MIN }), true, NOW, on)), "device-inactive", "un redémarrage rafraîchit lastSeen seul : il ne rend pas l'appareil actif pour le quorum");
+  assert.equal(reason(voteAdmission(dev({ lastPing: NOW - 46 * MIN, lastSeen: NOW }), true, NOW, on)), "device-inactive");
+  assert.equal(reason(voteAdmission(dev({ lastPing: NOW - 5 * MIN, lastSeen: NOW - 600 * MIN }), true, NOW, on)), "ok", "lastSeen ancien n'empêche pas un lastPing récent");
   assert.equal(reason(voteAdmission(dev({ lastPing: undefined, lastSeen: undefined }), true, NOW, on)), "device-inactive");
 });
 test("admission : capteur seul refusé (avant tout autre contrôle) ; firmware ancien, usurpé (suffixe), vide ou inconnu refusé ; appareil absent = 404", () => {
@@ -73,4 +75,13 @@ test("admission : ordre des contrôles (capteur, firmware, v1, appairage, activi
 test("rollback VOTE_ONLY_NETWORK=false : comportement HISTORIQUE (tout est admis ici, v1, non appairé, ancien firmware, capteur) — seul l'appareil absent reste refusé", () => {
   for (const d of [dev({ firmware: "multiscreen-2.2" }), dev({ artistId: undefined, artistName: undefined }), dev({ screens: ["sensor"] }), dev({ lastPing: 0, lastSeen: 0 })]) assert.equal(reason(voteAdmission(d, false, NOW, off)), "ok");
   assert.equal(voteAdmission(null, false, NOW, off).ok, false);
+});
+
+test("frontière de l'activité : juste sous 45 minutes accepté, exactement 45 minutes refusé (comme getGlobalActiveCount : now - lastPing < ACTIVE_WINDOW_MS)", () => {
+  assert.equal(reason(voteAdmission(dev({ lastPing: NOW - (45 * MIN - 1), lastSeen: NOW - 600 * MIN }), true, NOW, on)), "ok");
+  assert.equal(reason(voteAdmission(dev({ lastPing: NOW - 45 * MIN, lastSeen: NOW }), true, NOW, on)), "device-inactive");
+  assert.equal(reason(voteAdmission(dev({ lastPing: NOW - (45 * MIN + 1), lastSeen: NOW }), true, NOW, on)), "device-inactive");
+});
+test("rollback VOTE_ONLY_NETWORK=false : l'activité n'est pas contrôlée ici (comportement historique)", () => {
+  assert.equal(reason(voteAdmission(dev({ lastPing: NOW - 600 * MIN, lastSeen: NOW }), true, NOW, off)), "ok");
 });
