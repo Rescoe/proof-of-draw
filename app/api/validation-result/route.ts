@@ -39,6 +39,7 @@ import { eligibilityConfigFromEnv, eligibilityModeFromEnv, profileIdOf, voteGate
 import { committeeGate, committeeModeFromEnv, committeeOutcome, currentWave, rejectIsObjective, type CommitteeOutcome } from "@/lib/committee";
 import { applyReputation, reputationEntries } from "@/lib/reputation";
 import { blockReceiptsEnabled } from "@/lib/blockReceipts";
+import { participatesInVoteNetwork } from "@/lib/voteCapability";
 
 const DEVICE_ID_REGEX = /^dev_[A-Z0-9]{8}$/;
 const BLACKLIST_TTL = parseInt(process.env.BLACKLIST_TTL_SECONDS ?? "604800");
@@ -92,6 +93,8 @@ export async function POST(req: NextRequest) {
     let device: Device | null = null;
     try { device = raws[1] ? (typeof raws[1] === "string" ? JSON.parse(raws[1] as string) : (raws[1] as Device)) : null; } catch { device = null; }
     if (!device) return json({ error: "Device inconnu" }, 404);
+    // Réseau de vote réel (14/10/2026) : un firmware qui ne sait pas voter en v2 ne s'exprime plus (ses votes « écho » ne comptent pour rien).
+    if (!participatesInVoteNetwork(device)) return json({ error: "Firmware sans vote v2 : mise à jour requise", reason: "firmware-not-vote-capable" }, 403);
 
     const candidate = parseCandidateRaw(raws[2]);
     if (!candidate) return json({ error: "Aucun candidat actif" }, 409);
@@ -159,7 +162,7 @@ export async function POST(req: NextRequest) {
       espScore = check.verdict === "accept" ? candidate.v2.s / PPM : 0;
     }
 
-    const STRICT_SIG = process.env.STRICT_SIGNATURE === "true";
+    const STRICT_SIG = process.env.STRICT_SIGNATURE !== "false";   // 14/10/2026 : signature STRICTE par défaut (vote réel) ; STRICT_SIGNATURE=false rétablit le mode permissif
     const sigStr = String(signature ?? "");
 
     if (isV2) {

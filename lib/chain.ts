@@ -423,11 +423,11 @@ export const VOTE_SCRIPT = [
 export const countV2Accepts = (m: VoteMap): number => [...voteGroups(m).values()].filter((e) => e.accept && !e.reject && e.v2Accept).length;
 
 /**
- * Nombre minimal d'approbations v2 exigé pour finaliser un candidat qui porte une spécification v2 (MIN_V2_APPROVALS, défaut 0 = désactivé).
+ * Nombre minimal d'approbations v2 exigé pour finaliser un candidat qui porte une spécification v2 (MIN_V2_APPROVALS ; DÉFAUT 1 depuis le 14/10/2026 = vote réel ; 0 = désactivé).
  * Sans cela, des votes v1 (simples échos du score serveur) peuvent à eux seuls atteindre le quorum et miner le bloc, sans qu'aucun appareil n'ait rien
  * recalculé. À activer pour un essai de validation réelle (ex. 1) ; ATTENTION : sans appareil v2 capable dans le comité, le candidat expire sans bloc.
  */
-const minV2Approvals = (): number => Math.max(0, parseInt(process.env.MIN_V2_APPROVALS ?? "0", 10) || 0);
+const minV2Approvals = (): number => { const raw = process.env.MIN_V2_APPROVALS; const v = raw === undefined || raw.trim() === "" ? 1 : parseInt(raw, 10); return Number.isFinite(v) ? Math.max(0, v) : 1; };   // 14/10/2026 : DÉFAUT 1 (vote réel) ; MIN_V2_APPROVALS=0 le désactive
 
 function voteSummary(voteMap: VoteMap, candidate: Candidate, added: boolean) {
   // Seules les APPROBATIONS comptent pour le quorum ; un refus signé (vote v2) est conservé mais ne finalise rien.

@@ -125,7 +125,7 @@ test("MIN_V2_APPROVALS=1 : 3 échos v1 n'atteignent pas le quorum ; l'arrivée d
   } finally { delete process.env.MIN_V2_APPROVALS; }
 });
 
-test("MIN_V2_APPROVALS absent (défaut) ou candidat sans v2 : comportement inchangé", async () => {
+test("MIN_V2_APPROVALS : DÉFAUT 1 depuis le 14/10/2026 (vote réel) — un vote v1 seul ne mine pas un candidat v2 ; 0 le désactive ; candidat sans v2 : aucune exigence", async () => {
   const { r, store } = fakeRedis();
   store.set(KEY_VOTES, JSON.stringify({ candidateId: "c1", votes: {} }));
   process.env.MIN_V2_APPROVALS = "1";
@@ -134,5 +134,15 @@ test("MIN_V2_APPROVALS absent (défaut) ou candidat sans v2 : comportement incha
     assert.equal((await castVoteOn(r, vote("dev_A"), cand("c1", 1), undefined)).quorumReached, true);
   } finally { delete process.env.MIN_V2_APPROVALS; }
   store.set(KEY_VOTES, JSON.stringify({ candidateId: "c2", votes: {} }));
-  assert.equal((await castVoteOn(r, vote("dev_A"), withV2("c2", 1), undefined)).quorumReached, true, "désactivé par défaut");
+  assert.equal((await castVoteOn(r, vote("dev_A"), withV2("c2", 1), undefined)).quorumReached, false, "défaut 1 : un vote v1 (écho) ne suffit plus pour un candidat v2");
+  process.env.MIN_V2_APPROVALS = "0";
+  try {
+    store.set(KEY_VOTES, JSON.stringify({ candidateId: "c3", votes: {} }));
+    assert.equal((await castVoteOn(r, vote("dev_A"), withV2("c3", 1), undefined)).quorumReached, true, "MIN_V2_APPROVALS=0 : désactivé");
+  } finally { delete process.env.MIN_V2_APPROVALS; }
+  process.env.MIN_V2_APPROVALS = "n'importe quoi";
+  try {
+    store.set(KEY_VOTES, JSON.stringify({ candidateId: "c4", votes: {} }));
+    assert.equal((await castVoteOn(r, vote("dev_A"), withV2("c4", 1), undefined)).quorumReached, false, "valeur illisible : retombe sur le défaut 1");
+  } finally { delete process.env.MIN_V2_APPROVALS; }
 });

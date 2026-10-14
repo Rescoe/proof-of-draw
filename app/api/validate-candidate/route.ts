@@ -21,6 +21,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { redis } from "@/lib/redis";
 import type { Device } from "@/lib/deviceStore";
+import { participatesInVoteNetwork } from "@/lib/voteCapability";
 import { parseCandidateRaw, parseVotesRaw, PULL_KEY_CANDIDATE, PULL_KEY_VOTES } from "@/lib/chain";
 import { getIP, forbidden } from "@/lib/rateLimit";
 import { ACTIVE_WINDOW_MS, rlSampled } from "@/lib/pullBudget";
@@ -58,6 +59,7 @@ export async function GET(req: NextRequest) {
   if (!device) {
     return NextResponse.json({ error: "Device inconnu" }, { status: 404 });
   }
+  if (!participatesInVoteNetwork(device)) return NextResponse.json({ error: "Firmware sans vote v2 : mise à jour requise", candidate: null, reason: "firmware-not-vote-capable" }, { status: 403 });   // réseau de vote réel (14/10/2026)
   const isActive = Date.now() - device.lastPing < ACTIVE_WINDOW_MS;
   if (!isActive) {
     return NextResponse.json({

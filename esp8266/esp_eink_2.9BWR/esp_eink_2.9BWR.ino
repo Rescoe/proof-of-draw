@@ -992,7 +992,7 @@ bool doRegister() {
   String pubHex     = keysLoaded ? bytesToHex(publicKey, 32) : "";
   String ownedHashes = loadOwnedHashesJson();  // ex: ["abc...","def..."] ou []
   String body = "{\"mac\":\"" + mac + "\",\"screens\":[\"" + SCREEN_TYPE + "\"],"
-                "\"firmware\":\"2.2\",\"publicKey\":\"" + pubHex + "\","
+                "\"firmware\":\"eink29bwr-2.3\",\"publicKey\":\"" + pubHex + "\","
                 "\"ownedHashes\":" + ownedHashes + "}";
   String resp;
 
