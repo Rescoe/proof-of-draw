@@ -75,3 +75,6 @@ esp8266/**/secrets.h
 arduino_uno_r4/**/pod_vote_pins.h
 # hôte du backend Preview pour le build d'appairage (TFT28-PREVIEW-ENROLL-1) : local, jamais commité
 arduino_uno_r4/**/pod_preview_host.h
+
+# copies prêtes à téléverser (contiennent secrets.h : JAMAIS commitées)
+/A_TELEVERSER/
