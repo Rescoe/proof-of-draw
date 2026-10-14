@@ -61,15 +61,16 @@ test("Apprendre : pas d'« aucun tampon » ni de scratch « alloué après la fe
 });
 
 // ── statuts matériels : jamais promus sans preuve du porteur ────────────────────────────────────────────────────────────────────────────
-test("statuts matériels : ESP8266 e-ink 2,7 seul = compilé, non testé ; R4 + TFT 2,8 vote = non testé (feuille de route et synthèse)", () => {
+test("statuts matériels : ESP8266 e-ink 2,7 seul = compilé, non testé ; R4 + TFT 2,8 = testé en réel LE 14/10/2026 (preuve citée) (feuille de route et synthèse)", () => {
   const items = Object.fromEntries(ROADMAP.flatMap((p) => p.items).map((i) => [i.id, i]));
-  for (const id of ["fw-27solo", "fw-tft28"]) {
-    assert.notEqual(items[id].status, "done", `${id} ne peut pas être « fait » sans essai sur la carte`);
-    assert.match(items[id].note ?? "", /essai|à faire|non/i, `${id} doit dire que l'essai reste à faire`);
-  }
+  assert.notEqual(items["fw-27solo"].status, "done", "fw-27solo ne peut pas être « fait » sans essai sur la carte");
+  assert.match(items["fw-27solo"].note ?? "", /essai|à faire|non/i, "fw-27solo doit dire que l'essai reste à faire");
+  // 14/10/2026 : le vote du TFT 2,8″ a été observé sur la carte (blocs #100 et #103) ; « fait » n'est permis que si la note cite cette preuve.
+  assert.equal(items["fw-tft28"].status, "done");
+  assert.match(items["fw-tft28"].note ?? "", /14\/10\/2026.*#103/, "fw-tft28 doit citer la preuve matérielle");
   const synth = read("app/learn/components/SynthesisPath.tsx");
   assert.match(synth, /"e-ink 2,7″ seul", "Oui \(code livré\)", "À essayer"/);
-  assert.match(synth, /"TFT 2,8″ tactile", "Oui \(code livré\)", "À essayer"/);
+  assert.match(synth, /"TFT 2,8″ tactile", "Oui", "Testé en réel"/);
   for (const sketch of ["esp8266/esp_eink_2.7BW/esp_eink_2.7BW.ino", "arduino_uno_r4/pod_uno_r4/pod_uno_r4.ino"]) assert.ok(fs.existsSync(path.join(root, sketch)), sketch);
 });
 

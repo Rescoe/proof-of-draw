@@ -45,3 +45,6 @@ Contexte : le vote réel v2 est en production (blocs #100, #101, #103). Ce docum
 
 ## Ordre conseillé
 A1 → A2 → A3/A4 (en parallèle) → B1 + B2 (un seul lot serveur, auditable) → C1 (décider quelles familles garder) → C2/C3 → B4 → le reste selon vos priorités.
+
+## Constat final de la suite de tests complète sur `main` (14/10/2026, tête `d70e7ea`)
+983 tests, **980 réussis, 3 échecs** : les 2 échecs **préexistants** `boundedSsl` (cœurs Renesas 1.5.3 et 1.6.0, présents avant tout ce travail) et 1 test de garde (`lot0sWording`) qui exigeait encore « TFT 2,8″ = non testé » — corrigé le jour même pour exiger à la place la preuve du 14/10/2026 (blocs #100 et #103) ; `lot0sWording` et `learnRoadmap` : 15/15 ensuite, `tsc` propre. C'est la première suite complète rejouée depuis la fusion de toutes les branches.
