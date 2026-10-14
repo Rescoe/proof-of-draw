@@ -191,13 +191,13 @@ export function jsonInventory(): JsonSite[] {
     lines.forEach((l, i) => {
       if (/^\s*\/\//.test(l) || !/\bdeserializeJson\(/.test(l.replace(/\/\/.*$/, ""))) return;
       const fn = enclosing(lines, i);
-      out.push({ sketch: sk, fn, line: i + 1, stack: /^(pullParseWork|registerParseWork|validateParseWork)$/.test(fn) ? "travail" : "principale" });
+      out.push({ sketch: sk, fn, line: i + 1, stack: /^(pullParseWork|registerParseWork|validateParseWork|benchPollParseWork)$/.test(fn) ? "travail" : "principale" });
     });
   }
   return out;
 }
 
-test("INVENTAIRE FORMEL des deserializeJson des cinq firmwares R4 : exactement les sites connus ; le e-ink 2,9″ n'en a plus AUCUN sur la pile principale ; les quatre autres restent à migrer APRÈS validation matérielle", () => {
+test("INVENTAIRE FORMEL des deserializeJson des cinq firmwares R4 : exactement les sites connus ; le e-ink 2,9″ n'en a plus AUCUN sur la pile principale ; le TFT 2,8″ est migré par LOT8B2D ; les trois autres restent à migrer APRÈS validation matérielle", () => {
   const inv = jsonInventory();
   const key = (s: JsonSite) => `${s.sketch}:${s.fn}:${s.stack}`;
   const got = inv.map(key).sort();
@@ -206,7 +206,7 @@ test("INVENTAIRE FORMEL des deserializeJson des cinq firmwares R4 : exactement l
     "pod_uno_r4_eink27:doRegister:principale", "pod_uno_r4_eink27:doPull:principale", "pod_uno_r4_eink27:doPull:principale", "pod_uno_r4_eink27:doValidate:principale",
     "pod_uno_r4_eink27_oled:doRegister:principale", "pod_uno_r4_eink27_oled:doPull:principale", "pod_uno_r4_eink27_oled:doPull:principale", "pod_uno_r4_eink27_oled:doValidate:principale",
     "pod_uno_r4_tft18:doRegister:principale", "pod_uno_r4_tft18:doPull:principale", "pod_uno_r4_tft18:doPull:principale", "pod_uno_r4_tft18:doValidate:principale",
-    "pod_uno_r4:doRegister:principale", "pod_uno_r4:doPull:principale", "pod_uno_r4:doPull:principale", "pod_uno_r4:doValidate:principale", "pod_uno_r4:benchPollOnce:principale",
+    "pod_uno_r4:registerParseWork:travail", "pod_uno_r4:pullParseWork:travail", "pod_uno_r4:pullParseWork:travail", "pod_uno_r4:validateParseWork:travail", "pod_uno_r4:benchPollParseWork:travail",   // LOT8B2D : le TFT 2,8″ est migré (compilé + hôte seulement, jamais flashé)
   ].sort();
   assert.deepEqual(got, want, "un deserializeJson a été ajouté, déplacé ou migré : le classer ici ET dans docs/LOT_8B2B2_REGISTER_JSON_STACK_FIX1_2026_10_10.md § 6");
 });

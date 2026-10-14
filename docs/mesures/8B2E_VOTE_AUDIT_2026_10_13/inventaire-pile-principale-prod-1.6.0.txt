@@ -1,0 +1,9 @@
+## JSON (ArduinoJson) : 0 fonctions atteignables sur la pile principale ; entrées depuis le sketch : -
+## Wi-Fi (module) : 0 fonctions atteignables sur la pile principale ; entrées depuis le sketch : -
+## TLS / client : 1 fonctions atteignables sur la pile principale ; entrées depuis le sketch : doRegisterv
+## Ed25519 / SHA : 6 fonctions atteignables sur la pile principale ; entrées depuis le sketch : setup
+## SD : 0 fonctions atteignables sur la pile principale ; entrées depuis le sketch : -
+## TFT / GFX : 37 fonctions atteignables sur la pile principale ; entrées depuis le sketch : setup, loop, drainTouchv
+## journal (vsniprintf) : 7 fonctions atteignables sur la pile principale ; entrées depuis le sketch : -
+## String / tas : 58 fonctions atteignables sur la pile principale ; entrées depuis le sketch : setup, loop, wifiFirmwarev, bytesToHexPKhj, doPullv, registerExchangev, registerShowOnboardingv
+total fonctions atteignables : 339 ; appels indirects dans ces fonctions : 61

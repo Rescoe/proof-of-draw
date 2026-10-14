@@ -5,6 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { compileHarness, describeChoice, findCompiler, runProcess } from "./helpers/cppHarness";
 import { undoAllStacks } from "./helpers/netStackEdits";
+import { undoFix2 } from "./helpers/pullIdleFix";
 
 // Lot 8B-2A — INTÉGRATION INACTIVE du noyau de rendu en flux dans QUATRE firmwares canaris (ESP8266 e-ink 2,9″ BWR, ESP8266 TFT 1,8″, UNO R4 e-ink 2,9″ BWR, UNO R4 TFT 1,8″).
 // Compilés seulement (arduino-cli, chemin désactivé puis activé) ; JAMAIS flashés, JAMAIS essayés sur une carte. Garantie testée ici : avec POD_RENDER_V1 = 0 (défaut), chaque firmware et chaque pilote modifié
@@ -13,7 +14,7 @@ const root = path.join(__dirname, "..");
 const read = (p: string) => fs.readFileSync(path.join(root, p), "utf8").replace(/\r\n/g, "\n");
 // Lot 8B-2B-2-STACK-FIX1 : les sketches UNO R4 passent désormais Ed25519 par podEdStack.h (tests/helpers/edStackEdits.ts, tests/edStack.test.ts). Les garanties du lot 8B (vue POD_RENDER_V1 = 0 == firmware d'avant, ACK/routes inchangés)
 // s'évaluent donc sur le sketch dont ces modifications EXACTES sont annulées ; tests/edStack.test.ts prouve séparément que cette annulation redonne le sketch d'avant le correctif, au texte près.
-const readIno = (p: string) => { const m = /\/(pod_uno_r4[a-z0-9_]*)\.ino$/.exec(p); return m ? undoAllStacks(read(p), m[1]) : read(p); };
+const readIno = (p: string) => { const m = /\/(pod_uno_r4[a-z0-9_]*)\.ino$/.exec(p); return m ? undoAllStacks(read(p), m[1]) : undoFix2(read(p)); };
 const BACKUP = "firmware-backups/2026-10-08_avant-rendu-v1-canaris";
 const BACKUP2 = "firmware-backups/2026-10-08_avant-propagation-8b2b1";
 
@@ -64,7 +65,7 @@ for (const s of SKETCHES) {
     assert.match(src, new RegExp(`#if POD_RENDER_V1\\n#include "podRenderStream.h"\\n#include "${s.crypto.replace(".", "\\.")}"\\n(#include <new>\\n)?#endif`));
     assert.equal((src.match(/#include "podRender(Stream)?\.h"/g) ?? []).length, 1);
     // chemin désactivé == avant
-    assert.equal(offView(src), plain(read(s.backup)), `${s.name} : la vue POD_RENDER_V1=0 diffère du firmware d'origine`);
+    assert.equal(offView(src), plain(read(s.backup).replace('\\"firmware\\":\\"2.2\\"', '\\"firmware\\":\\"eink29bwr-2.3\\"')), `${s.name} : la vue POD_RENDER_V1=0 diffère du firmware d'origine`);
     // aucun symbole du noyau hors des blocs actifs seulement avec 1
     const offOnly = offView(src);
     assert.doesNotMatch(offOnly, /PodEinkRenderer|PodTftRenderer|PodFrameHasher|PodPassHasher|podRender|POD_R_/);
@@ -132,7 +133,7 @@ for (const s of SKETCHES) {
 
 test("pilotes modifiés : seuls des AJOUTS balisés (DisplayStream / displayStream) — la vue sans ajout est identique au pilote d'avant", () => {
   for (const s of SKETCHES) for (const [driver, backup] of s.drivers) {
-    const src = read(driver);
+    const src = read(driver).replace(/#include "pod_canary_flags\.h"[^\n]*\n/, "");   // FIX2 : en-tête des drapeaux du 2,7″ + OLED (source unique, partagée avec le sketch)
     assert.equal((src.match(/POD_RENDER_V1_BEGIN/g) ?? []).length, 1, driver);
     assert.equal(offView(src), plain(read(backup)), `${driver} : modification hors des blocs balisés`);
   }

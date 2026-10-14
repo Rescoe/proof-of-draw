@@ -3,6 +3,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { redis } from "@/lib/redis";
 import { writeDeviceKey, type Device } from "@/lib/deviceStore";
 import { SCREEN_IDS } from "@/lib/screenProfiles";
+import { participatesInVoteNetwork } from "@/lib/voteCapability";
+import { personalFrameAnnounced } from "@/lib/personalFrame";
 import { HOT_KEY, idleRetrySec, presenceStale, rlSampled, RL_SAMPLED_BLACKLIST, RL_SAMPLED_MAX } from "@/lib/pullBudget";
 import { frameKey, parseStoredFrame, oldestFrame, FramePayload } from "@/lib/queue";
 import { getIP, forbidden } from "@/lib/rateLimit";
@@ -107,6 +109,13 @@ export async function GET(req: NextRequest) {
         frameId: null, screen: null,
         chain: null, pendingValidation: null,
       }, 404);
+    // Réseau de vote réel (14/10/2026, lib/voteCapability.ts) : un firmware qui ne sait pas voter en v2 ne reçoit RIEN (ni image, ni bloc, ni candidat) et n'écrit rien (pas de présence). 1 seule commande Redis déjà dépensée (le MGET).
+    if (!participatesInVoteNetwork(device)) {
+      return json({
+        frame: null, frameSource: "none", frameId: null, screen: null, chain: null, pendingValidation: null,
+        retryAfter: 1800, notice: "firmware sans vote v2 : mise a jour requise",
+      });
+    }
     const screens = device.screens ?? [];
     const frameRaws = FRAME_IDS.map((s, i) => (screens.includes(s) ? raws[3 + i] : null));
     const rest = raws.slice(3 + FRAME_IDS.length);
@@ -167,7 +176,7 @@ export async function GET(req: NextRequest) {
       frameId      = consensusFrame.frameId ?? null;
       screen       = (consensusFrame.payload as Record<string, unknown>).screen as string ?? null;
       delivery     = selectDelivery(device, screen, consensusFrame.payload as Record<string, unknown>);
-    } else if (personalFrame?.payload) {
+    } else if (personalFrame?.payload && personalFrameAnnounced(personalFrame, device)) {   // 14/10/2026 : un e-ink qui a déjà reçu sa frame personnelle ne la repeint pas après un Reset
       frameMeta    = payloadMeta(personalFrame.payload);
       frameSource  = "personal";
       frameId      = personalFrame.frameId ?? null;

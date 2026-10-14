@@ -20,9 +20,16 @@ function OnboardForm() {
   const [artistName, setArtist]   = useState("");
   const [loading, setLoading]     = useState(false);
   const [error, setError]         = useState<string | null>(null);
+  // Navigateur INTÉGRÉ d'une application (Snapchat, Instagram, Facebook, TikTok…) : il a son propre stockage de cookies, la connexion n'y est pas conservée et l'accès à l'ESP se perd
+  // dès qu'on ouvre le site dans le vrai navigateur (cas du 14/10/2026). On prévient AVANT le jumelage.
+  const [inApp, setInApp]         = useState<string | null>(null);
   useEffect(() => {
     if (codeFromUrl) setMode("qr");
   }, [codeFromUrl]);
+  useEffect(() => {
+    const m = /Snapchat|Instagram|FBAN|FBAV|FB_IAB|MicroMessenger|TikTok|musical_ly|LinkedInApp|Line\//i.exec(navigator.userAgent || "");
+    setInApp(m ? m[0].replace("FBAN", "Facebook").replace("FBAV", "Facebook").replace("FB_IAB", "Facebook").replace("musical_ly", "TikTok") : null);
+  }, []);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -70,6 +77,17 @@ function OnboardForm() {
             Scanne le QR code affiché sur ton écran, ou entre les infos manuellement.
           </p>
         </div>
+
+        {inApp && (
+          <div className="bg-amber-950 border border-amber-600 rounded p-3 text-sm text-amber-200 space-y-1" role="alert">
+            <p className="font-semibold">⚠ Tu es dans le navigateur intégré de {inApp}</p>
+            <p>Il ne garde pas la connexion : tu perdrais l'accès à ton ESP en changeant de navigateur. Ouvre cette page dans <b>Safari</b> ou <b>Chrome</b> (menu ⋯ ou bouton « Ouvrir dans le navigateur »), puis fais le jumelage depuis là.</p>
+          </div>
+        )}
+
+        <p className="text-gray-500 text-xs">
+          Accès perdu (nouveau téléphone, autre navigateur) ? Entre de nouveau le <b>même code de jumelage</b> de ton ESP : tu retrouves ton profil, rien n'est perdu.
+        </p>
 
         {/* Toggle mode */}
         <div className="flex rounded overflow-hidden border border-gray-700 text-sm">

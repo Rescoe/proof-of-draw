@@ -1,0 +1,110 @@
+# Pile STATIQUE (cœur 1.6.0, canari) des lambdas d'animation — appels directs seulement
+_ZZL15runResidentAnimmENKUlvE_clEv cadre 160 chaine 792
+    _ZZL15runResidentAnimmENKUlvE_clEv(160)
+    > _ZN5SDLib7SDClass4openEPKch(152)
+    > _ZN5SDLib7SDClass12getParentDirEPKcPi(144)
+    > _ZN6SdFile4openEPS_PKch(48)
+    > _ZN6SdFile15openCachedEntryEhh(16)
+    > _ZN6SdFile8truncateEm(32)
+    > _ZN8SdVolume9freeChainEm(24)
+    > _ZN8SdVolume6fatPutEmm(24)
+    > _ZN8SdVolume13cacheRawBlockEmh(16)
+    > _ZN8SdVolume10cacheFlushEh(16)
+    > _ZN8SdVolume21cacheMirrorBlockFlushEh(8)
+    > _ZN7Sd2Card10writeBlockEmPKhh(24)
+    > _ZN7Sd2Card11cardCommandEhm(24)
+    > _ZN7Sd2Card13chipSelectLowEv(8)
+    > _ZN7arduino10ArduinoSPI16beginTransactionENS_11SPISettingsE(24)
+    > _ZN7arduino10ArduinoSPI17configSpiSettingsERKNS_11SPISetting(0)
+    > _ZN7arduino10ArduinoSPI12configSpiSciERKNS_11SPISettingsE(24)
+    > R_SCI_SPI_CalculateBitrate(16)
+    > __aeabi_ldivmod(0)
+    > __udivmoddi4(32)
+_ZZL19animValidateAndMarkRKN7arduino6StringEjPhRtENKUlvE_clEv cadre 120 chaine 752
+    _ZZL19animValidateAndMarkRKN7arduino6StringEjPhRtENKUlvE_clE(120)
+    > _ZN5SDLib7SDClass4openEPKch(152)
+    > _ZN5SDLib7SDClass12getParentDirEPKcPi(144)
+    > _ZN6SdFile4openEPS_PKch(48)
+    > _ZN6SdFile15openCachedEntryEhh(16)
+    > _ZN6SdFile8truncateEm(32)
+    > _ZN8SdVolume9freeChainEm(24)
+    > _ZN8SdVolume6fatPutEmm(24)
+    > _ZN8SdVolume13cacheRawBlockEmh(16)
+    > _ZN8SdVolume10cacheFlushEh(16)
+    > _ZN8SdVolume21cacheMirrorBlockFlushEh(8)
+    > _ZN7Sd2Card10writeBlockEmPKhh(24)
+    > _ZN7Sd2Card11cardCommandEhm(24)
+    > _ZN7Sd2Card13chipSelectLowEv(8)
+    > _ZN7arduino10ArduinoSPI16beginTransactionENS_11SPISettingsE(24)
+    > _ZN7arduino10ArduinoSPI17configSpiSettingsERKNS_11SPISetting(0)
+    > _ZN7arduino10ArduinoSPI12configSpiSciERKNS_11SPISettingsE(24)
+    > R_SCI_SPI_CalculateBitrate(16)
+    > __aeabi_ldivmod(0)
+    > __udivmoddi4(32)
+_ZZL19netGetBlockClipToSdRKN7arduino6StringEjRbENKUlvE_clEv cadre 288 chaine 1040
+    _ZZL19netGetBlockClipToSdRKN7arduino6StringEjRbENKUlvE_clEv(288)
+    > _ZN4Conn7requestEPKcRKN7arduino6StringEPS4_(64)
+    > _ZN13WiFiSSLClient7connectEPKct(96)
+    > _ZN13WiFiSSLClient9getSocketEv(72)
+    > _ZN10ModemClass5beginEii(88)
+    > _ZN10ModemClass5writeERKNSt7__cxx1112basic_stringIcSt11char_(40)
+    > vsniprintf(112)
+    > _svfiprintf_r(152)
+    > __ssputs_r(32)
+    > _realloc_r(24)
+    > _malloc_r(32)
+    > sbrk_aligned(16)
+    > _sbrk_r(16)
+    > _sbrk(8)
+_ZZL11restoreRowsiiENKUlvE_clEv cadre 72 chaine 704
+    _ZZL11restoreRowsiiENKUlvE_clEv(72)
+    > _ZN5SDLib7SDClass4openEPKch(152)
+    > _ZN5SDLib7SDClass12getParentDirEPKcPi(144)
+    > _ZN6SdFile4openEPS_PKch(48)
+    > _ZN6SdFile15openCachedEntryEhh(16)
+    > _ZN6SdFile8truncateEm(32)
+    > _ZN8SdVolume9freeChainEm(24)
+    > _ZN8SdVolume6fatPutEmm(24)
+    > _ZN8SdVolume13cacheRawBlockEmh(16)
+    > _ZN8SdVolume10cacheFlushEh(16)
+    > _ZN8SdVolume21cacheMirrorBlockFlushEh(8)
+    > _ZN7Sd2Card10writeBlockEmPKhh(24)
+    > _ZN7Sd2Card11cardCommandEhm(24)
+    > _ZN7Sd2Card13chipSelectLowEv(8)
+    > _ZN7arduino10ArduinoSPI16beginTransactionENS_11SPISettingsE(24)
+    > _ZN7arduino10ArduinoSPI17configSpiSettingsERKNS_11SPISetting(0)
+    > _ZN7arduino10ArduinoSPI12configSpiSciERKNS_11SPISettingsE(24)
+    > R_SCI_SPI_CalculateBitrate(16)
+    > __aeabi_ldivmod(0)
+    > __udivmoddi4(32)
+
+# Pile principale (rapport tft28-stack-report)
+# frames : hal_entry 8 + arduino_main 16 ; setup 224 ; loop 272
+| étape | cadre | pire chaîne sous l'étape | cumul depuis setup | marge (setup) | cumul depuis loop | marge (loop) | indirects |
+|---|---|---|---|---|---|---|---|
+| doRegister | 8 | 456 | 704 | 320 | 752 | 272 | 50 |
+| doRegisterDecode | 40 | 192 | 440 | 584 | 488 | 536 | 25 |
+| doPull | 88 | 448 | 696 | 328 | 744 | 280 | 38 |
+| doPullStage | 80 | 360 | 608 | 416 | 656 | 368 | 32 |
+| doFetchFrame | (absente du binaire) | | | | | | |
+| ackFrame | (absente du binaire) | | | | | | |
+| httpCall | 88 | 264 | 512 | 512 | 560 | 464 | 23 |
+| doValidate | (absente du binaire) | | | | | | |
+| doValidateV2 | (absente du binaire) | | | | | | |
+| doValidateDecode | (absente du binaire) | | | | | | |
+| doObsConfirm | (absente du binaire) | | | | | | |
+| benchPollOnce | 48 | 312 | 560 | 464 | 608 | 416 | 25 |
+| toggleCartel | (absente du binaire) | | | | | | |
+| serviceTouch | (absente du binaire) | | | | | | |
+| drawCartel | 64 | 264 | 512 | 512 | 560 | 464 | 5 |
+| restoreRows | 64 | 104 | 352 | 672 | 400 | 624 | 30 |
+| restoreLastFrame | (absente du binaire) | | | | | | |
+| runResidentAnim | 80 | 168 | 416 | 608 | 464 | 560 | 42 |
+| fetchAnimToSd | (absente du binaire) | | | | | | |
+| playBenchClip | (absente du binaire) | | | | | | |
+| selfTestEd25519 | (absente du binaire) | | | | | | |
+| generateKeys | (absente du binaire) | | | | | | |
+| displayKeyMaterialOnce | (absente du binaire) | | | | | | |
+| displayOnboardingTFT | 112 | 368 | 616 | 408 | 664 | 360 | 7 |
+| macString | (absente du binaire) | | | | | | |
+| initSD | (absente du binaire) | | | | | | |

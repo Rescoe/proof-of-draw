@@ -1,3 +1,7 @@
 # Les vecteurs de test sont lus ligne a ligne par les harnais C++ et par les tests (mutations d un caractere de fin de ligne) : TOUJOURS en LF, meme sous Windows avec core.autocrlf=true
 # (un checkout propre les recevait en CRLF et faisait echouer 4 controles negatifs ; constate le 09/10/2026 lors du lot NETSTACK-FIX2).
 consensus-pod/test-vectors/*.txt text eol=lf
+# LOT8B2D : la sauvegarde figée du sketch TFT 2,8″ (SHA-256 contrôlé par tests/tft28Canary.test.ts) et le harnais hôte du firmware : TOUJOURS en LF (core.autocrlf)
+firmware-backups/2026-10-12_avant-canari-tft28/** text eol=lf
+consensus-pod/host/tft28/** text eol=lf
+consensus-pod/host/tft28_*.cpp text eol=lf

@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
+import { voteCanaryOffView } from "./helpers/tft28Source";
 
 // Un dossier de firmware est autonome (l'IDE Arduino ne compile que son dossier) : les en-têtes de validation réelle existent en COPIES IDENTIQUES.
 // Après une modification de l'original dans esp8266/_shared : le recopier (la table d'entropie se régénère avec scripts/gen-pod-metrics-table.js).
@@ -68,7 +69,7 @@ const SKETCHES = [
 ];
 for (const sketch of SKETCHES) {
   test(`${sketch} : vote v2 sur tout type d'écran, re-register sur 403`, () => {
-    const src = read(sketch);
+    const src = sketch.endsWith("pod_uno_r4/pod_uno_r4.ino") ? voteCanaryOffView(read(sketch)) : read(sketch);   // V4 : vue production du TFT 2,8″ (le canari de vote épingle volontairement tft28)
     assert.ok(src.includes("/api/candidate-frame?candidateId="), "relit le candidat");
     assert.doesNotMatch(src, /kind\s*!=\s*POD_[A-Z0-9]+/, "ne refuse aucun type d'écran");
     assert.ok(src.includes('indexOf("Signature")'), "ré-enregistre la clé publique sur un 403 « Signature »");

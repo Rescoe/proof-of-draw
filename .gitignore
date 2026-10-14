@@ -70,3 +70,11 @@ esp8266/**/secrets.h
 
 # sources WiFiS3 tierces téléchargées par scripts/fetch-wifis3-sources.js (jamais commitées)
 /consensus-pod/host/wifis3/.cache/
+
+# canari de vote (LOT8B2E V4) : épinglage LOCAL (hôte du backend isolé, candidat, hash) — jamais commité
+arduino_uno_r4/**/pod_vote_pins.h
+# hôte du backend Preview pour le build d'appairage (TFT28-PREVIEW-ENROLL-1) : local, jamais commité
+arduino_uno_r4/**/pod_preview_host.h
+
+# copies prêtes à téléverser (contiennent secrets.h : JAMAIS commitées)
+/A_TELEVERSER/

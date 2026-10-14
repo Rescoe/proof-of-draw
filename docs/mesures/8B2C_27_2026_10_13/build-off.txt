@@ -1,0 +1,14 @@
+# build ESP8266 core 3.1.2 (esp8266com:esp8266:nodemcuv2), xtensa-lx106-elf-gcc 10.3, --warnings all, secrets.h factice ; config=off
+Variables and constants in RAM (global, static), used 35200 / 80192 bytes (43%)
+Instruction RAM (IRAM_ATTR, ICACHE_RAM_ATTR), used 61667 / 65536 bytes (94%)
+Code in flash (default, ICACHE_FLASH_ATTR), used 473820 / 1048576 bytes (45%)
+--- avertissements (normalisés : sans chemin ni numéro de ligne)
+      1 AES128.cpp: warning: unused parameter 'input' [-Wunused-parameter]
+      1 AES128.cpp: warning: unused parameter 'output' [-Wunused-parameter]
+      1 AES256.cpp: warning: unused parameter 'input' [-Wunused-parameter]
+      1 AES256.cpp: warning: unused parameter 'output' [-Wunused-parameter]
+      4 esp_eink_2.7BW_OLED.ino: warning: 'DynamicJsonDocument' is deprecated: use JsonDocument instead [-Wdeprecated-declarations]
+      1 pod_anim_esp.h: warning: comparison of integer expressions of different signedness: 'int' and 'const size_t' {aka 'const unsigned int'} [-Wsign-compare]
+      1 pod_anim_esp.h: warning: comparison of integer expressions of different signedness: 'int' and 'size_t' {aka 'unsigned int'} [-Wsign-compare]
+      1 pod_bench_esp.h: warning: 'DynamicJsonDocument' is deprecated: use JsonDocument instead [-Wdeprecated-declarations]
+      2 qrcode.c: warning: comparison is always false due to limited range of data type [-Wtype-limits]

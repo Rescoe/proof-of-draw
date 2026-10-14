@@ -1,0 +1,8 @@
+# portée ELF depuis setup + loop : 189 fonctions atteignables par appels directs (+ lambdas rattachées), 35 appels indirects non suivis
+- ÉCRAN (TFT / GFX / fonctions d'affichage) : AUCUNE fonction atteignable
+- TACTILE (STMPE610 / toucher) : AUCUNE fonction atteignable
+- CARTE SD (SD / fichiers / onSd) : AUCUNE fonction atteignable
+- ANIMATION / BANC D'ESSAI / ACK / IMAGE : AUCUNE fonction atteignable
+- PULL / CANDIDAT / VOTE / VERROU (build d'appairage) : AUCUNE fonction atteignable
+- constructeurs statiques (avant setup) : 55 fonctions atteignables ; objets d'affichage / tactile / SD construits : _GLOBAL__sub_I__ZN17Adafruit_STMPE610C2Ehhhh, _ZN17Adafruit_STMPE610C1EhPN7arduino11HardwareSPIE, _ZN16Adafruit_ILI9341C1Eaaa, _ZN15Adafruit_SPITFTC1Ettaaa, _ZN15Adafruit_SPITFTC1EttPN7arduino11HardwareSPIEaaa, _ZN12Adafruit_GFXC1Ess ; accès au bus (pinMode / digitalWrite / SPI) : AUCUN
+# VERDICT : aucun appel d'écran, de tactile ni de carte SD n'est atteignable depuis setup() / loop() ; les constructeurs statiques n'accèdent pas au bus

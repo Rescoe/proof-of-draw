@@ -8,6 +8,7 @@ import { decrementDeviceCount, incrementDeviceCount } from "@/lib/rateLimit";
 import type { SceneCapability } from "@/lib/scene/spec";
 import { generateLinkCode, type LinkCodeStatus } from "@/lib/linkCode";
 import { isSensorScreens, measureKindsOf, type MeasureKind } from "@/lib/measures";
+import { participatesInVoteNetwork } from "@/lib/voteCapability";
 
 export interface Device {
   deviceId:   string;
@@ -422,6 +423,7 @@ export async function getGlobalActiveCount(activeWindowMs = ACTIVE_WINDOW_MS): P
       const isPaired  = !!(d.artistId || d.artistName);
       const isActive  = now - d.lastPing < activeWindowMs;
       if (isSensorScreens(d.screens)) return null;   // un capteur seul ne vote pas (entrée héritée d'avant le correctif du 12/10/2026)
+      if (!participatesInVoteNetwork(d)) return null;   // 14/10/2026 : un firmware qui ne sait pas voter en v2 n'est pas compté dans le quorum
       return (isPaired && isActive) ? d : null;
     } catch {
       return null;
@@ -448,7 +450,7 @@ export async function getPoolSnapshot(activeWindowMs = ACTIVE_WINDOW_MS): Promis
   const devices: Device[] = [];
   for (const raw of values) {
     if (!raw) continue;
-    try { const d = typeof raw === "string" ? JSON.parse(raw) : (raw as Device); if (!isSensorScreens(d.screens)) devices.push(d); } catch { /* entrée illisible : ignorée */ }   // un capteur seul n'est jamais un validateur
+    try { const d = typeof raw === "string" ? JSON.parse(raw) : (raw as Device); if (!isSensorScreens(d.screens) && participatesInVoteNetwork(d)) devices.push(d); } catch { /* entrée illisible : ignorée */ }   // un capteur seul n'est jamais un validateur
   }
   const legacy = devices.filter((d) => !!(d.artistId || d.artistName) && now - d.lastPing < activeWindowMs).length;
   return { devices, legacyCount: Math.max(1, legacy) };

@@ -23,6 +23,7 @@ interface MinedBlock {
   workTitle?: string;
   drawArtistName?: string;
   deviceOwnerName?: string;
+  votesSummary?: { v2: number; v1: number; rejects: number };
 }
 
 interface BlockImagePayload {
@@ -431,6 +432,12 @@ export function SidePanel({
                       <span className="nv2-block-meta__label">Validateurs</span>
                       <span className="nv2-block-meta__value">{lastBlock.validatorIds.length}</span>
                     </div>
+                    {lastBlock.votesSummary && (
+                      <div className="nv2-block-meta__row">
+                        <span className="nv2-block-meta__label">Votes</span>
+                        <span className="nv2-block-meta__value">v2 vérifié ×{lastBlock.votesSummary.v2} · écho ×{lastBlock.votesSummary.v1}{lastBlock.votesSummary.rejects > 0 ? ` · refus ×${lastBlock.votesSummary.rejects}` : ""}</span>
+                      </div>
+                    )}
                     <div className="nv2-block-meta__row">
                       <span className="nv2-block-meta__label">Display</span>
                       <span className="nv2-block-meta__value">{lastBlock.displayTime}s</span>

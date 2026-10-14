@@ -1,0 +1,29 @@
+# frames : hal_entry 8 + arduino_main 16 ; setup 232 ; loop 272
+| étape | cadre | pire chaîne sous l'étape | cumul depuis setup | marge (setup) | cumul depuis loop | marge (loop) | indirects |
+|---|---|---|---|---|---|---|---|
+| doRegister | 8 | 456 | 712 | 312 | 752 | 272 | 51 |
+| doRegisterDecode | 40 | 152 | 408 | 616 | 448 | 576 | 24 |
+| doPull | 88 | 416 | 672 | 352 | 712 | 312 | 39 |
+| doPullStage | 80 | 328 | 584 | 440 | 624 | 400 | 33 |
+| doFetchFrame | (absente du binaire) | | | | | | |
+| ackFrame | (absente du binaire) | | | | | | |
+| httpCall | 88 | 232 | 488 | 536 | 528 | 496 | 23 |
+| doValidate | (absente du binaire) | | | | | | |
+| doValidateV2 | (absente du binaire) | | | | | | |
+| doValidateDecode | (absente du binaire) | | | | | | |
+| doObsConfirm | (absente du binaire) | | | | | | |
+| benchPollOnce | 56 | 288 | 544 | 480 | 584 | 440 | 24 |
+| toggleCartel | (absente du binaire) | | | | | | |
+| serviceTouch | (absente du binaire) | | | | | | |
+| drawCartel | 64 | 216 | 472 | 552 | 512 | 512 | 5 |
+| restoreRows | 64 | 104 | 360 | 664 | 400 | 624 | 30 |
+| restoreLastFrame | (absente du binaire) | | | | | | |
+| runResidentAnim | 80 | 168 | 424 | 600 | 464 | 560 | 42 |
+| fetchAnimToSd | (absente du binaire) | | | | | | |
+| playBenchClip | (absente du binaire) | | | | | | |
+| selfTestEd25519 | (absente du binaire) | | | | | | |
+| generateKeys | (absente du binaire) | | | | | | |
+| displayKeyMaterialOnce | (absente du binaire) | | | | | | |
+| displayOnboardingTFT | 112 | 368 | 624 | 400 | 664 | 360 | 7 |
+| macString | (absente du binaire) | | | | | | |
+| initSD | (absente du binaire) | | | | | | |

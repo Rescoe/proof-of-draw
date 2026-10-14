@@ -56,6 +56,8 @@ export async function POST(req: NextRequest) {
     device.lastFrameReceivedAt = Date.now();
     await Promise.all([
       t ? redis.del(frameKey(deviceId, t.screen)) : Promise.resolve(0),
+      // 14/10/2026 : une frame du consensus affichée REMPLACE le dessin privé précédent (sinon il réapparaît au prochain Reset et masque l'écran dans les vues publiques). 0 commande s'il n'y en a pas.
+      t && raws[3 + FRAME_IDS.length] ? redis.del(personalKey(deviceId)) : Promise.resolve(0),
       writeDeviceKey(device),
     ]);
 

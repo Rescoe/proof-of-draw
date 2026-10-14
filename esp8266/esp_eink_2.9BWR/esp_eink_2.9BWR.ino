@@ -53,6 +53,9 @@
 #ifndef POD_RENDER_MODE_DEFAULT
 #define POD_RENDER_MODE_DEFAULT POD_R_FIT   // constante de compilation : le réglage cartelMode n'est PAS exposé (pas d'interface, pas de réglage serveur)
 #endif
+#ifndef POD_CANARY
+#define POD_CANARY 0   // 1 = BUILD LOCAL TEMPORAIRE de CANARI (-DPOD_RENDER_V1=1 -DPOD_CANARY=1) : frame personnelle -> rendu -> ACK instrumentés, AUCUN vote ; sans effet si POD_RENDER_V1 = 0. NE JAMAIS COMMITER 1 (docs/LOT_8B2C_ESP8266_EINK29_CANARY_2026_10_12.md).
+#endif
 #if POD_RENDER_V1
 #include "podRenderStream.h"
 #include "crypto_esp8266.h"
@@ -149,6 +152,103 @@ String pendingDisplayTs  = "";
 String pendingObsHashes  = "";   // JSON array de hashes en attente
 String pendingObsTarget  = "";   // targetBlockHash (hash du bloc portant les revalidated[])
 
+#if POD_RENDER_V1 && POD_CANARY
+// ─── CANARI ESP8266 e-ink 2,9″ (LOT8B2C-ESP8266-EINK29-CANARY-1) ─────────────────────────────────────────────────────────────────────────────────────────────
+// Valide UNIQUEMENT : démarrage -> Wi-Fi -> register -> pull sans frame -> frame PERSONNELLE (9 472 o) -> TLS fermé -> frameHash -> rendu v1 en flux -> remise au pilote -> ACK. Aucun vote, aucune animation, aucun OTA.
+//  • AUCUN VOTE : doValidate() oublie localement le candidat annoncé (UNE ligne) avant tout réseau ; doObsConfirm() n'envoie rien. Pas de validation-result, pas de signature, pas de bloc.
+//  • Trace de PHASES en mémoire RTC utilisateur (survit à un reset logiciel, de chien de garde ou d'exception, pas à une coupure d'alimentation) : relue au démarrage suivant avec la CAUSE du reset.
+//    Deux redémarrages ANORMAUX consécutifs (chien de garde / exception) => ARRÊT (le canari ne boucle jamais sur le serveur).
+//  • Mesures : tas libre, plus grand bloc libre, fragmentation, pile « cont » libre, durée de chaque étape ; pile « cont » minimale et temps entre deux yield() PENDANT le flux vers le pilote.
+//  • Pré-vol TLS : si le tas ne permet pas BearSSL (iobuf 16 384 + 512, pile de poussée 6 200, contextes) on refuse AVANT de construire WiFiClientSecure (le cœur abort() si la pile de poussée ne peut pas être allouée).
+//  • Corps : Content-Length connu et != 9 472, ou octets en trop disponibles => lecture refusée (aucun rendu, aucun ACK).
+// RAM : chaînes en flash (F / PSTR), statiques < 100 o. Tout est ABSENT quand POD_CANARY = 0.
+#define PCR_MAGIC 0x50434E52UL                 // « PCNR »
+#define POD_CANARY_TLS_MIN_HEAP  24000UL      // iobuf 16 384 + 512 + pile de poussée 6 200 = 23 096 o + 900 o de contextes
+#define POD_CANARY_TLS_MIN_BLOCK 17000UL      // iobuf d'entrée (16 384) contigu + en-tête
+#define POD_CANARY_YIELD_ALERT_US 500000UL    // plus de 0,5 s entre deux appels du producteur : le chien de garde logiciel (≈ 3,2 s) approche
+struct PodCanaryRtc { uint32_t magic, seq, phase, abn; };   // 16 o
+enum PodCanaryPhase : uint8_t { PCP_NONE = 0, PCP_BOOT, PCP_WIFI, PCP_REGISTER, PCP_PULL, PCP_FETCH, PCP_PLANES, PCP_TLS_OPEN, PCP_BODY, PCP_TLS_CLOSED, PCP_FRAMEHASH, PCP_PANEL, PCP_STREAM, PCP_FINISH, PCP_ACK, PCP_DONE };
+static PodCanaryRtc g_pcRtc = { 0, 0, 0, 0 };
+static uint32_t g_pcStepMs = 0, g_pcHeapPre = 0, g_pcMinHeap = 0xFFFFFFFFUL, g_pcCalls = 0, g_pcEnterUs = 0, g_pcLastEndUs = 0, g_pcMaxCallUs = 0, g_pcMaxGapUs = 0;
+static uint16_t g_pcMinStack = 0xFFFF;
+// BALLAST DE REPRÉSENTATIVITÉ : le canari ÉLIMINE le chemin de vote (doValidate retourne avant tout) ; le compilateur retire alors ≈ 1,2 Ko de RAM statique que le build POD_RENDER_V1=1 NON canari conserve.
+// Sans ballast, le tas mesuré serait ≈ 1,2 Ko trop OPTIMISTE pour la configuration à valider. Valeur mesurée (cœur 3.1.2, gcc 10.3, ArduinoJson 7.4.3) : ON 35 056 o − canari 33 820 o = 1 236 o ; le démarrage
+// affiche la RAM statique réelle pour la comparer à la référence ON.
+static volatile uint8_t g_pcBallast[1284];
+extern "C" { extern char _data_start; extern char _bss_end; }
+static const __FlashStringHelper* canaryPhaseName(uint32_t p) {
+  switch (p) {
+    case PCP_BOOT: return F("BOOT"); case PCP_WIFI: return F("WIFI"); case PCP_REGISTER: return F("REGISTER"); case PCP_PULL: return F("PULL"); case PCP_FETCH: return F("FETCH");
+    case PCP_PLANES: return F("PLANES"); case PCP_TLS_OPEN: return F("TLS_OUVERT"); case PCP_BODY: return F("CORPS_LU"); case PCP_TLS_CLOSED: return F("TLS_FERME"); case PCP_FRAMEHASH: return F("FRAMEHASH");
+    case PCP_PANEL: return F("PANNEAU_INIT"); case PCP_STREAM: return F("FLUX_PILOTE"); case PCP_FINISH: return F("RENDERHASH"); case PCP_ACK: return F("ACK"); case PCP_DONE: return F("TERMINE");
+    default: return F("AUCUNE");
+  }
+}
+/** Inscrit la phase en RTC (écrit AVANT l'étape, relu après un reset) puis journalise : durée depuis l'étape précédente, tas, plus grand bloc, fragmentation, pile « cont » libre. */
+static void canaryStep(uint8_t phase, const __FlashStringHelper* label) {
+  g_pcRtc.magic = PCR_MAGIC; g_pcRtc.seq++; g_pcRtc.phase = phase;
+  ESP.rtcUserMemoryWrite(0, (uint32_t*)&g_pcRtc, sizeof(g_pcRtc));
+  const uint32_t now = millis(), h = ESP.getFreeHeap();
+  if (h < g_pcMinHeap) g_pcMinHeap = h;
+  Serial.print(F("[CANARY] ")); Serial.print(label);
+  Serial.printf_P(PSTR(" : +%lums tas=%u maxBloc=%u frag=%u%% pile=%u t=%lu\n"), (unsigned long)(now - g_pcStepMs), h, ESP.getMaxFreeBlockSize(), ESP.getHeapFragmentation(), ESP.getFreeContStack(), (unsigned long)now);
+  g_pcStepMs = now;
+}
+static void canaryBoot() {
+  Serial.println(F("[CANARY] BUILD LOT8B2C-ESP8266-EINK29-CANARY-1 | base 3239d2e | POD_RENDER_V1=1 POD_CANARY=1 | AUCUN VOTE | compile " __DATE__ " " __TIME__));
+  const uint32_t reason = ESP.getResetInfoPtr()->reason;   // 0 alim · 1 chien de garde MATÉRIEL · 2 exception · 3 chien de garde LOGICIEL · 4 redémarrage logiciel · 5 réveil · 6 reset externe
+  PodCanaryRtc prev = { 0, 0, 0, 0 };
+  ESP.rtcUserMemoryRead(0, (uint32_t*)&prev, sizeof(prev));
+  const bool valid = prev.magic == PCR_MAGIC;
+  const bool abnormal = reason == 1 || reason == 2 || reason == 3;
+  Serial.printf_P(PSTR("[CANARY] cause du dernier reset = %u (%s) | RTC %s derniere phase=%u"), (unsigned)reason, ESP.getResetReason().c_str(), valid ? "valide" : "absente", valid ? (unsigned)prev.phase : 0u);
+  if (valid) { Serial.print(F(" (")); Serial.print(canaryPhaseName(prev.phase)); Serial.printf_P(PSTR(") seq=%u anormaux=%u"), (unsigned)prev.seq, (unsigned)prev.abn); }
+  Serial.println();
+  g_pcRtc.abn = abnormal ? (valid ? prev.abn : 0) + 1 : 0;
+  if (abnormal) Serial.println(F("[CANARY] ALERTE : redemarrage ANORMAL (chien de garde ou exception) — la derniere phase ci-dessus localise la faute"));
+  if (g_pcRtc.abn >= 2) {
+    g_pcRtc.magic = PCR_MAGIC; ESP.rtcUserMemoryWrite(0, (uint32_t*)&g_pcRtc, sizeof(g_pcRtc));
+    Serial.println(F("[CANARY] ARRET : deux redemarrages anormaux consecutifs — aucun reseau (couper l'alimentation pour rearmer)"));
+    for (;;) delay(1000);
+  }
+  g_pcBallast[0] = 0xA5;   // référencé : sinon --gc-sections retire le ballast
+  Serial.printf_P(PSTR("[CANARY] RAM statique=%u o (reference ON non-canari : 35056 o ; ballast %u o)\n"), (unsigned)(&_bss_end - &_data_start), (unsigned)sizeof(g_pcBallast));
+  g_pcStepMs = millis();
+  canaryStep(PCP_BOOT, F("demarrage"));
+}
+/** Pré-vol AVANT de construire un WiFiClientSecure (téléchargement ET ACK : les deux plans de 9 472 o sont encore vivants dans les deux cas) : false = pas assez de tas pour BearSSL ;
+ *  aucune allocation, aucun TLS ouvert. `consequence` dit ce qui arrive à l'appelant (le journal ne ment jamais sur l'état de l'écran ni de l'ACK). */
+static bool canaryTlsPreflight(uint8_t phase, const __FlashStringHelper* label, const __FlashStringHelper* consequence) {
+  g_pcHeapPre = ESP.getFreeHeap();
+  canaryStep(phase, label);
+  if (g_pcHeapPre < POD_CANARY_TLS_MIN_HEAP || ESP.getMaxFreeBlockSize() < POD_CANARY_TLS_MIN_BLOCK) {
+    Serial.printf_P(PSTR("[CANARY] REFUS pre-vol TLS : tas=%u (min %lu) maxBloc=%u (min %lu) — "), g_pcHeapPre, POD_CANARY_TLS_MIN_HEAP, ESP.getMaxFreeBlockSize(), POD_CANARY_TLS_MIN_BLOCK);
+    Serial.println(consequence);
+    return false;
+  }
+  return true;
+}
+/** Après la fermeture du scope TLS : le tas doit être revenu au niveau d'avant la connexion (à 1 Ko près). Rapport seulement (une fragmentation transitoire de lwIP n'est pas une faute). */
+static void canaryAfterTls() {
+  canaryStep(PCP_TLS_CLOSED, F("TLS FERME (client detruit)"));
+  const uint32_t h = ESP.getFreeHeap();
+  if (h + 1024UL < g_pcHeapPre) Serial.printf_P(PSTR("[CANARY] ALERTE tas non restitue apres la fermeture TLS : %u < %u (avant) — fuite possible\n"), h, g_pcHeapPre);
+  else Serial.printf_P(PSTR("[CANARY] tas restitue apres la fermeture TLS : %u (avant %u, minimum observe %u)\n"), h, g_pcHeapPre, g_pcMinHeap);
+}
+static void canaryProduceEnter() {
+  g_pcEnterUs = micros();
+  if (g_pcLastEndUs != 0) { const uint32_t gap = g_pcEnterUs - g_pcLastEndUs; if (gap > g_pcMaxGapUs) g_pcMaxGapUs = gap; }
+  const uint32_t st = ESP.getFreeContStack(); if (st < g_pcMinStack) g_pcMinStack = (uint16_t)st;
+}
+static void canaryProduceLeave() {
+  g_pcLastEndUs = micros(); g_pcCalls++;
+  const uint32_t d = g_pcLastEndUs - g_pcEnterUs; if (d > g_pcMaxCallUs) g_pcMaxCallUs = d;
+}
+static void canaryStreamReport() {
+  Serial.printf_P(PSTR("[CANARY] flux pilote : %lu appels du producteur, plus long appel=%luus, plus long intervalle entre appels=%luus%s, pile cont minimale=%u o\n"),
+                  (unsigned long)g_pcCalls, (unsigned long)g_pcMaxCallUs, (unsigned long)g_pcMaxGapUs, g_pcMaxGapUs > POD_CANARY_YIELD_ALERT_US ? " (ALERTE chien de garde)" : "", (unsigned)g_pcMinStack);
+}
+#endif
 // ─── EEPROM helpers ────────────────────────────────────────────────────────
 
 bool onboardingAlreadyShown() {
@@ -638,6 +738,15 @@ void burnEinkCartel_29(uint8_t* bBuf, uint8_t* rBuf,
 // ─── OBS-CONFIRM (Axe 3) ─────────────────────────────────────────────────────
 
 bool doObsConfirm() {
+#if POD_RENDER_V1 && POD_CANARY
+  // LOT8B2C : aucune requête serveur hors register, pull, pull-frame et ack.
+  if (pendingObsHashes.length() > 0) {
+    Serial.println(F("[CANARY] tache d'observation annoncee : IGNOREE en build canari (aucune requete obs-confirm)"));
+    pendingObsHashes = "";
+    pendingObsTarget = "";
+  }
+  return true;
+#endif
   if (pendingObsHashes.length() == 0) return true;
 
   String body = "{\"deviceId\":\"" + deviceId
@@ -883,7 +992,7 @@ bool doRegister() {
   String pubHex     = keysLoaded ? bytesToHex(publicKey, 32) : "";
   String ownedHashes = loadOwnedHashesJson();  // ex: ["abc...","def..."] ou []
   String body = "{\"mac\":\"" + mac + "\",\"screens\":[\"" + SCREEN_TYPE + "\"],"
-                "\"firmware\":\"2.2\",\"publicKey\":\"" + pubHex + "\","
+                "\"firmware\":\"eink29bwr-2.3\",\"publicKey\":\"" + pubHex + "\","
                 "\"ownedHashes\":" + ownedHashes + "}";
   String resp;
 
@@ -986,7 +1095,14 @@ void logHeapState(const char* tag) {
 // Pic ajouté par ce chemin : ≈ 300 o de pile. Retour : 0 = échec AVANT la fin de la remise · 1 = données remises mais confirmation incomplète · 2 = rendu calculé ET remis au pilote (seul 2 est un succès : sinon AUCUN ACK, le serveur réessaiera).
 // ⚠ État de l'écran après un échec : il n'est PAS garanti inchangé. clearDisplayWhite() peut avoir affiché une page BLANCHE juste avant (si une image était déjà affichée) ; une production interrompue laisse la RAM du panneau
 //   partiellement écrite SANS lancer le rafraîchissement (l'écran garde alors son état physique du moment, éventuellement blanc). Sans ACK il reste blanc / ancien jusqu'au prochain pull réussi.
+#if POD_RENDER_V1 && POD_CANARY
+#define podRenderProduce podRenderProduceInner
+#endif
 static unsigned int podRenderProduce(void* ctx, unsigned char* out, unsigned int cap) { return ((PodEinkRenderer<PodSha256Br>*)ctx)->read(out, cap); }
+#if POD_RENDER_V1 && POD_CANARY
+#undef podRenderProduce
+static unsigned int podRenderProduce(void* ctx, unsigned char* out, unsigned int cap) { canaryProduceEnter(); const unsigned int n = podRenderProduceInner(ctx, out, cap); canaryProduceLeave(); return n; }
+#endif
 
 static uint8_t podRenderAndShow() {
   const PodRenderSpec spec = pod_render_spec(POD_R_EINK29);
@@ -997,13 +1113,26 @@ static uint8_t podRenderAndShow() {
     PodFrameHasher<PodSha256Br> fh;
     if (!fh.begin(spec) || !fh.update(blackBuf, BUF_SIZE) || !fh.update(redBuf, BUF_SIZE) || !fh.finish(frameHex)) { Serial.println(F("[RENDER] frameHash impossible — abandon")); return 0; }
   }
+#if POD_RENDER_V1 && POD_CANARY
+  canaryStep(PCP_FRAMEHASH, F("frameHash calcule"));
+#endif
   PodEinkRenderer<PodSha256Br> r;
   if (!r.begin(spec, POD_RENDER_MODE_DEFAULT, meta, blackBuf, redBuf, BUF_SIZE)) { Serial.println(F("[RENDER] paramètres refusés — abandon")); return 0; }
   if (!initDisplayForRefresh()) { Serial.println(F("[RENDER] panneau non initialisé — abandon, aucune donnée envoyée (l'écran peut être resté blanc)")); return 0; }
+#if POD_RENDER_V1 && POD_CANARY
+  canaryStep(PCP_PANEL, F("panneau initialise, flux vers le pilote"));
+#endif
   const bool delivered = epd.DisplayStream(podRenderProduce, &r);
+#if POD_RENDER_V1 && POD_CANARY
+  canaryStep(PCP_STREAM, F("flux remis au pilote (DisplayStream retourne)"));
+  canaryStreamReport();
+#endif
   epd.Sleep();
   lastRefreshMs = millis();
   if (!delivered) { Serial.println(F("[RENDER] production interrompue — rafraîchissement NON lancé (RAM du panneau partiellement écrite ; l'écran garde son état physique, éventuellement blanc)")); return 0; }
+#if POD_RENDER_V1 && POD_CANARY
+  canaryStep(PCP_FINISH, F("renderHash"));
+#endif
   if (!r.finish(renderHex)) { Serial.println(F("[RENDER] renderHash incomplet — abandon")); return 1; }
   Serial.printf_P(PSTR("[RENDER] calculé ET remis au pilote — mode=%u frameHash=%s renderHash=%s\n"), (unsigned)POD_RENDER_MODE_DEFAULT, frameHex, renderHex);
   return 2;
@@ -1014,6 +1143,9 @@ static uint8_t podRenderAndShow() {
 // ─── FETCH FRAME ─────────────────────────────────────────────────────────────
 bool doFetchFrame(const String& frameId, const String& frameSource) {
   logHeapState("FETCHFRAME-BEFORE");
+#if POD_RENDER_V1 && POD_CANARY
+  canaryStep(PCP_FETCH, F("frame: debut du telechargement"));
+#endif
 
   blackBuf = (uint8_t*)malloc(BUF_SIZE);
   redBuf   = (uint8_t*)malloc(BUF_SIZE);
@@ -1025,6 +1157,13 @@ bool doFetchFrame(const String& frameId, const String& frameSource) {
   }
   memset(blackBuf, 0xFF, BUF_SIZE);
   memset(redBuf,   0xFF, BUF_SIZE);
+#if POD_RENDER_V1 && POD_CANARY
+  if (!canaryTlsPreflight(PCP_PLANES, F("planes allouees (9472 o), avant TLS"), F("tampons liberes, pas d'ACK, nouvel essai au prochain pull"))) {
+    free(blackBuf); blackBuf = nullptr;
+    free(redBuf);   redBuf   = nullptr;
+    return false;
+  }
+#endif
 
   {
     WiFiClientSecure client;
@@ -1043,6 +1182,9 @@ bool doFetchFrame(const String& frameId, const String& frameSource) {
 
     int code = http.GET();
     Serial.printf("[HTTP GET] /api/pull-frame → %d\n", code);
+#if POD_RENDER_V1 && POD_CANARY
+    canaryStep(PCP_TLS_OPEN, F("TLS ouvert (BearSSL alloue)"));
+#endif
 
     if (code == 404) {
       http.end();
@@ -1077,6 +1219,18 @@ bool doFetchFrame(const String& frameId, const String& frameSource) {
     WiFiClient* stream = http.getStreamPtr();
     size_t bRead = readFull(stream, blackBuf, BUF_SIZE);
     size_t rRead = readFull(stream, redBuf,   BUF_SIZE);
+#if POD_RENDER_V1 && POD_CANARY
+    {
+      const int canaryClen = http.getSize();            // en-têtes HTTP/1.0 : Content-Length (−1 = inconnu)
+      const int canarySurplus = stream->available();    // octets déjà disponibles APRÈS les 9 472 attendus (http.end() les VIDE sans rien dire)
+      Serial.printf_P(PSTR("[CANARY] corps : Content-Length=%d lus noir=%u rouge=%u surplus=%d\n"), canaryClen, (unsigned)bRead, (unsigned)rRead, canarySurplus);
+      if ((canaryClen >= 0 && canaryClen != (int)(2 * BUF_SIZE)) || canarySurplus > 0) {
+        Serial.println(F("[CANARY] REFUS : corps de taille inattendue (tronque, trop long ou surplus) — aucun rendu, aucun ACK"));
+        bRead = 0;   // retombe dans la branche « lecture incomplète » : tampons libérés, aucun ACK
+      }
+      canaryStep(PCP_BODY, F("corps lu (TLS encore ouvert)"));
+    }
+#endif
     http.end();
 
     Serial.printf("[FETCHFRAME] lu black=%u red=%u expected=%u\n", bRead, rRead, BUF_SIZE);
@@ -1089,6 +1243,9 @@ bool doFetchFrame(const String& frameId, const String& frameSource) {
     }
   }
   // TLS fermé ici — le panel a eu le temps de finir son refresh précédent
+#if POD_RENDER_V1 && POD_CANARY
+  canaryAfterTls();
+#endif
 
 #if POD_RENDER_V1
   // ── Rendu v1 en flux : cartel + fit calculés par le noyau, remis au pilote par morceaux (aucune gravure en place) ──
@@ -1108,6 +1265,9 @@ bool doFetchFrame(const String& frameId, const String& frameSource) {
 
   if (!refreshDisplay()) {
 #endif
+#if POD_RENDER_V1 && POD_CANARY
+    Serial.println(F("[CANARY] ECHEC rendu/affichage : AUCUN ACK, tampons liberes, nouvel essai au prochain pull (pas de polling accelere)"));
+#endif
     Serial.println("[FETCHFRAME] refreshDisplay failed — frame conservée côté serveur");
     free(blackBuf); blackBuf = nullptr;
     free(redBuf);   redBuf   = nullptr;
@@ -1115,6 +1275,34 @@ bool doFetchFrame(const String& frameId, const String& frameSource) {
     return false;
   }
 
+#if POD_RENDER_V1 && POD_CANARY
+  // LOT8B2C-FIX1 : en canari le RÉSULTAT de l'ACK décide du succès. L'écran a PU être affiché (hasDisplayedFrame), mais la frame n'est « terminée » (lastFrameId, frameReady, PCP_DONE, retour true) QU'APRÈS
+  // un ACK HTTP 200 ; sinon retour false : le serveur reproposera la frame au prochain pull (≥ 60 s, jamais de polling accéléré). Pré-vol BearSSL aussi pour l'ACK : les plans (9 472 o) sont encore vivants.
+  hasDisplayedFrame = true;
+  if (!canaryTlsPreflight(PCP_ACK, F("rendu OK, pre-vol TLS avant l'ACK (plans encore vivants)"), F("AUCUN ACK envoye : l'ecran a PU etre affiche mais la frame N'EST PAS acquittee (retentee au prochain pull)"))) {
+    free(blackBuf); blackBuf = nullptr;
+    free(redBuf);   redBuf   = nullptr;
+    frameReady = false;
+    return false;
+  }
+  if (!ackFrame(frameId)) {
+    Serial.println(F("[CANARY] ECHEC ACK : refuse ou impossible — l'ecran a PU etre affiche mais la frame N'EST PAS acquittee (lastFrameId et frameReady inchanges), retentee au prochain pull"));
+    free(blackBuf); blackBuf = nullptr;
+    free(redBuf);   redBuf   = nullptr;
+    frameReady = false;
+    return false;
+  }
+  lastFrameId           = frameId;
+  frameReady            = true;
+  lastFrameWasConsensus = (frameSource == "consensus");
+  pendingCandidateId    = "";
+  canaryStep(PCP_DONE, F("ACK recu (HTTP 200) : frame acquittee"));
+  Serial.printf_P(PSTR("[FETCHFRAME] ✅ affichée et acquittée frameId=%s source=%s\n"), frameId.c_str(), frameSource.c_str());
+  logHeapState("FETCHFRAME-AFTER");
+  canaryStreamReport();
+  g_pcRtc.abn = 0;
+  return true;
+#endif
   hasDisplayedFrame     = true;
   lastFrameId           = frameId;
   frameReady            = true;
@@ -1137,6 +1325,9 @@ bool doPull() {
   free(redBuf);   redBuf   = nullptr;
 
   logHeapState("PULL-BEFORE");
+#if POD_RENDER_V1 && POD_CANARY
+  canaryStep(PCP_PULL, F("pull: debut"));
+#endif
 
   String newBlockHash   = "";
   int    newBlockIndex  = -1;
@@ -1256,7 +1447,10 @@ bool doPull() {
   }
 
   // Ajuste l'intervalle de pull selon l'activité réseau signalée par le serveur
-  if (newFrameSource == "none" && newCandId.length() == 0) {
+  // Frame déjà affichée (même frameId) sans candidat : rien à faire → retryAfter, comme « aucune frame »
+  // (sinon une frame personnelle acquittée, qui reste dans /api/pull, imposait un pull toutes les 60 s).
+  bool sameFrameIdle = newFrameId.length() > 0 && newFrameId == lastFrameId;
+  if ((newFrameSource == "none" || sameFrameIdle) && newCandId.length() == 0) {
     // Réseau idle → on respecte le retryAfter du serveur (typiquement 300s)
     nextPullIntervalMs = (unsigned long)pullRetryAfter * 1000UL;
   } else {
@@ -1366,6 +1560,14 @@ bool doValidateV2(const String& candidateId, const String& screenName, size_t by
 
 // ─── VALIDATION ─────────────────────────────────────────────────────────────
 bool doValidate() {
+#if POD_RENDER_V1 && POD_CANARY
+  // LOT8B2C : le canari ne teste PAS le consensus. Aucun réseau, aucune signature, aucune requete validation-result, aucun re-register : le candidat est oublié localement (le serveur le ré-annoncera au pull suivant).
+  if (pendingCandidateId.length() > 0) {
+    Serial.println(F("[CANARY] candidat annonce : AUCUN vote en build canari — candidat oublie localement (le canari ne teste pas le consensus)"));
+    pendingCandidateId = "";
+  }
+  return true;
+#endif
   if (pendingCandidateId.length() == 0) return true;
 
   // ← SUPPRIME ces lignes qui bloquent la validation après un consensus :
@@ -1502,6 +1704,9 @@ validate_realloc:
 void setup() {
   Serial.begin(115200);
   Serial.println("\n[BOOT] Proof-of-Draw ESP v2.0");
+#if POD_RENDER_V1 && POD_CANARY
+  canaryBoot();
+#endif
 
   eepromInit();
 
@@ -1517,6 +1722,9 @@ void setup() {
   Serial.println();
   Serial.println("[WIFI] IP: " + WiFi.localIP().toString());
   Serial.printf("[HEAP] après WiFi: %u bytes\n", ESP.getFreeHeap());
+#if POD_RENDER_V1 && POD_CANARY
+  canaryStep(PCP_WIFI, F("wifi connecte"));
+#endif
 
   // Migration V1 → ED25519 réel : ancien flag 0x01 = clés fake, forcer régénération
   if (EEPROM.read(EEPROM_FLAG_OFF) == 0x01) {
@@ -1558,6 +1766,9 @@ void setup() {
     if (doRegister()) break;
     delay(5000);
   }
+#if POD_RENDER_V1 && POD_CANARY
+  canaryStep(PCP_REGISTER, F("register OK"));
+#endif
 
   Serial.println("[BOOT] Premier pull immédiat...");
   doPull();

@@ -28,7 +28,7 @@ test("sketch : les quatre fragments exacts, drapeaux 0/0, aucun new_handler ni o
   assert.ok(ino.indexOf("#define WiFiSSLClient PodBoundedSSL") < ino.indexOf("struct Conn {"));
   assert.match(ino, /struct Conn \{\n  WiFiSSLClient client;\n  podhttp::Reader<WiFiSSLClient> rd;/);
   // ni les autres firmwares R4/ESP8266, ni de copie du client borné ailleurs
-  for (const other of ["pod_uno_r4_eink27", "pod_uno_r4_eink27_oled", "pod_uno_r4_tft18", "pod_uno_r4", "pod_uno_r4_tft28"]) {
+  for (const other of ["pod_uno_r4_eink27", "pod_uno_r4_eink27_oled", "pod_uno_r4_tft18", "pod_uno_r4_tft28"]) {
     const d = path.join(root, "arduino_uno_r4", other);
     if (!fs.existsSync(d)) continue;
     assert.ok(!fs.existsSync(path.join(d, "pod_ssl_bounded.h")), `${other} : pas de copie`);

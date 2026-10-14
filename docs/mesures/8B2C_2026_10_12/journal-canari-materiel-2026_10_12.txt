@@ -1,0 +1,106 @@
+# Journal série BRUT du canari matériel LOT8B2C-ESP8266-EINK29-CANARY (build 6ccb729, POD_RENDER_V1=1 POD_CANARY=1, compile Oct 12 2026 09:50:11)
+# Carte ESP8266 + e-ink 2,9" BWR du porteur. Transcrit tel que fourni par le porteur (aucune ligne modifiée, hors un espace final retiré après « Pull dans 60s ») ; deux extraits : (1) démarrage + frame personnelle, (2) cinq pulls suivants.
+# Verdict : docs/LOT_8B2C_ESP8266_EINK29_CANARY_2026_10_12.md § « 4 ter ».
+
+## Extrait 1 — démarrage, register, pull, téléchargement, rendu, ACK
+[BOOT] Proof-of-Draw ESP v2.0
+[CANARY] BUILD LOT8B2C-ESP8266-EINK29-CANARY-1 | base 3239d2e | POD_RENDER_V1=1 POD_CANARY=1 | AUCUN VOTE | compile Oct 12 2026 09:50:11
+[CANARY] cause du dernier reset = 6 (External System) | RTC valide derniere phase=10 (FRAMEHASH) seq=10 anormaux=0
+[CANARY] RAM statique=35104 o (reference ON non-canari : 35056 o ; ballast 1284 o)
+[CANARY] demarrage : +0ms tas=45384 maxBloc=45384 frag=0% pile=3216 t=97
+[WIFI] Connexion..................
+[WIFI] IP: 10.29.55.204
+[HEAP] après WiFi: 43752 bytes
+[CANARY] wifi connecte : +9836ms tas=43752 maxBloc=43304 frag=2% pile=3152 t=9933
+[KEYS] Clés ED25519 chargées depuis EEPROM
+[KEYS] PubKey: 309bd539abbc487d8b422c1c01383fc061ca7fb3abc5d6bb296933a38c91bcd7
+[CHAIN] BlockHash restauré: cbdfc97353efdfd5c9ce1ad62611d417
+[REGISTER] heap avant: 43008
+[HTTP POST] URL: https://proof-of-draw.vercel.app/api/register
+[HTTP POST] body len: 338
+[HTTP POST] /api/register → 200
+[HTTP POST] resp: {"deviceId":"dev_MN67OG7R","pairCode":"9MTNU94Q","canvasUrl":"https://proof-of-draw.vercel.app/draw/dev_MN67OG7R/eink29bwr","paired":true,"artistName":"Roubzi"}
+[REGISTER] heap après: 42472
+[REGISTER] resp: {"deviceId":"dev_MN67OG7R","pairCode":"9MTNU94Q","canvasUrl":"https://proof-of-draw.vercel.app/draw/dev_MN67OG7R/eink29bwr","paired":true,"artistName":"Roubzi"}
+[REGISTER] deviceId: dev_MN67OG7R
+[REGISTER] paired: oui
+[HEAP] avant malloc: 41064 bytes
+[HEAP] après malloc: 31576 bytes
+[REGISTER] Déjà appairé, pas de QR
+[CANARY] register OK : +2323ms tas=33760 maxBloc=21384 frag=31% pile=1504 t=12256
+[BOOT] Premier pull immédiat... [PULL-BEFORE] heap=43248 maxBlock=35808 frag=17%
+[CANARY] pull: debut : +14ms tas=43248 maxBloc=35808 frag=17% pile=1504 t=12270
+[HTTP GET] /api/pull → 200
+[PULL] cartel: title=Temps artist=Roubzi ts=07/10/2026 17:33 (Paris) bloc=91
+[PULL] nextInterval=60s (retryAfter=60)
+[PULL] Nouveau bloc #95 hash=cbdfc97353ef...
+[PULL] Nouvelle frame frameId=08ac7ff7-b12e-4116-be04-c0076ff940e6 source=personal → fetch
+[FETCHFRAME-BEFORE] heap=42840 maxBlock=35808 frag=16%
+[CANARY] frame: debut du telechargement : +1415ms tas=42840 maxBloc=35808 frag=16% pile=1440 t=13685
+[CANARY] planes allouees (9472 o), avant TLS : +9ms tas=33352 maxBloc=26320 frag=20% pile=1440 t=13694
+[HTTP GET] /api/pull-frame → 200
+[CANARY] TLS ouvert (BearSSL alloue) : +1252ms tas=4000 maxBloc=2776 frag=30% pile=992 t=14946
+[CANARY] corps : Content-Length=9472 lus noir=4736 rouge=4736 surplus=0
+[CANARY] corps lu (TLS encore ouvert) : +339ms tas=5864 maxBloc=3392 frag=38% pile=992 t=15285
+[FETCHFRAME] lu black=4736 red=4736 expected=4736
+[CANARY] TLS FERME (client detruit) : +9ms tas=33352 maxBloc=26320 frag=20% pile=992 t=15294
+[CANARY] tas restitue apres la fermeture TLS : 33352 (avant 33352, minimum observe 4000)
+[CANARY] frameHash calcule : +26ms tas=33352 maxBloc=26320 frag=20% pile=992 t=15320
+e-Paper busy
+e-Paper busy TIMEOUT
+e-Paper busy release
+e-Paper busy
+e-Paper busy TIMEOUT
+e-Paper busy release
+e-Paper busy
+e-Paper busy TIMEOUT
+e-Paper busy release
+[CANARY] panneau initialise, flux vers le pilote : +45408ms tas=33176 maxBloc=26320 frag=20% pile=992 t=60728
+e-Paper busy
+e-Paper busy release
+[CANARY] flux remis au pilote (DisplayStream retourne) : +299ms tas=33176 maxBloc=26320 frag=20% pile=992 t=61027
+[CANARY] flux pilote : 296 appels du producteur, plus long appel=1047us, plus long intervalle entre appels=2896us, pile cont minimale=992 o
+[CANARY] renderHash : +11ms tas=33176 maxBloc=26320 frag=20% pile=992 t=61038
+[RENDER] calculé ET remis au pilote — mode=1 frameHash=32f59527a165df2e35d7d6342726ccfa3bc44cf6297ab5734774b88e8a285e8e renderHash=c5b123cd46928a28bdd95ebf9037823f2a8c2637cb78317668a7fc3aac2289a0
+[CANARY] rendu OK, pre-vol TLS avant l'ACK (plans encore vivants) : +24ms tas=33176 maxBloc=26320 frag=20% pile=992 t=61062
+[HTTP POST] URL: https://proof-of-draw.vercel.app/api/ack-frame
+[HTTP POST] body len: 76
+[HTTP POST] /api/ack-frame → 200
+[HTTP POST] resp: {"ok":true,"cleared":false}
+[CANARY] ACK recu (HTTP 200) : frame acquittee : +1654ms tas=32792 maxBloc=26320 frag=19% pile=672 t=62716
+[FETCHFRAME] ✅ affichée et acquittée frameId=08ac7ff7-b12e-4116-be04-c0076ff940e6 source=personal
+[FETCHFRAME-AFTER] heap=32792 maxBlock=26320 frag=19%
+[CANARY] flux pilote : 296 appels du producteur, plus long appel=1047us, plus long intervalle entre appels=2896us, pile cont minimale=992 o
+[BOOT] Pret. Pull dans 60s
+
+## Extrait 2 — cinq pulls suivants (même frame personnelle acquittée, toujours présente dans /api/pull)
+[PULL-BEFORE] heap=42968 maxBlock=41568 frag=4%
+[CANARY] pull: debut : +61427ms tas=42968 maxBloc=41568 frag=4% pile=672 t=1164667
+[HTTP GET] /api/pull → 200
+[PULL] cartel: title=Temps artist=Roubzi ts=07/10/2026 17:33 (Paris) bloc=91
+[PULL] nextInterval=60s (retryAfter=300)
+[PULL] Frame déjà affichée (frameId identique)
+[PULL-BEFORE] heap=42968 maxBlock=41568 frag=4%
+[CANARY] pull: debut : +61444ms tas=42968 maxBloc=41568 frag=4% pile=672 t=1226111
+[HTTP GET] /api/pull → 200
+[PULL] cartel: title=Temps artist=Roubzi ts=07/10/2026 17:33 (Paris) bloc=91
+[PULL] nextInterval=60s (retryAfter=300)
+[PULL] Frame déjà affichée (frameId identique)
+[PULL-BEFORE] heap=42968 maxBlock=41568 frag=4%
+[CANARY] pull: debut : +61435ms tas=42968 maxBloc=41568 frag=4% pile=672 t=1287546
+[HTTP GET] /api/pull → 200
+[PULL] cartel: title=Temps artist=Roubzi ts=07/10/2026 17:33 (Paris) bloc=91
+[PULL] nextInterval=60s (retryAfter=900)
+[PULL] Frame déjà affichée (frameId identique)
+[PULL-BEFORE] heap=42968 maxBlock=41568 frag=4%
+[CANARY] pull: debut : +61443ms tas=42968 maxBloc=41568 frag=4% pile=672 t=1348989
+[HTTP GET] /api/pull → 200
+[PULL] cartel: title=Temps artist=Roubzi ts=07/10/2026 17:33 (Paris) bloc=91
+[PULL] nextInterval=60s (retryAfter=900)
+[PULL] Frame déjà affichée (frameId identique)
+[PULL-BEFORE] heap=42968 maxBlock=41568 frag=4%
+[CANARY] pull: debut : +61435ms tas=42968 maxBloc=41568 frag=4% pile=672 t=1410424
+[HTTP GET] /api/pull → 200
+[PULL] cartel: title=Temps artist=Roubzi ts=07/10/2026 17:33 (Paris) bloc=91
+[PULL] nextInterval=60s (retryAfter=900)
+[PULL] Frame déjà affichée (frameId identique)

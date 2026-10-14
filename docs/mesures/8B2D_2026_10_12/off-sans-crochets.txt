@@ -1,0 +1,17 @@
+# LOT8B2D — chemin désactivé (POD_CANARY = 0) : le sketch compilé tel quel vs le MÊME sketch dont les crochets du canari sont retirés du texte (macros vides => retirées ; POD_CANARY_CANDIDATE développée en sa définition de production). Désassemblage normalisé par fonction (adresses effacées).
+## cœur 1.5.3 : fonctions comparées 1370 ; fonctions au code DIFFÉRENT :
+         1 < <__EH_FRAME_BEGIN__>:
+         1 < <_fini>:
+         1 < <g_pin_cfg>:
+         1 > <__EH_FRAME_BEGIN__>:
+         1 > <_fini>:
+         1 > <g_pin_cfg>:
+   (les seules entrées différentes sont des tables de DONNÉES après _fini ; cause du décalage de 24 o non investiguée plus avant : mêmes tailles de fonctions, adresses différentes : Sketch uses 163452 bytes (62%) contre Sketch uses 163428 bytes (62%))
+## cœur 1.6.0 : fonctions comparées 1370 ; fonctions au code DIFFÉRENT :
+         1 < <__EH_FRAME_BEGIN__>:
+         1 < <_fini>:
+         1 < <g_pin_cfg>:
+         1 > <__EH_FRAME_BEGIN__>:
+         1 > <_fini>:
+         1 > <g_pin_cfg>:
+   (les seules entrées différentes sont des tables de DONNÉES après _fini ; cause du décalage de 24 o non investiguée plus avant : mêmes tailles de fonctions, adresses différentes : Sketch uses 163452 bytes (62%) contre Sketch uses 163428 bytes (62%))

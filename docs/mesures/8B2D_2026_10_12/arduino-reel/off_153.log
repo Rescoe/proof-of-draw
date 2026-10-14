@@ -1,0 +1,323 @@
+$ /tmp/claude-0/cli/arduino-cli compile --config-dir /tmp/claude-0/cfg1.5.3 --fqbn local:renesas_uno:unor4wifi --libraries /tmp/claude-0/sb1.5.3/libraries --build-property build.compiler_path=/usr/bin/ --build-property runtime.tools.ctags.path=/tmp/claude-0/ct3 --build-path /tmp/claude-0/real/real_off_153/build --warnings all --output-dir /tmp/claude-0/real/real_off_153/bin <sketch>/pod_uno_r4 --build-property compiler.cpp.extra_flags=-std=gnu++14
+Downloading index: library_index.tar.bz2 Get "https://downloads.arduino.cc/libraries/library_index.tar.bz2": dial tcp: lookup downloads.arduino.cc on 8.8.8.8:53: no such host
+Error initializing instance: Error downloading index 'https://downloads.arduino.cc/libraries/library_index.tar.bz2': Get "https://downloads.arduino.cc/libraries/library_index.tar.bz2": dial tcp: lookup downloads.arduino.cc on 8.8.8.8:53: no such host
+Error initializing instance: Loading index file: loading json index file /tmp/claude-0/cfg1.5.3/data/package_index.json: open /tmp/claude-0/cfg1.5.3/data/package_index.json: no such file or directory
+Error initializing instance: Error loading hardware platform: discovery builtin:serial-discovery not found
+Error initializing instance: Error loading hardware platform: discovery builtin:mdns-discovery not found
+Error initializing instance: Error loading hardware platform: discovery builtin:dfu-discovery not found
+Error initializing instance: Error loading hardware platform: discovery builtin:serial-discovery not found
+Error initializing instance: Error loading hardware platform: discovery builtin:mdns-discovery not found
+Error initializing instance: Loading index file: reading library_index.json: open /tmp/claude-0/cfg1.5.3/data/library_index.json: no such file or directory
+In file included from /tmp/claude-0/sb1.5.3/hardware/local/renesas_uno/libraries/WiFiS3/src/WiFi.h:11,
+                 from /tmp/claude-0/sb1.5.3/hardware/local/renesas_uno/libraries/WiFiS3/src/WiFiS3.h:23,
+                 from <sketch>/pod_uno_r4/pod_uno_r4.ino:38:
+/tmp/claude-0/sb1.5.3/hardware/local/renesas_uno/libraries/WiFiS3/src/WiFiClient.h:193:16: warning: 'virtual bool WiFiClient::operator==(const WiFiClient&)' was hidden [-Woverloaded-virtual=]
+  193 |   virtual bool operator==(const WiFiClient&);
+      |                ^~~~~~~~
+In file included from /tmp/claude-0/sb1.5.3/hardware/local/renesas_uno/libraries/WiFiS3/src/WiFi.h:14:
+/tmp/claude-0/sb1.5.3/hardware/local/renesas_uno/libraries/WiFiS3/src/WiFiSSLClient.h:183:17: note:   by 'virtual bool WiFiSSLClient::operator==(const WiFiSSLClient&)'
+  183 |    virtual bool operator==(const WiFiSSLClient&);
+      |                 ^~~~~~~~
+/tmp/claude-0/sb1.5.3/hardware/local/renesas_uno/libraries/WiFiS3/src/WiFiClient.h:205:16: warning: 'virtual bool WiFiClient::operator!=(const WiFiClient&)' was hidden [-Woverloaded-virtual=]
+  205 |   virtual bool operator!=(const WiFiClient& whs)
+      |                ^~~~~~~~
+/tmp/claude-0/sb1.5.3/hardware/local/renesas_uno/libraries/WiFiS3/src/WiFiSSLClient.h:195:17: note:   by 'virtual bool WiFiSSLClient::operator!=(const WiFiSSLClient&)'
+  195 |    virtual bool operator!=(const WiFiSSLClient& whs)
+      |                 ^~~~~~~~
+In file included from /tmp/claude-0/sb1.5.3/hardware/local/renesas_uno/libraries/WiFiS3/src/WiFiClient.h:30:
+/tmp/claude-0/sb1.5.3/hardware/local/renesas_uno/cores/arduino/FifoBuffer.h: In member function 'int arduino::FifoBuffer<T, size>::available() [with T = unsigned char; long unsigned int size = 1024]':
+/tmp/claude-0/sb1.5.3/hardware/local/renesas_uno/cores/arduino/FifoBuffer.h:94:5: warning: control reaches end of non-void function [-Wreturn-type]
+   94 |     }
+      |     ^
+/tmp/claude-0/sb1.5.3/hardware/local/renesas_uno/cores/arduino/FifoBuffer.h: In member function 'int arduino::FifoBuffer<T, size>::freePositions() [with T = unsigned char; long unsigned int size = 1024]':
+/tmp/claude-0/sb1.5.3/hardware/local/renesas_uno/cores/arduino/FifoBuffer.h:100:5: warning: control reaches end of non-void function [-Wreturn-type]
+  100 |     }
+      |     ^
+/tmp/claude-0/sb1.5.3/hardware/local/renesas_uno/cores/arduino/FifoBuffer.h: In member function 'bool arduino::FifoBuffer<T, size>::isFull() [with T = unsigned char; long unsigned int size = 1024]':
+/tmp/claude-0/sb1.5.3/hardware/local/renesas_uno/cores/arduino/FifoBuffer.h:113:5: warning: control reaches end of non-void function [-Wreturn-type]
+  113 |     }
+      |     ^
+/tmp/claude-0/sb1.5.3/hardware/local/renesas_uno/cores/arduino/FifoBuffer.h: In member function 'uint32_t arduino::FifoBuffer<T, size>::nextIndex(uint32_t) [with T = unsigned char; long unsigned int size = 1024]':
+/tmp/claude-0/sb1.5.3/hardware/local/renesas_uno/cores/arduino/FifoBuffer.h:41:5: warning: control reaches end of non-void function [-Wreturn-type]
+   41 |     }
+      |     ^
+/tmp/claude-0/sb1.5.3/hardware/local/renesas_uno/cores/arduino/FifoBuffer.h: In member function 'T arduino::FifoBuffer<T, size>::read(bool*) [with T = unsigned char; long unsigned int size = 1024]':
+/tmp/claude-0/sb1.5.3/hardware/local/renesas_uno/cores/arduino/FifoBuffer.h:88:5: warning: control reaches end of non-void function [-Wreturn-type]
+   88 |     }
+      |     ^
+/tmp/claude-0/sb1.5.3/hardware/local/renesas_uno/libraries/WiFiS3/src/Modem.cpp: In destructor 'ModemClass::~ModemClass()':
+/tmp/claude-0/sb1.5.3/hardware/local/renesas_uno/libraries/WiFiS3/src/Modem.cpp:27:7: warning: deleting object of polymorphic class type 'UART' which has non-virtual destructor might cause undefined behavior [-Wdelete-non-virtual-dtor]
+   27 |       delete _serial;
+      |       ^~~~~~~~~~~~~~
+In file included from /tmp/claude-0/sb1.5.3/hardware/local/renesas_uno/libraries/WiFiS3/src/WiFiClient.h:30,
+                 from /tmp/claude-0/sb1.5.3/hardware/local/renesas_uno/libraries/WiFiS3/src/WiFiClient.cpp:1:
+/tmp/claude-0/sb1.5.3/hardware/local/renesas_uno/cores/arduino/FifoBuffer.h: In member function 'int arduino::FifoBuffer<T, size>::available() [with T = unsigned char; long unsigned int size = 1024]':
+/tmp/claude-0/sb1.5.3/hardware/local/renesas_uno/cores/arduino/FifoBuffer.h:94:5: warning: control reaches end of non-void function [-Wreturn-type]
+   94 |     }
+      |     ^
+/tmp/claude-0/sb1.5.3/hardware/local/renesas_uno/cores/arduino/FifoBuffer.h: In member function 'int arduino::FifoBuffer<T, size>::freePositions() [with T = unsigned char; long unsigned int size = 1024]':
+/tmp/claude-0/sb1.5.3/hardware/local/renesas_uno/cores/arduino/FifoBuffer.h:100:5: warning: control reaches end of non-void function [-Wreturn-type]
+  100 |     }
+      |     ^
+/tmp/claude-0/sb1.5.3/hardware/local/renesas_uno/cores/arduino/FifoBuffer.h: In member function 'bool arduino::FifoBuffer<T, size>::isFull() [with T = unsigned char; long unsigned int size = 1024]':
+/tmp/claude-0/sb1.5.3/hardware/local/renesas_uno/cores/arduino/FifoBuffer.h:113:5: warning: control reaches end of non-void function [-Wreturn-type]
+  113 |     }
+      |     ^
+/tmp/claude-0/sb1.5.3/hardware/local/renesas_uno/cores/arduino/FifoBuffer.h: In member function 'uint32_t arduino::FifoBuffer<T, size>::nextIndex(uint32_t) [with T = unsigned char; long unsigned int size = 1024]':
+/tmp/claude-0/sb1.5.3/hardware/local/renesas_uno/cores/arduino/FifoBuffer.h:41:5: warning: control reaches end of non-void function [-Wreturn-type]
+   41 |     }
+      |     ^
+/tmp/claude-0/sb1.5.3/hardware/local/renesas_uno/cores/arduino/FifoBuffer.h: In member function 'T arduino::FifoBuffer<T, size>::read(bool*) [with T = unsigned char; long unsigned int size = 1024]':
+/tmp/claude-0/sb1.5.3/hardware/local/renesas_uno/cores/arduino/FifoBuffer.h:88:5: warning: control reaches end of non-void function [-Wreturn-type]
+   88 |     }
+      |     ^
+In file included from /tmp/claude-0/sb1.5.3/hardware/local/renesas_uno/libraries/WiFiS3/src/WiFi.h:11,
+                 from /tmp/claude-0/sb1.5.3/hardware/local/renesas_uno/libraries/WiFiS3/src/WiFi.cpp:1:
+/tmp/claude-0/sb1.5.3/hardware/local/renesas_uno/libraries/WiFiS3/src/WiFiClient.h:193:16: warning: 'virtual bool WiFiClient::operator==(const WiFiClient&)' was hidden [-Woverloaded-virtual=]
+  193 |   virtual bool operator==(const WiFiClient&);
+      |                ^~~~~~~~
+In file included from /tmp/claude-0/sb1.5.3/hardware/local/renesas_uno/libraries/WiFiS3/src/WiFi.h:14:
+/tmp/claude-0/sb1.5.3/hardware/local/renesas_uno/libraries/WiFiS3/src/WiFiSSLClient.h:183:17: note:   by 'virtual bool WiFiSSLClient::operator==(const WiFiSSLClient&)'
+  183 |    virtual bool operator==(const WiFiSSLClient&);
+      |                 ^~~~~~~~
+/tmp/claude-0/sb1.5.3/hardware/local/renesas_uno/libraries/WiFiS3/src/WiFiClient.h:205:16: warning: 'virtual bool WiFiClient::operator!=(const WiFiClient&)' was hidden [-Woverloaded-virtual=]
+  205 |   virtual bool operator!=(const WiFiClient& whs)
+      |                ^~~~~~~~
+/tmp/claude-0/sb1.5.3/hardware/local/renesas_uno/libraries/WiFiS3/src/WiFiSSLClient.h:195:17: note:   by 'virtual bool WiFiSSLClient::operator!=(const WiFiSSLClient&)'
+  195 |    virtual bool operator!=(const WiFiSSLClient& whs)
+      |                 ^~~~~~~~
+In file included from /tmp/claude-0/sb1.5.3/hardware/local/renesas_uno/libraries/WiFiS3/src/WiFiSSLClient.h:24,
+                 from /tmp/claude-0/sb1.5.3/hardware/local/renesas_uno/libraries/WiFiS3/src/WiFiSSLClient.cpp:1:
+/tmp/claude-0/sb1.5.3/hardware/local/renesas_uno/libraries/WiFiS3/src/WiFiClient.h:193:16: warning: 'virtual bool WiFiClient::operator==(const WiFiClient&)' was hidden [-Woverloaded-virtual=]
+  193 |   virtual bool operator==(const WiFiClient&);
+      |                ^~~~~~~~
+/tmp/claude-0/sb1.5.3/hardware/local/renesas_uno/libraries/WiFiS3/src/WiFiSSLClient.h:183:17: note:   by 'virtual bool WiFiSSLClient::operator==(const WiFiSSLClient&)'
+  183 |    virtual bool operator==(const WiFiSSLClient&);
+      |                 ^~~~~~~~
+/tmp/claude-0/sb1.5.3/hardware/local/renesas_uno/libraries/WiFiS3/src/WiFiClient.h:205:16: warning: 'virtual bool WiFiClient::operator!=(const WiFiClient&)' was hidden [-Woverloaded-virtual=]
+  205 |   virtual bool operator!=(const WiFiClient& whs)
+      |                ^~~~~~~~
+/tmp/claude-0/sb1.5.3/hardware/local/renesas_uno/libraries/WiFiS3/src/WiFiSSLClient.h:195:17: note:   by 'virtual bool WiFiSSLClient::operator!=(const WiFiSSLClient&)'
+  195 |    virtual bool operator!=(const WiFiSSLClient& whs)
+      |                 ^~~~~~~~
+In file included from /tmp/claude-0/sb1.5.3/hardware/local/renesas_uno/libraries/WiFiS3/src/WiFiClient.h:30:
+/tmp/claude-0/sb1.5.3/hardware/local/renesas_uno/cores/arduino/FifoBuffer.h: In member function 'int arduino::FifoBuffer<T, size>::available() [with T = unsigned char; long unsigned int size = 1024]':
+/tmp/claude-0/sb1.5.3/hardware/local/renesas_uno/cores/arduino/FifoBuffer.h:94:5: warning: control reaches end of non-void function [-Wreturn-type]
+   94 |     }
+      |     ^
+/tmp/claude-0/sb1.5.3/hardware/local/renesas_uno/cores/arduino/FifoBuffer.h: In member function 'int arduino::FifoBuffer<T, size>::freePositions() [with T = unsigned char; long unsigned int size = 1024]':
+/tmp/claude-0/sb1.5.3/hardware/local/renesas_uno/cores/arduino/FifoBuffer.h:100:5: warning: control reaches end of non-void function [-Wreturn-type]
+  100 |     }
+      |     ^
+/tmp/claude-0/sb1.5.3/hardware/local/renesas_uno/cores/arduino/FifoBuffer.h: In member function 'bool arduino::FifoBuffer<T, size>::isFull() [with T = unsigned char; long unsigned int size = 1024]':
+/tmp/claude-0/sb1.5.3/hardware/local/renesas_uno/cores/arduino/FifoBuffer.h:113:5: warning: control reaches end of non-void function [-Wreturn-type]
+  113 |     }
+      |     ^
+/tmp/claude-0/sb1.5.3/hardware/local/renesas_uno/cores/arduino/FifoBuffer.h: In member function 'uint32_t arduino::FifoBuffer<T, size>::nextIndex(uint32_t) [with T = unsigned char; long unsigned int size = 1024]':
+/tmp/claude-0/sb1.5.3/hardware/local/renesas_uno/cores/arduino/FifoBuffer.h:41:5: warning: control reaches end of non-void function [-Wreturn-type]
+   41 |     }
+      |     ^
+/tmp/claude-0/sb1.5.3/hardware/local/renesas_uno/cores/arduino/FifoBuffer.h: In member function 'T arduino::FifoBuffer<T, size>::read(bool*) [with T = unsigned char; long unsigned int size = 1024]':
+/tmp/claude-0/sb1.5.3/hardware/local/renesas_uno/cores/arduino/FifoBuffer.h:88:5: warning: control reaches end of non-void function [-Wreturn-type]
+   88 |     }
+      |     ^
+/tmp/claude-0/sb1.5.3/hardware/local/renesas_uno/libraries/WiFiS3/src/WiFiServer.cpp: In member function 'WiFiClient WiFiServer::available()':
+/tmp/claude-0/sb1.5.3/hardware/local/renesas_uno/libraries/WiFiS3/src/WiFiServer.cpp:27:44: warning: implicitly-declared 'WiFiClient& WiFiClient::operator=(const WiFiClient&)' is deprecated [-Wdeprecated-copy]
+   27 |             client = WiFiClient(client_sock);
+      |                                            ^
+In file included from /tmp/claude-0/sb1.5.3/hardware/local/renesas_uno/libraries/WiFiS3/src/WiFiServer.h:26,
+                 from /tmp/claude-0/sb1.5.3/hardware/local/renesas_uno/libraries/WiFiS3/src/WiFiServer.cpp:1:
+/tmp/claude-0/sb1.5.3/hardware/local/renesas_uno/libraries/WiFiS3/src/WiFiClient.h:65:3: note: because 'WiFiClient' has user-provided 'WiFiClient::WiFiClient(const WiFiClient&)'
+   65 |   WiFiClient(const WiFiClient& c);
+      |   ^~~~~~~~~~
+In file included from /tmp/claude-0/sb1.5.3/hardware/local/renesas_uno/libraries/WiFiS3/src/WiFiUdp.h:31,
+                 from /tmp/claude-0/sb1.5.3/hardware/local/renesas_uno/libraries/WiFiS3/src/WiFiUdp.cpp:1:
+/tmp/claude-0/sb1.5.3/hardware/local/renesas_uno/cores/arduino/FifoBuffer.h: In member function 'int arduino::FifoBuffer<T, size>::available() [with T = unsigned char; long unsigned int size = 1461]':
+/tmp/claude-0/sb1.5.3/hardware/local/renesas_uno/cores/arduino/FifoBuffer.h:94:5: warning: control reaches end of non-void function [-Wreturn-type]
+   94 |     }
+      |     ^
+/tmp/claude-0/sb1.5.3/hardware/local/renesas_uno/cores/arduino/FifoBuffer.h: In member function 'int arduino::FifoBuffer<T, size>::freePositions() [with T = unsigned char; long unsigned int size = 1461]':
+/tmp/claude-0/sb1.5.3/hardware/local/renesas_uno/cores/arduino/FifoBuffer.h:100:5: warning: control reaches end of non-void function [-Wreturn-type]
+  100 |     }
+      |     ^
+/tmp/claude-0/sb1.5.3/hardware/local/renesas_uno/cores/arduino/FifoBuffer.h: In member function 'bool arduino::FifoBuffer<T, size>::isFull() [with T = unsigned char; long unsigned int size = 1461]':
+/tmp/claude-0/sb1.5.3/hardware/local/renesas_uno/cores/arduino/FifoBuffer.h:113:5: warning: control reaches end of non-void function [-Wreturn-type]
+  113 |     }
+      |     ^
+/tmp/claude-0/sb1.5.3/hardware/local/renesas_uno/cores/arduino/FifoBuffer.h: In member function 'uint32_t arduino::FifoBuffer<T, size>::nextIndex(uint32_t) [with T = unsigned char; long unsigned int size = 1461]':
+/tmp/claude-0/sb1.5.3/hardware/local/renesas_uno/cores/arduino/FifoBuffer.h:41:5: warning: control reaches end of non-void function [-Wreturn-type]
+   41 |     }
+      |     ^
+/tmp/claude-0/sb1.5.3/hardware/local/renesas_uno/cores/arduino/FifoBuffer.h: In member function 'T arduino::FifoBuffer<T, size>::read(bool*) [with T = unsigned char; long unsigned int size = 1461]':
+/tmp/claude-0/sb1.5.3/hardware/local/renesas_uno/cores/arduino/FifoBuffer.h:88:5: warning: control reaches end of non-void function [-Wreturn-type]
+   88 |     }
+      |     ^
+/tmp/claude-0/sb1.5.3/hardware/local/renesas_uno/libraries/SPI/SPI.cpp: In member function 'virtual void arduino::ArduinoSPI::begin()':
+/tmp/claude-0/sb1.5.3/hardware/local/renesas_uno/libraries/SPI/SPI.cpp:70:8: warning: structured bindings only available with '-std=c++17' or '-std=gnu++17' [-Wc++17-extensions]
+   70 |   auto [cfg_pins_ok, cfg_channel, cfg_is_sci] = cfg_pins(max_index, _miso_pin, _mosi_pin, _sck_pin, _periph_mode);
+      |        ^
+/tmp/claude-0/sb1.5.3/hardware/local/renesas_uno/libraries/SPI/SPI.cpp: In member function 'void arduino::ArduinoSPI::configSpi(const arduino::SPISettings&)':
+/tmp/claude-0/sb1.5.3/hardware/local/renesas_uno/libraries/SPI/SPI.cpp:421:10: warning: structured bindings only available with '-std=c++17' or '-std=gnu++17' [-Wc++17-extensions]
+  421 |     auto [clk_phase, clk_polarity, bit_order] = toFspSpiConfig(settings);
+      |          ^
+/tmp/claude-0/sb1.5.3/hardware/local/renesas_uno/libraries/SPI/SPI.cpp: In member function 'void arduino::ArduinoSPI::configSpiSci(const arduino::SPISettings&)':
+/tmp/claude-0/sb1.5.3/hardware/local/renesas_uno/libraries/SPI/SPI.cpp:480:8: warning: structured bindings only available with '-std=c++17' or '-std=gnu++17' [-Wc++17-extensions]
+  480 |   auto [clk_phase, clk_polarity, bit_order] = toFspSpiConfig(settings);
+      |        ^
+/tmp/claude-0/sb1.5.3/libraries/SD/src/utility/SdFile.cpp: In member function 'uint8_t SdFile::open(SdFile*, const char*, uint8_t)':
+/tmp/claude-0/sb1.5.3/libraries/SD/src/utility/SdFile.cpp:532:15: warning: taking address of packed member of 'directoryEntry' may result in an unaligned pointer value [-Waddress-of-packed-member]
+  532 |     dateTime_(&p->creationDate, &p->creationTime);
+      |               ^~~~~~~~~~~~~~~~
+/tmp/claude-0/sb1.5.3/libraries/SD/src/utility/SdFile.cpp:532:15: warning: taking address of packed member of 'directoryEntry' may result in an unaligned pointer value [-Waddress-of-packed-member]
+/tmp/claude-0/sb1.5.3/libraries/SD/src/utility/SdFile.cpp:532:33: warning: taking address of packed member of 'directoryEntry' may result in an unaligned pointer value [-Waddress-of-packed-member]
+  532 |     dateTime_(&p->creationDate, &p->creationTime);
+      |                                 ^~~~~~~~~~~~~~~~
+/tmp/claude-0/sb1.5.3/libraries/SD/src/utility/SdFile.cpp:532:33: warning: taking address of packed member of 'directoryEntry' may result in an unaligned pointer value [-Waddress-of-packed-member]
+/tmp/claude-0/sb1.5.3/libraries/SD/src/utility/SdFile.cpp: In member function 'uint8_t SdFile::sync(uint8_t)':
+/tmp/claude-0/sb1.5.3/libraries/SD/src/utility/SdFile.cpp:1155:17: warning: taking address of packed member of 'directoryEntry' may result in an unaligned pointer value [-Waddress-of-packed-member]
+ 1155 |       dateTime_(&d->lastWriteDate, &d->lastWriteTime);
+      |                 ^~~~~~~~~~~~~~~~~
+/tmp/claude-0/sb1.5.3/libraries/SD/src/utility/SdFile.cpp:1155:17: warning: taking address of packed member of 'directoryEntry' may result in an unaligned pointer value [-Waddress-of-packed-member]
+/tmp/claude-0/sb1.5.3/libraries/SD/src/utility/SdFile.cpp:1155:36: warning: taking address of packed member of 'directoryEntry' may result in an unaligned pointer value [-Waddress-of-packed-member]
+ 1155 |       dateTime_(&d->lastWriteDate, &d->lastWriteTime);
+      |                                    ^~~~~~~~~~~~~~~~~
+/tmp/claude-0/sb1.5.3/libraries/SD/src/utility/SdFile.cpp:1155:36: warning: taking address of packed member of 'directoryEntry' may result in an unaligned pointer value [-Waddress-of-packed-member]
+/tmp/claude-0/sb1.5.3/hardware/local/renesas_uno/libraries/Wire/Wire.cpp: In member function 'virtual void TwoWire::setClock(uint32_t)':
+/tmp/claude-0/sb1.5.3/hardware/local/renesas_uno/libraries/Wire/Wire.cpp:571:14: warning: enumeration value 'I2C_MASTER_RATE_FASTPLUS' not handled in switch [-Wswitch]
+  571 |       switch (m_i2c_cfg.rate) {
+      |              ^
+/tmp/claude-0/sb1.5.3/libraries/QRCode/src/qrcode.c:41: warning: ignoring '#pragma mark ' [-Wunknown-pragmas]
+   41 | #pragma mark - Error Correction Lookup tables
+      |
+/tmp/claude-0/sb1.5.3/libraries/QRCode/src/qrcode.c:104: warning: ignoring '#pragma mark ' [-Wunknown-pragmas]
+  104 | #pragma mark - Mode testing and conversion
+      |
+/tmp/claude-0/sb1.5.3/libraries/QRCode/src/qrcode.c:143: warning: ignoring '#pragma mark ' [-Wunknown-pragmas]
+  143 | #pragma mark - Counting
+      |
+/tmp/claude-0/sb1.5.3/libraries/QRCode/src/qrcode.c:170: warning: ignoring '#pragma mark ' [-Wunknown-pragmas]
+  170 | #pragma mark - BitBucket
+      |
+/tmp/claude-0/sb1.5.3/libraries/QRCode/src/qrcode.c:254: warning: ignoring '#pragma mark ' [-Wunknown-pragmas]
+  254 | #pragma mark - Drawing Patterns
+      |
+/tmp/claude-0/sb1.5.3/libraries/QRCode/src/qrcode.c:477: warning: ignoring '#pragma mark ' [-Wunknown-pragmas]
+  477 | #pragma mark - Penalty Calculation
+      |
+/tmp/claude-0/sb1.5.3/libraries/QRCode/src/qrcode.c:577: warning: ignoring '#pragma mark ' [-Wunknown-pragmas]
+  577 | #pragma mark - Reed-Solomon Generator
+      |
+/tmp/claude-0/sb1.5.3/libraries/QRCode/src/qrcode.c:631: warning: ignoring '#pragma mark ' [-Wunknown-pragmas]
+  631 | #pragma mark - QrCode
+      |
+/tmp/claude-0/sb1.5.3/libraries/QRCode/src/qrcode.c:772: warning: ignoring '#pragma mark ' [-Wunknown-pragmas]
+  772 | #pragma mark - Public QRCode functions
+      |
+/tmp/claude-0/sb1.5.3/libraries/QRCode/src/qrcode.c: In function 'qrcode_getModule':
+/tmp/claude-0/sb1.5.3/libraries/QRCode/src/qrcode.c:860:11: warning: comparison is always false due to limited range of data type [-Wtype-limits]
+  860 |     if (x < 0 || x >= qrcode->size || y < 0 || y >= qrcode->size) {
+      |           ^
+/tmp/claude-0/sb1.5.3/libraries/QRCode/src/qrcode.c:860:41: warning: comparison is always false due to limited range of data type [-Wtype-limits]
+  860 |     if (x < 0 || x >= qrcode->size || y < 0 || y >= qrcode->size) {
+      |                                         ^
+/tmp/claude-0/sb1.5.3/libraries/Crypto/AES128.cpp: In member function 'virtual void AESTiny128::decryptBlock(uint8_t*, const uint8_t*)':
+/tmp/claude-0/sb1.5.3/libraries/Crypto/AES128.cpp:235:40: warning: unused parameter 'output' [-Wunused-parameter]
+  235 | void AESTiny128::decryptBlock(uint8_t *output, const uint8_t *input)
+      |                               ~~~~~~~~~^~~~~~
+/tmp/claude-0/sb1.5.3/libraries/Crypto/AES128.cpp:235:63: warning: unused parameter 'input' [-Wunused-parameter]
+  235 | void AESTiny128::decryptBlock(uint8_t *output, const uint8_t *input)
+      |                                                ~~~~~~~~~~~~~~~^~~~~
+/tmp/claude-0/sb1.5.3/libraries/Crypto/AES256.cpp: In member function 'virtual void AESTiny256::decryptBlock(uint8_t*, const uint8_t*)':
+/tmp/claude-0/sb1.5.3/libraries/Crypto/AES256.cpp:272:40: warning: unused parameter 'output' [-Wunused-parameter]
+  272 | void AESTiny256::decryptBlock(uint8_t *output, const uint8_t *input)
+      |                               ~~~~~~~~~^~~~~~
+/tmp/claude-0/sb1.5.3/libraries/Crypto/AES256.cpp:272:63: warning: unused parameter 'input' [-Wunused-parameter]
+  272 | void AESTiny256::decryptBlock(uint8_t *output, const uint8_t *input)
+      |                                                ~~~~~~~~~~~~~~~^~~~~
+/tmp/claude-0/sb1.5.3/libraries/Crypto/RNG.cpp:80:2: warning: #warning "no hardware random number source detected for this platform" [-Wcpp]
+   80 | #warning "no hardware random number source detected for this platform"
+      |  ^~~~~~~
+/tmp/claude-0/sb1.5.3/hardware/local/renesas_uno/cores/arduino/Interrupts.cpp: In function 'int pin2IrqChannel(int)':
+/tmp/claude-0/sb1.5.3/hardware/local/renesas_uno/cores/arduino/Interrupts.cpp:78:21: warning: comparison of integer expressions of different signedness: 'int' and 'unsigned int' [-Wsign-compare]
+   78 |   if(pin < 0 || pin >= PINS_COUNT) {
+/tmp/claude-0/sb1.5.3/hardware/local/renesas_uno/cores/arduino/IRQManager.cpp: In member function 'bool IRQManager::addPeripheral(Peripheral_t, void*)':
+/tmp/claude-0/sb1.5.3/hardware/local/renesas_uno/cores/arduino/IRQManager.cpp:385:38: warning: comparison of integer expressions of different signedness: 'uint32_t' {aka 'long unsigned int'} and 'IRQn_Type' {aka 'IRQn'} [-Wsign-compare]
+  385 |         if (irqcfg->first_irq_number != FSP_INVALID_VECTOR) {
+/tmp/claude-0/sb1.5.3/hardware/local/renesas_uno/cores/arduino/IRQManager.cpp:448:38: warning: comparison of integer expressions of different signedness: 'uint32_t' {aka 'long unsigned int'} and 'IRQn_Type' {aka 'IRQn'} [-Wsign-compare]
+  448 |         if (irqcfg->first_irq_number != FSP_INVALID_VECTOR) {
+/tmp/claude-0/sb1.5.3/hardware/local/renesas_uno/cores/arduino/IRQManager.cpp:609:26: warning: unused variable 'scfg' [-Wunused-variable]
+  609 |         i2c_slave_cfg_t *scfg = (i2c_slave_cfg_t *)p_cfg->scfg;
+      |                          ^~~~
+/tmp/claude-0/sb1.5.3/hardware/local/renesas_uno/cores/arduino/IRQManager.cpp:701:27: warning: unused variable 'mcfg' [-Wunused-variable]
+  701 |         i2c_master_cfg_t *mcfg = (i2c_master_cfg_t *)p_cfg->mcfg;
+      |                           ^~~~
+/tmp/claude-0/sb1.5.3/hardware/local/renesas_uno/cores/arduino/IRQManager.cpp: In member function 'void IRQManager::set_canfd_error_link_event(int, int)':
+/tmp/claude-0/sb1.5.3/hardware/local/renesas_uno/cores/arduino/IRQManager.cpp:1779:49: warning: unused parameter 'li' [-Wunused-parameter]
+ 1779 | void IRQManager::set_canfd_error_link_event(int li, int ch)
+      |                                             ~~~~^~
+/tmp/claude-0/sb1.5.3/hardware/local/renesas_uno/cores/arduino/IRQManager.cpp:1779:57: warning: unused parameter 'ch' [-Wunused-parameter]
+ 1779 | void IRQManager::set_canfd_error_link_event(int li, int ch)
+      |                                                     ~~~~^~
+/tmp/claude-0/sb1.5.3/hardware/local/renesas_uno/cores/arduino/IRQManager.cpp: In member function 'void IRQManager::set_canfd_rx_link_event(int, int)':
+/tmp/claude-0/sb1.5.3/hardware/local/renesas_uno/cores/arduino/IRQManager.cpp:1794:46: warning: unused parameter 'li' [-Wunused-parameter]
+ 1794 | void IRQManager::set_canfd_rx_link_event(int li, int ch)
+      |                                          ~~~~^~
+/tmp/claude-0/sb1.5.3/hardware/local/renesas_uno/cores/arduino/IRQManager.cpp:1794:54: warning: unused parameter 'ch' [-Wunused-parameter]
+ 1794 | void IRQManager::set_canfd_rx_link_event(int li, int ch)
+      |                                                  ~~~~^~
+/tmp/claude-0/sb1.5.3/hardware/local/renesas_uno/cores/arduino/IRQManager.cpp: In member function 'void IRQManager::set_canfd_tx_link_event(int, int)':
+/tmp/claude-0/sb1.5.3/hardware/local/renesas_uno/cores/arduino/IRQManager.cpp:1809:46: warning: unused parameter 'li' [-Wunused-parameter]
+ 1809 | void IRQManager::set_canfd_tx_link_event(int li, int ch)
+      |                                          ~~~~^~
+/tmp/claude-0/sb1.5.3/hardware/local/renesas_uno/cores/arduino/IRQManager.cpp:1809:54: warning: unused parameter 'ch' [-Wunused-parameter]
+ 1809 | void IRQManager::set_canfd_tx_link_event(int li, int ch)
+      |                                                  ~~~~^~
+/tmp/claude-0/sb1.5.3/hardware/local/renesas_uno/cores/arduino/cm_backtrace/cm_backtrace.c: In function 'cm_backtrace_init':
+/tmp/claude-0/sb1.5.3/hardware/local/renesas_uno/cores/arduino/cm_backtrace/cm_backtrace.c:144:13: warning: assignment discards 'const' qualifier from pointer target type [-Wdiscarded-qualifiers]
+  144 |     fw_name = firmware_name;
+      |             ^
+/tmp/claude-0/sb1.5.3/hardware/local/renesas_uno/cores/arduino/cm_backtrace/cm_backtrace.c:145:12: warning: assignment discards 'const' qualifier from pointer target type [-Wdiscarded-qualifiers]
+  145 |     hw_ver = hardware_ver;
+      |            ^
+/tmp/claude-0/sb1.5.3/hardware/local/renesas_uno/cores/arduino/cm_backtrace/cm_backtrace.c:146:12: warning: assignment discards 'const' qualifier from pointer target type [-Wdiscarded-qualifiers]
+  146 |     sw_ver = software_ver;
+      |            ^
+/tmp/claude-0/sb1.5.3/hardware/local/renesas_uno/cores/arduino/main.cpp: In function 'void arduino_main()':
+/tmp/claude-0/sb1.5.3/hardware/local/renesas_uno/cores/arduino/main.cpp:92:7: warning: array subscript [16, 47] is outside array bounds of 'const uint32_t [1]' {aka 'const long unsigned int [1]'} [-Warray-bounds=]
+   92 |       *(irq_vector_table + _i +BSP_CORTEX_VECTOR_TABLE_ENTRIES) = (uint32_t)g_vector_table[_i];
+      |       ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+/tmp/claude-0/sb1.5.3/hardware/local/renesas_uno/cores/arduino/main.cpp:7:23: note: at offset [64, 188] into object '__StackTop' of size 4
+    7 | extern const uint32_t __StackTop;
+      |                       ^~~~~~~~~~
+/tmp/claude-0/sb1.5.3/hardware/local/renesas_uno/cores/arduino/tinyusb/rusb2/dcd_rusb2.c: In function 'wait_pipe_fifo_empty':
+/tmp/claude-0/sb1.5.3/hardware/local/renesas_uno/cores/arduino/tinyusb/rusb2/dcd_rusb2.c:289:3: warning: 'return' with a value, in function returning void [-Wreturn-type]
+  289 |   TU_ASSERT(num);
+      |   ^~~~~~~~~
+/tmp/claude-0/sb1.5.3/hardware/local/renesas_uno/cores/arduino/tinyusb/rusb2/dcd_rusb2.c:288:13: note: declared here
+  288 | static void wait_pipe_fifo_empty(rusb2_reg_t* rusb, uint8_t num) {
+      |             ^~~~~~~~~~~~~~~~~~~~
+/usr/lib/gcc/arm-none-eabi/13.2.1/../../../arm-none-eabi/bin/ld: /usr/lib/gcc/arm-none-eabi/13.2.1/../../../arm-none-eabi/lib/thumb/v7e-m+fp/hard/libc_nano.a(libc_a-signalr.o): in function `_getpid_r':
+/build/newlib-38V0JC/newlib-4.4.0.20231231/build_nano/arm-none-eabi/thumb/v7e-m+fp/hard/newlib/../../../../../../newlib/libc/reent/signalr.c:83:(.text+0x2c): warning: _getpid is not implemented and will always fail
+/usr/lib/gcc/arm-none-eabi/13.2.1/../../../arm-none-eabi/bin/ld: /usr/lib/gcc/arm-none-eabi/13.2.1/../../../arm-none-eabi/lib/thumb/v7e-m+fp/hard/libc_nano.a(libc_a-signalr.o): in function `_kill_r':
+/build/newlib-38V0JC/newlib-4.4.0.20231231/build_nano/arm-none-eabi/thumb/v7e-m+fp/hard/newlib/../../../../../../newlib/libc/reent/signalr.c:53:(.text+0x12): warning: _kill is not implemented and will always fail
+Sketch uses 163460 bytes (62%) of program storage space. Maximum is 262144 bytes.
+Global variables use 21676 bytes (66%) of dynamic memory, leaving 11092 bytes for local variables. Maximum is 32768 bytes.
+
+[92mUsed library[0m         [92mVersion[0m [90mPath[0m
+[93mWiFiS3[0m               0.0.0   [90m/tmp/claude-0/core/r1.5.3/libraries/WiFiS3[0m
+[93mSPI[0m                          [90m/tmp/claude-0/core/r1.5.3/libraries/SPI[0m
+[93mSD[0m                   1.3.0   [90m/tmp/claude-0/sb/libraries/SD[0m
+[93mEEPROM[0m               1.0     [90m/tmp/claude-0/core/r1.5.3/libraries/EEPROM[0m
+[93mBlockDevices[0m                 [90m/tmp/claude-0/core/r1.5.3/libraries/BlockDevices[0m
+[93mArduinoJson[0m          7.4.3   [90m/tmp/claude-0/core/libs/ArduinoJson[0m
+[93mAdafruit GFX Library[0m 1.12.6  [90m/tmp/claude-0/core/libs/Adafruit-GFX-Library[0m
+[93mAdafruit BusIO[0m       1.17.4  [90m/tmp/claude-0/core/libs/Adafruit_BusIO[0m
+[93mWire[0m                         [90m/tmp/claude-0/core/r1.5.3/libraries/Wire[0m
+[93mAdafruit ILI9341[0m     1.6.4   [90m/tmp/claude-0/sb/libraries/Adafruit_ILI9341[0m
+[93mAdafruit STMPE610[0m    1.1.6   [90m/tmp/claude-0/sb/libraries/Adafruit_STMPE610[0m
+[93mQRCode[0m               0.0.1   [90m/tmp/claude-0/core/libs/QRCode[0m
+[93mCrypto[0m               0.4.0   [90m/tmp/claude-0/sb/libraries/Crypto[0m
+[93mStorage[0m                      [90m/tmp/claude-0/core/r1.5.3/libraries/Storage[0m
+
+[92mUsed platform[0m     [92mVersion[0m [90mPath[0m
+[93mlocal:renesas_uno[0m 1.5.3   [90m/tmp/claude-0/sb1.5.3/hardware/local/renesas_uno[0m

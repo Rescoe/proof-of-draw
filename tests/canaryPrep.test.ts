@@ -65,7 +65,7 @@ test("build de canari : POD_CANARY = 0 par défaut, jamais actif sans POD_RENDER
   // le firmware annoncé au serveur ne change pas (le canari se reconnaît au moniteur série, pas côté serveur)
   assert.equal((src.match(/#define FIRMWARE_VERSION\s+"r4eink29-1\.1"/g) ?? []).length, 1);
   // aucun autre firmware ne porte l'instrumentation
-  for (const other of ["esp8266/esp_eink_2.9BWR/esp_eink_2.9BWR.ino", "esp8266/esp_tft1.8/esp_tft1.8.ino", "arduino_uno_r4/pod_uno_r4_tft18/pod_uno_r4_tft18.ino", "arduino_uno_r4/pod_uno_r4_eink27/pod_uno_r4_eink27.ino"]) assert.doesNotMatch(read(other), /POD_CANARY/, other);
+  for (const other of ["esp8266/esp_tft1.8/esp_tft1.8.ino", "arduino_uno_r4/pod_uno_r4_tft18/pod_uno_r4_tft18.ino", "arduino_uno_r4/pod_uno_r4_eink27/pod_uno_r4_eink27.ino"]) assert.doesNotMatch(read(other), /POD_CANARY/, other);
 });
 
 test("les binaires de canari ne peuvent PAS être commités : /canary-builds/ est ignoré par git (ils embarquent les identifiants Wi-Fi de secrets.h)", () => {

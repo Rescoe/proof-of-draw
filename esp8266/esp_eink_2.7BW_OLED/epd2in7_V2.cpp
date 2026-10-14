@@ -26,6 +26,7 @@
 
 #include <stdlib.h>
 #include "epd2in7_V2.h"
+#include "pod_canary_flags.h"   // FIX2 : mêmes drapeaux que le sketch (source unique)
 
 static const unsigned char LUT_DATA_4Gray[159] =
 {
@@ -219,10 +220,30 @@ void Epd::SendData(unsigned char data) {
     SpiTransfer(data);
 }
 
+#if POD_RENDER_V1 && POD_CANARY
+// LOT8B2C-27 : compteurs des attentes BUSY (lus par le sketch, canari seulement)
+uint32_t g_pcBusyCalls = 0, g_pcBusyTotalMs = 0, g_pcBusyMaxMs = 0, g_pcBusyTimeouts = 0;
+#define POD_CANARY_BUSY_CEIL_MS 20000UL
+#endif
 /**
  *  @brief: Wait until the busy_pin goes HIGH
  */
 void Epd::ReadBusy(void) {
+#if POD_RENDER_V1 && POD_CANARY
+    // LOT8B2C-27 : ReadBusy() de PRODUCTION attend INDÉFINIMENT (boucle sans plafond). En canari : même polarité, même pas de 100 ms, MAIS plafond de 20 s (puis on CONTINUE, comme le 2,9″ validé, et on le dit)
+    // et mesure de chaque attente. delay() nourrit le chien de garde logiciel : aucun reset pendant l'attente.
+    const uint32_t t0 = millis();
+    Serial.print("e-Paper busy\r\n");
+    g_pcBusyCalls++;
+    while(DigitalRead(busy_pin) == 1) {      //1: busy, 0: idle
+        DelayMs(100);
+        if (millis() - t0 > POD_CANARY_BUSY_CEIL_MS) { g_pcBusyTimeouts++; Serial.print("e-Paper busy TIMEOUT (plafond canari)\r\n"); break; }
+    }
+    const uint32_t d = millis() - t0;
+    g_pcBusyTotalMs += d; if (d > g_pcBusyMaxMs) g_pcBusyMaxMs = d;
+    Serial.print("e-Paper busy release\r\n");
+    return;
+#endif
     Serial.print("e-Paper busy\r\n");
     while(DigitalRead(busy_pin) == 1) {      //1: busy, 0: idle
         DelayMs(100);
