@@ -1,4 +1,5 @@
 import { isSensorScreens } from "@/lib/measures";
+import { ACTIVE_WINDOW_MS } from "@/lib/pullBudget";
 
 // lib/voteCapability.ts — « RÉSEAU DE VOTE RÉEL » (14/10/2026) : quels appareils savent voter en v2 ? (pur, sans Redis, testé)
 //
@@ -26,7 +27,7 @@ export const VOTE_V2_FIRMWARE: Record<string, [number, number]> = {
 /** Ce firmware (chaîne déclarée par l'appareil) sait-il voter en v2 ? */
 export function voteV2Capable(firmware: string | null | undefined): boolean {
   const f = String(firmware ?? "").trim().toLowerCase();
-  const m = /^([a-z0-9]+)-(\d+)\.(\d+)/.exec(f);
+  const m = /^([a-z0-9]+)-(\d+)\.(\d+)(?:\.\d+)?$/.exec(f);   // ancrée aux deux bouts (VOTE-NETWORK-GATE-FIX1) : « r4tft28-2.5abc » ou « r4tft28-2.5-x » ne passent pas
   if (!m) return false;
   const min = VOTE_V2_FIRMWARE[m[1]];
   if (!min) return false;
@@ -46,4 +47,32 @@ export function participatesInVoteNetwork(device: { screens?: readonly string[] 
   if (device.screens && isSensorScreens(device.screens)) return true;   // capteur seul : hors mécanisme
   if (!voteOnlyNetwork(env)) return true;
   return voteV2Capable(device.firmware);
+}
+
+/** Résultat de l'admission d'un VOTE (VOTE-NETWORK-GATE-FIX1). */
+export type VoteAdmission = { ok: true } | { ok: false; status: 403 | 404; reason: string; error: string };
+
+/**
+ * Un appareil peut-il VOTER ? Appliquée par /api/validation-result AVANT tout calcul. Quand `VOTE_ONLY_NETWORK` est actif :
+ *   - un capteur seul ne vote jamais ;
+ *   - le firmware déclaré doit savoir voter en v2 (déclaratif : la preuve cryptographique reste la signature v2, vérifiée par la route) ;
+ *   - tout vote v1 (écho du score serveur, sans recalcul) est REFUSÉ ;
+ *   - l'appareil doit être appairé ET actif (ping ou présence sous ACTIVE_WINDOW_MS).
+ * `VOTE_ONLY_NETWORK=false` : comportement historique (tout est admis ici ; les contrôles de la route restent).
+ */
+export function voteAdmission(
+  device: { screens?: readonly string[] | null; firmware?: string | null; artistId?: string | null; artistName?: string | null; lastPing?: number; lastSeen?: number } | null | undefined,
+  isV2: boolean,
+  now: number = Date.now(),
+  env: NodeJS.ProcessEnv = process.env,
+): VoteAdmission {
+  if (!device) return { ok: false, status: 404, reason: "device-unknown", error: "Device inconnu" };
+  if (!voteOnlyNetwork(env)) return { ok: true };
+  if (device.screens && isSensorScreens(device.screens)) return { ok: false, status: 403, reason: "sensor-cannot-vote", error: "Un capteur ne vote pas" };
+  if (!voteV2Capable(device.firmware)) return { ok: false, status: 403, reason: "firmware-not-vote-capable", error: "Firmware sans vote v2 : mise à jour requise" };
+  if (!isV2) return { ok: false, status: 403, reason: "v1-vote-refused", error: "Vote v1 (écho du score) refusé : vote v2 requis" };
+  if (!(device.artistId || device.artistName)) return { ok: false, status: 403, reason: "device-not-paired", error: "Appareil non appairé" };
+  const lastActivity = Math.max(Number(device.lastPing) || 0, Number(device.lastSeen) || 0);
+  if (now - lastActivity >= ACTIVE_WINDOW_MS) return { ok: false, status: 403, reason: "device-inactive", error: "Appareil inactif" };
+  return { ok: true };
 }
