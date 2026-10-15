@@ -150,10 +150,10 @@ export function NetworkStage({ snapshot, onDeviceSelect, selectedDeviceId, onSer
     return espLayout.flatMap((node) =>
       node.device.screens.slice(0, 4).map((screen, si) => {
         const total = Math.min(node.device.screens.length, 4);
-        const spreadAngle = total > 1 ? (Math.PI * 0.7) / (total - 1) : 0;
+        const spreadAngle = total > 1 ? Math.min(Math.PI * 0.7, 0.95) / 1 : 0;   // éventail vers l'extérieur : écart fixe entre deux écrans (plus de recouvrement)
         const baseAngle = Math.atan2(node.y - cy, node.x - cx);
         const angle = baseAngle + (si - (total - 1) / 2) * spreadAngle;
-        const dist = 92 * nodeScale;
+        const dist = 125 * nodeScale;
         return {
           screen,
           deviceId: node.device.deviceId,

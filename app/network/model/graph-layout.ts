@@ -63,7 +63,7 @@ function pointToWorld(point: StablePoint, size: number): { x: number; y: number 
   return { x, y };
 }
 
-type Orbits = { deviceOrbit: number; deviceRingGap: number; screenOrbit: number };
+type Orbits = { deviceOrbit: number; deviceRingGap: number; screenOrbit: number; screenSpacing: number };
 
 /** Rayon occupé par un artiste : bulle + appareils (+ anneaux supplémentaires) + écrans + libellés. */
 function artistFootprint(artist: ArtistGroup, orbits: Orbits): number {
@@ -237,9 +237,14 @@ export function layoutNetwork(hierarchy: NetworkHierarchy): GraphLayout {
       });
       addLink(id, deviceId, "device");
 
-      const screenPhase = (stableHash32(`screen:${device.publicId}`) / 0x1_0000_0000) * Math.PI * 2;
+      // Topologie en couches : comme les appareils s'écartent du centre (artiste), les écrans s'écartent de leur appareil VERS L'EXTÉRIEUR, en éventail.
+      // L'écart angulaire garantit que deux vignettes voisines ne se recouvrent pas (arc >= screenSpacing) ; l'espace entre l'appareil et l'écran laisse voir le lien.
+      const outward = Math.atan2(devicePos.y - position.y, devicePos.x - position.x);
+      const count = device.screens.length;
+      let step = count > 1 ? 2 * Math.asin(Math.min(0.98, orbits.screenSpacing / (2 * orbits.screenOrbit))) : 0;
+      if (count > 1 && step * (count - 1) > 2.2) step = 2.2 / (count - 1);
       device.screens.forEach((screen, screenIndex) => {
-        const angle = screenPhase + (Math.PI * 2 * screenIndex) / Math.max(1, device.screens.length);
+        const angle = outward + (screenIndex - (count - 1) / 2) * step;
         const screenId = screenNodeId(device.publicId, screen.screen);
         nodes.push({
           id: screenId,
