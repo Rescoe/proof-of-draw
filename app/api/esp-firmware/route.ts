@@ -152,8 +152,8 @@ export async function GET(req: NextRequest) {
         "",
         "Plus d'infos : https://proof-of-draw.vercel.app/learn",
         "",
-        "Licence : MIT — code libre",
-        "Dessins soumis au réseau : CC0 — domaine public avec traçabilité blockchain",
+        "Licence : aucune licence logicielle générale accordée, tous droits réservés (voir le README du dépôt) ; les bibliothèques tierces gardent leurs licences",
+        "Dessins soumis au réseau : traçabilité par chaîne liée par hachage ; régime de droits des œuvres à décider (voir README)",
       ].join("\n"),
     );
 

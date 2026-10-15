@@ -147,8 +147,7 @@ export const INSTALL_PROFILES: Record<InstallProfileId, InstallProfile> = {
     moduleReference: "Waveshare 2.9inch e-Paper B V4",
     shortDescription: "Le même e-ink trois couleurs, piloté par une UNO R4 WiFi avec buffers statiques.",
     wiringIntro: "Utilisez le SPI matériel de la R4 : DIN sur D11 et CLK sur D13, puis les quatre lignes de contrôle.",
-    wiring: [WIRING.r4Eink29], specificLibraries: [], accent: "#ef4444", testedOnHardware: false,
-    statusNote: "Le firmware compile et son lecteur réseau est testé sur PC, mais cette combinaison doit encore être validée sur une carte physique.",
+    wiring: [WIRING.r4Eink29], specificLibraries: [], accent: "#ef4444", testedOnHardware: true,   // validé sur la carte : canari réseau/TLS (11/10/2026), vote v2 observé (blocs #100, #101, #103)
   },
   r4Eink27: {
     id: "r4Eink27", boardId: "unoR4", installScreenId: "eink27bwSolo",

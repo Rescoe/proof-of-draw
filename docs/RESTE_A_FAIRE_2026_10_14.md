@@ -1,5 +1,7 @@
 # Ce qu'il reste à faire — état au 14/10/2026 (fin de journée)
 
+> **Mise à jour du 15/10/2026 (état courant : `docs/ETAT_PUBLIC_ET_SOURCES_IA_2026_10_15.md`).** Déployés sur `main` (`f6f648e`) : réception maintenue (le point B1 ci-dessous est **abandonné** : la réception est maintenue pour tous), archive des rejets `REJECTED-CANDIDATE-ARCHIVE-1` + `FIX1` (B4 **fait**), `TFT28-ACK-STATE-FIX1` validé sur la carte (C2 **fait**, aucun nouveau flash requis), preuves du bloc #104. Reste à observer en production : `docs/VERIFICATIONS_POST_DEPLOIEMENT_REJETS_RECEPTION_2026_10_15.md`. Pas de reset global : fork en cas d'évolution incompatible.
+
 Contexte : le vote réel v2 est en production (blocs #100, #101, #103). Ce document liste **tout ce qui reste**, classé par ordre de priorité conseillé, avec pour chaque point l'effort estimé (S = quelques heures, M = une demi-journée à une journée, L = plusieurs jours), et si cela demande un reflash. Les références (`docs/…`) sont dans le dépôt.
 
 ## A. À faire en premier (court, utile)

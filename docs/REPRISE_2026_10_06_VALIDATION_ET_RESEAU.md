@@ -1,5 +1,7 @@
 # Reprise du 06/10/2026 — validation réelle et page Réseau
 
+> **DOCUMENT HISTORIQUE — état courant au 15/10/2026 : voir `lib/projectStatus.ts` et `docs/ETAT_PUBLIC_ET_SOURCES_IA_2026_10_15.md`.** Ce document est conservé tel qu’il a été écrit à sa date ; les affirmations « non validé », « à essayer » ou « jamais flashé » qu’il contient ont pu être dépassées depuis (le vote v2 réel est opérationnel ; blocs #100, #101, #103, #104).
+
 Cette note est le point de départ commun pour le porteur du projet et Claude. Elle complète
 `CHANTIER_VALIDATION_REELLE.md` et `SESSION_2026_10_05_CLOTURE.md` ; elle ne les remplace pas.
 

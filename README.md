@@ -8,7 +8,7 @@
 
 Proof of Draw is an experimental art network connecting a web drawing studio, a serverless coordination layer and physical ESP8266 / Arduino UNO R4 WiFi displays. Artworks can be drawn or animated in the browser, converted into deterministic screen payloads, proposed to a pool of devices, signed and acknowledged by embedded clients, then rendered on e-paper, OLED or TFT screens.
 
-The project explores verifiable digital-to-physical art, constrained rendering, embedded signatures, device consensus, local SD archives and environmental measurements. It is active research software: display and acknowledgement paths have been validated on selected hardware, while real multi-device voting and remote firmware updates are still under validation.
+The project explores verifiable digital-to-physical art, constrained rendering, embedded signatures, device consensus, local SD archives and environmental measurements. It is active research software. Real v2 voting is operational: capable devices recompute the content and metrics and sign their votes with Ed25519, and the server verifies the signatures; real blocks (#100, #101, #103, #104) have been mined by multi-device quorum. Some device families still await hardware qualification, and remote firmware updates (OTA) are neither generalised nor validated across the fleet.
 
 This repository is public for transparency and research. **No software licence has been granted yet**; see [Licence and reuse](#licence-et-réutilisation) before reusing the code.
 
@@ -28,23 +28,29 @@ Le projet associe ainsi :
 - une visualisation publique des artistes, œuvres, appareils et événements du réseau ;
 - des expériences autour des capteurs et de la preuve de mesure.
 
-Proof of Draw n’est pas, à ce stade, une blockchain autonome. Le serveur coordonne encore le réseau et Redis conserve son état opérationnel. La recherche porte précisément sur ce qui peut être vérifié, calculé, affiché ou archivé par les appareils eux-mêmes.
+Proof of Draw n’est pas, à ce stade, une blockchain publique, autonome ou décentralisée. Le serveur coordonne encore le réseau et Redis conserve son état opérationnel et la chaîne. La recherche porte précisément sur ce qui peut être vérifié, calculé, affiché ou archivé par les appareils eux-mêmes.
 
-## État du projet — octobre 2026
+## État du projet — 15 octobre 2026
 
-Le dépôt évolue par petits lots audités, compilés sur l’hôte, puis validés par des canaris matériels. Une fonctionnalité présente dans le code n’est donc pas automatiquement considérée comme validée sur toutes les cartes.
+> Faits courants, sources et limites : [`lib/projectStatus.ts`](lib/projectStatus.ts) (source unique, testée) · [`/llms.txt`](https://proof-of-draw.vercel.app/llms.txt) · [`docs/ETAT_PUBLIC_ET_SOURCES_IA_2026_10_15.md`](docs/ETAT_PUBLIC_ET_SOURCES_IA_2026_10_15.md).
+
+Le dépôt évolue par petits lots audités, compilés sur l’hôte, puis validés par des canaris matériels. Une fonctionnalité présente dans le code n’est pas automatiquement considérée comme validée sur toutes les cartes.
+
+**Le vote v2 réel est opérationnel.** Les appareils recalculent le contenu brut du candidat et trois métriques entières, décident d’un verdict objectif puis signent leur vote en Ed25519 ; le serveur vérifie réellement les signatures et compare hash et métriques à ses propres valeurs. Des blocs réels ont été minés par quorum multi-appareils : **#100, #101, #103 et #104** (le #104 compte 2 votes v2, 0 vote v1 et 0 rejet ; le #101 comptait encore un vote v1 d’un ancien appareil, avant le correctif qui les refuse). Preuves : [`docs/SYNTHESE_VOTE_REEL_ET_PRODUCTION_DIRECTE_2026_10_14.md`](docs/SYNTHESE_VOTE_REEL_ET_PRODUCTION_DIRECTE_2026_10_14.md) et [`docs/mesures/TFT28_ACK_BLOC104_2026_10_15/`](docs/mesures/TFT28_ACK_BLOC104_2026_10_15/).
+
+Un appareil dont le firmware ne sait pas voter en v2 **continue de recevoir les œuvres**, mais ne reçoit jamais de demande de validation, ne vote pas et ne compte pas dans le quorum.
 
 ### Chemins validés matériellement
 
-| Installation | Réception et affichage | ACK | Stabilité observée | Vote réel |
-|---|---:|---:|---:|---:|
-| UNO R4 WiFi + e-ink 2,9″ BWR | oui | oui | canari mémoire et TLS validé | non validé |
-| ESP8266 + e-ink 2,9″ BWR | oui | oui | rendu v1 validé, marge TLS mesurée | non validé |
-| ESP8266 + e-ink 2,7″ BW + OLED | oui | oui | coexistence e-ink/OLED et pulls répétés validés sur branche de recherche | non validé |
-| UNO R4 WiFi + TFT 2,8″ tactile + SD | image fixe et animation validées sur branche de recherche | oui | cache SD et lecture d’animation observés | non validé |
-| UNO R4 WiFi + DHT22 | mesure et envoi validés | n/a | lecture toutes les 30 min, envoi horaire | n/a |
+| Installation | Réception et affichage | ACK | Vote v2 observé sur la carte |
+|---|---:|---:|---:|
+| UNO R4 WiFi + e-ink 2,9″ BWR | oui | oui | oui (#100, #101, #103) |
+| UNO R4 WiFi + TFT 2,8″ tactile + SD | image fixe et animation | oui (l’ACK décide du succès local, validé le 15/10/2026) | oui (#100, #103, #104) |
+| ESP8266 + e-ink 2,9″ BWR | oui | oui | oui (#101, #104) |
+| ESP8266 multiscreen e-ink 2,7″ + OLED | oui | oui | oui (#103) |
+| UNO R4 WiFi + DHT22 | mesure et envoi validés | n/a | n/a |
 
-Les autres firmwares présents dans le dépôt ont des niveaux de maturité différents : certains sont compilés seulement, d’autres attendent une carte de test. Le vote matériel multi-appareils et l’OTA ne doivent pas être considérés comme déployés.
+**Qualifications matérielles restantes** (code de vote compilé, vote jamais observé sur la carte ; ce n’est pas une absence de consensus) : ESP8266 e-ink 2,7″ seul, ESP8266 TFT 1,8″, UNO R4 e-ink 2,7″ seul, UNO R4 e-ink 2,7″ + OLED, UNO R4 TFT 1,8″. Les animations suivent le même parcours qu’un dessin mais sont encore votées en v1 : leur validation par calcul n’est pas active. L’OTA n’est ni généralisée ni validée sur la flotte. *Proof-of-Display Duration* est une piste de recherche, pas une fonctionnalité disponible.
 
 ### Ce qui fonctionne dans l’application
 
@@ -93,7 +99,7 @@ Le trafic est initié par les appareils vers le serveur : le serveur n’essaie 
 5. Lorsque la politique de quorum est satisfaite, un bloc est finalisé.
 6. Chaque écran récupère son payload binaire, le rend, puis envoie un ACK uniquement après succès.
 
-Le code du protocole de vote existe et dispose de harnais hôte, mais le vote réel contrôlé sur le matériel fait encore partie du chantier de validation.
+Le vote v2 est opérationnel en production (voir « État du projet ») ; ce qui reste porte sur la qualification de familles d’appareils supplémentaires et sur des garanties plus fortes (éligibilité par profil, reçus signés conservés dans le bloc, identités).
 
 ## Architecture technique
 
@@ -141,14 +147,14 @@ public/               ressources statiques de l’application
 
 | Profil | Format | Taille logique | État général |
 |---|---|---:|---|
-| e-ink 2,9″ BWR | noir, blanc, rouge | 296 × 128 | chemins d’affichage validés sur ESP8266 et UNO R4 |
-| e-ink 2,7″ BW | monochrome | 264 × 176 | validé avec OLED sur ESP8266 ; R4 en attente de matériel |
+| e-ink 2,9″ BWR | noir, blanc, rouge | 296 × 128 | affichage et vote v2 validés sur ESP8266 et UNO R4 |
+| e-ink 2,7″ BW | monochrome | 264 × 176 | multiscreen ESP8266 + OLED validé (dont le vote v2) ; ESP8266 seul et R4 à qualifier |
 | OLED 0,96″ | monochrome | 128 × 64 | écran auxiliaire et animation testés avec l’e-ink 2,7″ |
-| TFT 1,8″ | couleur | 160 × 128 | firmware présent, validation matérielle à reprendre |
-| TFT 2,8″ tactile + SD | RGB565 | 240 × 320 | image, cache SD et animation validés sur branche de recherche |
+| TFT 1,8″ | couleur | 160 × 128 | firmware présent, qualification matérielle du vote restante |
+| TFT 2,8″ tactile + SD | RGB565 | 240 × 320 | image, cache SD, animation, ACK et vote v2 validés sur la carte |
 | DHT22 sur UNO R4 | température / humidité | — | acquisition matérielle validée |
 
-Consulter [`docs/COMPATIBILITE_ECRANS.md`](docs/COMPATIBILITE_ECRANS.md) pour les brochages et contraintes connues. Les verdicts récents restent volontairement isolés sur leurs branches tant que leur intégration dans `main` n’a pas été auditée.
+Consulter [`docs/COMPATIBILITE_ECRANS.md`](docs/COMPATIBILITE_ECRANS.md) pour les brochages et contraintes connues. Les verdicts matériels récents sont intégrés dans `main` ; les documents datés conservent l’historique des canaris.
 
 ## Démarrage local
 
@@ -229,8 +235,10 @@ Ces protections sont spécifiques aux chemins et aux cibles. Une réussite sur u
 
 ## Sécurité et modèle de confiance
 
+> Proof-of-Draw fournit une preuve applicative et cryptographique orchestrée par le serveur et les appareils. Les votes v2 sont réellement signés en Ed25519 et vérifiés côté serveur. Les clés sont toutefois stockées dans l’EEPROM ou la flash et ne sont pas protégées par un secure element. La chaîne est liée par hashes et stockée dans l’infrastructure Proof-of-Draw ; elle n’est pas encore une blockchain publique autonome. L’ACK constitue une preuve applicative de traitement par le firmware, pas une preuve optique indépendante des pixels.
+
 - sessions web signées par HMAC ;
-- identités d’appareils et signatures Ed25519 ;
+- identités d’appareils et signatures Ed25519 vérifiées par le serveur (mode strict) ;
 - hashes SHA-256 des rendus et blocs ;
 - rate limiting et blocage des abus dans Redis ;
 - TTL sur les états temporaires ;
@@ -238,7 +246,7 @@ Ces protections sont spécifiques aux chemins et aux cibles. Une réussite sur u
 - résultats de vote classés afin d’éviter un second envoi lorsque le premier a peut-être atteint le serveur ;
 - ACK envoyé uniquement après un chemin d’affichage considéré comme réussi.
 
-Le projet est expérimental et n’a pas fait l’objet d’un audit de sécurité indépendant complet. Ne l’utilisez pas comme infrastructure critique ou comme preuve juridique sans analyse adaptée.
+Limites connues : pas de signature matérielle inviolable, pas de preuve optique, vote compté par appareil (pas par profil), auteur autorisé à voter sur son propre dessin, votes signés complets non conservés dans le bloc, connexions TLS des cartes sans authentification du serveur, OTA non généralisée. Le projet est expérimental et n’a pas fait l’objet d’un audit de sécurité indépendant complet. Ne l’utilisez pas comme infrastructure critique ou comme preuve juridique sans analyse adaptée.
 
 ## Documentation de recherche
 
@@ -251,9 +259,12 @@ Quelques points d’entrée :
 - [Faisabilité des animations](docs/ANIMATIONS_FAISABILITE_ESP_ET_COULEUR.md)
 - [Capteur DHT22 sur UNO R4](docs/CAPTEUR_TEMPERATURE_R4_DHT22.md)
 - [Verdict du client SSL borné sur R4 e-ink 2,9″](docs/CANARY_R4_EINK29_BOUNDED_SSL_FIX1_VERDICT_2026_10_11.md)
-- [Journal de validation réelle](docs/CHANTIER_VALIDATION_REELLE.md)
+- [État public et sources IA (15/10/2026)](docs/ETAT_PUBLIC_ET_SOURCES_IA_2026_10_15.md) — document de référence de l’état courant
+- [Synthèse du vote réel et de la production directe (14/10/2026)](docs/SYNTHESE_VOTE_REEL_ET_PRODUCTION_DIRECTE_2026_10_14.md)
+- [Reste à faire](docs/RESTE_A_FAIRE_2026_10_14.md)
+- [Journal de validation réelle — historique du chantier](docs/CHANTIER_VALIDATION_REELLE.md)
 
-Les documents datés conservent l’historique de la recherche. Ils peuvent décrire une étape dépassée ; les verdicts les plus récents et le code de `main` priment.
+Les documents datés conservent l’historique de la recherche. Ils peuvent décrire une étape dépassée ; les verdicts les plus récents, `lib/projectStatus.ts` et le code de `main` priment.
 
 ## Contribuer
 
@@ -271,7 +282,7 @@ Les contributions ne doivent contenir aucun secret, dump privé, clé, `.env`, `
 
 **Aucune licence logicielle n’est actuellement accordée par ce dépôt.** Le code est visible publiquement pour documenter la recherche et permettre son examen, mais cette visibilité ne constitue pas une autorisation générale de copier, modifier, distribuer ou exploiter commercialement le projet.
 
-Sauf mention contraire applicable à un composant tiers, tous les droits sur le code et les contenus propres à Proof of Draw sont réservés. Pour une expérimentation, une contribution, une intégration ou une licence commerciale, ouvrez une issue afin de discuter du périmètre et des conditions.
+Sauf mention contraire applicable à un composant tiers, tous les droits sur le code et les contenus propres à Proof of Draw sont réservés. Le régime juridique des œuvres soumises au réseau n’est pas encore fixé (aucun consentement CC0 explicite n’est recueilli par le parcours de soumission actuel) : décision à prendre avant toute affirmation publique. Pour une expérimentation, une contribution, une intégration ou une licence commerciale, ouvrez une issue afin de discuter du périmètre et des conditions.
 
 Les dépendances et bibliothèques tierces conservent leurs licences respectives.
 

@@ -1,5 +1,7 @@
 # Plan de travail — du canari validé au système de consensus final (avant nœuds Raspberry et PoDScan)
 
+> **DOCUMENT HISTORIQUE — état courant au 15/10/2026 : voir `lib/projectStatus.ts` et `docs/ETAT_PUBLIC_ET_SOURCES_IA_2026_10_15.md`.** Ce document est conservé tel qu’il a été écrit à sa date ; les affirmations « non validé », « à essayer » ou « jamais flashé » qu’il contient ont pu être dépassées depuis (le vote v2 réel est opérationnel ; blocs #100, #101, #103, #104).
+
 > **Avancement matériel du 11/10/2026 — lot 8B-2B-2.** AUDIT5 (`3387088`) a confirmé sur UNO R4 WiFi + e-ink 2,9 pouces que le téléchargement de frame appelle `abort()` dans `WiFiSSLClient::read()` après l'envoi de la requête (`M93 V59 R54#`, 2 976 o libres, sommet vierge 1 888 o). Le prochain lot est le correctif étroit `PULLFRAME-BOUNDED-SSL-FIX1`, avant toute frame, propagation, vote ou OTA. Références : `docs/AUDIT_GPT_AUDIT5_PULLFRAME_2026_10_11.md` et `docs/HANDOFF_CLAUDE_CLOUD_PULLFRAME_2026_10_11.md`.
 
 | | |

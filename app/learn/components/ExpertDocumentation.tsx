@@ -184,23 +184,23 @@ Payload adapté au profil de l’écran`}</CodeBlock>
         <div className={styles.licenceGrid}>
           <article>
             <span>Code source</span>
-            <h4>Licence MIT</h4>
+            <h4>Dépôt public, droits réservés</h4>
             <p>
-              Le code du serveur, les firmwares et les bibliothèques peuvent être utilisés, modifiés, redistribués et forkés,
-              y compris commercialement, sous réserve de conserver la notice de licence.
+              Le dépôt est public pour la transparence et l’examen de la recherche. <strong>Aucune licence logicielle générale n’est accordée</strong> :
+              voir le fichier README du dépôt avant toute réutilisation. Les bibliothèques tierces gardent leurs propres licences.
             </p>
           </article>
           <article>
             <span>Œuvres</span>
-            <h4>Licence CC0</h4>
+            <h4>Régime à décider</h4>
             <p>
-              Un dessin soumis est placé dans le domaine public universel. Il est librement partageable, réutilisable et modifiable sans condition.
+              Le régime juridique des dessins soumis au réseau <strong>n’est pas encore fixé</strong> : le parcours de soumission actuel ne recueille pas de consentement
+              explicite à une licence (CC0 ou autre). Aucune licence ouverte n’est donc annoncée pour les œuvres tant que le porteur du projet n’a pas pris cette décision.
             </p>
           </article>
         </div>
         <p>
-          CC0 ne signifie pas anonymat : le nom d’artiste, le hash du dessin et la date restent associés à l’œuvre dans la chaîne.
-          La liberté de réutilisation et la traçabilité de l’origine coexistent.
+          Le nom d’artiste, le hash du dessin et la date restent associés à l’œuvre dans la chaîne : la traçabilité de l’origine est indépendante du régime de droits.
         </p>
       </Disclosure>
     </section>

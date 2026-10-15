@@ -1,7 +1,8 @@
 import { Callout, Code, CodeBlock, Disclosure, SectionHeading } from "./ContentPrimitives";
 import styles from "../learn.module.css";
+import { HARDWARE_PENDING, PROOF_BLOCKS, TRUST_MODEL, VERIFIED_AT } from "@/lib/projectStatus";
 
-// Synthèse technique de Proof-of-Draw (état au 06/10/2026). Vocabulaire HONNÊTE : chaque affirmation correspond à ce que le code fait aujourd’hui ;
+// Synthèse technique de Proof-of-Draw (état vérifié le 15/10/2026 ; faits courants : lib/projectStatus.ts). Vocabulaire HONNÊTE : chaque affirmation correspond à ce que le code fait aujourd’hui ;
 // ce qui n’existe pas encore est dit comme tel et renvoyé à la feuille de route (en bas de la page).
 
 const pipeline = [
@@ -11,23 +12,23 @@ const pipeline = [
   ["Relire", "Chaque carte télécharge le contenu brut du candidat (octets exacts de l’écran, servis par un CDN) et le lit en flux : le firmware évite de recopier l’image dans un second buffer complet."],
   ["Recalculer", "Pendant la lecture, la carte calcule le SHA-256 et trois métriques entières. Elle décide d’un verdict objectif puis signe son vote en Ed25519."],
   ["Voter", "Le serveur vérifie la signature et refuse tout « accepte » dont le hash ou une métrique diffère d’un seul ppm. Le vote est écrit de façon atomique."],
-  ["Miner", "Au quorum (51 % des appareils appairés actifs), le serveur crée le bloc, relié par hash au précédent, et tire au sort le mineur parmi les validateurs."],
-  ["Afficher", "L’œuvre est diffusée aux écrans compatibles. Chaque carte récupère la frame au prochain contact, l’affiche (avec le cartel) puis accuse réception."],
+  ["Miner", "Au quorum (51 % des appareils appairés, actifs et capables de voter en v2, avec au moins un vote v2), le serveur crée le bloc, relié par hash au précédent, et tire au sort le mineur parmi les validateurs."],
+  ["Afficher", "L’œuvre est diffusée aux écrans compatibles, y compris à ceux dont le firmware ne sait pas voter (ils reçoivent l’œuvre, jamais de demande de validation). Chaque carte récupère la frame au prochain contact, l’affiche (avec le cartel) puis accuse réception : cet accusé (ACK) prouve que le firmware a traité l’image, pas que les pixels ont été vus."],
 ];
 
 const firmwares = [
-  ["ESP8266", "e-ink 2,9″ BWR", "Oui", "Testé en réel"],
-  ["ESP8266", "multiscreen e-ink 2,7″ + OLED", "Oui", "Testé en réel"],
-  ["ESP8266", "TFT 1,8″", "Oui", "Testé en réel"],
-  ["ESP8266", "e-ink 2,7″ seul", "Oui (code livré)", "À essayer"],
-  ["UNO R4 WiFi", "e-ink 2,9″ BWR", "Oui", "Testé en réel"],
-  ["UNO R4 WiFi", "e-ink 2,7″ seul · e-ink 2,7″ + OLED · TFT 1,8″", "Oui", "Testé en réel"],
-  ["UNO R4 WiFi", "TFT 2,8″ tactile", "Oui", "Testé en réel"],
+  ["ESP8266", "e-ink 2,9″ BWR", "Oui", "Vote v2 observé sur la carte"],
+  ["ESP8266", "multiscreen e-ink 2,7″ + OLED", "Oui", "Vote v2 observé sur la carte"],
+  ["ESP8266", "e-ink 2,7″ seul", "Oui (code livré)", "À qualifier"],
+  ["ESP8266", "TFT 1,8″", "Oui (code livré)", "À qualifier"],
+  ["UNO R4 WiFi", "e-ink 2,9″ BWR", "Oui", "Vote v2 observé sur la carte"],
+  ["UNO R4 WiFi", "TFT 2,8″ tactile", "Oui", "Vote v2 observé sur la carte ; ACK décisif validé"],
+  ["UNO R4 WiFi", "e-ink 2,7″ seul · e-ink 2,7″ + OLED · TFT 1,8″", "Oui (code livré)", "À qualifier"],
 ];
 
 const levels = [
-  ["N0", "« N appareils étaient en ligne »", "Ancien fonctionnement : le vote recopiait le score du serveur.", "Encore le cas des animations et des appareils à firmware ancien."],
-  ["N1", "Intégrité attestée : plusieurs appareils indépendants ont reçu ces octets exacts et signé leur hash", "Les cartes v2 le font pour les images fixes.", "Atteint partiellement : les votes anciens (écho) sont encore comptés, et les reçus signés ne sont pas conservés dans le bloc."],
+  ["N0", "« N appareils étaient en ligne »", "Ancien fonctionnement : le vote recopiait le score du serveur.", "Encore le cas des animations (votées en v1) ; les images fixes ne l’acceptent plus."],
+  ["N1", "Intégrité attestée : plusieurs appareils indépendants ont reçu ces octets exacts et signé leur hash", "Les cartes v2 le font pour les images fixes.", "Atteint pour les images fixes : les votes v1 (écho) sont refusés depuis le 14/10/2026 et au moins un vote v2 signé est exigé. Limite : les reçus signés complets ne sont pas conservés dans le bloc, et l’appareil peut voter sur son propre dessin."],
   ["N2", "Règles objectives : format valide, image non uniforme, pas de bruit pur", "Appliquées par le firmware ; refus enregistrés mais non bloquants.", "Pas encore revérifiées par le serveur ; motif du refus non signé."],
   ["N3", "Authenticité du geste : le dessin a été tracé à la main", "Vérifiée par le serveur seul (rythme des gestes, replay).", "Pas encore refaisable par un tiers : phase « auditeurs » de la feuille de route."],
 ];
@@ -61,15 +62,19 @@ export function SynthesisPath() {
         <Callout tone="success" title="Ce qui est réel aujourd’hui">
           <p>
             Pour une <strong>image fixe</strong>, plusieurs cartes ESP8266 et UNO R4 téléchargent les octets finaux, calculent un SHA-256 et trois
-            métriques entières, puis signent leur verdict. Un essai réel à quatre appareils l’a confirmé le 6 octobre 2026.
+            métriques entières, puis signent leur verdict en Ed25519 ; le serveur vérifie la signature. Des blocs réels ont été minés par quorum
+            multi-appareils ({PROOF_BLOCKS.map((b) => `#${b.index}`).join(", ")}) ; le #104 compte 2 votes v2, 0 vote v1 et 0 rejet (état vérifié le {VERIFIED_AT}).
           </p>
         </Callout>
         <Callout tone="warning" title="Ce que ce n’est pas (encore)">
           <p>
             Le système est aujourd’hui une <strong>chaîne de blocs centralisée, liée par hachage, alimentée par des attestations signées
             des appareils</strong>. Le serveur choisit le candidat, forme le quorum, tire le mineur et écrit l’unique registre. Ce n’est pas encore
-            une blockchain décentralisée : voir « Ce que PoD n’est pas encore » et la feuille de route.
+            une blockchain publique, autonome ou décentralisée : voir « Ce que PoD n’est pas encore » et la feuille de route.
           </p>
+        </Callout>
+        <Callout tone="info" title="Modèle de confiance">
+          <p>{TRUST_MODEL}</p>
         </Callout>
       </Disclosure>
 
@@ -164,7 +169,7 @@ message signé = pod-vote-v2 | appareil | candidat | hash | version | e | t | r 
 
       <Disclosure title="Identité, signatures et sécurité" id="synth-secu">
         <ul className={styles.powerList}>
-          <li><strong>Clés</strong> : chaque carte génère une paire Ed25519 au premier démarrage et la garde en mémoire permanente.</li>
+          <li><strong>Clés</strong> : chaque carte génère une paire Ed25519 au premier démarrage et la garde dans son EEPROM ou sa flash ; aucun secure element ne la protège.</li>
           <li><strong>Votes v2</strong> : la signature est obligatoire et couvre l’appareil, le candidat, le contenu, les métriques et le verdict.</li>
           <li><strong>Vote atomique</strong> : un script Redis enregistre chaque vote d’un seul tenant ; un double vote est ignoré.</li>
           <li><strong>Session du navigateur</strong> : cookie signé qui prouve la possession d’un écran, sans compte ni mot de passe.</li>
@@ -172,7 +177,7 @@ message signé = pod-vote-v2 | appareil | candidat | hash | version | e | t | r 
         </ul>
         <Callout tone="warning" title="Limites connues, listées dans la feuille de route">
           <p>
-            Un appareil non appairé peut encore voter ; le vote est compté par appareil et non par profil ; l’auteur n’est pas exclu du vote sur son œuvre ;
+            Un appareil non appairé ne peut plus voter (depuis le 14/10/2026), mais le vote est compté par appareil et non par profil et l’auteur n’est pas exclu du vote sur son œuvre ;
             l’enregistrement d’un appareil ne demande pas de preuve de possession de la clé ; les connexions des cartes n’authentifient pas le serveur ;
             la clé de l’ESP8266 est générée avec une source d’aléa à renforcer. Aucun élément matériel sécurisé n’existe sur ces cartes : l’identité sera donc
             liée à un propriétaire, pas à un matériel certifié.
@@ -224,12 +229,15 @@ message signé = pod-vote-v2 | appareil | candidat | hash | version | e | t | r 
 
       <Disclosure title="Ce que PoD n’est pas (encore)" id="synth-pas">
         <ul className={styles.powerList}>
-          <li>Une blockchain <strong>décentralisée</strong> : un registre unique, un serveur qui choisit candidat, quorum et mineur.</li>
+          <li>Une blockchain <strong>publique, autonome ou décentralisée</strong> : un registre unique, un serveur qui choisit candidat, quorum et mineur.</li>
           <li>Un consensus <strong>résistant aux identités multiples</strong> : le vote est par appareil, pas par profil.</li>
           <li>Un <strong>taux de menteurs mesuré</strong> : aucune réputation persistante n’existe ; seul un drapeau « suspect » temporaire.</li>
           <li>Une <strong>validation des animations par calcul</strong>.</li>
           <li>Une <strong>preuve que le dessin est fait à la main</strong> vérifiable par un tiers.</li>
-          <li>Un système à <strong>mise à jour à distance</strong> : chaque carte se reflashe encore par câble.</li>
+          <li>Un système à <strong>mise à jour à distance</strong> (OTA) généralisé et validé : chaque carte se reflashe encore par câble.</li>
+          <li>Une <strong>preuve optique</strong> des pixels affichés : elle n’existe pas, l’ACK prouve le traitement par le firmware, pas ce que l’œil voit.</li>
+          <li>Une <strong>validation matérielle de toutes les familles de cartes</strong> : {HARDWARE_PENDING.length} familles attendent encore leur qualification (code de vote compilé, vote jamais observé sur la carte).</li>
+          <li>Une <strong>preuve de durée d’affichage</strong> : « Proof-of-Display Duration » est une piste de recherche, pas une fonctionnalité.</li>
         </ul>
         <p>Chacun de ces points est une ligne de la feuille de route, avec son statut.</p>
       </Disclosure>

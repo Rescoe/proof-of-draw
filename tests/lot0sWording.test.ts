@@ -69,8 +69,8 @@ test("statuts matériels : ESP8266 e-ink 2,7 seul = compilé, non testé ; R4 + 
   assert.equal(items["fw-tft28"].status, "done");
   assert.match(items["fw-tft28"].note ?? "", /14\/10\/2026.*#103/, "fw-tft28 doit citer la preuve matérielle");
   const synth = read("app/learn/components/SynthesisPath.tsx");
-  assert.match(synth, /"e-ink 2,7″ seul", "Oui \(code livré\)", "À essayer"/);
-  assert.match(synth, /"TFT 2,8″ tactile", "Oui", "Testé en réel"/);
+  assert.match(synth, /"e-ink 2,7″ seul", "Oui \(code livré\)", "À qualifier"/);
+  assert.match(synth, /"TFT 2,8″ tactile", "Oui", "Vote v2 observé sur la carte ; ACK décisif validé"/);   // 15/10/2026 : la colonne d'état = vote observé (plus « Testé en réel »)
   for (const sketch of ["esp8266/esp_eink_2.7BW/esp_eink_2.7BW.ino", "arduino_uno_r4/pod_uno_r4/pod_uno_r4.ino"]) assert.ok(fs.existsSync(path.join(root, sketch)), sketch);
 });
 

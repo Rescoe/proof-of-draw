@@ -1,5 +1,7 @@
 # Chantier « Validation réelle » — rendre le Proof-of-Draw vérifiable par les appareils
 
+> **DOCUMENT HISTORIQUE — état courant au 15/10/2026 : voir `lib/projectStatus.ts` et `docs/ETAT_PUBLIC_ET_SOURCES_IA_2026_10_15.md`.** Ce document est conservé tel qu’il a été écrit à sa date ; les affirmations « non validé », « à essayer » ou « jamais flashé » qu’il contient ont pu être dépassées depuis (le vote v2 réel est opérationnel ; blocs #100, #101, #103, #104).
+
 | | |
 |---|---|
 | **Statut** | Dossier de cadrage et d'analyse — **aucun code écrit**. À lire en entier avant d'ouvrir le chantier. |

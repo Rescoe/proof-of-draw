@@ -1,5 +1,7 @@
 # AGENTS.md
 
+> **État courant (vérifié le 15/10/2026) : lire d'abord `lib/projectStatus.ts` (source unique des faits publics), `docs/ETAT_PUBLIC_ET_SOURCES_IA_2026_10_15.md`, `docs/SYNTHESE_VOTE_REEL_ET_PRODUCTION_DIRECTE_2026_10_14.md` puis `docs/RESTE_A_FAIRE_2026_10_14.md`.** Les sections ci-dessous qui portent une date antérieure sont HISTORIQUES : elles décrivent la V1 du 16/05/2026 et ne reflètent plus l'état du projet. Les consignes de prudence (invariants mémoire, sécurité, rendu) restent en vigueur.
+
 ## Mission
 
 Le projet `proof-of-draw` est une application Next.js + firmware ESP8266 pour dessiner depuis le web et afficher les frames sur des écrans e-ink / OLED connectés à des ESP.
@@ -8,17 +10,19 @@ Le projet `proof-of-draw` est une application Next.js + firmware ESP8266 pour de
 
 ---
 
-## Statut au 16/05/2026
+## Statut
 
-La V1 distribuée est fonctionnelle sur l'écran e-ink 2.9" BWR. Le pipeline complet fonctionne :
+**Historique (16/05/2026)** : la V1 distribuée fonctionnait sur l'e-ink 2,9″ BWR (pipeline dessin → candidat → vote ESP → bloc miné → fetch binaire → affichage ; commit de référence `43aac8f`).
 
-```
-dessin web → candidat → vote ESP → bloc miné → fetch binaire → affichage e-ink
-```
+**État au 15/10/2026** :
+- le **vote v2 réel est opérationnel** : les appareils recalculent le contenu brut et trois métriques entières, puis signent leur vote en **Ed25519** ; le serveur vérifie réellement les signatures (mode strict) ;
+- des blocs réels ont été minés par quorum multi-appareils : **#100, #101, #103 et #104** (#104 : 2 votes v2, 0 vote v1, 0 rejet) ;
+- validateurs v2 observés sur la carte réelle : UNO R4 e-ink 2,9″, UNO R4 TFT 2,8″ (dont l'ACK décisif), ESP8266 e-ink 2,9″, ESP8266 multiscreen ; les autres familles sont des **qualifications matérielles restantes**, pas une absence de consensus ;
+- un appareil incapable de voter en v2 **reçoit encore les œuvres** mais ne reçoit pas `pendingValidation`, ne vote pas et ne compte pas dans le quorum ;
+- les animations sont encore votées en v1 ; l'OTA n'est pas généralisée ; *Proof-of-Display Duration* est une piste de recherche ;
+- **modèle de confiance** : preuve applicative et cryptographique orchestrée par le serveur et les appareils ; clés en EEPROM ou flash sans secure element ; chaîne liée par hashes dans l'infrastructure du projet, pas une blockchain publique autonome ; l'ACK n'est pas une preuve optique.
 
-Commit de référence : `43aac8f`
-
-Le travail restant concerne la généralisation à d'autres types d'écrans et le passage au quorum multi-ESP.
+Ne jamais annoncer : blockchain autonome ou décentralisée, signature matérielle inviolable, preuve optique, OTA universelle, validation matérielle de toutes les cartes. `tests/publicState.test.ts` refuse ces affirmations dans les surfaces publiques.
 
 ---
 
@@ -127,18 +131,18 @@ Pour porter un nouvel écran, trois points à modifier :
 **3. `screenProfiles.ts`**
 - ajouter le profil : `BUF_SIZE`, `bufferCount` (1 ou 2), `format` (`bw` ou `bwr`)
 
-### V1 — Test multi-ESP en pool
+### V1 — Test multi-ESP en pool (FAIT : quorum multi-appareils observé sur les blocs #100, #101, #103, #104)
 
 - vérifier que le quorum `ceil(poolSize × 0.51)` fonctionne avec plusieurs devices
 - vérifier que `alreadyVoted` bloque correctement le double vote
 
-### V2 — Roadmap
+### Chantiers suivants (voir `docs/RESTE_A_FAIRE_2026_10_14.md` et la feuille de route de `app/learn/data/roadmap.ts`)
 
-- `/api/candidate-payload` : payload binaire pour calcul local métriques ESP
-- Signature ED25519 réelle (clé privée EEPROM déjà générée côté ESP)
-- Score composite local : entropie Shannon + transitions + RLE
-- Multi-pool par résolution/couleur
-- Mint on-chain (hors scope V1)
+- qualification matérielle des familles non encore observées au vote ;
+- éligibilité par profil, reçus signés conservés dans le bloc, identités (preuve de possession de la clé) ;
+- validation des animations par calcul (`pod-anim-v3`, inactif) ;
+- OTA signée, portail Wi-Fi ;
+- déjà livré (ne plus le replanifier) : vote v2 (SHA-256 + métriques entières + verdict), **signature Ed25519 réelle**, score composite calculé par les appareils.
 
 ---
 
@@ -149,8 +153,8 @@ Pour porter un nouvel écran, trois points à modifier :
 - ne pas dupliquer la logique de dessin hors de `lib/drawEngine` (l'ancien hook `useCanvasDrawing` a été supprimé)
 - ne pas remplacer `canvasToScreen.ts`
 - ne pas transformer le projet en nouvelle app
-- ne pas ajouter blockchain / wallet / seed / token maintenant
-- ne pas déployer
+- ne pas ajouter blockchain / wallet / seed / token maintenant (et ne pas décrire la chaîne comme une blockchain publique autonome)
+- ne pas déployer ni pousser `main` sans autorisation explicite (audit puis GO)
 - ne pas modifier le design global
 - ne pas inventer une nouvelle architecture de fichiers
 - ne pas faire de fetch sortant vers IP locale
