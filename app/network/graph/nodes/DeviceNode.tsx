@@ -29,13 +29,12 @@ export function DeviceNode({ node, device, selected, hitRadius, detailed, active
       onClick={onSelect} onDoubleClick={onFocus} onKeyDown={(event) => { if (event.key === "Enter") onSelect(); }}>
       <circle className="ng-hit" r={hitRadius} />
       {active && <circle className="ng-device__activity" r={node.radius + 9} />}
-      {voter && <circle className={`ng-device__vote ng-device__vote--${voter}`} r={node.radius + 6}><title>{voter === "yes" ? "Vote v2 : cet appareil valide les dessins" : "Reçoit les œuvres, ne vote pas (firmware sans vote v2)"}</title></circle>}
       {isSensor
         ? <rect className="ng-device__body" x={-node.radius * 0.78} y={-node.radius * 0.78} width={node.radius * 1.56} height={node.radius * 1.56} rx={5} transform="rotate(45)" style={{ stroke: "#fbbf24" }} />
         : <circle className="ng-device__body" r={node.radius} style={{ stroke: HARDWARE_COLOR[device.hardware] }} />}
       {/* Un appareil (ESP) n'affiche jamais d'image : seuls ses écrans (ScreenNode) en portent. */}
       <text className="ng-device__icon" textAnchor="middle" y={4}>{icon}</text>
-      <circle className="ng-device__status" cx={node.radius * 0.68} cy={-node.radius * 0.68} r={5} />
+      <circle className="ng-device__status" cx={node.radius * 0.68} cy={-node.radius * 0.68} r={5}>{voter && <title>{voter === "yes" ? "Vote v2 : cet appareil valide les dessins" : "Reçoit les œuvres, ne vote pas (firmware sans vote v2)"}</title>}</circle>
       {detailed && <text className="ng-device__label" textAnchor="middle" y={node.radius + 17}>{device.publicId.slice(0, 11)}</text>}
       {reading && <g className="ng-device__reading" transform={`translate(0 ${node.radius + (detailed ? 33 : 20)})`}><rect x={-Math.max(26, reading.length * 3.6)} y={-8} width={Math.max(52, reading.length * 7.2)} height={14} rx={7} /><text textAnchor="middle" y={3}>{reading}</text></g>}
     </g>

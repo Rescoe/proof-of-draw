@@ -300,7 +300,6 @@ export function Graph({ variant, snapshot, displays = null, events = [], selecte
         <span><i className="is-device" />appareil</span>
         <span><i className="is-sensor" />capteur</span>
         <span><i className="is-screen" />écran</span>
-        <span><i className="is-voter" />vote v2</span>
         <span><i className="is-latest" />dernier bloc affiché</span>
         <span><i className="is-flow" />flux observé</span>
         <span><i className="is-flow is-recon" />flux reconstitué*</span>
@@ -355,11 +354,10 @@ const GRAPH_STYLES = `
   .ng-thumb{display:grid;place-items:center;width:100%;height:100%;overflow:hidden;border:1px solid rgba(255,255,255,.25);border-radius:5px;background:#fff}.ng-thumb .ld-thumb{border:0;border-radius:0}.ng-thumb .ld-muted{color:#475569;font-size:7px}
   .ng-legend{position:absolute;z-index:4;left:64px;bottom:15px;display:flex;flex-wrap:wrap;gap:8px 14px;max-width:calc(100% - 291px);padding:7px 10px;border:1px solid rgba(148,163,184,.1);border-radius:10px;background:rgba(5,8,16,.72);color:#718198;font:600 8px/1 ui-monospace,monospace;pointer-events:none;backdrop-filter:blur(8px)}.ng-legend .is-sensor{border-radius:2px;border-color:#fbbf24;transform:rotate(45deg) scale(.85)}.ng-device--sensor .ng-device__body{fill:#2a2108}.ng-device--sensor .ng-device__label{fill:#fbbf24}.ng-legend span{display:flex;align-items:center;gap:5px;white-space:nowrap}.ng-legend i{display:inline-block;width:10px;height:10px;border:1px solid #64748b;border-radius:50%}.ng-legend .is-zone{border-style:dashed;border-color:#5d8fc3}.ng-legend .is-artist{border-color:#a78bfa;background:rgba(167,139,250,.18)}.ng-legend .is-device{border-color:#60a5fa;background:rgba(96,165,250,.15)}.ng-legend .is-screen{width:11px;height:7px;border-radius:2px;border-color:#94a3b8}.ng-legend .is-flow{width:16px;height:0;border:0;border-top:2px solid #2dd4bf;border-radius:0}
   .ng-minimap{position:absolute;z-index:5;right:14px;bottom:14px;padding:5px;border:1px solid rgba(148,163,184,.14);border-radius:12px;background:rgba(5,8,16,.85);backdrop-filter:blur(12px)}.ng-minimap>button{display:block;margin-left:auto;min-width:44px;height:32px;border:0;background:transparent;color:#8fa1ba;font:700 9px/1 ui-monospace,monospace;cursor:pointer}.ng-minimap svg{display:block;width:190px;height:120px;border-radius:7px;background:#060b14}.ng-minimap line{stroke:rgba(148,163,184,.25);stroke-width:5}.ng-minimap circle{fill:#64748b}.ng-minimap circle.is-core{fill:#2dd4bf}.ng-minimap circle.is-artist{fill:#a78bfa}.ng-minimap circle.is-device{fill:#60a5fa}.ng-minimap__window{fill:rgba(96,165,250,.08);stroke:#93c5fd;stroke-width:6;vector-effect:non-scaling-stroke}
-  .ng-device__vote{fill:none;stroke-width:2;vector-effect:non-scaling-stroke}.ng-device__vote--yes{stroke:#4ade80;stroke-dasharray:3 4;opacity:.8}.ng-device__vote--no{stroke:#64748b;stroke-dasharray:1 5;opacity:.7}
   .ng-screen__halo{fill:none;stroke-width:2.5;vector-effect:non-scaling-stroke;opacity:.85;animation:ng-halo 2.4s ease-in-out infinite}
   .ng-device__reading rect{fill:rgba(42,33,8,.92);stroke:rgba(251,191,36,.55);stroke-width:1;vector-effect:non-scaling-stroke}.ng-device__reading text{fill:#fbbf24;font:800 8px/1 ui-monospace,monospace}
   .ng-device--sensor{opacity:.88}
-  .ng-legend .is-voter{border-color:#4ade80;border-style:dashed}.ng-legend .is-latest{width:11px;height:7px;border-radius:2px;border-color:#2dd4bf;box-shadow:0 0 5px #2dd4bf}
+  .ng-legend .is-latest{width:11px;height:7px;border-radius:2px;border-color:#2dd4bf;box-shadow:0 0 5px #2dd4bf}
   .ng-toolbar button:disabled{opacity:.45;cursor:default}
   @keyframes ng-halo{0%,100%{opacity:.35}50%{opacity:1}}
   @keyframes ng-stream{to{stroke-dashoffset:-17.1}}
