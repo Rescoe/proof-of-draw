@@ -1,0 +1,9 @@
+// pod_vote_pins.h.example — modèle du fichier LOCAL pod_vote_pins.h du CANARI DE VOTE (POD_VOTE_CANARY = 1), LOT8B2E V4.
+// Copier en pod_vote_pins.h (IGNORÉ par git, ne jamais le commiter), renseigner les trois valeurs, puis compiler avec -DPOD_VOTE_CANARY=1 (POD_CANARY = 0).
+// Le canari ne vote QUE ce candidat, ce profil (tft28), cette taille (153 600 o) et ce hash, et QUE contre ce backend isolé (jamais proof-of-draw.vercel.app).
+#define POD_VOTE_BACKEND_HOST "<hote-du-backend-isole>.vercel.app"          // déploiement de prévisualisation avec Redis dédié
+#define POD_VOTE_PIN_ID       "<candidateId : UUID de 36 caracteres>"        // identifiant du candidat connu
+#define POD_VOTE_PIN_HASH     "<sha256 hexadecimal minuscule, 64 caracteres>"  // SHA-256 des 153 600 octets bruts du candidat
+// VOTE REEL SUR LA PRODUCTION (lot TFT28-PROD-VOTE-CANARY-1, decision du 14/10/2026) : par defaut la production est REFUSEE. Pour l'autoriser, mettre l'hote ci-dessus a "proof-of-draw.vercel.app" ET decommenter la ligne suivante
+// (consentement LOCAL et EXPLICITE ; refuse a la compilation avec un autre hote ; exige POD_CANARY = POD_RENDER_V1 = POD_VOTE_V1 = POD_PREVIEW_ENROLL = 0) :
+// #define POD_VOTE_ALLOW_PRODUCTION 1

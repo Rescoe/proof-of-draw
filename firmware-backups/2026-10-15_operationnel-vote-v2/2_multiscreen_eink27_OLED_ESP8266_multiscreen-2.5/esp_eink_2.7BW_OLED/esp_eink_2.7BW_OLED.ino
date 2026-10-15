@@ -1,0 +1,2447 @@
+// esp_eink_2.7BW_OLED.ino
+// Proof-of-Draw — Firmware multiscreen v2.5
+//
+// ⚠ v2.5 (06/10/2026) — CORRECTIF « le device n'arrive plus à s'enregistrer » (http POST /api/register → -1, puis Exception 29) — NON TESTÉ sur le matériel.
+//    CAUSE : la v2.3 avait remplacé les malloc/free des tampons d'image par des tampons STATIQUES (g_e27Buf 5 808 o + g_oledArt 1 024 o) et la v2.4 avait ajouté le vote v2 :
+//    RAM statique 39 420 → 47 160 o, donc seulement ≈ 30 Ko de tas après le Wi-Fi (« [HEAP] après WiFi: 30336 ») ; BearSSL (TLS) a besoin d'environ 35 Ko : connexion impossible, puis un malloc
+//    qui renvoie NULL dans BearSSL ⇒ plantage. Une RAM statique plus grande RÉDUIT le tas : « statique » n'est pas gratuit sur ESP8266 (80 Ko au total).
+//    CORRECTION : (1) plus aucun gros tampon statique ; l'image e-ink est téléchargée dans la FLASH (LittleFS, par morceaux de 256 o) puis le tampon de 5 808 o n'est alloué qu'APRÈS la fermeture
+//    du TLS et libéré aussitôt (règles 1 et 2 du CLAUDE.md) ; sans système de fichiers, ancien chemin (malloc avant le TLS) ; (2) les messages Serial sont en mémoire FLASH (F()/PSTR()) :
+//    ≈ 6 Ko de RAM rendus ; (3) le tas libre et le plus gros bloc sont journalisés AVANT chaque requête TLS (« [MEM] avant TLS »). Voir docs/NOTE_MULTISCREEN_TAS_2026_10_06.md.
+//
+// Proof-of-Draw — (historique) Firmware multiscreen v2.4
+//
+// ⚠ v2.4 (06/10/2026) — VALIDATION RÉELLE (vote v2) — NON TESTÉ sur le matériel : relit le dessin candidat en flux (e-ink 2,7" ou OLED, selon l'écran annoncé), recalcule SHA-256 + métriques
+//    entières, signe son verdict et vote ; repli sur le vote v1 sans `candidate.v2`. Tampon de lecture OLED = g_e27Buf (statique). Voir docs/CANARI_MULTI_ESP_PROTOCOLE.md.
+// Supporte : oled096 (128×64) + eink27bw (176×264)
+//
+// ⚠ v2.3 (05/10/2026) — CORRECTIF « l'e-ink ne reçoit plus rien après une animation sur l'OLED » — NON TESTÉ sur le matériel.
+//    1. lastFrameId était UNIQUE pour les deux écrans : une frame de même id en attente pour l'autre écran (dessin converti, même id sur l'OLED et l'e-ink) était
+//       jugée « déjà affichée », jamais récupérée NI acquittée, et restait en tête de file jusqu'à son TTL (jusqu'à 2 h pour une animation). Désormais un id PAR écran.
+//    2. Une frame du consensus « déjà affichée » mais encore en attente (ACK perdu) est ré-acquittée (avec `screen`) au lieu de bloquer la file.
+//    3. Échecs réseau répétés avec un tas fragmenté (plus gros bloc libre < 20 Ko) → redémarrage de secours (l'affiche OLED, la clé, le clip en flash survivent).
+//    4. TAMPONS STATIQUES (g_e27Buf 5,8 Ko partagé OLED/e-ink, g_oledArt 1 Ko) au lieu de malloc/free autour de chaque TLS — solution du sketch OLED_ESP_v10_Eink_Fin
+//       (einkRenderBuffer[] / lastRendered[] globaux). RAM statique 39 420 → 46 460 o (compilé, esp8266 3.1.2, nodemcuv2 4M2M) ; le tas libre baisse d'autant : relever `[HEAP]`
+//       / `PULL-BEFORE maxBlock` au Serial (il faut ≥ ~20 000 pour le TLS). Après un rafraîchissement e-ink, l'OLED est ré-initialisé (GPIO12 = SDA = MISO du SPI).
+//    Côté serveur (même date) : la règle « la plus ancienne frame gagne » ne marchait pas (`storedAt` n'existait jamais) — lib/queue.ts frameStoredAt.
+//    Sauvegarde du firmware d'avant : firmware-backups/2026-10-05_avant-correctif-multiscreen/.
+//
+// ⚠⚠ v2.2 (04/10/2026) — AJOUT NON TESTÉ SUR LE MATÉRIEL : ANIMATION EN BOUCLE sur l'OLED (blocs d'animation du consensus).
+//    /api/pull annonce un pointeur `anim` (seulement à un firmware >= multiscreen-2.2 : la version est envoyée à /api/register) ; l'affiche s'affiche d'abord
+//    (ticker compris), puis le clip (≤ 9 Ko, /api/block-clip) est téléchargé, validé et rangé en flash (LittleFS) et joué EN BOUCLE sans AUCUNE requête
+//    entre deux tâches réseau (pull, vote). Une nouvelle image fixe OLED l'arrête. L'e-ink 2.7" n'anime pas. Détails : esp8266/_shared/pod_anim_esp.h.
+//    IDE : Outils → Flash Size → un réglage AVEC système de fichiers (ex. « 4MB (FS:2MB OTA:~1019KB) »), sinon le clip est retéléchargé avant chaque lecture.
+//    Sauvegarde du firmware d'avant : firmware-backups/2026-10-04_avant-animation-esp/ (tag git firmware-avant-animation-esp-2026-10-04).
+//
+// ⚠⚠ v2.1 (03/10/2026) — AJOUT NON TESTÉ SUR LE MATÉRIEL : lecture des animations du banc d'essai (page /bench de l'app, clips PBC1 128×64)
+//    sur l'OLED. Écrit et compilé (ESP8266 core 3.1.2), le lecteur est testé sur PC ; le réseau, la mémoire et l'affichage I2C réel ne l'ont jamais été.
+//    Sauvegarde du firmware d'avant : firmware-backups/2026-10-03_avant-integration-animation/ (tag git firmware-avant-animations-2026-10-03).
+//    Le reste du firmware (frames OLED / e-ink, ticker, validation) est inchangé.
+//
+// IDENTIQUE au eink29BWR v2.0 dans sa logique :
+//   1. Génération paire de clés ED25519 au premier boot → EEPROM
+//   2. Affichage clés UNE SEULE FOIS (OLED + E27)
+//   3. Pull léger (metadata) + fetch frame séparé
+//   4. Boucle validate → mine → pull immédiat
+//   5. Ack uniquement après affichage confirmé
+//   6. lastFrameId mis à jour uniquement après succès
+//   7. Pas de consensusJustDisplayed (géré serveur via alreadyVoted)
+//   8. SPI.begin()/begin() autour de chaque accès E27 (cohabitation I2C)
+
+#include <Arduino.h>
+#include <ESP8266WiFi.h>
+#include <ESP8266HTTPClient.h>
+#include <WiFiClientSecure.h>
+#include <ArduinoJson.h>
+#include <SPI.h>
+#include <Wire.h>
+#include <Adafruit_GFX.h>
+#include <Adafruit_SSD1306.h>
+#include <qrcode.h>
+#include <EEPROM.h>
+#include "epd2in7_V2.h"
+#include "epdif.h"
+#include <Ed25519.h>       // Bibliothèque Crypto (rhempel) — ED25519 réel
+#include "pod_bench_esp.h" // banc d'essai d'animation (clips PBC1) — ⚠ NON TESTÉ sur le matériel (voir en-tête)
+#include "pod_anim_esp.h"  // animation résidente en boucle (blocs d'animation) — ⚠ NON TESTÉ sur le matériel (voir en-tête)
+#include "pod_vote_esp.h"  // validation réelle (vote v2) : SHA-256 + métriques entières en flux — ⚠ NON TESTÉ sur le matériel
+
+// POD_RENDER_V1_BEGIN
+#include "pod_canary_flags.h"   // FIX2 : source unique des drapeaux (le pilote .cpp ne voit pas un #define du .ino)
+// ─── Rendu v1 EN FLUX (lot 8B-2A / 8B-2B-1) — INACTIF PAR DÉFAUT ──────────────────────────────────────────────────────────────────────────────────────────
+// 0 (défaut) : comportement d'avant, octet pour octet (cartel gravé en place dans le tampon, affichage du tampon complet).
+// 1 : l'image reçue (plan unique, JAMAIS modifié) est rendue par le noyau gelé consensus-pod/src/podRenderStream.h (layoutVersion 1 : cartel, fit) et remise au pilote PAR MORCEAUX de 32 octets (DisplayStream) ;
+//     frameHash (octets reçus) et renderHash (octets remis) sont CALCULÉS et seulement journalisés — l'ACK, les routes et le rapport de rendu ne sont PAS modifiés.
+// ⚠ NON ESSAYÉ SUR LA CARTE. Ne pas activer sans canari matériel : docs/LOT_8B2B1_PROPAGATION_2026_10_08.md.
+#ifndef POD_RENDER_V1
+#define POD_RENDER_V1 0
+#endif
+#ifndef POD_RENDER_MODE_DEFAULT
+#define POD_RENDER_MODE_DEFAULT POD_R_FIT   // constante de compilation : le réglage cartelMode n'est PAS exposé (pas d'interface, pas de réglage serveur)
+#endif
+#ifndef POD_CANARY
+#define POD_CANARY 0   // 1 = BUILD LOCAL TEMPORAIRE de CANARI (-DPOD_RENDER_V1=1 -DPOD_CANARY=1) : frame personnelle e-ink -> rendu -> ACK instrumentés, AUCUN vote ; sans effet si POD_RENDER_V1 = 0. NE JAMAIS COMMITER 1 (docs/LOT_8B2C_ESP8266_EINK27_OLED_CANARY_2026_10_13.md).
+#endif
+#if POD_RENDER_V1
+#include "podRenderStream.h"
+#include "crypto_esp8266.h"
+#endif
+// POD_RENDER_V1_END
+
+// ─── CONFIG ────────────────────────────────────────────────────────────────
+// Wi-Fi : copier secrets.h.example en secrets.h (ignoré par git : les identifiants ne doivent JAMAIS être commités), puis renseigner SSID / mot de passe (2,4 GHz).
+#if __has_include("secrets.h")
+  #include "secrets.h"
+  const char* WIFI_SSID     = SECRET_WIFI_SSID;
+  const char* WIFI_PASSWORD = SECRET_WIFI_PASSWORD;
+#else
+  const char* WIFI_SSID     = "";            // ← renseigner (ou créer secrets.h)
+  const char* WIFI_PASSWORD = "";
+#endif
+
+#define SERVER_URL       "https://proof-of-draw.vercel.app"
+#define FIRMWARE_VERSION "multiscreen-2.5"
+#define SCREEN_OLED      "oled096"
+#define SCREEN_E27       "eink27bw"
+
+#define PULL_INTERVAL      60000UL
+#define VALIDATE_INTERVAL  30000UL
+#define E27_MIN_REFRESH_MS 180000UL  // 180s minimum — spec Waveshare 2.7" BW V2
+#define IDLE_DELAY_MS      100UL
+
+// ─── EEPROM layout ─────────────────────────────────────────────────────────
+// [0..31]     : clé privée (32 bytes)
+// [32..63]    : blockHash courant (32 bytes ASCII)
+// [64]        : keyGenerated flag
+// [65..96]    : clé publique (32 bytes)
+// [97]        : onboarding shown flag
+// [98]        : OLED frame saved flag (0x5A = valide)
+// [99..1122]  : OLED frame buffer (1024 bytes)
+// [1123..1202]: OLED ticker text sauvegardé (80 bytes, null-terminated)
+// [1203]      : owned_head   — index de tête du ring buffer (0-9)
+// [1204]      : owned_count  — nombre de slots valides (0-10)
+// [1205..1524]: owned slots  — 10 × 32 bytes = 320 bytes (hashes de blocs possédés)
+// [1525..1539]: réservé
+#define EEPROM_SIZE            1540
+#define EEPROM_PRIVKEY_OFF     0
+#define EEPROM_BLOCKHASH_OFF   32
+#define EEPROM_FLAG_OFF        64
+#define EEPROM_PUBKEY_OFF      65
+#define EEPROM_ONBOARDING_OFF  97
+#define EEPROM_OLED_FLAG_OFF   98
+#define EEPROM_OLED_BUF_OFF    99
+#define EEPROM_OLED_TICK_OFF   (EEPROM_OLED_BUF_OFF + OLED_BUF_SIZE)  // 99+1024 = 1123
+#define EEPROM_OLED_TICK_LEN   80
+#define KEY_GENERATED_FLAG     0xED   // 0xED = ED25519 réel (0x01 = ancienne V1 fake)
+#define ONBOARDING_SHOWN_FLAG  0x01
+#define OLED_FRAME_SAVED_FLAG  0x5A
+// Slots de blocs possédés (ring buffer)
+#define EEPROM_OWNED_HEAD_OFF  1203
+#define EEPROM_OWNED_COUNT_OFF 1204
+#define EEPROM_OWNED_SLOTS_OFF 1205
+#define OWNED_SLOTS_MAX        10
+#define OWNED_HASH_LEN         32   // 32 premiers chars du hash hex
+
+// ─── OLED 128×64 ───────────────────────────────────────────────────────────
+#define OLED_SDA      D6
+#define OLED_SCL      D4
+#define OLED_RST      -1
+#define OLED_WIDTH    128
+#define OLED_HEIGHT   64
+#define OLED_BUF_SIZE ((OLED_WIDTH * OLED_HEIGHT) / 8)  // 1024
+
+Adafruit_SSD1306 oled(OLED_WIDTH, OLED_HEIGHT, &Wire, OLED_RST);
+bool oledReady = false;
+
+// ─── EINK 2.7" BW ──────────────────────────────────────────────────────────
+#define E27_WIDTH    176
+#define E27_HEIGHT   264
+#define E27_BUF_SIZE ((E27_WIDTH * E27_HEIGHT) / 8)  // 5808
+
+Epd epd27;
+unsigned long lastE27RefreshMs = 0;
+bool lastScreenWasSPI = false;  // pour gérer la bascule SPI↔I2C
+
+// ─── STATE ─────────────────────────────────────────────────────────────────
+String deviceId, pairCode, canvasUrl;
+bool   registered  = false;
+bool   paired      = false;
+
+// Dernière frame affichée, PAR ÉCRAN : le serveur peut tenir en attente la même frameId sur l'OLED ET l'e-ink (dessin converti) ;
+// un id unique faisait ignorer la seconde (« déjà affichée »), qui restait alors en tête de file sans jamais être récupérée.
+String lastFrameIdOLED       = "";
+String lastFrameIdE27        = "";
+bool   hasDisplayedFrame     = false;
+bool   lastFrameWasConsensus = false;
+
+String pendingCandidateId     = "";
+unsigned long lastPullMs      = 0;
+unsigned long lastValidateMs  = 0;
+unsigned long nextPullIntervalMs = PULL_INTERVAL;  // adapté par retryAfter serveur
+
+// Clés
+uint8_t privateKey[32];
+uint8_t publicKey[32];
+bool    keysLoaded = false;
+
+// État chaîne
+String currentBlockHash  = "";
+int    currentBlockIndex = -1;
+
+// ─── MÉTADONNÉES CARTEL ─────────────────────────────────────────────────────
+// Lues depuis le JSON de /api/pull, appliquées lors du fetch frame
+String pendingWorkTitle  = "";   // titre de l'œuvre (≤80 chars)
+String pendingArtistName = "";   // nom de l'artiste (≤40 chars)
+String pendingDisplayTs  = "";   // timestamp formaté "DD/MM HH:MM" (UTC)
+
+// ─── REVALIDATION (Axe 3) ───────────────────────────────────────────────────
+// Tâche d'observation envoyée par le serveur quand le device est idle.
+// Contient les hashes des blocs à re-confirmer (JSON array stringifié).
+// Aucun changement d'affichage — confirmation purement réseau.
+String pendingObsHashes  = "";   // ex: ["abcd...","1234..."]
+String pendingObsTarget  = "";   // hash du bloc cible (contient les entrées revalidated[])
+
+// ─── TICKER OLED NON-BLOQUANT ────────────────────────────────────────────────
+// Le buffer artwork est alloué une seule fois sur le heap et réutilisé.
+// Le ticker tourne en boucle infinie via tickerStep() appelé dans loop().
+// Quand un nouveau frame arrive, setOLEDFrame() remplace le contenu.
+// ─── TAMPONS STATIQUES (même solution que le sketch OLED_ESP_v10_Eink_Fin : einkRenderBuffer[] / lastRendered[] globaux) ───
+// ⚠ v2.5 : seul g_oledArt (1 Ko) reste statique. g_e27Buf (5,8 Ko) a été SUPPRIMÉ : il faisait tomber le tas libre sous ce que demande le TLS (voir l'en-tête du fichier).
+// (Ancien raisonnement, conservé pour mémoire :) Un malloc/free de 5,8 Ko (e-ink) ou 1 Ko (OLED) AUTOUR de chaque connexion TLS fragmente le tas de l'ESP8266 : BearSSL, qui veut ≈ 17 Ko d'un seul bloc, finit
+// par ne plus en trouver (http.GET() → -1) et l'écran « ne reçoit plus rien ». Les tampons vivent donc dans la RAM statique (≈ 6,8 Ko pris UNE fois pour toutes,
+// hors du tas) : le tas ne sert plus qu'au TLS, au clip d'animation (alloué puis libéré) et aux Strings.
+static uint8_t g_oledArt[OLED_BUF_SIZE];      // artwork OLED persistant (ticker, restauration après l'animation)
+uint8_t*      oledArtBuf    = nullptr;   // artwork persistant : nullptr tant qu'aucune frame, sinon g_oledArt
+String        oledTicker    = "";        // texte en cours de défilement
+int           oledTickStep  = 0;         // position courante (px, 0 = texte à droite)
+int           oledTickTotal = 0;         // OLED_WIDTH + textWidth = distance totale
+bool          oledTickActive = false;    // ticker en cours ?
+unsigned long lastTickMs    = 0;         // timestamp dernier pas (throttle 35ms)
+
+// ─── DEBUG HEAP ─────────────────────────────────────────────────────────────
+void logHeapState(const char* tag) {
+  Serial.printf_P(PSTR("[%s] heap=%u maxBlock=%u frag=%u%%\n"),
+                tag, ESP.getFreeHeap(),
+                ESP.getMaxFreeBlockSize(),
+                ESP.getHeapFragmentation());
+}
+
+// ─── REDÉMARRAGE DE SECOURS (tas fragmenté) ─────────────────────────────────
+// BearSSL veut ≈ 17 Ko d'UN SEUL bloc. Après des cycles TLS + lecture d'un clip + écritures flash, le tas peut rester assez libre mais trop fragmenté :
+// http.begin()/GET() échouent alors à chaque pull et l'écran « ne reçoit plus rien ». Seul remède fiable sur ESP8266 : redémarrer.
+// Tout ce qui compte survit (clés et affiche OLED en EEPROM, clip en flash LittleFS). Garde-fous : Wi-Fi connecté, 2 échecs d'affilée, bloc libre
+// mesuré AVANT la tentative < 20 Ko, 2 minutes de fonctionnement minimum (pas de boucle de redémarrages si c'est le serveur ou le Wi-Fi qui est en panne).
+#define HEAL_BLOCK_MIN   32000UL   // v2.5 : le TLS a échoué (puis planté) avec ≈ 29,9 Ko de plus gros bloc libre ; 20 000 n'aurait jamais déclenché la reprise
+#define HEAL_FAILS       2
+#define HEAL_MIN_UPTIME  120000UL
+uint8_t g_netFails = 0;
+
+void noteNet(bool ok, uint32_t blockBefore, const char* what) {
+  if (ok) { g_netFails = 0; return; }
+  g_netFails++;
+  Serial.printf_P(PSTR("[HEAL] échec réseau #%u (%s) — bloc libre avant: %u, maintenant: %u\n"),
+                g_netFails, what, (unsigned)blockBefore, (unsigned)ESP.getMaxFreeBlockSize());
+  if (g_netFails >= HEAL_FAILS && WiFi.status() == WL_CONNECTED && blockBefore < HEAL_BLOCK_MIN && millis() > HEAL_MIN_UPTIME) {
+    Serial.println(F("[HEAL] tas fragmenté : redémarrage de secours"));
+    delay(300);
+    ESP.restart();
+  }
+}
+
+#if POD_RENDER_V1 && POD_CANARY
+// ─── CANARI ESP8266 e-ink 2,7″ BW + OLED (LOT8B2C-ESP8266-EINK27-OLED-CANARY-1) ───────────────────────────────────────────────────────────────────�
+// Valide UNIQUEMENT : démarrage -> Wi-Fi -> register -> pull sans frame -> frame PERSONNELLE e-ink 2,7″ (5 808 o) -> reçue dans la FLASH (LittleFS) pendant le TLS -> TLS fermé -> plan relu en RAM -> frameHash -> rendu v1 en flux ->
+// remise au pilote -> ACK 200 obligatoire -> OLED re-vérifié (le bus SPI du pilote e-ink a pris GPIO12 = SDA). Aucun vote, aucune animation, aucun banc d'essai, aucun OTA.
+//  • AUCUN VOTE : doValidate() oublie localement le candidat annoncé (UNE ligne) avant tout réseau ; doObsConfirm() n'envoie rien ; le pointeur d'animation et le mode banc d'essai du pull sont IGNORÉS (aucune requête de clip).
+//  • Trace de PHASES en mémoire RTC utilisateur (survit à un reset logiciel / chien de garde / exception) relue au démarrage suivant avec la CAUSE du reset ; deux redémarrages ANORMAUX consécutifs => ARRÊT sans réseau.
+//  • Mesures : tas libre, plus grand bloc, fragmentation, pile « cont » libre, durée de chaque étape ; pile « cont » minimale et plus long intervalle entre deux appels du producteur PENDANT le flux vers le pilote ;
+//    durée de chaque attente BUSY du pilote (appels, total, maximum, dépassements d'un plafond de 20 s posé en canari seulement : ReadBusy() de production attend INDÉFINIMENT).
+//  • Pré-vol TLS (téléchargement ET ACK) : refus AVANT de construire WiFiClientSecure si le tas ne permet pas BearSSL (iobuf 16 384 + 512, pile de poussée 6 200, contextes).
+//  • Corps : Content-Length connu != 5 808, ou octets en trop déjà disponibles => refus (aucun rendu, aucun ACK). L'ACK DÉCIDE du succès : lastFrameIdE27 n'est mis à jour qu'après un ACK HTTP 200.
+// Tout est ABSENT quand POD_CANARY = 0. Chaînes en flash (F / PSTR).
+#define PCR_MAGIC 0x50433237UL                 // « PC27 »
+#define POD_CANARY_TLS_MIN_HEAP  24000UL      // iobuf 16 384 + 512 + pile de poussée 6 200 = 23 096 o + 900 o de contextes
+#define POD_CANARY_TLS_MIN_BLOCK 17000UL      // iobuf d'entrée (16 384) contigu + en-tête
+#define POD_CANARY_YIELD_ALERT_US 500000UL    // plus de 0,5 s entre deux appels du producteur : le chien de garde logiciel (≈ 3,2 s) approche
+#define POD_CANARY_BUSY_ALERT_MS  8000UL      // une attente BUSY plus longue que 8 s est anormale pour un 2,7″ (rafraîchissement complet ≈ 3 à 4 s)
+struct PodCanaryRtc { uint32_t magic, seq, phase, abn; };   // 16 o
+enum PodCanaryPhase : uint8_t { PCP_NONE = 0, PCP_BOOT, PCP_WIFI, PCP_REGISTER, PCP_PULL, PCP_FETCH, PCP_PLANE_DEST, PCP_TLS_OPEN, PCP_BODY, PCP_TLS_CLOSED, PCP_PLANE_READY, PCP_FRAMEHASH, PCP_PANEL, PCP_STREAM, PCP_FINISH, PCP_ACK, PCP_OLED, PCP_DONE };
+static PodCanaryRtc g_pcRtc = { 0, 0, 0, 0 };
+static uint32_t g_pcStepMs = 0, g_pcHeapPre = 0, g_pcMinHeap = 0xFFFFFFFFUL, g_pcCalls = 0, g_pcEnterUs = 0, g_pcLastEndUs = 0, g_pcMaxCallUs = 0, g_pcMaxGapUs = 0;
+static uint16_t g_pcMinStack = 0xFFFF;
+extern uint32_t g_pcBusyCalls, g_pcBusyTotalMs, g_pcBusyMaxMs, g_pcBusyTimeouts;   // définis dans epd2in7_V2.cpp (ReadBusy borné et mesuré, canari seulement)
+// BALLAST DE REPRÉSENTATIVITÉ : le canari ÉLIMINE le chemin de vote (doValidate retourne avant tout) ; le compilateur retire alors de la RAM statique ce que le build POD_RENDER_V1=1 NON canari conserve.
+// Sans ballast, le tas mesuré serait trop OPTIMISTE pour la configuration à valider. Le démarrage affiche la RAM statique réelle pour la comparer à la référence ON.
+static volatile uint8_t g_pcBallast[20];
+extern "C" { extern char _data_start; extern char _bss_end; }
+bool ensureOLEDReady();
+static const __FlashStringHelper* canaryPhaseName(uint32_t p) {
+  switch (p) {
+    case PCP_BOOT: return F("BOOT"); case PCP_WIFI: return F("WIFI"); case PCP_REGISTER: return F("REGISTER"); case PCP_PULL: return F("PULL"); case PCP_FETCH: return F("FETCH");
+    case PCP_PLANE_DEST: return F("DESTINATION_PLAN"); case PCP_TLS_OPEN: return F("TLS_OUVERT"); case PCP_BODY: return F("CORPS_LU"); case PCP_TLS_CLOSED: return F("TLS_FERME"); case PCP_PLANE_READY: return F("PLAN_PRET");
+    case PCP_FRAMEHASH: return F("FRAMEHASH"); case PCP_PANEL: return F("PANNEAU_INIT"); case PCP_STREAM: return F("FLUX_PILOTE"); case PCP_FINISH: return F("RENDERHASH"); case PCP_ACK: return F("ACK"); case PCP_OLED: return F("OLED_VERIFIE"); case PCP_DONE: return F("TERMINE");
+    default: return F("AUCUNE");
+  }
+}
+/** Inscrit la phase en RTC (écrit AVANT l'étape, relu après un reset) puis journalise : durée depuis l'étape précédente, tas, plus grand bloc, fragmentation, pile « cont » libre. */
+static void canaryStep(uint8_t phase, const __FlashStringHelper* label) {
+  g_pcRtc.magic = PCR_MAGIC; g_pcRtc.seq++; g_pcRtc.phase = phase;
+  ESP.rtcUserMemoryWrite(0, (uint32_t*)&g_pcRtc, sizeof(g_pcRtc));
+  const uint32_t now = millis(), h = ESP.getFreeHeap();
+  if (h < g_pcMinHeap) g_pcMinHeap = h;
+  Serial.print(F("[CANARY] ")); Serial.print(label);
+  Serial.printf_P(PSTR(" : +%lums tas=%u maxBloc=%u frag=%u%% pile=%u t=%lu\n"), (unsigned long)(now - g_pcStepMs), h, ESP.getMaxFreeBlockSize(), ESP.getHeapFragmentation(), ESP.getFreeContStack(), (unsigned long)now);
+  g_pcStepMs = now;
+}
+static void canaryBoot() {
+  Serial.println(F("[CANARY] BUILD LOT8B2C-ESP8266-EINK27-OLED-CANARY-1 | base e059db3 | POD_RENDER_V1=1 POD_CANARY=1 | AUCUN VOTE | compile " __DATE__ " " __TIME__));
+  const uint32_t reason = ESP.getResetInfoPtr()->reason;   // 0 alim · 1 chien de garde MATÉRIEL · 2 exception · 3 chien de garde LOGICIEL · 4 redémarrage logiciel · 5 réveil · 6 reset externe
+  PodCanaryRtc prev = { 0, 0, 0, 0 };
+  ESP.rtcUserMemoryRead(0, (uint32_t*)&prev, sizeof(prev));
+  const bool valid = prev.magic == PCR_MAGIC;
+  const bool abnormal = reason == 1 || reason == 2 || reason == 3;
+  Serial.printf_P(PSTR("[CANARY] cause du dernier reset = %u (%s) | RTC %s derniere phase=%u"), (unsigned)reason, ESP.getResetReason().c_str(), valid ? "valide" : "absente", valid ? (unsigned)prev.phase : 0u);
+  if (valid) { Serial.print(F(" (")); Serial.print(canaryPhaseName(prev.phase)); Serial.printf_P(PSTR(") seq=%u anormaux=%u"), (unsigned)prev.seq, (unsigned)prev.abn); }
+  Serial.println();
+  g_pcRtc.abn = abnormal ? (valid ? prev.abn : 0) + 1 : 0;
+  if (abnormal) Serial.println(F("[CANARY] ALERTE : redemarrage ANORMAL (chien de garde ou exception) — la derniere phase ci-dessus localise la faute"));
+  if (reason == 4) Serial.println(F("[CANARY] note : redemarrage logiciel (ESP.restart) — peut venir de [HEAL] (tas fragmente) : voir les lignes [HEAL] du journal precedent"));
+  if (g_pcRtc.abn >= 2) {
+    g_pcRtc.magic = PCR_MAGIC; ESP.rtcUserMemoryWrite(0, (uint32_t*)&g_pcRtc, sizeof(g_pcRtc));
+    Serial.println(F("[CANARY] ARRET : deux redemarrages anormaux consecutifs — aucun reseau (couper l'alimentation pour rearmer)"));
+    for (;;) delay(1000);
+  }
+  g_pcBallast[0] = 0xA5;   // référencé : sinon --gc-sections retire le ballast
+  Serial.printf_P(PSTR("[CANARY] RAM statique=%u o (reference ON non-canari : 35316 o ; ballast %u o)\n"), (unsigned)(&_bss_end - &_data_start), (unsigned)sizeof(g_pcBallast));
+  Serial.printf_P(PSTR("[CANARY] e-ink : controleur %ux%u (portrait) ; rendu v1 PAYSAGE (cable a gauche) ; plan BW unique %u o ; ORIENTATION PHYSIQUE A JUGER sur l'image de test (lettre F noire en haut a gauche)\n"), (unsigned)E27_WIDTH, (unsigned)E27_HEIGHT, (unsigned)E27_BUF_SIZE);
+  g_pcStepMs = millis();
+  canaryStep(PCP_BOOT, F("demarrage"));
+}
+/** Pré-vol AVANT de construire un WiFiClientSecure (téléchargement ET ACK) : false = pas assez de tas pour BearSSL ; aucune allocation, aucun TLS ouvert. `consequence` dit ce qui arrive à l'appelant. */
+static bool canaryTlsPreflight(uint8_t phase, const __FlashStringHelper* label, const __FlashStringHelper* consequence) {
+  g_pcHeapPre = ESP.getFreeHeap();
+  canaryStep(phase, label);
+  if (g_pcHeapPre < POD_CANARY_TLS_MIN_HEAP || ESP.getMaxFreeBlockSize() < POD_CANARY_TLS_MIN_BLOCK) {
+    Serial.printf_P(PSTR("[CANARY] REFUS pre-vol TLS : tas=%u (min %lu) maxBloc=%u (min %lu) — "), g_pcHeapPre, POD_CANARY_TLS_MIN_HEAP, ESP.getMaxFreeBlockSize(), POD_CANARY_TLS_MIN_BLOCK);
+    Serial.println(consequence);
+    return false;
+  }
+  return true;
+}
+/** Après la fermeture du scope TLS : le tas doit être revenu au niveau d'avant la connexion (à 1 Ko près). Rapport seulement. */
+static void canaryAfterTls() {
+  canaryStep(PCP_TLS_CLOSED, F("TLS FERME (client detruit)"));
+  const uint32_t h = ESP.getFreeHeap();
+  if (h + 1024UL < g_pcHeapPre) Serial.printf_P(PSTR("[CANARY] ALERTE tas non restitue apres la fermeture TLS : %u < %u (avant) — fuite possible\n"), h, g_pcHeapPre);
+  else Serial.printf_P(PSTR("[CANARY] tas restitue apres la fermeture TLS : %u (avant %u, minimum observe %u)\n"), h, g_pcHeapPre, g_pcMinHeap);
+}
+static void canaryProduceEnter() {
+  g_pcEnterUs = micros();
+  if (g_pcLastEndUs != 0) { const uint32_t gap = g_pcEnterUs - g_pcLastEndUs; if (gap > g_pcMaxGapUs) g_pcMaxGapUs = gap; }
+  const uint32_t st = ESP.getFreeContStack(); if (st < g_pcMinStack) g_pcMinStack = (uint16_t)st;
+}
+static void canaryProduceLeave() {
+  g_pcLastEndUs = micros(); g_pcCalls++;
+  const uint32_t d = g_pcLastEndUs - g_pcEnterUs; if (d > g_pcMaxCallUs) g_pcMaxCallUs = d;
+}
+static void canaryStreamReport() {
+  Serial.printf_P(PSTR("[CANARY] flux pilote : %lu appels du producteur, plus long appel=%luus, plus long intervalle entre appels=%luus%s, pile cont minimale=%u o\n"),
+                  (unsigned long)g_pcCalls, (unsigned long)g_pcMaxCallUs, (unsigned long)g_pcMaxGapUs, g_pcMaxGapUs > POD_CANARY_YIELD_ALERT_US ? " (ALERTE chien de garde)" : "", (unsigned)g_pcMinStack);
+}
+static void canaryBusyReport(const __FlashStringHelper* tag) {
+  Serial.print(F("[CANARY] BUSY ")); Serial.print(tag);
+  Serial.printf_P(PSTR(" : attentes=%lu total=%lums maximum=%lums depassements-du-plafond=%lu%s\n"), (unsigned long)g_pcBusyCalls, (unsigned long)g_pcBusyTotalMs, (unsigned long)g_pcBusyMaxMs, (unsigned long)g_pcBusyTimeouts,
+                  (g_pcBusyTimeouts > 0 || g_pcBusyMaxMs > POD_CANARY_BUSY_ALERT_MS) ? " (ALERTE : BUSY anormalement long ou bloque)" : "");
+}
+/** L'OLED après l'e-ink : le rendu a libéré SPI et mis oledReady à faux (GPIO12 = SDA = MISO). On le ré-initialise comme le fait tickerStep() et on remet l'affiche (si elle existe). Le résultat est journalisé : il ne décide jamais du succès de l'e-ink. */
+static void canaryOledProbe() {
+  const bool wasReady = oledReady, spi = lastScreenWasSPI;
+  const bool ok = ensureOLEDReady();
+  Serial.printf_P(PSTR("[CANARY] OLED apres l'e-ink : pret_avant=%d spi_actif_avant=%d reinit=%s affiche_en_memoire=%d\n"), wasReady ? 1 : 0, spi ? 1 : 0, ok ? "OK" : "ECHEC", oledArtBuf ? 1 : 0);
+  if (ok && oledArtBuf) { memcpy(oled.getBuffer(), oledArtBuf, OLED_BUF_SIZE); oled.display(); }
+  canaryStep(PCP_OLED, F("OLED verifie apres l'e-ink"));
+}
+#endif
+// ─── EEPROM helpers ────────────────────────────────────────────────────────
+void eepromInit() { EEPROM.begin(EEPROM_SIZE); }
+
+bool keysAlreadyGenerated() {
+  return EEPROM.read(EEPROM_FLAG_OFF) == KEY_GENERATED_FLAG;
+}
+
+bool onboardingAlreadyShown() {
+  return EEPROM.read(EEPROM_ONBOARDING_OFF) == ONBOARDING_SHOWN_FLAG;
+}
+
+void setOnboardingShown() {
+  EEPROM.write(EEPROM_ONBOARDING_OFF, ONBOARDING_SHOWN_FLAG);
+  EEPROM.commit();
+}
+
+void saveKeysToEEPROM() {
+  for (int i = 0; i < 32; i++) EEPROM.write(EEPROM_PRIVKEY_OFF + i, privateKey[i]);
+  for (int i = 0; i < 32; i++) EEPROM.write(EEPROM_PUBKEY_OFF  + i, publicKey[i]);
+  EEPROM.write(EEPROM_FLAG_OFF, KEY_GENERATED_FLAG);
+  EEPROM.commit();
+}
+
+void loadKeysFromEEPROM() {
+  for (int i = 0; i < 32; i++) privateKey[i] = EEPROM.read(EEPROM_PRIVKEY_OFF + i);
+  for (int i = 0; i < 32; i++) publicKey[i]  = EEPROM.read(EEPROM_PUBKEY_OFF  + i);
+
+  // ── Validation de cohérence ──────────────────────────────────────────────────
+  // Si EEPROM.commit() a été interrompu (watchdog/coupure power) après l'écriture
+  // de la clé privée mais avant celle de la clé publique, on se retrouve avec
+  // une clé publique corrompue (0xFF...) incohérente avec la clé privée.
+  // On re-dérive la clé publique et on corrige si nécessaire.
+  uint8_t derived[32];
+  Ed25519::derivePublicKey(derived, privateKey);
+  if (memcmp(derived, publicKey, 32) != 0) {
+    Serial.println(F("[KEYS] Clé publique EEPROM incohérente → recalcul depuis clé privée"));
+    memcpy(publicKey, derived, 32);
+    for (int i = 0; i < 32; i++) EEPROM.write(EEPROM_PUBKEY_OFF + i, publicKey[i]);
+    EEPROM.commit();
+    Serial.println(F("[KEYS] Clé publique corrigée et sauvegardée"));
+  }
+  keysLoaded = true;
+}
+
+void saveBlockHashToEEPROM(const String& hash) {
+  String h = hash.length() >= 32 ? hash.substring(0, 32) : hash;
+  h += String(' ', 32);
+  for (int i = 0; i < 32; i++)
+    EEPROM.write(EEPROM_BLOCKHASH_OFF + i, (uint8_t)h[i]);
+  EEPROM.commit();
+}
+
+String loadBlockHashFromEEPROM() {
+  String hash = "";
+  for (int i = 0; i < 32; i++) {
+    char c = (char)EEPROM.read(EEPROM_BLOCKHASH_OFF + i);
+    if (c == ' ' || c == '\0') break;
+    hash += c;
+  }
+  return hash;
+}
+
+// ─── Persistance frame OLED ────────────────────────────────────────────────
+// Sauvegarde le buffer OLED (1024 bytes) + le texte du ticker
+// afin de restaurer le dernier affichage après un redémarrage.
+// Le E-ink n'en a pas besoin (rétention sans alimentation).
+
+void saveOLEDFrameToEEPROM(const uint8_t* buf, const String& ticker) {
+  Serial.println(F("[EEPROM] Sauvegarde frame OLED..."));
+  // Buffer pixel (1024 octets)
+  for (int i = 0; i < OLED_BUF_SIZE; i++) {
+    EEPROM.write(EEPROM_OLED_BUF_OFF + i, buf[i]);
+    if (i % 128 == 0) yield();  // éviter watchdog sur longue boucle
+  }
+  // Ticker text (max EEPROM_OLED_TICK_LEN - 1 chars + '\0')
+  int tlen = min((int)ticker.length(), EEPROM_OLED_TICK_LEN - 1);
+  for (int i = 0; i < tlen; i++)
+    EEPROM.write(EEPROM_OLED_TICK_OFF + i, (uint8_t)ticker.charAt(i));
+  EEPROM.write(EEPROM_OLED_TICK_OFF + tlen, 0);  // null terminator
+  // Flag en dernier (valide uniquement si écriture complète)
+  EEPROM.write(EEPROM_OLED_FLAG_OFF, OLED_FRAME_SAVED_FLAG);
+  EEPROM.commit();
+  Serial.printf_P(PSTR("[EEPROM] Frame OLED sauvegardée (%d bytes buf, ticker: \"%s\")\n"),
+                OLED_BUF_SIZE, ticker.c_str());
+}
+
+// Retourne true si une frame valide a été restaurée.
+// buf doit pointer sur un buffer alloué de OLED_BUF_SIZE bytes.
+// ticker est rempli avec le texte sauvegardé (vide si aucun).
+
+bool loadOLEDFrameFromEEPROM(uint8_t* buf, String& ticker) {
+  if (EEPROM.read(EEPROM_OLED_FLAG_OFF) != OLED_FRAME_SAVED_FLAG) {
+    Serial.println(F("[EEPROM] Pas de frame OLED sauvegardée"));
+    return false;
+  }
+  for (int i = 0; i < OLED_BUF_SIZE; i++) {
+    buf[i] = EEPROM.read(EEPROM_OLED_BUF_OFF + i);
+    if (i % 128 == 0) yield();
+  }
+  ticker = "";
+  for (int i = 0; i < EEPROM_OLED_TICK_LEN - 1; i++) {
+    char c = (char)EEPROM.read(EEPROM_OLED_TICK_OFF + i);
+    if (c == '\0') break;
+    ticker += c;
+  }
+  Serial.printf_P(PSTR("[EEPROM] Frame OLED restaurée — ticker: \"%s\"\n"), ticker.c_str());
+  return true;
+}
+
+// ─── Blocs possédés (EEPROM ring buffer) ───────────────────────────────────
+
+// Sauvegarde un hash de bloc possédé dans le ring buffer EEPROM.
+// Écrit les 32 premiers chars du hash hex (suffisant pour identification unique).
+// Ring buffer circulaire : déborde proprement sur les plus vieux slots.
+void saveOwnedBlockHash(const String& fullHash) {
+  if (fullHash.length() < 16) return;  // hash trop court, ignore
+
+  // Tronque ou complète à OWNED_HASH_LEN chars
+  String h = fullHash.length() >= OWNED_HASH_LEN
+             ? fullHash.substring(0, OWNED_HASH_LEN)
+             : fullHash;
+  while ((int)h.length() < OWNED_HASH_LEN) h += ' ';
+
+  uint8_t head  = EEPROM.read(EEPROM_OWNED_HEAD_OFF);
+  uint8_t count = EEPROM.read(EEPROM_OWNED_COUNT_OFF);
+  if (head  >= OWNED_SLOTS_MAX) head  = 0;
+  if (count >  OWNED_SLOTS_MAX) count = 0;
+
+  // Vérifie si ce hash est déjà stocké (évite les doublons après re-notification)
+  for (uint8_t i = 0; i < count; i++) {
+    uint8_t slot = (head - count + i + OWNED_SLOTS_MAX) % OWNED_SLOTS_MAX;
+    int off = EEPROM_OWNED_SLOTS_OFF + slot * OWNED_HASH_LEN;
+    bool match = true;
+    for (int j = 0; j < OWNED_HASH_LEN && match; j++) {
+      if ((char)EEPROM.read(off + j) != h[j]) match = false;
+    }
+    if (match) {
+      Serial.println(F("[OWNED] Hash déjà stocké, skip"));
+      return;
+    }
+  }
+
+  // Écriture dans le slot de tête
+  int slotOff = EEPROM_OWNED_SLOTS_OFF + head * OWNED_HASH_LEN;
+  for (int i = 0; i < OWNED_HASH_LEN; i++)
+    EEPROM.write(slotOff + i, (uint8_t)h[i]);
+
+  head  = (head + 1) % OWNED_SLOTS_MAX;
+  count = min((int)count + 1, (int)OWNED_SLOTS_MAX);
+
+  EEPROM.write(EEPROM_OWNED_HEAD_OFF,  head);
+  EEPROM.write(EEPROM_OWNED_COUNT_OFF, count);
+  EEPROM.commit();
+
+  Serial.printf_P(PSTR("[OWNED] Bloc sauvegardé: %s... (%u/%u slots)\n"),
+                h.substring(0, 8).c_str(), count, OWNED_SLOTS_MAX);
+}
+
+// Retourne un JSON array des hashes possédés stockés en EEPROM.
+// Du plus récent au plus ancien (lecture depuis la tête vers l'arrière).
+String loadOwnedHashesJson() {
+  uint8_t head  = EEPROM.read(EEPROM_OWNED_HEAD_OFF);
+  uint8_t count = EEPROM.read(EEPROM_OWNED_COUNT_OFF);
+  if (head  >= OWNED_SLOTS_MAX) head  = 0;
+  if (count  > OWNED_SLOTS_MAX) count = 0;
+  if (count == 0) return "[]";
+
+  String json = "[";
+  bool first = true;
+  for (uint8_t i = 0; i < count; i++) {
+    uint8_t slot = (head - 1 - i + OWNED_SLOTS_MAX) % OWNED_SLOTS_MAX;
+    int off = EEPROM_OWNED_SLOTS_OFF + slot * OWNED_HASH_LEN;
+    String h = "";
+    for (int j = 0; j < OWNED_HASH_LEN; j++) {
+      char c = (char)EEPROM.read(off + j);
+      if (c == ' ' || c == '\0') break;
+      h += c;
+    }
+    if (h.length() >= 8) {
+      if (!first) json += ",";
+      json += "\"" + h + "\"";
+      first = false;
+    }
+  }
+  json += "]";
+  return json;
+}
+
+// ─── Génération de clés ED25519 réelle ───────────────────────────────────────
+
+void generateKeys() {
+  Serial.println(F("[KEYS] Génération paire ED25519..."));
+  randomSeed(analogRead(A0) ^ millis() ^ (uint32_t)WiFi.RSSI());
+  for (int i = 0; i < 32; i++) {
+    privateKey[i] = (uint8_t)(random(256) ^ (analogRead(A0) & 0xFF));
+    delayMicroseconds(100);
+  }
+  Ed25519::derivePublicKey(publicKey, privateKey);
+  keysLoaded = true;
+  saveKeysToEEPROM();
+  Serial.println(F("[KEYS] Paire ED25519 générée et sauvegardée"));
+  Serial.println("[KEYS] PubKey: " + bytesToHex(publicKey, 32));
+}
+
+String bytesToHex(const uint8_t* buf, size_t len) {
+  String hex = "";
+  hex.reserve(len * 2);
+  for (size_t i = 0; i < len; i++) {
+    if (buf[i] < 16) hex += "0";
+    hex += String(buf[i], HEX);
+  }
+  return hex;
+}
+
+// ─── Signature ED25519 ───────────────────────────────────────────────────────
+String signED25519(const String& candidateId, float score) {
+  char scoreStr[8];
+  dtostrf(score, 1, 3, scoreStr);
+  String message = deviceId + ":" + candidateId + ":" + String(scoreStr);
+
+  uint8_t sig[64];
+  Ed25519::sign(sig, privateKey, publicKey,
+                (const uint8_t*)message.c_str(), message.length());
+
+  String sigHex = bytesToHex(sig, 64);
+
+  // Debug : imprime pubKey + message + signature pour vérification manuelle
+  // avec /api/debug/verify-sig?secret=X&pubKey=...&msg=...&sig=...
+  Serial.println("[SIGN] PUBKEY: " + bytesToHex(publicKey, 32));
+  Serial.println("[SIGN] MSG: " + message);
+  Serial.println("[SIGN] SIG: " + sigHex);
+
+  return sigHex;
+}
+
+// ─── BASE64 ────────────────────────────────────────────────────────────────
+static const int8_t B64_TABLE[256] PROGMEM = {
+  -1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,
+  -1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,
+  -1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,62,-1,-1,-1,63,
+  52,53,54,55,56,57,58,59,60,61,-1,-1,-1, 0,-1,-1,
+  -1, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9,10,11,12,13,14,
+  15,16,17,18,19,20,21,22,23,24,25,-1,-1,-1,-1,-1,
+  -1,26,27,28,29,30,31,32,33,34,35,36,37,38,39,40,
+  41,42,43,44,45,46,47,48,49,50,51,-1,-1,-1,-1,-1,
+  -1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,
+  -1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,
+  -1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,
+  -1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,
+  -1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,
+  -1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,
+  -1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,
+  -1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1,-1
+};
+
+size_t base64Decode(const char* src, size_t srcLen, uint8_t* dst, size_t dstMax) {
+  size_t out = 0;
+  int buf = 0, bits = 0;
+  for (size_t i = 0; i < srcLen && out < dstMax; i++) {
+    int8_t val = (int8_t)pgm_read_byte(&B64_TABLE[(uint8_t)src[i]]);
+    if (val < 0) continue;
+    buf = (buf << 6) | val;
+    bits += 6;
+    if (bits >= 8) { bits -= 8; dst[out++] = (buf >> bits) & 0xFF; }
+    yield();
+  }
+  return out;
+}
+
+// ─── HTTP HELPERS ──────────────────────────────────────────────────────────
+bool httpPost(const String& path, const String& body, String& resp) {
+  Serial.printf_P(PSTR("[MEM] avant TLS: libre=%u plus gros bloc=%u\n"), ESP.getFreeHeap(), ESP.getMaxFreeBlockSize());
+  WiFiClientSecure client;
+  client.setInsecure();
+  HTTPClient http;
+  String url = String(SERVER_URL) + path;
+
+  Serial.println("[HTTP POST] " + url);
+  Serial.println("[HTTP POST] body len: " + String(body.length()));
+
+  if (!http.begin(client, url)) {
+    Serial.println(F("[HTTP POST] begin() failed"));
+    return false;
+  }
+  http.addHeader("Content-Type", "application/json");
+  http.setTimeout(15000);
+
+  int code = http.POST(body);
+  resp = (code > 0) ? http.getString() : "";
+  Serial.printf_P(PSTR("[HTTP POST] %s → %d\n"), path.c_str(), code);
+  if (code > 0) Serial.println("[HTTP POST] resp: " + resp);
+  http.end();
+  return code == 200;
+}
+
+bool httpGet(const String& path, String& resp) {
+  Serial.printf_P(PSTR("[MEM] avant TLS: libre=%u plus gros bloc=%u\n"), ESP.getFreeHeap(), ESP.getMaxFreeBlockSize());
+  WiFiClientSecure client;
+  client.setInsecure();
+  HTTPClient http;
+
+  if (!http.begin(client, String(SERVER_URL) + path)) {
+    Serial.println(F("[HTTP GET] begin() failed"));
+    return false;
+  }
+  http.setTimeout(20000);
+
+  int code = http.GET();
+  resp = (code > 0) ? http.getString() : "";
+  http.end();
+  Serial.printf_P(PSTR("[HTTP GET] %s → %d (%u bytes)\n"), path.c_str(), code, resp.length());
+  return code == 200 || code == 429;
+}
+
+// ─── BUS helpers (SPI ↔ I2C) ───────────────────────────────────────────────
+// Sur ESP8266, Wire.end() n'existe pas → on réinitialise avec begin()
+// ─── BUS helpers ───────────────────────────────────────────────────────────
+
+void activateSPI() {
+  // Coupe I2C proprement (Wire.end() n'existe pas sur ESP8266
+  // → on réinitialise Wire pour libérer les pins sans crash)
+  Wire.begin(OLED_SDA, OLED_SCL);
+  delay(10);
+
+  SPI.begin();
+  SPI.beginTransaction(SPISettings(2000000, MSBFIRST, SPI_MODE0));
+  delay(10);
+  lastScreenWasSPI = true;
+}
+
+void activateI2C() {
+  if (!lastScreenWasSPI) return;
+  SPI.endTransaction();
+  SPI.end();
+  delay(10);
+  Wire.begin(OLED_SDA, OLED_SCL);
+  Wire.setClock(100000);
+  delay(10);
+  lastScreenWasSPI = false;
+}
+
+// ─── FONT 5×7 ──────────────────────────────────────────────────────────────
+static const uint8_t FONT_5x7[][5] PROGMEM = {
+  {0x3E,0x51,0x49,0x45,0x3E},{0x00,0x42,0x7F,0x40,0x00},{0x42,0x61,0x51,0x49,0x46},
+  {0x21,0x41,0x45,0x4B,0x31},{0x18,0x14,0x12,0x7F,0x10},{0x27,0x45,0x45,0x45,0x39},
+  {0x3C,0x4A,0x49,0x49,0x30},{0x01,0x71,0x09,0x05,0x03},{0x36,0x49,0x49,0x49,0x36},
+  {0x06,0x49,0x49,0x29,0x1E},{0x7C,0x12,0x11,0x12,0x7C},{0x7F,0x49,0x49,0x49,0x36},
+  {0x3E,0x41,0x41,0x41,0x22},{0x7F,0x41,0x41,0x22,0x1C},{0x7F,0x49,0x49,0x49,0x41},
+  {0x7F,0x09,0x09,0x09,0x01},{0x3E,0x41,0x49,0x49,0x7A},{0x7F,0x08,0x08,0x08,0x7F},
+  {0x00,0x41,0x7F,0x41,0x00},{0x20,0x40,0x41,0x3F,0x01},{0x7F,0x08,0x14,0x22,0x41},
+  {0x7F,0x40,0x40,0x40,0x40},{0x7F,0x02,0x0C,0x02,0x7F},{0x7F,0x04,0x08,0x10,0x7F},
+  {0x3E,0x41,0x41,0x41,0x3E},{0x7F,0x09,0x09,0x09,0x06},{0x3E,0x41,0x51,0x21,0x5E},
+  {0x7F,0x09,0x19,0x29,0x46},{0x46,0x49,0x49,0x49,0x31},{0x01,0x01,0x7F,0x01,0x01},
+  {0x3F,0x40,0x40,0x40,0x3F},{0x1F,0x20,0x40,0x20,0x1F},{0x3F,0x40,0x38,0x40,0x3F},
+  {0x63,0x14,0x08,0x14,0x63},{0x07,0x08,0x70,0x08,0x07},{0x61,0x51,0x49,0x45,0x43},
+  {0x00,0x36,0x36,0x00,0x00},{0x00,0x60,0x60,0x00,0x00},{0x08,0x08,0x08,0x08,0x08},
+  {0x03,0x0C,0x18,0x20,0x40},{0x00,0x00,0x00,0x00,0x00},
+};
+
+int charIndex(char c) {
+  if (c >= '0' && c <= '9') return c - '0';
+  if (c >= 'A' && c <= 'Z') return c - 'A' + 10;
+  if (c >= 'a' && c <= 'z') return c - 'a' + 10;
+  if (c == ':') return 36; if (c == '.') return 37;
+  if (c == '-') return 38; if (c == '/') return 39;
+  return 40;
+}
+
+inline void setPixelE27(uint8_t* buf, int x, int y) {
+  if (!buf || x < 0 || x >= E27_WIDTH || y < 0 || y >= E27_HEIGHT) return;
+  int xr = E27_WIDTH - 1 - x;
+  int byteIndex = (xr / 8) + y * (E27_WIDTH / 8);
+  buf[byteIndex] &= ~(0x80 >> (xr & 7));
+}
+
+void drawCharE27(uint8_t* buf, int x, int y, char c, int scale = 1) {
+  int idx = charIndex(c);
+  for (int col = 0; col < 5; col++) {
+    uint8_t bits = pgm_read_byte(&FONT_5x7[idx][col]);
+    for (int row = 0; row < 7; row++) {
+      if (bits & (0x40 >> row)) {
+        for (int dx = 0; dx < scale; dx++)
+          for (int dy = 0; dy < scale; dy++)
+            setPixelE27(buf, x + col * scale + dx, y + row * scale + dy);
+      }
+    }
+  }
+}
+
+void drawTextE27(uint8_t* buf, int x, int y, const String& text, int scale = 1) {
+  int cx = x;
+  for (unsigned int i = 0; i < text.length(); i++) {
+    drawCharE27(buf, cx, y, text.charAt(i), scale);
+    cx += 6 * scale;
+    yield();
+  }
+}
+
+int textWidthE27(const String& text, int scale = 1) {
+  return text.length() * 6 * scale;
+}
+
+// ─── CARTEL E-INK ──────────────────────────────────────────────────────────
+// Blanchit une bande horizontale dans le buffer E27 (remet les bytes à 0xFF).
+// Le buffer E27 est organisé en rows de (E27_WIDTH/8) = 22 bytes.
+// Un bit à 1 = blanc, un bit à 0 = noir (convention e-ink Waveshare).
+
+void clearBandE27(uint8_t* buf, int yStart, int yEnd) {
+  const int bytesPerRow = E27_WIDTH / 8;  // 22
+  for (int y = yStart; y <= yEnd && y < E27_HEIGHT; y++) {
+    memset(buf + y * bytesPerRow, 0xFF, bytesPerRow);
+  }
+}
+
+// ─── FONCTIONS PAYSAGE (câble à gauche, rotation 90° sens horaire) ────────────
+//
+// Repères :
+//   Portrait  : PW=176, PH=264 — tel que stocké dans le buffer
+//   Paysage   : LW=264, LH=176 — tel que vu par l'utilisateur
+//
+// Transformation paysage→portrait : px=ly, py=(PH-1)-lx
+//   soit : setPixelE27(buf, ly, E27_HEIGHT-1-lx)
+//
+// Caractère 5×7 en paysage (rotation 90° CW dans le buffer portrait) :
+//   - lx : direction de lecture (gauche→droite en paysage) — avance de 6px/char (5 cols + gap)
+//   - ly : hauteur du glyphe (haut→bas en paysage)          — 7px (7 rows du font)
+//   - col du glyphe (0..4) → axe lx (lecture)
+//   - row du glyphe (0..6) → axe ly (hauteur)
+
+// Efface des colonnes portrait (= bandes horizontales en paysage)
+void clearPortraitCols(uint8_t* buf, int pxStart, int pxEnd) {
+  for (int px = pxStart; px <= pxEnd && px < E27_WIDTH; px++) {
+    int bufCol = px; // pas de mirroir : voir CLAUDE.md (bufCol = y_canvas)
+    for (int bufRow = 0; bufRow < E27_HEIGHT; bufRow++) {
+      buf[(bufCol / 8) + bufRow * (E27_WIDTH / 8)] |= (0x80 >> (bufCol & 7));  // bit=1 = blanc
+    }
+  }
+}
+
+// Ligne séparatrice : colonne portrait noire = ligne horizontale en paysage
+void drawLandscapeSepLine(uint8_t* buf, int portraitX) {
+  int bufCol = portraitX; // pas de mirroir
+  for (int bufRow = 0; bufRow < E27_HEIGHT; bufRow++) {
+    buf[(bufCol / 8) + bufRow * (E27_WIDTH / 8)] &= ~(0x80 >> (bufCol & 7));
+  }
+}
+
+// Dessine un caractère lisible en paysage (rotation 90° CCW, voir CLAUDE.md).
+// Mapping direct (sans mirroir) : bufCol = ly_px, bufRow = (E27_HEIGHT-1) - lx_px
+void drawCharE27_landscape(uint8_t* buf, int lx, int ly, char c, int scale = 1) {
+  int idx = charIndex(c);
+  for (int col = 0; col < 5; col++) {
+    uint8_t bits = pgm_read_byte(&FONT_5x7[idx][col]);
+    for (int row = 0; row < 7; row++) {
+      if (bits & (0x40 >> row)) {
+        for (int s1 = 0; s1 < scale; s1++)
+          for (int s2 = 0; s2 < scale; s2++) {
+            int lx_px = lx + col * scale + s1;  // cols  → lx (direction de lecture) ✓
+            int ly_px = ly + row * scale + s2;  // rows  → ly (hauteur du glyphe)    ✓
+            int bufCol = ly_px;   // bandes haut/bas : confirmées correctes (ne pas toucher)
+            int bufRow = lx_px;   // ex (H-1)-lx_px : inversait le sens de lecture → texte
+                                  // en miroir gauche/droite ("Tulipe" affiché "EPILUT").
+                                  // Sans inversion : sens de lecture correct (cf. BW seul).
+            if (bufCol < 0 || bufCol >= E27_WIDTH || bufRow < 0 || bufRow >= E27_HEIGHT) continue;
+            buf[(bufCol / 8) + bufRow * (E27_WIDTH / 8)] &= ~(0x80 >> (bufCol & 7));
+          }
+      }
+    }
+  }
+}
+
+void drawTextE27_landscape(uint8_t* buf, int lx, int ly, const String& text, int scale = 1) {
+  int cx = lx;
+  for (unsigned int i = 0; i < text.length(); i++) {
+    drawCharE27_landscape(buf, cx, ly, text.charAt(i), scale);
+    cx += 6 * scale;  // 5px de large (cols) + 1px gap dans la direction de lecture
+    yield();
+  }
+}
+
+int textWidthE27_landscape(const String& text, int scale = 1) {
+  return (int)text.length() * 6 * scale;
+}
+
+// Brûle un cartel PAYSAGE dans le buffer E27 :
+//   - Bande SUPÉRIEURE paysage (ly=0..BAND-1 = portrait cols gauches)  : timestamp + bloc
+//   - Bande INFÉRIEURE paysage (ly=LH-BAND..LH-1 = portrait cols droites) : artiste + titre
+//
+// Les bandes couvrent ~13px sur chaque bord paysage (top/bottom).
+// L'artwork est légèrement rogné mais la composition reste lisible.
+
+void burnEinkCartel_landscape(uint8_t* buf,
+                               const String& workTitle,
+                               const String& artistName,
+                               const String& ts,
+                               int blockIndex = -1) {
+  if (!buf) return;
+  const int BAND = 13;    // largeur en paysage-Y (= colonnes portrait)
+  // LH = E27_WIDTH = 176 (hauteur paysage = largeur portrait)
+  // LW = E27_HEIGHT = 264 (largeur paysage = hauteur portrait)
+
+  // ── Bande supérieure paysage : portrait cols [0..BAND-1] ─────────────────
+  clearPortraitCols(buf, 0, BAND - 1);
+  drawLandscapeSepLine(buf, BAND - 1);  // séparateur à ly=BAND-1
+
+  // Texte : timestamp + numéro de bloc
+  String topLine = ts.length() > 0 ? ts : "PROOF-OF-DRAW";
+  if (blockIndex >= 0) topLine += " Block #" + String(blockIndex);
+  // Tronquer si trop large (LW=264)
+  while (topLine.length() > 0 && textWidthE27_landscape(topLine, 1) > E27_HEIGHT - 4)
+    topLine.remove(topLine.length() - 1);
+  // Centrage en lx (LW=E27_HEIGHT=264)
+  int topLx = max(0, (E27_HEIGHT - textWidthE27_landscape(topLine, 1)) / 2);
+  // Position ly : 2px de marge depuis le bord (ly=2, glyphe 7px → s'étend jusqu'à ly=8)
+  drawTextE27_landscape(buf, topLx, 2, topLine, 1);
+
+  // ── Bande inférieure paysage : portrait cols [E27_WIDTH-BAND..E27_WIDTH-1] ──
+  int botPxStart = E27_WIDTH - BAND;  // 163
+  clearPortraitCols(buf, botPxStart, E27_WIDTH - 1);
+  drawLandscapeSepLine(buf, botPxStart);  // séparateur à ly=163
+
+  String botLine;
+  if (artistName.length() > 0 && workTitle.length() > 0)
+    botLine = artistName + " - " + workTitle;
+  else if (artistName.length() > 0)
+    botLine = artistName;
+  else if (workTitle.length() > 0)
+    botLine = workTitle;
+
+  while (botLine.length() > 0 && textWidthE27_landscape(botLine, 1) > E27_HEIGHT - 4)
+    botLine.remove(botLine.length() - 1);
+
+  int botLx  = max(0, (E27_HEIGHT - textWidthE27_landscape(botLine, 1)) / 2);
+  // Position ly : 2px au-dessus du séparateur (botPxStart+2 = 165)
+  drawTextE27_landscape(buf, botLx, botPxStart + 2, botLine, 1);
+}
+
+// Brûle un cartel fixe dans le buffer E27 (mode portrait, conservé pour référence) :
+//   - Bande haute  (13px) : displayTs (horodatage)
+//   - Bande basse  (13px) : artistName + " · " + workTitle (tronqué)
+// Les bandes recouvrent le bord de l'artwork — pas de redimensionnement du canvas.
+
+// blockIndex : numéro du bloc courant (-1 = absent)
+void burnEinkCartel(uint8_t* buf,
+                    const String& workTitle,
+                    const String& artistName,
+                    const String& ts,
+                    int blockIndex = -1) {
+  if (!buf) return;
+  const int BAND = 13;  // hauteur de chaque bande en pixels
+
+  // ── Bande supérieure : timestamp + numéro de bloc ─────────────────────────
+  clearBandE27(buf, 0, BAND - 1);
+  // Ligne de séparation : dernière ligne de la bande (pixels noirs)
+  for (int x = 0; x < E27_WIDTH; x++) setPixelE27(buf, x, BAND - 1);
+  // Texte : "DD/MM HH:MM  #N" (centré), fallback "PROOF-OF-DRAW"
+  String topLine = ts.length() > 0 ? ts : "PROOF-OF-DRAW";
+  if (blockIndex >= 0) topLine += "  #" + String(blockIndex);
+  // Si trop long, on tronque le timestamp pour garder le numéro de bloc
+  while (topLine.length() > 0 && textWidthE27(topLine, 1) > E27_WIDTH - 4) {
+    topLine.remove(topLine.length() - 1);
+  }
+  int topX = max(0, (E27_WIDTH - textWidthE27(topLine, 1)) / 2);
+  drawTextE27(buf, topX, 2, topLine, 1);
+
+  // ── Bande inférieure : artiste + titre ────────────────────────────────────
+  int botBandY = E27_HEIGHT - BAND;
+  clearBandE27(buf, botBandY, E27_HEIGHT - 1);
+  // Ligne de séparation en haut de la bande
+  for (int x = 0; x < E27_WIDTH; x++) setPixelE27(buf, x, botBandY);
+
+  String botLine;
+  if (artistName.length() > 0 && workTitle.length() > 0)
+    botLine = artistName + " \xB7 " + workTitle;  // "·" latin-1
+  else if (artistName.length() > 0)
+    botLine = artistName;
+  else if (workTitle.length() > 0)
+    botLine = workTitle;
+  else
+    botLine = "";
+
+  // Tronquer si trop long pour la largeur de l'écran
+  while (botLine.length() > 0 && textWidthE27(botLine, 1) > E27_WIDTH - 4) {
+    botLine.remove(botLine.length() - 1);
+  }
+  if (botLine.length() == 0 && workTitle.length() > 0) {
+    botLine = workTitle.substring(0, min((int)workTitle.length(), 26));
+  }
+  int botX = max(0, (E27_WIDTH - textWidthE27(botLine, 1)) / 2);
+  drawTextE27(buf, botX, botBandY + 2, botLine, 1);
+}
+
+// ─── OLED ──────────────────────────────────────────────────────────────────
+
+bool ensureOLEDReady() {
+  // Force toujours Wire sur les bons pins avant toute opération OLED
+  Wire.begin(OLED_SDA, OLED_SCL);
+  Wire.setClock(100000);
+  delay(10);
+
+  if (oledReady) return true;
+
+  oledReady = oled.begin(SSD1306_SWITCHCAPVCC, 0x3C);
+  if (!oledReady) {
+    Serial.println(F("[OLED] init failed"));
+    return false;
+  }
+  oled.clearDisplay();
+  oled.display();
+  Serial.println(F("[OLED] ready"));
+  return true;
+}
+
+bool displayOLED(const uint8_t* buf, size_t len) {
+  if (len != OLED_BUF_SIZE) {
+    Serial.printf_P(PSTR("[OLED] taille invalide: %u attendu %u\n"), len, OLED_BUF_SIZE);
+    return false;
+  }
+
+  // Si on vient du SPI, on coupe SPI proprement avant de toucher I2C
+  if (lastScreenWasSPI) {
+    SPI.endTransaction();
+    SPI.end();
+    delay(50);  // laisse le bus se stabiliser
+    lastScreenWasSPI = false;
+  }
+
+  // Réinitialise Wire sur les bons pins dans tous les cas
+  Wire.begin(OLED_SDA, OLED_SCL);
+  Wire.setClock(100000);
+  delay(20);
+
+  // Re-init du contrôleur SSD1306
+  // Nécessaire si on a coupé l'alimentation ou switché le bus
+  if (!oled.begin(SSD1306_SWITCHCAPVCC, 0x3C)) {
+    Serial.println(F("[OLED] begin() failed"));
+    oledReady = false;
+    return false;
+  }
+  oledReady = true;
+  delay(10);  // laisse le SSD1306 finir son init interne
+
+  // Copie le buffer et envoie
+  memcpy(oled.getBuffer(), buf, OLED_BUF_SIZE);
+  oled.display();
+
+  Serial.println(F("[OLED] displayed"));
+  return true;
+}
+
+
+// ─── TICKER OLED NON-BLOQUANT ────────────────────────────────────────────────
+//
+// setOLEDFrame() : enregistre un nouveau frame artwork + ticker.
+//   Alloue oledArtBuf une seule fois ; les appels suivants réutilisent le slot.
+//   Réinitialise le scroll à 0 (le texte repart de la droite).
+//
+// tickerStep() : avance d'un pas (2px) si 35ms se sont écoulées.
+//   Appelé dans loop() — non-bloquant, rend la main immédiatement.
+//   Boucle infinie : quand le texte sort à gauche, il revient à droite.
+
+void setOLEDFrame(const uint8_t* artBuf, const String& ticker) {
+  if (!artBuf) return;
+
+  oledArtBuf = g_oledArt;   // tampon STATIQUE (voir « TAMPONS STATIQUES ») : jamais libéré, ne fragmente pas le tas
+  if (artBuf != g_oledArt) memcpy(oledArtBuf, artBuf, OLED_BUF_SIZE);
+
+  oledTicker   = ticker;
+  oledTickStep = 0;
+  // 6px/char (police Adafruit 1×) ; texte doit traverser écran + sa propre largeur
+  const int CHAR_W = 6;
+  oledTickTotal    = OLED_WIDTH + (int)ticker.length() * CHAR_W;
+  oledTickActive   = (ticker.length() > 0);
+
+  Serial.printf_P(PSTR("[TICKER] setOLEDFrame ticker=\"%s\" total=%d\n"),
+                ticker.c_str(), oledTickTotal);
+}
+
+void tickerStep() {
+  if (!oledTickActive || !oledArtBuf || oledTicker.length() == 0) return;
+
+  unsigned long now = millis();
+  if (now - lastTickMs < 60) return;  // ~16 fps — vitesse réduite pour lisibilité
+  lastTickMs = now;
+
+  // ── Réinitialisation bus si on vient du SPI (E-ink) ──────────────────────
+  if (lastScreenWasSPI) {
+    SPI.endTransaction();
+    SPI.end();
+    delay(20);
+    Wire.begin(OLED_SDA, OLED_SCL);
+    Wire.setClock(100000);
+    delay(10);
+    if (!oled.begin(SSD1306_SWITCHCAPVCC, 0x3C)) return;
+    oledReady = true;
+    lastScreenWasSPI = false;
+  } else if (!oledReady) {
+    Wire.begin(OLED_SDA, OLED_SCL);
+    Wire.setClock(100000);
+    delay(10);
+    if (!oled.begin(SSD1306_SWITCHCAPVCC, 0x3C)) return;
+    oledReady = true;
+  }
+
+  // ── Rendu du pas courant ──────────────────────────────────────────────────
+  memcpy(oled.getBuffer(), oledArtBuf, OLED_BUF_SIZE);
+  // Page 0 = octets [0..127] = 8 premières lignes → fond noir pour le ticker
+  memset(oled.getBuffer(), 0x00, OLED_WIDTH);
+  oled.setTextWrap(false);
+  oled.setTextSize(1);
+  oled.setTextColor(SSD1306_WHITE);
+  oled.setCursor((int16_t)(OLED_WIDTH - oledTickStep), 0);
+  oled.print(oledTicker);
+  oled.display();
+
+  // ── Avance + boucle infinie ───────────────────────────────────────────────
+  oledTickStep += 2;
+  if (oledTickStep > oledTickTotal) {
+    oledTickStep = 0;  // le texte repart de la droite
+  }
+}
+
+// ─── E27 DISPLAY ───────────────────────────────────────────────────────────
+bool initE27ForRefresh() {
+  unsigned long elapsed = millis() - lastE27RefreshMs;
+  if (elapsed < E27_MIN_REFRESH_MS) {
+    unsigned long wait = E27_MIN_REFRESH_MS - elapsed;
+    Serial.printf_P(PSTR("[E27] attente refresh %lums\n"), wait);
+    delay(wait);
+  }
+
+  activateSPI();  // SPI.begin() + beginTransaction() — lastScreenWasSPI = true
+
+  // Nourrir le watchdog avant les boucles busy du driver (peut durer 2-3s)
+  // Même sécurité que le BWR.
+  ESP.wdtFeed();
+
+  if (epd27.Init() != 0) {
+    Serial.println(F("[E27] Init failed"));
+    SPI.endTransaction();
+    SPI.end();
+    lastScreenWasSPI = false;
+    return false;
+  }
+  return true;
+}
+
+bool displayE27Buffer(const uint8_t* buf) {
+  if (!buf) return false;
+  if (!initE27ForRefresh()) return false;
+
+  epd27.Display(buf);
+  epd27.Sleep();
+
+  SPI.endTransaction();
+  SPI.end();
+  lastScreenWasSPI = false;  // libère SPI après chaque usage E27
+  // GPIO12 = SDA de l'OLED = MISO du SPI : SPI.begin() l'a pris (pinMode SPECIAL). Comme recoverOledAfterEink() du sketch OLED_ESP_v10_Eink_Fin, on force la
+  // ré-initialisation de l'OLED (Wire.begin + oled.begin) : tickerStep() le fait dès qu'oledReady est faux ; la lecture d'animation le fait à chaque démarrage.
+  oledReady = false;
+
+  lastE27RefreshMs = millis();
+  Serial.println(F("[E27] displayed"));
+  return true;
+}
+
+// ─── AFFICHAGE CLÉS (unique au premier boot) ────────────────────────────────
+void displayKeyMaterialOnce() {
+  String pubHex  = bytesToHex(publicKey,  32);
+  String privHex = bytesToHex(privateKey, 32);
+
+  // NE PAS imprimer la clé privée sur Serial — reste strictement dans l'EEPROM
+  Serial.println(F("[KEYS] Affichage clé publique (une seule fois)"));
+  Serial.println("[KEYS] PubKey: " + pubHex);
+
+  // ── OLED : clé publique ──
+  if (ensureOLEDReady()) {
+    oled.clearDisplay();
+    oled.setTextSize(1);
+    oled.setTextColor(SSD1306_WHITE);
+    oled.setCursor(0, 0);
+    oled.println("PROOF-OF-DRAW KEYS");
+    oled.println("-- SAVE PUBLIC KEY --");
+    // Clé publique sur 4 lignes de 16 chars
+    for (int line = 0; line < 4; line++) {
+      oled.println(pubHex.substring(line * 16, line * 16 + 16));
+    }
+    oled.display();
+  }
+
+  // ── E27 : clé publique + privée ──
+  uint8_t* buf = (uint8_t*)malloc(E27_BUF_SIZE);
+  if (buf) {
+    memset(buf, 0xFF, E27_BUF_SIZE);
+
+    String title = "PROOF-OF-DRAW KEYS";
+    String warn1 = "SAVE THESE KEYS NOW";
+    String warn2 = "PRIVATE KEY ONCE";
+
+    drawTextE27(buf, (E27_WIDTH - textWidthE27(title, 1)) / 2, 10, title, 1);
+    for (int x = 10; x < E27_WIDTH - 10; x++) setPixelE27(buf, x, 22);
+
+    drawTextE27(buf, 4, 30, "PUB:", 1);
+    for (int line = 0; line < 4; line++)
+      drawTextE27(buf, 4, 42 + line * 12, pubHex.substring(line * 16, line * 16 + 16), 1);
+
+    drawTextE27(buf, 4, 102, "PRIV:", 1);
+    for (int line = 0; line < 4; line++)
+      drawTextE27(buf, 4, 114 + line * 12, privHex.substring(line * 16, line * 16 + 16), 1);
+
+    for (int x = 10; x < E27_WIDTH - 10; x++) setPixelE27(buf, x, 166);
+    drawTextE27(buf, (E27_WIDTH - textWidthE27(warn1, 1)) / 2, 174, warn1, 1);
+    drawTextE27(buf, (E27_WIDTH - textWidthE27(warn2, 1)) / 2, 188, warn2, 1);
+
+    displayE27Buffer(buf);
+    free(buf);
+  }
+
+  Serial.println(F("[KEYS] Clés affichées — 60s pour noter"));
+  delay(60000);
+  Serial.println(F("[KEYS] Délai écoulé"));
+}
+
+// ─── QR ONBOARDING ─────────────────────────────────────────────────────────
+void displayOnboardingOLED(const String& code, const String& mac) {
+  if (!ensureOLEDReady()) return;
+
+  oled.clearDisplay();
+  oled.setTextSize(1);
+  oled.setTextColor(SSD1306_WHITE);
+  oled.setCursor(0, 0);
+  oled.println("PROOF-OF-DRAW");
+  oled.println("Code appairage:");
+  oled.println();
+  oled.setTextSize(2);
+  oled.println(code);
+  oled.setTextSize(1);
+  String macShort = mac;
+  macShort.replace(":", "");
+  macShort.toUpperCase();
+  oled.println("MAC:" + macShort);
+  oled.display();
+  Serial.println(F("[OLED] onboarding displayed"));
+}
+
+void displayOnboardingE27(const String& onboardUrl, const String& code, const String& mac) {
+  uint8_t* buf = (uint8_t*)malloc(E27_BUF_SIZE);
+  if (!buf) { Serial.println(F("[E27] onboarding malloc failed")); return; }
+  memset(buf, 0xFF, E27_BUF_SIZE);
+
+  QRCode qrcode;
+  uint8_t qrcodeData[qrcode_getBufferSize(5)];
+  int qrResult = qrcode_initText(&qrcode, qrcodeData, 4, ECC_MEDIUM, onboardUrl.c_str());
+  if (qrResult < 0)
+    qrResult = qrcode_initText(&qrcode, qrcodeData, 5, ECC_MEDIUM, onboardUrl.c_str());
+
+  String title   = "PROOF-OF-DRAW";
+  String codeLine = "CODE:" + code;
+  codeLine.toUpperCase();
+  String macShort = mac;
+  macShort.replace(":", "");
+  macShort.toUpperCase();
+  String macLine = "MAC:" + macShort;
+
+  drawTextE27(buf, (E27_WIDTH - textWidthE27(title, 2)) / 2, 10, title, 2);
+  drawTextE27(buf, (E27_WIDTH - textWidthE27("SCAN TO PAIR", 1)) / 2, 32, "SCAN TO PAIR", 1);
+
+  if (qrResult >= 0) {
+    const int quietZone = 2;
+    int scale = 4;
+    int qrPx  = (qrcode.size + quietZone * 2) * scale;
+    int qrX0  = (E27_WIDTH - qrPx) / 2;
+    int qrY0  = 48;
+    for (int my = 0; my < qrcode.size; my++) {
+      for (int mx = 0; mx < qrcode.size; mx++) {
+        if (!qrcode_getModule(&qrcode, mx, my)) continue;
+        int px0 = qrX0 + (mx + quietZone) * scale;
+        int py0 = qrY0 + (my + quietZone) * scale;
+        for (int dy = 0; dy < scale; dy++)
+          for (int dx = 0; dx < scale; dx++)
+            setPixelE27(buf, px0 + dx, py0 + dy);
+      }
+      yield();
+    }
+  }
+
+  drawTextE27(buf, (E27_WIDTH - textWidthE27(codeLine, 2)) / 2, 200, codeLine, 2);
+  drawTextE27(buf, (E27_WIDTH - textWidthE27(macLine,  1)) / 2, 228, macLine,  1);
+
+  displayE27Buffer(buf);
+  free(buf);
+  Serial.println(F("[E27] onboarding displayed"));
+}
+
+// ─── ACK ───────────────────────────────────────────────────────────────────
+bool ackFrame(const String& frameId, const char* screen) {
+  if (frameId.length() == 0) return false;
+  // `screen` : le serveur n'acquitte que la frame de CET écran (une même frameId peut être en attente sur les deux)
+  String body = "{\"deviceId\":\"" + deviceId + "\",\"frameId\":\"" + frameId + "\",\"screen\":\"" + String(screen) + "\"}";
+  String resp;
+  bool ok = httpPost("/api/ack-frame", body, resp);
+  Serial.printf_P(PSTR("[ACK] frameId=%s → %s\n"), frameId.c_str(), ok ? "OK" : "FAIL");
+  return ok;
+}
+
+// ─── REGISTER ──────────────────────────────────────────────────────────────
+bool doRegister() {
+  String mac = WiFi.macAddress();
+  mac.toLowerCase();
+
+  String pubHex      = keysLoaded ? bytesToHex(publicKey, 32) : "";
+  String ownedHashes = loadOwnedHashesJson();  // ex: ["abc...","def..."] ou []
+  String body =
+    "{\"mac\":\"" + mac + "\","
+    "\"screens\":[\"" + String(SCREEN_OLED) + "\",\"" + String(SCREEN_E27) + "\"],"
+    "\"firmware\":\"" + String(FIRMWARE_VERSION) + "\","
+    "\"publicKey\":\"" + pubHex + "\","
+    "\"ownedHashes\":" + ownedHashes + "}";
+
+  String resp;
+  Serial.printf_P(PSTR("[REGISTER] heap avant: %u\n"), ESP.getFreeHeap());
+
+  if (!httpPost("/api/register", body, resp)) {
+    Serial.println(F("[REGISTER] Echec HTTP"));
+    return false;
+  }
+
+  Serial.printf_P(PSTR("[REGISTER] heap après: %u\n"), ESP.getFreeHeap());
+
+  DynamicJsonDocument doc(768);
+  if (deserializeJson(doc, resp)) {
+    Serial.println(F("[REGISTER] JSON error"));
+    return false;
+  }
+
+  deviceId  = doc["deviceId"].as<String>();
+  pairCode  = doc["pairCode"].as<String>();
+  canvasUrl = doc["canvasUrl"].as<String>();
+  paired    = doc["paired"] | false;
+  registered = true;
+
+  Serial.println("[REGISTER] deviceId: " + deviceId);
+  Serial.println("[REGISTER] paired: " + String(paired ? "oui" : "non"));
+
+  if (!paired && !onboardingAlreadyShown()) {
+    // Premier boot non appairé : clés déjà générées dans setup() — afficher seulement
+    displayKeyMaterialOnce();
+
+    String onboardUrl = String(SERVER_URL) + "/onboard?code=" + pairCode;
+    displayOnboardingOLED(pairCode, mac);
+    displayOnboardingE27(onboardUrl, pairCode, mac);
+
+    setOnboardingShown();
+    Serial.println(F("[REGISTER] Onboarding affiché. En attente d'appairage..."));
+
+  } else if (!paired) {
+    // Boots suivants non appairés : ré-afficher QR (clé publique déjà vue)
+    Serial.println(F("[REGISTER] Non appairé — ré-affichage QR code..."));
+    String onboardUrl = String(SERVER_URL) + "/onboard?code=" + pairCode;
+    displayOnboardingOLED(pairCode, mac);
+    displayOnboardingE27(onboardUrl, pairCode, mac);
+  } else {
+    Serial.println(F("[REGISTER] Déjà appairé"));
+  }
+
+  return true;
+}
+
+
+
+
+// ─── FETCH FRAME OLED ──────────────────────────────────────────────────────
+// Même pattern que E27 : fetch binaire séparé via /api/pull-frame. Tampon de 1 Ko : alloué AVANT le TLS (petit), libéré avant l'ACK.
+bool doFetchFrameOLED(const String& frameId, const String& frameSource) {
+  logHeapState("FETCHFRAME-OLED-BEFORE");
+  const uint32_t blockBefore = ESP.getMaxFreeBlockSize();
+
+  uint8_t* oledBuf = (uint8_t*)malloc(OLED_BUF_SIZE);
+  if (!oledBuf) {
+    Serial.println(F("[FETCHFRAME-OLED] malloc failed"));
+    noteNet(false, blockBefore, "malloc OLED");
+    return false;
+  }
+  memset(oledBuf, 0x00, OLED_BUF_SIZE);
+
+  {
+    WiFiClientSecure client;
+    client.setInsecure();
+    HTTPClient http;
+
+    // &screen= pour que le serveur sache quel buffer envoyer
+    String url = String(SERVER_URL) + "/api/pull-frame?deviceId=" + deviceId
+                 + "&screen=" + String(SCREEN_OLED) + "&fmt=bin";
+    if (!http.begin(client, url)) {
+      Serial.println(F("[FETCHFRAME-OLED] begin() failed"));
+      free(oledBuf);
+      noteNet(false, blockBefore, "begin OLED");
+      return false;
+    }
+    http.setTimeout(20000);
+    http.useHTTP10(true);
+
+    int code = http.GET();
+    Serial.printf_P(PSTR("[HTTP GET] /api/pull-frame (OLED) → %d\n"), code);
+    noteNet(code > 0, blockBefore, "GET pull-frame OLED");   // code <= 0 : connexion TLS impossible (mémoire, Wi-Fi) ; un 4xx/5xx n'est pas un souci de tas
+
+    if (code == 404) {
+      http.end();
+      Serial.println(F("[FETCHFRAME-OLED] Pas de frame"));
+      free(oledBuf);
+      return true;
+    }
+    if (code != 200) {
+      http.end();
+      Serial.printf_P(PSTR("[FETCHFRAME-OLED] HTTP error: %d\n"), code);
+      free(oledBuf);
+      return false;
+    }
+
+    auto readFull = [](WiFiClient* s, uint8_t* dst, size_t len) -> size_t {
+      size_t total = 0;
+      unsigned long t0 = millis();
+      while (total < len && millis() - t0 < 15000) {
+        if (s->available()) {
+          size_t got = s->readBytes(dst + total, len - total);
+          if (got > 0) total += got;
+        } else { delay(10); }
+      }
+      return total;
+    };
+
+    WiFiClient* stream = http.getStreamPtr();
+    size_t bRead = readFull(stream, oledBuf, OLED_BUF_SIZE);
+    http.end();
+
+    Serial.printf_P(PSTR("[FETCHFRAME-OLED] lu=%u expected=%u\n"), bRead, OLED_BUF_SIZE);
+
+    if (bRead != OLED_BUF_SIZE) {
+      Serial.println(F("[FETCHFRAME-OLED] lecture incomplète"));
+      free(oledBuf);
+      return false;
+    }
+  }
+  // TLS fermé
+
+  if (!displayOLED(oledBuf, OLED_BUF_SIZE)) {
+    Serial.println(F("[FETCHFRAME-OLED] display failed — frame conservée serveur"));
+    free(oledBuf);
+    return false;
+  }
+
+  // ── Composition du ticker ───────────────────────────────────────────────
+  // Format : "TITRE  |  ARTISTE  #N  DD/MM HH:MM"
+  // Toujours calculé même si certains champs sont vides.
+  {
+    String ticker = "";
+    if (pendingWorkTitle.length() > 0)
+      ticker += pendingWorkTitle;
+    if (pendingArtistName.length() > 0)
+      ticker += (ticker.length() > 0 ? "  |  " : "") + pendingArtistName;
+    if (currentBlockIndex >= 0)
+      ticker += "  Block #" + String(currentBlockIndex);
+    if (pendingDisplayTs.length() > 0)
+      ticker += "  " + pendingDisplayTs;
+
+    Serial.println("[TICKER] " + (ticker.length() > 0 ? ticker : "(vide)"));
+
+    // Démarre le ticker non-bloquant (boucle infinie dans loop())
+    setOLEDFrame(oledBuf, ticker);
+
+    // Persistance EEPROM : sauvegarde frame + ticker pour restauration boot
+    saveOLEDFrameToEEPROM(oledBuf, ticker);
+  }
+
+  free(oledBuf);  // le buffer local est libéré ; oledArtBuf (global) garde sa copie
+
+  lastFrameIdOLED       = frameId;
+  hasDisplayedFrame     = true;
+  lastFrameWasConsensus = (frameSource == "consensus");
+  pendingCandidateId    = "";
+  ackFrame(frameId, SCREEN_OLED);
+
+  Serial.printf_P(PSTR("[FETCHFRAME-OLED] ✅ frameId=%s source=%s\n"),
+                frameId.c_str(), frameSource.c_str());
+  logHeapState("FETCHFRAME-OLED-AFTER");
+  return true;
+}
+
+// ─── FETCH FRAME E27 ───────────────────────────────────────────────────────
+// Le tampon e-ink (5 808 o) ne doit JAMAIS vivre pendant une connexion TLS (BearSSL a besoin de presque tout le tas) :
+//   1. le flux est écrit dans un fichier LittleFS par morceaux de 256 o (aucun gros tampon pendant le TLS) ;
+//   2. une fois le TLS FERMÉ, le tampon est alloué, rempli depuis le fichier (puis le fichier est effacé), le cartel est gravé et l'écran rafraîchi ;
+//   3. le tampon est libéré AVANT l'ACK (autre connexion TLS).
+// Sans système de fichiers (IDE : Flash Size sans FS), ancien chemin : malloc avant le TLS (moins robuste).
+extern podanimesp::State g_anim;                       // défini plus bas (état de l'animation résidente) ; fsOk = LittleFS monté
+static const char* E27_TMP = "/e27.tmp";
+
+#if POD_RENDER_V1
+// ─── Rendu v1 en flux : calcul ET remise au pilote (e-ink 2,7″, plan unique) ──────────────────────────────────────────────────────────────────────────────
+// Ordre de la mémoire (ESP8266, TLS FERMÉ à l'entrée) : e27Buf 5 808 o (existant, alloué comme avant, JAMAIS modifié ici) ; PILE : PodEinkRenderer 264 o + 65 o de hash + 32 o de morceau dans le pilote. AUCUNE allocation, aucun
+// tampon final, aucune grille. Retour : 0 = échec AVANT la fin de la remise · 2 = rendu calculé ET remis. (L'état « 1 » des 2,9″ n'existe pas ici : ReadBusy() bloque sans délai.) Seul 2 est un succès (sinon AUCUN ACK, le serveur réessaiera).
+// ⚠ État de l'écran après un échec : NON garanti inchangé (page blanche éventuellement affichée avant ; RAM du panneau partiellement écrite si la production s'interrompt, sans rafraîchissement).
+#if POD_RENDER_V1 && POD_CANARY
+#define podRenderProduce podRenderProduceInner
+#endif
+static unsigned int podRenderProduce(void* ctx, unsigned char* out, unsigned int cap) { return ((PodEinkRenderer<PodSha256Br>*)ctx)->read(out, cap); }
+#if POD_RENDER_V1 && POD_CANARY
+#undef podRenderProduce
+static unsigned int podRenderProduce(void* ctx, unsigned char* out, unsigned int cap) { canaryProduceEnter(); const unsigned int n = podRenderProduceInner(ctx, out, cap); canaryProduceLeave(); return n; }
+#endif
+
+static uint8_t podRenderAndShowE27(const uint8_t* buf) {
+  if (!buf) return 0;
+  const PodRenderSpec spec = pod_render_spec(POD_R_EINK27);
+  const PodRenderMeta meta = { (const uint8_t*)pendingDisplayTs.c_str(), (size_t)pendingDisplayTs.length(), (int32_t)currentBlockIndex,
+                               (const uint8_t*)pendingArtistName.c_str(), (size_t)pendingArtistName.length(), (const uint8_t*)pendingWorkTitle.c_str(), (size_t)pendingWorkTitle.length() };
+  char hex[65];
+  PodEinkRenderer<PodSha256Br> r;
+  if (!r.frameHash(spec, buf, nullptr, E27_BUF_SIZE, hex)) { Serial.println(F("[RENDER] frameHash impossible — abandon")); return 0; }
+  Serial.printf_P(PSTR("[RENDER] frameHash=%s\n"), hex);
+#if POD_RENDER_V1 && POD_CANARY
+  canaryStep(PCP_FRAMEHASH, F("frameHash calcule"));
+#endif
+  if (!r.begin(spec, POD_RENDER_MODE_DEFAULT, meta, buf, nullptr, E27_BUF_SIZE)) { Serial.println(F("[RENDER] paramètres refusés — abandon")); return 0; }
+  if (!initE27ForRefresh()) { Serial.println(F("[RENDER] panneau non initialisé — abandon, aucune donnée envoyée (l'écran peut être resté blanc)")); return 0; }
+#if POD_RENDER_V1 && POD_CANARY
+  canaryStep(PCP_PANEL, F("panneau initialise, flux vers le pilote"));
+  canaryBusyReport(F("apres Init"));
+#endif
+  const bool delivered = epd27.DisplayStream(podRenderProduce, &r);
+#if POD_RENDER_V1 && POD_CANARY
+  canaryStep(PCP_STREAM, F("flux remis au pilote (DisplayStream retourne, rafraichissement attendu termine)"));
+  canaryStreamReport();
+  canaryBusyReport(F("apres le rafraichissement"));
+#endif
+  epd27.Sleep();
+  SPI.endTransaction();
+  SPI.end();
+  lastScreenWasSPI = false;  // miroir de displayE27Buffer() : libère SPI après chaque usage E27
+  oledReady = false;         // GPIO12 = SDA de l'OLED = MISO du SPI : l'OLED est ré-initialisé par tickerStep()
+  lastE27RefreshMs = millis();
+  if (!delivered) { Serial.println(F("[RENDER] production interrompue — rafraîchissement NON lancé (RAM du panneau partiellement écrite ; l'écran garde son état physique, éventuellement blanc)")); return 0; }
+#if POD_RENDER_V1 && POD_CANARY
+  canaryStep(PCP_FINISH, F("renderHash"));
+#endif
+  if (!r.finish(hex)) { Serial.println(F("[RENDER] renderHash incomplet — abandon")); return 0; }
+  Serial.printf_P(PSTR("[RENDER] calculé ET remis au pilote — mode=%u renderHash=%s\n"), (unsigned)POD_RENDER_MODE_DEFAULT, hex);
+  return 2;
+}
+#endif
+
+
+bool doFetchFrameE27(const String& frameId, const String& frameSource) {
+  logHeapState("FETCHFRAME-E27-BEFORE");
+#if POD_RENDER_V1 && POD_CANARY
+  canaryStep(PCP_FETCH, F("frame e-ink 2,7 : debut du telechargement"));
+#endif
+  const uint32_t blockBefore = ESP.getMaxFreeBlockSize();
+
+  bool useFile = g_anim.fsOk;
+  File tmp;
+  if (useFile) {
+    tmp = LittleFS.open(E27_TMP, "w");
+    if (!tmp) { Serial.println(F("[FETCHFRAME-E27] fichier temporaire impossible — repli sur la RAM")); useFile = false; }
+  }
+  uint8_t* e27Buf = nullptr;
+  if (!useFile) {
+    e27Buf = (uint8_t*)malloc(E27_BUF_SIZE);
+    if (!e27Buf) {
+      Serial.println(F("[FETCHFRAME-E27] malloc failed"));
+      noteNet(false, blockBefore, "malloc E27");
+      return false;
+    }
+    memset(e27Buf, 0xFF, E27_BUF_SIZE);
+  }
+  auto cleanup = [&]() {
+    if (tmp) tmp.close();
+    if (useFile && LittleFS.exists(E27_TMP)) LittleFS.remove(E27_TMP);
+    if (e27Buf) { free(e27Buf); e27Buf = nullptr; }
+  };
+#if POD_RENDER_V1 && POD_CANARY
+  canaryStep(PCP_PLANE_DEST, useFile ? F("destination du plan : fichier flash ouvert (aucun plan en RAM pendant le TLS)") : F("destination du plan : RAM (5808 o alloues avant le TLS)"));
+  if (!canaryTlsPreflight(PCP_PLANE_DEST, F("pre-vol TLS avant le telechargement"), F("destination liberee, pas d'ACK, nouvel essai au prochain pull"))) { cleanup(); return false; }
+#endif
+
+  size_t bRead = 0;
+  {
+    WiFiClientSecure client;
+    client.setInsecure();
+    HTTPClient http;
+
+    // &screen= obligatoire — device multi-screen
+    String url = String(SERVER_URL) + "/api/pull-frame?deviceId=" + deviceId
+                 + "&screen=" + String(SCREEN_E27) + "&fmt=bin";
+    if (!http.begin(client, url)) {
+      Serial.println(F("[FETCHFRAME-E27] begin() failed"));
+      cleanup();
+      noteNet(false, blockBefore, "begin E27");
+      return false;
+    }
+    http.setTimeout(20000);
+    http.useHTTP10(true);
+
+    int code = http.GET();
+    Serial.printf_P(PSTR("[HTTP GET] /api/pull-frame (E27) → %d\n"), code);
+    noteNet(code > 0, blockBefore, "GET pull-frame E27");   // code <= 0 : TLS impossible (mémoire, Wi-Fi)
+#if POD_RENDER_V1 && POD_CANARY
+    canaryStep(PCP_TLS_OPEN, F("TLS ouvert (BearSSL alloue)"));
+#endif
+
+    if (code == 404) {
+      http.end();
+      Serial.println(F("[FETCHFRAME-E27] Pas de frame"));
+      cleanup();
+      return true;
+    }
+    if (code != 200) {
+      http.end();
+      Serial.printf_P(PSTR("[FETCHFRAME-E27] HTTP error: %d\n"), code);
+      cleanup();
+      return false;
+    }
+
+    WiFiClient* stream = http.getStreamPtr();
+    unsigned long t0 = millis();
+    if (useFile) {
+      uint8_t chunk[256];                              // un flux TLS rend souvent MOINS que demandé : on boucle jusqu'au compte exact (readFull)
+      while (bRead < E27_BUF_SIZE && millis() - t0 < 15000) {
+        if (stream->available()) {
+          size_t want = E27_BUF_SIZE - bRead;
+          if (want > sizeof(chunk)) want = sizeof(chunk);
+          size_t got = stream->readBytes(chunk, want);
+          if (got > 0) {
+            if (tmp.write(chunk, got) != got) { Serial.println(F("[FETCHFRAME-E27] écriture flash impossible")); break; }
+            bRead += got;
+          }
+        } else { delay(10); }
+      }
+    } else {
+      while (bRead < E27_BUF_SIZE && millis() - t0 < 15000) {
+        if (stream->available()) {
+          size_t got = stream->readBytes(e27Buf + bRead, E27_BUF_SIZE - bRead);
+          if (got > 0) bRead += got;
+        } else { delay(10); }
+      }
+    }
+#if POD_RENDER_V1 && POD_CANARY
+    {
+      const int canaryClen = http.getSize();            // en-têtes HTTP/1.0 : Content-Length (−1 = inconnu)
+      const int canarySurplus = stream->available();    // octets déjà disponibles APRÈS les 5 808 attendus (http.end() les VIDE sans rien dire)
+      Serial.printf_P(PSTR("[CANARY] corps : Content-Length=%d lus=%u attendus=%u surplus=%d\n"), canaryClen, (unsigned)bRead, (unsigned)E27_BUF_SIZE, canarySurplus);
+      if (canaryClen != (int)E27_BUF_SIZE || canarySurplus > 0) {   // Content-Length EXACT exigé : absent / inconnu (−1) REFUSÉ
+        Serial.println(F("[CANARY] REFUS : corps de taille inattendue (Content-Length absent ou different de 5808, ou surplus) — aucun rendu, aucun ACK"));
+        bRead = 0;   // retombe dans la branche « lecture incomplète » : destination libérée, aucun ACK
+      }
+      canaryStep(PCP_BODY, F("corps lu (TLS encore ouvert)"));
+    }
+#endif
+    http.end();
+
+    Serial.printf_P(PSTR("[FETCHFRAME-E27] lu=%u expected=%u (%s)\n"), bRead, E27_BUF_SIZE, useFile ? "via flash" : "via RAM");
+  }
+  // TLS fermé : le tas est de nouveau disponible
+  if (tmp) tmp.close();
+#if POD_RENDER_V1 && POD_CANARY
+  canaryAfterTls();
+#endif
+
+  if (bRead != E27_BUF_SIZE) {
+    Serial.println(F("[FETCHFRAME-E27] lecture incomplète"));
+    cleanup();
+    return false;
+  }
+
+  if (useFile) {
+    e27Buf = (uint8_t*)malloc(E27_BUF_SIZE);           // APRÈS le TLS : aucune connexion ouverte
+    File rd = e27Buf ? LittleFS.open(E27_TMP, "r") : File();
+    size_t got = (e27Buf && rd) ? rd.read(e27Buf, E27_BUF_SIZE) : 0;
+    if (rd) rd.close();
+    LittleFS.remove(E27_TMP);
+    if (!e27Buf || got != E27_BUF_SIZE) {
+      Serial.println(F("[FETCHFRAME-E27] relecture de la flash impossible"));
+      cleanup();
+      return false;
+    }
+  }
+
+#if POD_RENDER_V1 && POD_CANARY
+  canaryStep(PCP_PLANE_READY, F("plan de 5808 o pret en RAM (TLS ferme)"));
+  g_pcBusyCalls = g_pcBusyTotalMs = g_pcBusyMaxMs = g_pcBusyTimeouts = 0;   // compteurs BUSY propres à CETTE frame (aucun faux refus dû à un affichage antérieur)
+#endif
+#if POD_RENDER_V1
+  // Rendu v1 en flux : cartel + fit calculés par le noyau (toujours un cartel : repli « PROOF-OF-DRAW »), remis au pilote par morceaux
+  if (podRenderAndShowE27(e27Buf) != 2) {   // 2 = rendu calculé ET remis au pilote
+#else
+  // ── Cartel e-ink PAYSAGE (câble à gauche) : brûler AVANT l'affichage ────────
+  // Bande supérieure paysage : timestamp + "Block #N"
+  // Bande inférieure paysage : artiste - titre
+  // Texte rotationné 90° sens horaire pour être lisible en paysage.
+  if (pendingWorkTitle.length() > 0 || pendingArtistName.length() > 0
+      || pendingDisplayTs.length() > 0 || currentBlockIndex >= 0) {
+    Serial.printf_P(PSTR("[E27] Cartel landscape: ts=%s artist=%s title=%s bloc=%d\n"),
+                  pendingDisplayTs.c_str(), pendingArtistName.c_str(),
+                  pendingWorkTitle.c_str(), currentBlockIndex);
+    burnEinkCartel_landscape(e27Buf, pendingWorkTitle, pendingArtistName,
+                             pendingDisplayTs, currentBlockIndex);
+  }
+
+  if (!displayE27Buffer(e27Buf)) {
+#endif
+#if POD_RENDER_V1 && POD_CANARY
+    Serial.println(F("[CANARY] ECHEC rendu/affichage : AUCUN ACK, plan libere, nouvel essai au prochain pull (pas de polling accelere) ; l'ecran n'est PAS garanti inchange"));
+    canaryOledProbe();
+#endif
+    Serial.println(F("[FETCHFRAME-E27] display failed — frame conservée serveur"));
+    cleanup();
+    return false;
+  }
+
+  free(e27Buf);                                        // libéré AVANT l'ACK (nouvelle connexion TLS)
+  e27Buf = nullptr;
+#if POD_RENDER_V1 && POD_CANARY
+  // LOT8B2C-27 : en canari le RÉSULTAT de l'ACK décide du succès. L'écran a PU être affiché (hasDisplayedFrame), mais la frame n'est « terminée » (lastFrameIdE27, retour true) QU'APRÈS un ACK HTTP 200 ;
+  // sinon retour false : le serveur reproposera la frame au prochain pull (≥ 60 s, jamais de polling accéléré). Pré-vol BearSSL aussi pour l'ACK (le plan est déjà libéré : mémoire restituée après le TLS).
+  hasDisplayedFrame = true;
+  if (g_pcBusyTimeouts > 0 || g_pcBusyMaxMs > POD_CANARY_BUSY_ALERT_MS) {   // toute ALERTE BUSY échoue FERMÉ : ni pré-vol, ni ACK, ni état acquitté
+    canaryBusyReport(F("refus ACK"));
+    Serial.println(F("[CANARY] REFUS ACK : BUSY anormalement long ou plafonne — AUCUN ACK, frame NON acquittee (lastFrameIdE27 inchange), l'ecran a PU etre affiche ; retentee au prochain pull"));
+    canaryOledProbe();
+    return false;
+  }
+  if (!canaryTlsPreflight(PCP_ACK, F("rendu OK, pre-vol TLS avant l'ACK"), F("AUCUN ACK envoye : l'ecran a PU etre affiche mais la frame N'EST PAS acquittee (retentee au prochain pull)"))) {
+    canaryOledProbe();
+    return false;
+  }
+  if (!ackFrame(frameId, SCREEN_E27)) {
+    Serial.println(F("[CANARY] ECHEC ACK : refuse ou impossible — l'ecran a PU etre affiche mais la frame N'EST PAS acquittee (lastFrameIdE27 inchange), retentee au prochain pull"));
+    canaryOledProbe();
+    return false;
+  }
+  lastFrameIdE27        = frameId;
+  lastFrameWasConsensus = (frameSource == "consensus");
+  pendingCandidateId    = "";
+  canaryStep(PCP_DONE, F("ACK recu (HTTP 200) : frame acquittee"));
+  Serial.printf_P(PSTR("[FETCHFRAME-E27] ✅ affichée et acquittée frameId=%s source=%s\n"), frameId.c_str(), frameSource.c_str());
+  logHeapState("FETCHFRAME-E27-AFTER");
+  canaryStreamReport();
+  canaryOledProbe();
+  g_pcRtc.abn = 0;
+  return true;
+#endif
+
+  lastFrameIdE27        = frameId;
+  hasDisplayedFrame     = true;
+  lastFrameWasConsensus = (frameSource == "consensus");
+  pendingCandidateId    = "";
+  ackFrame(frameId, SCREEN_E27);
+
+  Serial.printf_P(PSTR("[FETCHFRAME-E27] ✅ frameId=%s source=%s\n"),
+                frameId.c_str(), frameSource.c_str());
+  logHeapState("FETCHFRAME-E27-AFTER");
+  return true;
+}
+
+// ─── BANC D'ESSAI D'ANIMATION SUR L'OLED (⚠ NON TESTÉ sur le matériel) ───────────────────────────────────────────────────────────
+// Le clip 128×64 est joué 1:1. Chaque image = Adafruit_GFX::drawBitmap (même format : lignes de 16 octets, MSB à gauche) puis display().
+// I2C passé à 400 kHz pendant la lecture (100 kHz = ~100 ms par image), remis à 100 kHz ensuite. Le ticker est suspendu puis repris ;
+// l'artwork (oledArtBuf) est remis à l'écran à la fin.
+podbenchesp::State g_bench;
+struct BenchOledSink {
+  void present(const uint8_t* frame) {
+    oled.clearDisplay();
+    oled.drawBitmap(0, 0, frame, OLED_WIDTH, OLED_HEIGHT, SSD1306_WHITE);
+    oled.display();
+  }
+};
+struct BenchOledPresenter {
+  bool tickerWasActive = false;
+  bool resident = false;                         // animation de bloc en boucle : le ticker (titre défilant) reste éteint, l'animation prend l'écran
+  void begin(const podbench::Clip&) {
+    tickerWasActive = oledTickActive;
+    oledTickActive = false;
+    if (lastScreenWasSPI) {                      // même bascule SPI → I2C que displayOLED()
+      SPI.endTransaction();
+      SPI.end();
+      delay(20);
+      lastScreenWasSPI = false;
+    }
+    Wire.begin(OLED_SDA, OLED_SCL);
+    Wire.setClock(400000);
+    delay(10);
+    oledReady = oled.begin(SSD1306_SWITCHCAPVCC, 0x3C);
+    if (!oledReady) Serial.println(F("[BENCH] OLED : init impossible"));
+  }
+  template <class Hook> bool play(const podbench::Clip& c, uint8_t* cur, Hook&& hook) {
+    BenchOledSink sink;
+    return podbench::playBitmap(c, cur, sink, hook);
+  }
+  void end() {
+    Wire.setClock(100000);
+    if (oledReady) {
+      if (oledArtBuf) memcpy(oled.getBuffer(), oledArtBuf, OLED_BUF_SIZE); else oled.clearDisplay();
+      oled.display();
+    }
+    oledTickActive = resident ? false : tickerWasActive;
+  }
+};
+BenchOledPresenter g_benchPresenter;
+BenchOledPresenter g_animPresenter;              // même écran, mode « résident » (g_animPresenter.resident = true dans setup())
+podanimesp::State g_anim;                        // animation de bloc active (clip en flash), voir pod_anim_esp.h
+
+/** Temps avant la prochaine tâche réseau (pull, vote, ré-validation) : l'animation ne la retarde jamais. */
+unsigned long msUntilNextTask() {
+  long r = (long)(lastPullMs + nextPullIntervalMs - millis());
+  if (pendingCandidateId.length() > 0) { const long v = (long)(lastValidateMs + VALIDATE_INTERVAL - millis()); if (v < r) r = v; }
+  if (pendingObsHashes.length() > 0) r = 0;
+  return podanimesp::budgetFromDue(r);
+}
+
+// ─── PULL ──────────────────────────────────────────────────────────────────
+bool doPull() {
+  logHeapState("PULL-BEFORE");
+#if POD_RENDER_V1 && POD_CANARY
+  canaryStep(PCP_PULL, F("pull: debut"));
+#endif
+  const uint32_t blockBefore = ESP.getMaxFreeBlockSize();
+
+  String newFrameId     = "";
+  String newFrameSource = "none";
+  String newScreen      = "";
+  String newCandId      = "";
+  String newBlockHash   = "";
+  int    newBlockIndex  = -1;
+  int    pullRetryAfter = 60;  // valeur par défaut, remplacée par doc["retryAfter"]
+  bool   newBenchMode   = false;
+  String newAnimHash    = "";                 // pointeur d'animation (firmware >= 2.2 seulement)
+  size_t newAnimBytes   = 0;
+
+  {
+    WiFiClientSecure client;
+    client.setInsecure();
+    HTTPClient http;
+
+    String url = String(SERVER_URL) + "/api/pull?deviceId=" + deviceId;
+    if (!http.begin(client, url)) {
+      Serial.println(F("[PULL] begin() failed"));
+      noteNet(false, blockBefore, "begin pull");
+      return true;
+    }
+    http.setTimeout(20000);
+    http.useHTTP10(true);
+
+    int code = http.GET();
+    Serial.printf_P(PSTR("[HTTP GET] /api/pull → %d\n"), code);
+    noteNet(code > 0, blockBefore, "GET pull");   // code <= 0 : connexion TLS impossible ; un 4xx/5xx n'est pas un souci de tas
+
+    if (code == 429) {
+      String rresp = http.getString();
+      http.end();
+      int retrySec = 60;
+      DynamicJsonDocument rateDoc(256);
+      if (deserializeJson(rateDoc, rresp) == DeserializationError::Ok)
+        retrySec = max(1, (int)(rateDoc["retryAfter"] | 60));
+      Serial.printf_P(PSTR("[PULL] 429 retryAfter=%ds\n"), retrySec);
+      unsigned long retryMs = (unsigned long)retrySec * 1000UL;
+      if (retryMs > PULL_INTERVAL) retryMs = PULL_INTERVAL;
+      lastPullMs = millis() - (PULL_INTERVAL - retryMs);
+      return true;
+    }
+
+    if (code != 200) {
+      http.end();
+      Serial.printf_P(PSTR("[PULL] HTTP error: %d\n"), code);
+      return true;
+    }
+
+    // Doc étendu : inclut workTitle (≤80) + drawArtistName (≤40) + displayTs (≤12)
+    DynamicJsonDocument doc(2048);
+    DeserializationError err = deserializeJson(doc, http.getStream());
+    http.end();
+
+    if (err) {
+      Serial.print(F("[PULL] JSON error: "));
+      Serial.println(err.c_str());
+      return true;
+    }
+
+    JsonObject chain = doc["chain"];
+    if (!chain.isNull()) {
+      newBlockHash  = chain["blockHash"]  | "";
+      newBlockIndex = chain["blockIndex"] | -1;
+    }
+
+    JsonObject pend = doc["pendingValidation"];
+    if (!pend.isNull()) newCandId = pend["candidateId"] | "";
+
+    newFrameSource = doc["frameSource"] | "none";
+    newFrameId     = doc["frameId"]     | "";
+    newScreen      = doc["screen"]      | "";
+    newBenchMode   = doc["benchMode"]   | false;   // le propriétaire a activé le mode banc d'essai dans l'app
+    {
+      JsonObject an = doc["anim"];
+      if (!an.isNull()) { newAnimHash = an["hash"] | ""; newAnimBytes = (size_t)(an["bytes"] | 0); }
+    }
+    pullRetryAfter = doc["retryAfter"]  | 60;
+    if (pullRetryAfter <= 0) pullRetryAfter = 60;
+
+    // ── Métadonnées cartel (à la racine, plus fiable que doc["frame"]) ─────────
+    // Le serveur expose cartelMeta{workTitle, drawArtistName, displayTs, blockIndex}
+    // indépendamment du chemin de validation.
+    {
+      JsonObject cm = doc["cartelMeta"];
+      if (!cm.isNull()) {
+        const char* wt = cm["workTitle"]      | "";
+        const char* an = cm["drawArtistName"] | "";
+        const char* dt = cm["displayTs"]      | "";
+        int         bi = cm["blockIndex"]     | -1;
+        if (strlen(wt) > 0) { pendingWorkTitle  = String(wt); pendingWorkTitle.trim(); }
+        else                   pendingWorkTitle  = "";
+        if (strlen(an) > 0) { pendingArtistName = String(an); pendingArtistName.trim(); }
+        else                   pendingArtistName = "";
+        if (strlen(dt) > 0)    pendingDisplayTs  = String(dt);
+        if (bi >= 0)           currentBlockIndex = bi;
+        Serial.printf_P(PSTR("[PULL] cartel: title=%s artist=%s ts=%s bloc=%d\n"),
+                      wt, an, dt, bi);
+      }
+    }
+
+    // Fallback frame{} pour les champs frameId/screen si absents à la racine
+    if (newFrameId.length() == 0) {
+      JsonObject frameObj = doc["frame"];
+      if (!frameObj.isNull()) {
+        newFrameId = frameObj["frameId"] | "";
+        newScreen  = frameObj["screen"]  | "";
+      }
+    }
+
+    // ── Tâche d'observation (revalidation de blocs antérieurs) ────────────────
+    // Uniquement quand le device est idle (le serveur ne peuple ce champ que dans ce cas).
+    // L'ESP ne change PAS son affichage — il confirme juste la présence des blocs.
+    {
+      JsonObject obs = doc["pendingObservation"];
+      if (!obs.isNull()) {
+        JsonArray hashes = obs["blockHashes"].as<JsonArray>();
+        if (hashes.size() > 0) {
+          String hashArr = "[";
+          for (size_t i = 0; i < hashes.size(); i++) {
+            if (i > 0) hashArr += ",";
+            const char* h = hashes[i] | "";
+            hashArr += "\"";
+            hashArr += h;
+            hashArr += "\"";
+          }
+          hashArr += "]";
+          pendingObsHashes = hashArr;
+          // targetBlockHash : identifie le bloc qui contient les entrées revalidated[]
+          const char* tgt = obs["targetBlockHash"] | "";
+          pendingObsTarget = String(tgt);
+          Serial.println("[PULL] Tâche obs hashes: " + pendingObsHashes);
+          if (pendingObsTarget.length() > 0)
+            Serial.println("[PULL] Tâche obs target: " + pendingObsTarget.substring(0, 12) + "...");
+        }
+      }
+    }
+
+    // ── Bloc nouvellement possédé (one-shot, posé par finalizeBlock) ──────────
+    // Présent uniquement le premier pull qui suit le minage de ce device.
+    // On sauvegarde en EEPROM ring buffer pour survivre aux redémarrages.
+    {
+      const char* newlyOwned = doc["ownedBlock"] | "";
+      if (strlen(newlyOwned) >= 16) {
+        Serial.println("[OWNED] Nouveau bloc possédé: " + String(newlyOwned).substring(0, 12) + "...");
+        saveOwnedBlockHash(String(newlyOwned));
+      }
+    }
+  }
+  // TLS fermé
+#if POD_RENDER_V1 && POD_CANARY
+  // LOT8B2C-27 : aucune requête hors register, pull, pull-frame et ack-frame : le mode banc d'essai et le pointeur d'animation annoncés par le pull sont IGNORÉS (aucun clip téléchargé).
+  if (newBenchMode || newAnimHash.length() > 0) Serial.println(F("[CANARY] banc d'essai / animation annonces : IGNORES en build canari (aucune requete de clip)"));
+  newBenchMode = false; newAnimHash = ""; newAnimBytes = 0;
+#endif
+  podbenchesp::onPull(g_bench, newBenchMode);
+  podanimesp::onPull(g_anim, newAnimHash.c_str(), newAnimBytes);
+
+  // Ajuste l'intervalle de pull selon l'activité réseau signalée par le serveur
+  if (newFrameSource == "none" && newCandId.length() == 0) {
+    // Réseau idle → on respecte le retryAfter du serveur (typiquement 300s)
+    nextPullIntervalMs = (unsigned long)pullRetryAfter * 1000UL;
+  } else {
+    // Activité détectée (frame ou candidat) → retour au rythme nominal
+    nextPullIntervalMs = PULL_INTERVAL;
+  }
+  Serial.printf_P(PSTR("[PULL] nextInterval=%lus (retryAfter=%d)\n"),
+                nextPullIntervalMs / 1000UL, pullRetryAfter);
+
+  // ── Mise à jour état chaîne ──
+  if (newBlockHash.length() > 0 && newBlockHash != currentBlockHash) {
+    currentBlockHash  = newBlockHash;
+    currentBlockIndex = newBlockIndex;
+    saveBlockHashToEEPROM(currentBlockHash);
+    Serial.printf_P(PSTR("[PULL] Nouveau bloc #%d hash=%s...\n"),
+                  currentBlockIndex, currentBlockHash.substring(0, 12).c_str());
+  }
+
+  if (newCandId.length() > 0) {
+    pendingCandidateId = newCandId;
+    Serial.println("[PULL] Candidat en attente: " + pendingCandidateId);
+  }
+
+  // ── Pas de frame ──
+  if (newFrameSource == "none" || newFrameId.length() == 0) {
+    Serial.println(F("[PULL] Aucune frame"));
+    logHeapState("PULL-DONE-NONE");
+    return true;
+  }
+
+  // ── Frame déjà affichée (id mémorisé PAR écran ; écran absent du JSON = e-ink, comme le dispatch plus bas) ──
+  const bool forOLED = (newScreen == SCREEN_OLED);
+  if (newFrameId == (forOLED ? lastFrameIdOLED : lastFrameIdE27)) {
+    Serial.println(F("[PULL] Frame déjà affichée"));
+    // Une frame du consensus déjà affichée mais encore EN ATTENTE sur le serveur = son ACK s'est perdu. Elle resterait en tête de file (jusqu'à 2 h pour une
+    // animation) et masquerait les frames de l'autre écran : on la ré-acquitte (1 requête, seulement dans ce cas anormal). Une frame personnelle n'est jamais supprimée par l'ACK.
+    if (newFrameSource == "consensus") {
+      Serial.println(F("[PULL] frame du consensus encore en attente malgré l'affichage → ré-ACK"));
+      ackFrame(newFrameId, forOLED ? SCREEN_OLED : SCREEN_E27);
+    }
+    if (nextPullIntervalMs < (unsigned long)pullRetryAfter * 1000UL && newCandId.length() == 0) nextPullIntervalMs = (unsigned long)pullRetryAfter * 1000UL;   // image déjà affichée : rythme de repos du serveur (quota Redis)
+    if (newScreen == SCREEN_OLED && g_anim.pendingHash.length() == 64 && podanimesp::acquire(g_anim, String(SERVER_URL))) oledTickActive = false;
+    return true;
+  }
+
+  // ── Dispatch vers le bon fetch ──
+  if (newScreen == SCREEN_OLED) {
+    Serial.printf_P(PSTR("[PULL] Nouvelle frame OLED frameId=%s source=%s → fetch\n"),
+                  newFrameId.c_str(), newFrameSource.c_str());
+    const bool shownOLED = doFetchFrameOLED(newFrameId, newFrameSource) && lastFrameIdOLED == newFrameId;
+    if (shownOLED) {
+      // L'affiche est à l'écran : une animation de bloc → on rapatrie le clip et on la joue en boucle ; une image fixe → l'animation précédente s'arrête.
+      if (g_anim.pendingHash.length() == 64) { if (podanimesp::acquire(g_anim, String(SERVER_URL))) oledTickActive = false; }
+      else podanimesp::forget(g_anim);
+    }
+    return true;
+  }
+
+  if (newScreen == SCREEN_E27) {
+    Serial.printf_P(PSTR("[PULL] Nouvelle frame E27 frameId=%s source=%s → fetch\n"),
+                  newFrameId.c_str(), newFrameSource.c_str());
+    doFetchFrameE27(newFrameId, newFrameSource);
+    return true;
+  }
+
+  // Screen absent du JSON → on essaie E27 par défaut si frameSource != none
+  // (cas où le serveur ne retourne pas le champ screen)
+  if (newScreen.length() == 0 && newFrameSource != "none") {
+    Serial.println(F("[PULL] screen absent — tentative E27 par défaut"));
+    doFetchFrameE27(newFrameId, newFrameSource);
+    return true;
+  }
+
+  Serial.println("[PULL] screen inconnu: " + newScreen);
+  return true;
+}
+
+
+
+// ─── OBS-CONFIRM (Axe 3 : revalidation de blocs antérieurs) ───────────────
+// Envoie la confirmation que cet ESP a "observé" les blocs de la tâche reçue.
+// Aucun changement d'affichage : uniquement une requête POST vers le serveur.
+bool doObsConfirm() {
+#if POD_RENDER_V1 && POD_CANARY
+  // LOT8B2C-27 : aucune requête serveur hors register, pull, pull-frame et ack-frame.
+  if (pendingObsHashes.length() > 0) {
+    Serial.println(F("[CANARY] tache d'observation annoncee : IGNOREE en build canari (aucune requete obs-confirm)"));
+    pendingObsHashes = "";
+    pendingObsTarget = "";
+  }
+  return true;
+#endif
+  if (pendingObsHashes.length() == 0) return true;
+
+  Serial.println("[OBS] Confirmation observation: " + pendingObsHashes);
+
+  // Inclure targetBlockHash pour que le serveur retrouve le bon bloc
+  // sans avoir à chercher dans toute la chaîne
+  String body = "{\"deviceId\":\"" + deviceId
+              + "\",\"blockHashes\":" + pendingObsHashes;
+  if (pendingObsTarget.length() == 64) {  // hash valide = 64 chars hex
+    body += ",\"targetBlockHash\":\"" + pendingObsTarget + "\"";
+  }
+  body += "}";
+
+  String resp;
+  bool ok = httpPost("/api/obs-confirm", body, resp);
+
+  Serial.printf_P(PSTR("[OBS] confirm → %s resp: %s\n"), ok ? "OK" : "FAIL", resp.c_str());
+  pendingObsHashes = "";   // toujours vider, même en cas d'échec
+  pendingObsTarget = "";
+  return ok;
+}
+
+// ─── VALIDATION ────────────────────────────────────────────────────────────
+// Retourne true si un bloc vient d'être miné (quorum atteint par ce vote).
+// Utilisé dans le loop() pour déclencher un pull immédiat uniquement si nécessaire.
+// ── Helper : sauvegarde/restaure oledArtBuf autour des TLS ─────────────────
+// BearSSL a besoin de ~16KB contigus. oledArtBuf (1024b) alloué globalement
+// fragmente le heap entre la 1re et la 2e connexion TLS de doValidate.
+// Même fix que le BWR avec blackBuf/redBuf, mais pour le buffer OLED.
+static uint8_t* _oledSave = nullptr;
+
+static void oledBufFreeForTLS() {
+  return;   // v2.3 : oledArtBuf est STATIQUE (g_oledArt) — plus rien à libérer ni à réallouer autour du TLS
+  if (!oledArtBuf) return;
+  _oledSave = (uint8_t*)malloc(OLED_BUF_SIZE);
+  if (_oledSave) {
+    memcpy(_oledSave, oledArtBuf, OLED_BUF_SIZE);
+    free(oledArtBuf);
+    oledArtBuf = nullptr;
+  }
+}
+
+static void oledBufRestoreAfterTLS() {
+  if (!_oledSave) return;
+  oledArtBuf = (uint8_t*)malloc(OLED_BUF_SIZE);
+  if (oledArtBuf) {
+    memcpy(oledArtBuf, _oledSave, OLED_BUF_SIZE);
+  } else {
+    Serial.println(F("[VALIDATE] malloc oledArtBuf restore failed — ticker suspendu"));
+  }
+  free(_oledSave);
+  _oledSave = nullptr;
+}
+
+// ─── VALIDATION RÉELLE (vote v2) ─────────────────────────────────────────────
+// ⚠ NON TESTÉ sur le matériel. Le serveur annonce le candidat (écran, taille, SHA-256) ; l'ESP lit le contenu BRUT en flux, recalcule hash + métriques entières, décide d'un verdict objectif,
+// le signe (Ed25519) et vote. Il relit un candidat de N'IMPORTE QUEL écran (pas seulement les siens) : le tampon que demandent l'OLED (1 024 o) et l'e-ink 2,9" (4 736 o) est alloué
+// (malloc) juste avant la requête et libéré aussitôt après (v2.5 : plus de tampon statique).
+bool doValidateV2(const String& candidateId, const String& screenName, size_t bytes, const String& announcedHash) {
+  PodScreenKind kind;
+  if (!podKindFromName(screenName, &kind)) { Serial.println("[VALIDATE2] écran inconnu: " + screenName); return false; }
+  logHeapState("VALIDATE2-BEFORE");
+  PodCheck chk;
+  uint8_t* scratch = nullptr;
+  size_t scratchLen = 0;
+  if (kind == POD_OLED096 || kind == POD_EINK29BWR) {
+    scratchLen = POD_SCRATCH_BYTES;
+    scratch = (uint8_t*)malloc(scratchLen);
+    if (!scratch) { Serial.println(F("[VALIDATE2] malloc scratch impossible")); return false; }
+  }
+  bool ok = podFetchAndCheck(String(SERVER_URL) + "/api/candidate-frame?candidateId=" + candidateId, kind, bytes, scratch, scratchLen, &chk);
+  free(scratch);
+  if (!ok) {
+    Serial.printf_P(PSTR("[VALIDATE2] lecture/calcul impossible (http=%d, %u/%u octets)\n"), chk.http, (unsigned)chk.bytes, (unsigned)bytes);
+    return false;
+  }
+
+  bool accept = false;
+  const char* reason = podVerdict(chk, announcedHash, &accept);
+  Serial.printf_P(PSTR("[VALIDATE2] %s %u o en %lu ms | e=%lu t=%lu r=%lu s=%lu | verdict=%s %s\n"), screenName.c_str(), (unsigned)chk.bytes, (unsigned long)chk.ms,
+                (unsigned long)chk.m.e, (unsigned long)chk.m.t, (unsigned long)chk.m.r, (unsigned long)chk.m.s, accept ? "accept" : "reject", reason);
+  Serial.println(String("[VALIDATE2] hash=") + chk.hash);
+
+  String msg = podVoteMessage(deviceId, candidateId, chk.hash, chk.m, accept);
+  uint8_t sig[64];
+  Ed25519::sign(sig, privateKey, publicKey, (const uint8_t*)msg.c_str(), msg.length());
+
+  String body = String("{\"v\":2,\"deviceId\":\"") + deviceId + "\",\"candidateId\":\"" + candidateId + "\",\"rawHash\":\"" + chk.hash + "\","
+                "\"e\":" + String((unsigned long)chk.m.e) + ",\"t\":" + String((unsigned long)chk.m.t) + ",\"r\":" + String((unsigned long)chk.m.r) + ","
+                "\"verdict\":\"" + (accept ? "accept" : "reject") + "\"" + (accept ? String("") : String(",\"reason\":\"") + reason + "\"") +
+                ",\"signature\":\"" + bytesToHex(sig, 64) + "\"}";
+
+  String vResp;
+  bool vOk = httpPost("/api/validation-result", body, vResp);
+  bool mined = false;
+  if (vOk) {
+    Serial.println(F("[VALIDATE2] Vote OK"));
+    if (vResp.indexOf("\"blockMined\":true") >= 0) { Serial.println(F("[VALIDATE2] BLOC MINE")); mined = true; }
+    if (vResp.indexOf("\"rejectObserved\":true") >= 0) Serial.println(F("[VALIDATE2] refus enregistré par le serveur (non bloquant)"));
+  } else {
+    Serial.println("[VALIDATE2] Echec vote (403 signature, 422 hash/métriques différents du serveur) : " + vResp);
+    // 403 Signature invalide → clé publique désynchronisée : on se ré-enregistre pour la renvoyer (comme le chemin v1), le prochain cycle votera.
+    if (vResp.indexOf("Signature") >= 0) { Serial.println(F("[VALIDATE2] Re-register pour resynchroniser publicKey...")); doRegister(); }
+  }
+  logHeapState("VALIDATE2-AFTER");
+  return mined;
+}
+
+bool doValidate() {
+#if POD_RENDER_V1 && POD_CANARY
+  // LOT8B2C-27 : le canari ne teste PAS le consensus. Aucun réseau, aucune signature, aucune requête validation-result, aucun re-register, aucun malloc : le candidat est oublié localement (le serveur le ré-annoncera au pull suivant).
+  if (pendingCandidateId.length() > 0) {
+    Serial.println(F("[CANARY] candidat annonce : AUCUN vote en build canari — candidat oublie localement (le canari ne teste pas le consensus)"));
+    pendingCandidateId = "";
+  }
+  return false;
+#endif
+  if (pendingCandidateId.length() == 0) return false;
+
+  Serial.println("[VALIDATE] Debut: " + pendingCandidateId);
+  logHeapState("VALIDATE-BEFORE");
+
+  // Libère oledArtBuf pour éviter la fragmentation entre les deux TLS
+  oledBufFreeForTLS();
+
+  String resp;
+  bool ok = httpGet("/api/validate-candidate?deviceId=" + deviceId, resp);
+
+  if (!ok || resp.length() == 0) {
+    Serial.println(F("[VALIDATE] Echec HTTP"));
+    pendingCandidateId = "";
+    oledBufRestoreAfterTLS();
+    return false;
+  }
+
+  DynamicJsonDocument doc(768);   // 512 avant la validation réelle : la réponse porte aussi { v2: écran, taille, hash } (≈ 110 o)
+  DeserializationError err = deserializeJson(doc, resp);
+  resp = "";
+
+  if (err) {
+    Serial.print(F("[VALIDATE] JSON err: ")); Serial.println(err.c_str());
+    pendingCandidateId = "";
+    oledBufRestoreAfterTLS();
+    return false;
+  }
+
+  if (doc["alreadyVoted"] | false) {
+    Serial.println(F("[VALIDATE] Déjà voté"));
+    pendingCandidateId = "";
+    oledBufRestoreAfterTLS();
+    return false;
+  }
+
+  if (doc["candidate"].isNull()) {
+    Serial.println(F("[VALIDATE] Pas de candidat actif"));
+    pendingCandidateId = "";
+    oledBufRestoreAfterTLS();
+    return false;
+  }
+
+  JsonObject cand    = doc["candidate"];
+  String candidateId = cand["candidateId"] | "";
+
+  if (candidateId.length() == 0) {
+    Serial.println(F("[VALIDATE] candidateId absent"));
+    pendingCandidateId = "";
+    oledBufRestoreAfterTLS();
+    return false;
+  }
+
+  // Validation RÉELLE : si le serveur annonce { v2 }, on revérifie le contenu au lieu de recopier son score (anciens serveurs / animations : chemin v1 ci-dessous).
+  if (!cand["v2"].isNull()) {
+    String v2screen = cand["v2"]["screen"] | "";
+    size_t v2bytes  = cand["v2"]["bytes"] | 0;
+    String v2hash   = cand["v2"]["hash"] | "";
+    pendingCandidateId = "";
+    doc.clear();
+    const bool minedV2 = doValidateV2(candidateId, v2screen, v2bytes, v2hash);
+    oledBufRestoreAfterTLS();
+    return minedV2;
+  }
+
+  float score = cand["score_server"] | 0.5f;
+  Serial.printf_P(PSTR("[VALIDATE] candidateId=%s score=%.3f\n"), candidateId.c_str(), score);
+
+  String signature = signED25519(candidateId, score);
+  char   scoreStr[8];
+  dtostrf(score, 1, 3, scoreStr);
+
+  String body = String("{\"deviceId\":\"") + deviceId + "\","
+                "\"candidateId\":\"" + candidateId + "\","
+                "\"entropy\":"     + scoreStr + ","
+                "\"transitions\":" + scoreStr + ","
+                "\"rle\":"         + scoreStr + ","
+                "\"score\":"       + scoreStr + ","
+                "\"signature\":\"" + signature + "\"}";
+
+  pendingCandidateId = "";
+
+  String vResp;
+  bool vOk = httpPost("/api/validation-result", body, vResp);
+  bool blockMined = false;
+
+  if (vOk) {
+    Serial.println(F("[VALIDATE] Vote OK"));
+    if (vResp.indexOf("\"blockMined\":true") >= 0) {
+      Serial.println(F("[VALIDATE] BLOC MINE"));
+      blockMined = true;
+    }
+  } else {
+    Serial.println(F("[VALIDATE] Echec vote"));
+    // 403 Signature invalide → clé publique désynchronisée sur le serveur.
+    // Re-register immédiatement pour envoyer la clé publique correcte.
+    // Le prochain cycle pull+validate votera avec succès.
+    // (oledArtBuf est déjà libéré → heap disponible pour une 3e connexion TLS)
+    if (vResp.indexOf("Signature") >= 0) {
+      Serial.println(F("[VALIDATE] Re-register pour resynchroniser publicKey..."));
+      doRegister();
+      Serial.println(F("[VALIDATE] Re-register terminé — retry au prochain cycle"));
+    }
+  }
+
+  // Restaure oledArtBuf — le ticker peut reprendre
+  oledBufRestoreAfterTLS();
+  logHeapState("VALIDATE-AFTER");
+  return blockMined;
+}
+
+// ─── SETUP ─────────────────────────────────────────────────────────────────
+void setup() {
+  Serial.begin(115200);
+  Serial.println(F("\n[BOOT] Proof-of-Draw multiscreen v2.0"));
+#if POD_RENDER_V1 && POD_CANARY
+  canaryBoot();
+#endif
+
+  eepromInit();
+
+  WiFi.mode(WIFI_STA);
+  WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+  Serial.print(F("[WIFI] Connexion"));
+  int i = 0;
+  while (WiFi.status() != WL_CONNECTED && i++ < 40) {
+    delay(500); Serial.print(F(".")); yield();
+  }
+  Serial.println();
+  Serial.println("[WIFI] IP: " + WiFi.localIP().toString());
+  Serial.printf_P(PSTR("[HEAP] après WiFi: %u bytes\n"), ESP.getFreeHeap());
+#if POD_RENDER_V1 && POD_CANARY
+  canaryStep(PCP_WIFI, F("wifi connecte"));
+#endif
+
+  // Migration V1 → ED25519 réel
+  if (EEPROM.read(EEPROM_FLAG_OFF) == 0x01) {
+    Serial.println(F("[KEYS] Clés V1 détectées — migration vers ED25519 réel"));
+    EEPROM.write(EEPROM_FLAG_OFF,       0x00);
+    EEPROM.write(EEPROM_ONBOARDING_OFF, 0x00);
+    EEPROM.commit();
+  }
+
+  // ── Clés ED25519 : générer ou charger AVANT tout register/TLS ────────────
+  if (!keysAlreadyGenerated()) {
+    generateKeys();
+  } else {
+    loadKeysFromEEPROM();
+    Serial.println(F("[KEYS] Clés ED25519 chargées depuis EEPROM"));
+    Serial.println("[KEYS] PubKey: " + bytesToHex(publicKey, 32));
+  }
+
+  // ── BlockHash EEPROM : valider avant utilisation ──────────────────────────
+  currentBlockHash = loadBlockHashFromEEPROM();
+  {
+    bool validHex = currentBlockHash.length() >= 8;
+    for (unsigned int i = 0; i < currentBlockHash.length() && validHex; i++) {
+      char c = currentBlockHash[i];
+      if (!((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F')))
+        validHex = false;
+    }
+    if (!validHex) currentBlockHash = "";
+  }
+  if (currentBlockHash.length() > 0)
+    Serial.println("[CHAIN] BlockHash restauré: " + currentBlockHash);
+
+  while (!registered) {
+    if (doRegister()) break;
+    delay(5000);
+  }
+#if POD_RENDER_V1 && POD_CANARY
+  canaryStep(PCP_REGISTER, F("register OK"));
+#endif
+
+  if (paired) {
+    ensureOLEDReady();
+
+    // ── Restauration EEPROM : affiche la dernière frame OLED avant le pull ──────
+    // Permet de revoir le dernier dessin immédiatement après redémarrage,
+    // sans attendre le prochain cycle pull (WiFi + serveur).
+    // setOLEDFrame() démarre le ticker non-bloquant (boucle via loop()).
+    {
+      uint8_t* savedBuf = (uint8_t*)malloc(OLED_BUF_SIZE);
+      if (savedBuf) {
+        String savedTicker = "";
+        if (loadOLEDFrameFromEEPROM(savedBuf, savedTicker)) {
+          Serial.println(F("[BOOT] Restauration frame OLED depuis EEPROM"));
+          displayOLED(savedBuf, OLED_BUF_SIZE);     // affichage immédiat
+          setOLEDFrame(savedBuf, savedTicker);       // démarre le ticker infini
+        }
+        free(savedBuf);  // local freed ; setOLEDFrame a copié dans oledArtBuf
+      } else {
+        Serial.println(F("[BOOT] malloc EEPROM restore échoué — skip"));
+      }
+    }
+
+    g_animPresenter.resident = true;
+    podanimesp::begin(g_anim);                      // flash LittleFS : une animation rangée reprend (le ticker reste éteint)
+    if (g_anim.on) oledTickActive = false;
+
+    Serial.println(F("[BOOT] Premier pull immédiat..."));
+    doPull();
+  }
+
+  lastPullMs     = millis();
+  lastValidateMs = millis();
+  Serial.println("[BOOT] Prêt. Pull dans " + String(PULL_INTERVAL / 1000) + "s");
+}
+
+// ─── LOOP ──────────────────────────────────────────────────────────────────
+void loop() {
+  unsigned long now = millis();
+
+  // ── Ticker OLED non-bloquant ─────────────────────────────────────────────
+  // Appelé à chaque tour, avance d'un pas seulement si 35ms se sont écoulées.
+  // Boucle infinie : le texte revient à droite après être sorti à gauche.
+  tickerStep();
+
+  // ── Re-registration si perdu ──
+  if (!registered) {
+    if (!doRegister()) { delay(5000); return; }
+  }
+
+  // ── Attente appairage ──
+  if (!paired) {
+    if (now - lastPullMs >= 300000UL) {
+      Serial.println(F("[PAIRING] recheck register..."));
+      bool wasPaired = paired;
+      doRegister();
+      lastPullMs = millis();
+      if (!wasPaired && paired) {
+        Serial.println(F("[PAIRING] appairage détecté → restart"));
+        delay(1000);
+        ESP.restart();
+      }
+    }
+    delay(250);
+    return;
+  }
+
+  // ── Pull périodique ──
+  if (now - lastPullMs >= nextPullIntervalMs) {
+    String prevCandidateId = pendingCandidateId;
+    doPull();
+    lastPullMs = millis();
+
+    if (pendingCandidateId.length() > 0 && pendingCandidateId != prevCandidateId) {
+      Serial.println(F("[LOOP] Nouveau candidat, reset timer validation"));
+      lastValidateMs = millis();
+    }
+  }
+
+  // ── Animation de bloc : jouée EN BOUCLE entre deux tâches réseau, sans aucune requête (⚠ non testé sur le matériel) ──
+  if (g_anim.on && !g_bench.mode) {
+    const unsigned long budget = msUntilNextTask();
+    if (budget > 1500UL) { podanimesp::run(g_anim, g_animPresenter, String(SERVER_URL), budget); return; }   // `now` est périmé : on repart d'une horloge fraîche
+  }
+
+  // ── Banc d'essai d'animation : ne fait rien tant que le mode n'est pas actif (⚠ non testé sur le matériel) ──
+  podbenchesp::service(g_bench, g_benchPresenter, String(SERVER_URL), deviceId);
+
+  // ── Observation (revalidation blocs) ──
+  // Dépend uniquement de la présence d'une tâche obs — pas de timer
+  if (pendingObsHashes.length() > 0) {
+    doObsConfirm();
+  }
+
+  // ── Validation candidat ──
+  if (pendingCandidateId.length() > 0 &&
+      millis() - lastValidateMs >= VALIDATE_INTERVAL) {
+    bool blockMined = doValidate();
+    lastValidateMs = millis();
+
+    // Pull immédiat uniquement si ce vote a déclenché le quorum
+    // (inutile sinon — préserve le budget rate-limit pull)
+    if (blockMined) {
+      Serial.println(F("[LOOP] Bloc miné — pull immédiat"));
+      delay(2000);  // laisse BearSSL libérer ses buffers TLS
+      doPull();
+      lastPullMs = millis();
+    }
+  }
+
+  // Pas de delay fixe ici : tickerStep() gère son propre throttle (35ms).
+  // Un yield() suffit pour nourrir le watchdog ESP8266 entre les tours de boucle.
+  yield();
+}
