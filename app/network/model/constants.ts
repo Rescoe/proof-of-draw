@@ -38,7 +38,8 @@ export const GRAPH_GEOMETRY = {
   screenRadius: 15,
   deviceOrbit: 112,
   deviceRingGap: 82,
-  screenOrbit: 58,
+  screenOrbit: 100,   // distance appareil -> écran, VERS L'EXTÉRIEUR (15/10/2026)
+  screenSpacing: 90,  // écart minimal entre deux écrans d'un même appareil (largeur d'une vignette)
 } as const;
 
 /**
@@ -48,8 +49,9 @@ export const GRAPH_GEOMETRY = {
  */
 export const SPACIOUS_GEOMETRY = {
   deviceOrbit: 330,
-  deviceRingGap: 150,
-  screenOrbit: 150,
+  deviceRingGap: 330,
+  screenOrbit: 270,   // les écrans s'écartent de l'appareil vers l'extérieur, comme les appareils s'écartent du centre
+  screenSpacing: 190, // vignette 76 px x nodeScale 1.8 = 137 + marge
   nodeScale: 1.8,
 } as const;
 

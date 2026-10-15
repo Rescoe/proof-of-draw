@@ -19,7 +19,7 @@ type ViewMode = "classic" | "diagram";
 
 export function NetworkMap({ snapshot, fixture }: Props) {
   const [selected, setSelected] = useState<GraphSelection | null>(null);
-  const [viewMode, setViewMode] = useState<ViewMode>("classic");
+  const [viewMode, setViewMode] = useState<ViewMode>("diagram");
   // Isolation d'un artiste dans la Constellation (clé stable) : le reste du réseau s'estompe
   const [isolatedKey, setIsolatedKey] = useState<string | null>(null);
   // Ce que chaque écran affiche réellement (ACK firmware) — une requête partagée par la section « en direct » et le panneau appareil
@@ -44,14 +44,15 @@ export function NetworkMap({ snapshot, fixture }: Props) {
 
   useEffect(() => {
     const requested = new URLSearchParams(window.location.search).get("networkView");
-    if (requested === "diagram") setViewMode("diagram");
+    // Constellation par défaut (15/10/2026) ; la Topologie reste accessible : ?networkView=classic
+    if (requested === "classic") setViewMode("classic");
   }, []);
 
   const switchView = useCallback((mode: ViewMode) => {
     setViewMode(mode);
     if (mode !== "diagram") setIsolatedKey(null);
     const url = new URL(window.location.href);
-    if (mode === "diagram") url.searchParams.set("networkView", "diagram");
+    if (mode === "classic") url.searchParams.set("networkView", "classic");
     else url.searchParams.delete("networkView");
     window.history.replaceState({}, "", `${url.pathname}${url.search}${url.hash}`);
   }, []);
@@ -91,11 +92,11 @@ export function NetworkMap({ snapshot, fixture }: Props) {
       <div>
         <span className="nv2-view-switch__label">Vue réseau</span>
         <div className="nv2-view-switch__buttons">
+          <button type="button" className={viewMode === "diagram" ? "is-active" : ""} onClick={() => switchView("diagram")} aria-pressed={viewMode === "diagram"}>
+            Constellation
+          </button>
           <button type="button" className={viewMode === "classic" ? "is-active" : ""} onClick={() => switchView("classic")} aria-pressed={viewMode === "classic"}>
             Topologie
-          </button>
-          <button type="button" className={viewMode === "diagram" ? "is-active" : ""} onClick={() => switchView("diagram")} aria-pressed={viewMode === "diagram"}>
-            Constellation <span>LAB</span>
           </button>
         </div>
       </div>

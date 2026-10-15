@@ -110,7 +110,8 @@ export function Graph({ variant, snapshot, displays = null, events = [], selecte
   const showDevices = !hasClusters || semanticScale >= 2.15;
   const showDeviceDetails = showDevices && semanticScale >= 2.45;
   const showScreens = showDevices && semanticScale >= 2.95;
-  const showThumbnails = showScreens && semanticScale >= 4.15;
+  // Petit réseau : les œuvres sont visibles dès le cadrage initial (les écrans sont écartés vers l'extérieur : plus de recouvrement)
+  const showThumbnails = showScreens && semanticScale >= (layout.nodeScale > 1 && snapshot.totals.devices <= 12 ? 3.0 : 4.15);
   const lod = showThumbnails ? "thumbs" : showScreens ? "screens" : showDevices ? "devices" : showArtists ? "artists" : "clusters";
   const coreMarkerScale = Math.min(layout.nodeScale > 1 ? 1.8 : 8, Math.max(1, 0.72 / Math.max(viewport.view.scale, 0.08)));
   const clusterMarkerScale = Math.min(8, Math.max(1, 0.72 / Math.max(viewport.view.scale, 0.08)));

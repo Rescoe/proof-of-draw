@@ -243,6 +243,25 @@ test("petit réseau : appareils et écrans restent loin de la bulle de leur arti
   }
 });
 
+test("petit réseau : les écrans s'écartent de leur appareil VERS L'EXTÉRIEUR et deux vignettes ne se recouvrent jamais", () => {
+  const three = [0, 1, 2].map((k) => ({ screen: ["eink29bwr", "oled096", "tft28"][k], label: "S" + k, description: "t" }));
+  const devices = smallNetwork(4, 3).map((d, i) => (i % 2 === 0 ? { ...d, screens: three } : { ...d, screens: three.slice(0, 2) }));
+  const layout = layoutNetwork(buildNetworkHierarchy(devices));
+  const byId = layout.nodeIndex;
+  const screens = layout.nodes.filter((n) => n.kind === "screen");
+  assert.ok(screens.length >= 20);
+  for (const s of screens) {
+    const device = byId.get(s.parentId!)!, artist = byId.get(device.parentId!)!;
+    const out = (device.x - artist.x) * (s.x - device.x) + (device.y - artist.y) * (s.y - device.y);
+    assert.ok(out > 0, "écran tourné vers l'intérieur : il doit s'écarter de l'artiste");
+  }
+  const THUMB = 76 * layout.nodeScale;   // largeur d'une vignette dessinée
+  for (let i = 0; i < screens.length; i++) for (let j = i + 1; j < screens.length; j++) {
+    const dx = Math.abs(screens[i].x - screens[j].x), dy = Math.abs(screens[i].y - screens[j].y);
+    assert.ok(dx >= THUMB || dy >= 54 * layout.nodeScale, `vignettes qui se recouvrent : ${screens[i].id} / ${screens[j].id}`);
+  }
+});
+
 test("petit réseau : positions déterministes (ordre d'entrée sans effet)", () => {
   const devices = smallNetwork(4, 2);
   const a = layoutNetwork(buildNetworkHierarchy(devices));
