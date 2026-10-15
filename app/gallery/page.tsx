@@ -5,6 +5,7 @@ import { GalleryClient } from "./GalleryClient";
 export const metadata: Metadata = {
   title: "Galerie · Proof-of-Draw",
   description: "Explorer tous les blocs minés sur le réseau Proof-of-Draw",
+  alternates: { canonical: "/gallery" },
 };
 
 export default function GalleryPage() {

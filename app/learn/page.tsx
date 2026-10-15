@@ -15,6 +15,7 @@ import styles from "./learn.module.css";
 export const metadata: Metadata = {
   title: "Apprendre | Proof-of-Draw",
   description: "Installer un écran avec une carte ESP8266 ou UNO R4 WiFi, participer sans matériel, comprendre le réseau Proof-of-Draw, lire la synthèse technique et la feuille de route.",
+  alternates: { canonical: "/learn" },
 };
 
 function parsePath(value: string | string[] | undefined): LearnPath | null {

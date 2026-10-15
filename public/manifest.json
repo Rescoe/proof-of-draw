@@ -1,15 +1,16 @@
 {
-  "name": "ESP Canvas",
-  "short_name": "ESPCanvas",
-  "description": "Draw & send frames to ESP8266 displays",
+  "name": "Proof-of-Draw",
+  "short_name": "Proof-of-Draw",
+  "description": "Réseau artistique : dessins et animations validés par des appareils ESP8266 et Arduino UNO R4 WiFi, affichés sur écrans e-ink, OLED et TFT.",
   "start_url": "/",
   "display": "standalone",
   "background_color": "#0a0a0f",
   "theme_color": "#0a0a0f",
+  "lang": "fr",
   "icons": [
     {
-      "src": "/icon-192.png",
-      "sizes": "192x192",
+      "src": "/logo.png",
+      "sizes": "48x56",
       "type": "image/png"
     }
   ]

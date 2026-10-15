@@ -4,6 +4,10 @@ import { EspActivityFeed } from "./network/EspActivityFeed";
 import { BlockGallery } from "./BlockGallery";
 import { RecentArtists } from "./RecentArtists";
 
+import type { Metadata } from "next";
+
+export const metadata: Metadata = { alternates: { canonical: "/" } };
+
 export default async function HomePage() {
   const snapshot = await getNetworkSnapshot();
 
