@@ -1,6 +1,6 @@
 # REJECTED-CANDIDATE-ARCHIVE-FIX1 + audit explicite de RECEPTION-MAINTENUE (15/10/2026)
 
-Demande de GPT (audit du 15/10/2026) : borner l'archive des rejets, supprimer la course sur `candidate:last`, rendre toutes les transitions idempotentes ; auditer la réception maintenue. Code : `lib/rejectedArchive.ts` ; tests : `tests/rejectedArchive.test.ts`, `tests/pullReception.test.ts`. Aucun firmware, aucun flash, `PULL_DORMANT_SEC` inchangé.
+Demande de GPT (audit du 15/10/2026) : borner l'archive des rejets, supprimer la course sur `candidate:last`, rendre toutes les transitions idempotentes ; auditer la réception maintenue. Code : `lib/rejectedArchive.ts` ; tests : `tests/rejectedArchive.test.ts`, `tests/pullReception.test.ts`. Le firmware source TFT est modifié par ACK-STATE-FIX1 (commit `c4be328`), mais aucun nouveau flash n'est requis car cette version a déjà été validée matériellement (canari ACK du 15/10/2026 : `docs/mesures/TFT28_ACK_BLOC104_2026_10_15/`). `PULL_DORMANT_SEC` est inchangé.
 
 ## 1. Ce que 8a7adfe avait de faux (constats de GPT, tous exacts)
 1. **Copies non bornées** : `candidate:archive:<id>` (copie COMPLÈTE avec image, sans expiration) était conservée à chaque rejet, alors que la liste `rejected:draws` est tronquée à 200 : les copies des entrées sorties de la liste restaient pour toujours.

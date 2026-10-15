@@ -27,16 +27,16 @@ test("un ancien firmware n'est pas invité à voter, ne peut pas voter (403) et 
   assert.equal(voteAdmission(good, true).ok, true);
 });
 
-// â”€â”€ Audit explicite RECEPTION-MAINTENUE (15/10/2026) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-test("audit : `mayVote` ne conditionne QUE pendingValidation â€” images, blocs, animations et observations ne dÃ©pendent pas de la capacitÃ© de vote", () => {
-  assert.equal((pull.match(/\bmayVote\b/g) ?? []).length, 2, "dÃ©finition + une seule utilisation");
+// ── Audit explicite RECEPTION-MAINTENUE (15/10/2026) ─────────────────────────────────────────────────────────────────────────────────────────
+test("audit : `mayVote` ne conditionne QUE pendingValidation — images, blocs, animations et observations ne dépendent pas de la capacité de vote", () => {
+  assert.equal((pull.match(/\bmayVote\b/g) ?? []).length, 2, "définition + une seule utilisation");
   const use = pull.indexOf("mayVote) {");
-  assert.ok(use > 0 && pull.slice(use - 80, use + 12).includes("alreadyVoted"), "l'unique usage est la condition d'invitation Ã  valider");
-  assert.equal((pull.match(/participatesInVoteNetwork\(/g) ?? []).length, 1, "aucune autre porte de capacitÃ© dans /api/pull");
+  assert.ok(use > 0 && pull.slice(use - 80, use + 12).includes("alreadyVoted"), "l'unique usage est la condition d'invitation à valider");
+  assert.equal((pull.match(/participatesInVoteNetwork\(/g) ?? []).length, 1, "aucune autre porte de capacité dans /api/pull");
   assert.doesNotMatch(pull, /voteV2Capable\(/);
 });
 
-test("audit : l'appareil non votant n'est jamais comptÃ© dans le quorum (deviceStore) et ne peut ni lire un candidat ni voter", () => {
+test("audit : l'appareil non votant n'est jamais compté dans le quorum (deviceStore) et ne peut ni lire un candidat ni voter", () => {
   const store = read("lib/deviceStore.ts"), vc = read("app/api/validate-candidate/route.ts"), vr = read("app/api/validation-result/route.ts");
   assert.ok((store.match(/participatesInVoteNetwork\(/g) ?? []).length >= 2, "getGlobalActiveCount ET getPoolSnapshot filtrent");
   assert.match(vc, /participatesInVoteNetwork\(/);
@@ -44,10 +44,9 @@ test("audit : l'appareil non votant n'est jamais comptÃ© dans le quorum (devic
   assert.match(vr, /voteAdmission\(device, isV2\)/);
 });
 
-test("audit : obs-confirm reste autorisÃ© SANS capacitÃ© de vote, comme simple confirmation de rÃ©ception, et n'a aucun effet sur les votes ni le quorum", () => {
+test("audit : obs-confirm reste autorisé SANS capacité de vote, comme simple confirmation de réception, et n'a aucun effet sur les votes ni le quorum", () => {
   const obs = read("app/api/obs-confirm/route.ts");
-  assert.doesNotMatch(obs, /voteAdmission|participatesInVoteNetwork|voteV2Capable/, "pas de porte de capacitÃ© : un non-votant peut encore confirmer la rÃ©ception");
-  assert.doesNotMatch(obs, /candidate:votes|getVotes|recordVote|poolSize|quorum|minV2Approvals/i, "aucun accÃ¨s aux votes ni au quorum");
+  assert.doesNotMatch(obs, /voteAdmission|participatesInVoteNetwork|voteV2Capable/, "pas de porte de capacité : un non-votant peut encore confirmer la réception");
+  assert.doesNotMatch(obs, /candidate:votes|getVotes|recordVote|poolSize|quorum|minV2Approvals/i, "aucun accès aux votes ni au quorum");
   assert.match(obs, /observerIds/);   // seul effet : consigner l'appareil comme observateur du bloc
 });
-
