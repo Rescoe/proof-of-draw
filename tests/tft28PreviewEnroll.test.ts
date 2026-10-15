@@ -12,7 +12,7 @@ import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { compileHarness, describeChoice, findCompiler, runProcess } from "./helpers/cppHarness";
-import { ROOT, readText, voteCanaryOffView } from "./helpers/tft28Source";
+import { ROOT, readText, voteCanaryOffView, undoAckStateFix } from "./helpers/tft28Source";
 import { ownTmp } from "./helpers/ownTmp";
 import { reachFrom } from "./helpers/voteCanaryReach";
 
@@ -147,7 +147,7 @@ test("APPAIRAGE — PRODUCTION INCHANGÉE : drapeau à 0 (jamais commité à 1),
   assert.match(INO_SRC, /#ifndef POD_PREVIEW_ENROLL\n#define POD_PREVIEW_ENROLL 0\n#endif/);
   assert.doesNotMatch(INO_SRC, /^#define POD_PREVIEW_ENROLL 1/m);
   const bak = readText("firmware-backups/2026-10-13_avant-vote-v4-canary/pod_uno_r4.ino");
-  assert.equal(voteCanaryOffView(INO_SRC), bak, "le texte du sketch (POD_VOTE_CANARY, POD_PREVIEW_ENROLL, POD_NOHW à 0) diffère de V3-FIX1");
+  assert.equal(undoAckStateFix(voteCanaryOffView(INO_SRC)), bak, "le texte du sketch (POD_VOTE_CANARY, POD_PREVIEW_ENROLL, POD_NOHW à 0) diffère de V3-FIX1 (modulo le seul delta TFT28-ACK-STATE-FIX1)");
   assert.ok(fs.existsSync(path.join(SK, "pod_preview_host.h.example")), "modèle de l'hôte local absent");
   const ls = spawnSync("git", ["ls-files", "--", "arduino_uno_r4"], { cwd: ROOT, encoding: "utf8" }).stdout || "";
   assert.ok(!/pod_preview_host\.h$/m.test(ls), "pod_preview_host.h SUIVI par git");

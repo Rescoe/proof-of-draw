@@ -1,0 +1,15 @@
+TRANSCRIPTION — PAS UN JOURNAL BRUT.
+Source : texte collé dans la conversation par le porteur le 15/10/2026 (copie du moniteur série de l'IDE, mise en forme par l'interface : blocs de code répétés).
+Le fichier brut du moniteur série N'EST PAS DISPONIBLE. Les lignes ci-dessous reprennent le texte reçu, sans horodatage (le moniteur n'en fournissait pas) ni ligne antérieure à « [FRAME] 320/320 lignes ».
+
+[FRAME] 320/320 lignes
+[HTTP POST] /api/ack-frame -> 200
+[ACK] 5cff3d84-63df-4fed-97dc-6d28c297ff19 -> OK
+[FRAME] OK en 25589 ms (frameId=5cff3d84-63df-4fed-97dc-6d28c297ff19 source=consensus, cache SD: oui) — ACK recu (HTTP 200)
+[MEM] après pull: tas libre 9476 o, zone 0xA5 sous la pile 1024 o (INDICATIF : NON fiable des la 1re pile temporaire)
+[HTTP GET] /api/pull?deviceId=dev_7B4L17N3 -> 200
+[PULL] aucune frame
+[HTTP GET] /api/pull?deviceId=dev_7B4L17N3 -> 200
+[PULL] aucune frame
+[HTTP GET] /api/pull?deviceId=dev_7B4L17N3 -> 200
+[PULL] aucune frame

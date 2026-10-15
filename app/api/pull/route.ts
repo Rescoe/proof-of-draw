@@ -110,12 +110,8 @@ export async function GET(req: NextRequest) {
         chain: null, pendingValidation: null,
       }, 404);
     // Réseau de vote réel (14/10/2026, lib/voteCapability.ts) : un firmware qui ne sait pas voter en v2 ne reçoit RIEN (ni image, ni bloc, ni candidat) et n'écrit rien (pas de présence). 1 seule commande Redis déjà dépensée (le MGET).
-    if (!participatesInVoteNetwork(device)) {
-      return json({
-        frame: null, frameSource: "none", frameId: null, screen: null, chain: null, pendingValidation: null,
-        retryAfter: 1800, notice: "firmware sans vote v2 : mise a jour requise",
-      });
-    }
+    // RECEPTION MAINTENUE (décision du porteur, 14/10/2026 soir) : un appareil qui ne sait pas voter en v2 continue de RECEVOIR les images et les blocs (il n'est simplement ni compté dans le quorum, ni invité à valider, ni admis au vote).
+    const mayVote = participatesInVoteNetwork(device);
     const screens = device.screens ?? [];
     const frameRaws = FRAME_IDS.map((s, i) => (screens.includes(s) ? raws[3 + i] : null));
     const rest = raws.slice(3 + FRAME_IDS.length);
@@ -211,7 +207,7 @@ export async function GET(req: NextRequest) {
       if (!notEligible && device && candidate.committee?.state === "enforce" && committeeModeFromEnv() === "enforce") {
         notEligible = committeeGate({ mode: "enforce", committee: candidate.committee, profileId: profileIdOf(device), wave: currentWave(candidate.committee, candidate.submittedAt, Date.now()), isV2: true }).action === "refuse";
       }
-      if (!alreadyVoted && !notEligible) {
+      if (!alreadyVoted && !notEligible && mayVote) {   // un appareil qui ne vote pas n'est jamais invité à valider
         pendingValidation = {
           candidateId: candidate.candidateId,
           poolScreen:  candidate.poolScreen, // info seulement — l'ESP peut l'afficher si son écran correspond
