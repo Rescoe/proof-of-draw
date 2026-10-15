@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { NetworkDevice, NetworkSnapshot } from "@/lib/networkSnapshot";
 import type { DisplaysMap } from "../LiveDisplays";
 import {
@@ -11,6 +11,9 @@ import {
   flattenClusters,
   layoutNetwork,
   screenNodeId,
+  artistNodeId,
+  SCREEN_COLOR,
+  type ObservedFlow,
   type ArtistGroup,
   type ClusterGroup,
   type LayoutNode,
@@ -95,6 +98,35 @@ export function Graph({ variant, snapshot, displays = null, events = [], selecte
   const clusters = useMemo(() => new Map(flattenClusters(hierarchy).map((cluster) => [cluster.id, cluster])), [hierarchy]);
   const devices = useMemo(() => new Map(snapshot.devices.map((device) => [device.publicId, device])), [snapshot.devices]);
   const flows = useMemo(() => buildObservedFlows({ devices: snapshot.devices, artists: hierarchy.artists, displays, events, now, reconstruct: true }), [displays, events, hierarchy.artists, now, snapshot.devices]);
+  // Dernier bloc affiché : les écrans dont l'ACK porte le frameId le plus récent (halo) — rien d'inventé, c'est ce que les ACK ont enregistré.
+  const latestScreens = useMemo(() => {
+    let best: { frameId: string; at: number } | null = null;
+    const all: { id: string; frameId: string; at: number }[] = [];
+    for (const device of snapshot.devices) for (const [screen, shown] of Object.entries(displays?.[device.deviceId] ?? {})) {
+      if (!shown?.frameId) continue;
+      all.push({ id: screenNodeId(device.publicId, screen), frameId: shown.frameId, at: shown.shownAt });
+      if (!best || shown.shownAt > best.at) best = { frameId: shown.frameId, at: shown.shownAt };
+    }
+    return { ids: new Set(all.filter((x) => best && x.frameId === best.frameId).map((x) => x.id)), at: best?.at ?? 0 };
+  }, [displays, snapshot.devices]);
+  // Rejouer le dernier bloc : trajet core -> artiste -> appareil -> écran vers chaque écran qui l'affiche. Reconstitué (déduit des ACK), jamais présenté comme observé en direct.
+  const [replaying, setReplaying] = useState(false);
+  const replayTimer = useRef<number | null>(null);
+  const replay = useCallback(() => {
+    if (replayTimer.current) window.clearTimeout(replayTimer.current);
+    setReplaying(true);
+    replayTimer.current = window.setTimeout(() => setReplaying(false), 9_000);
+  }, []);
+  useEffect(() => () => { if (replayTimer.current) window.clearTimeout(replayTimer.current); }, []);
+  const replayFlows = useMemo<ObservedFlow[]>(() => {
+    if (!replaying) return [];
+    return snapshot.devices.flatMap((device) => device.screens.filter((s) => latestScreens.ids.has(screenNodeId(device.publicId, s.screen))).map((s) => ({
+      id: `replay:${device.publicId}:${s.screen}`, kind: "block" as const, origin: "reconstructed" as const, timestamp: Date.now(),
+      path: [CORE_NODE_ID, artistNodeId(device.artistKey), deviceNodeId(device.publicId), screenNodeId(device.publicId, s.screen)],
+      moving: true, color: SCREEN_COLOR[s.screen] ?? "#94a3b8", label: "Rejeu du dernier bloc*", detail: s.label, artistKey: device.artistKey, publicId: device.publicId, screen: s.screen,
+      phase: "active" as const, ageMs: 0, opacity: 1, pulsePeriodMs: 4000,
+    })));
+  }, [replaying, latestScreens, snapshot.devices]);
   const activeIds = useMemo(() => new Set(flows.flatMap((flow) => flow.path)), [flows]);
 
   const detailScale = viewport.view.scale / Math.max(0.001, viewport.view.fitScale);
@@ -119,7 +151,7 @@ export function Graph({ variant, snapshot, displays = null, events = [], selecte
   const nodeScale = layout.nodeScale;
   const isolated = isolatedArtistKey;
   const isDimmed = (node: LayoutNode) => isolated !== null && node.kind !== "core" && node.artistKey !== isolated;
-  const shownFlows = isolated === null ? flows : flows.filter((flow) => flow.artistKey === isolated);
+  const shownFlows = [...(isolated === null ? flows : flows.filter((flow) => flow.artistKey === isolated)), ...replayFlows.filter((flow) => isolated === null || flow.artistKey === isolated)];
   const visibleNodes = useMemo(() => layout.nodes.filter((node) => node.id === CORE_NODE_ID || nodeInViewport(node, viewport.view)), [layout.nodes, viewport.view]);
   const visibleIds = useMemo(() => new Set(visibleNodes.map((node) => node.id)), [visibleNodes]);
   const showMinimap = variant === "full" && (hierarchy.artistCount > 12 || detailScale < 0.92 || detailScale > 1.35);
@@ -170,6 +202,7 @@ export function Graph({ variant, snapshot, displays = null, events = [], selecte
         <button type="button" onClick={() => viewport.zoomBy(1.4)} aria-label="Zoomer">+</button>
         <button type="button" onClick={() => viewport.zoomBy(1 / 1.4)} aria-label="Dézoomer">−</button>
         <button type="button" onClick={() => viewport.fit()} aria-label="Ajuster tout le réseau">◎</button>
+        <button type="button" onClick={replay} disabled={replaying || latestScreens.ids.size === 0} aria-label="Rejouer le trajet du dernier bloc" title="Rejouer le trajet du dernier bloc (reconstitué)">{replaying ? "▶ …" : "▶ Bloc"}</button>
         <button type="button" className={locked ? "is-active" : ""} onClick={() => setLocked((value) => !value)} aria-pressed={locked} aria-label={locked ? "Déverrouiller le diagramme" : "Verrouiller le diagramme"}>{locked ? "Déverrouiller" : "Verrouiller"}</button>
       </div>
       {isolated !== null && (
@@ -212,7 +245,7 @@ export function Graph({ variant, snapshot, displays = null, events = [], selecte
                     visibleSource = layout.nodeIndex.get(visibleSource.parentId) ?? visibleSource;
                   }
                 }
-                return <line key={link.id} className={`ng-link ng-link--${link.kind} ng-link--depth-${target.depth}${isDimmed(target) ? " ng-dim" : ""}`} x1={visibleSource.x} y1={visibleSource.y} x2={target.x} y2={target.y} />;
+                return <line key={link.id} className={`ng-link ng-link--${link.kind} ng-link--depth-${target.depth}${isDimmed(target) ? " ng-dim" : ""}`} x1={visibleSource.x} y1={visibleSource.y} x2={target.x} y2={target.y} style={target.kind === "screen" && target.screen ? { stroke: SCREEN_COLOR[target.screen] } : undefined} />;
               })}
             </g>
             <g className="ng-flows" filter={`url(#ng-glow-${variant})`}>
@@ -253,7 +286,7 @@ export function Graph({ variant, snapshot, displays = null, events = [], selecte
                 }
                 if (!showScreens || !node.screen) return null;
                 const info = device.screens.find((screen) => screen.screen === node.screen);
-                return <ScreenNode key={node.id} node={node} label={info?.label ?? node.screen} shown={displays?.[device.deviceId]?.[node.screen]} detailed={showThumbnails} thumbnail={common.selected || showThumbnails} scale={nodeScale} {...common} />;
+                return <ScreenNode key={node.id} node={node} label={info?.label ?? node.screen} shown={displays?.[device.deviceId]?.[node.screen]} detailed={showThumbnails} thumbnail={common.selected || showThumbnails} latest={latestScreens.ids.has(node.id)} scale={nodeScale} {...common} />;
                 })();
                 return element && dimmed ? <g key={node.id} className="ng-dim">{element}</g> : element;
               })}
@@ -267,6 +300,8 @@ export function Graph({ variant, snapshot, displays = null, events = [], selecte
         <span><i className="is-device" />appareil</span>
         <span><i className="is-sensor" />capteur</span>
         <span><i className="is-screen" />écran</span>
+        <span><i className="is-voter" />vote v2</span>
+        <span><i className="is-latest" />dernier bloc affiché</span>
         <span><i className="is-flow" />flux observé</span>
         <span><i className="is-flow is-recon" />flux reconstitué*</span>
         <small className="ng-footnote">* reconstitué à partir des blocs, des présences et des votes publiés (ce que le trajet devrait avoir été) — non mesuré directement.</small>
@@ -320,7 +355,14 @@ const GRAPH_STYLES = `
   .ng-thumb{display:grid;place-items:center;width:100%;height:100%;overflow:hidden;border:1px solid rgba(255,255,255,.25);border-radius:5px;background:#fff}.ng-thumb .ld-thumb{border:0;border-radius:0}.ng-thumb .ld-muted{color:#475569;font-size:7px}
   .ng-legend{position:absolute;z-index:4;left:64px;bottom:15px;display:flex;flex-wrap:wrap;gap:8px 14px;max-width:calc(100% - 291px);padding:7px 10px;border:1px solid rgba(148,163,184,.1);border-radius:10px;background:rgba(5,8,16,.72);color:#718198;font:600 8px/1 ui-monospace,monospace;pointer-events:none;backdrop-filter:blur(8px)}.ng-legend .is-sensor{border-radius:2px;border-color:#fbbf24;transform:rotate(45deg) scale(.85)}.ng-device--sensor .ng-device__body{fill:#2a2108}.ng-device--sensor .ng-device__label{fill:#fbbf24}.ng-legend span{display:flex;align-items:center;gap:5px;white-space:nowrap}.ng-legend i{display:inline-block;width:10px;height:10px;border:1px solid #64748b;border-radius:50%}.ng-legend .is-zone{border-style:dashed;border-color:#5d8fc3}.ng-legend .is-artist{border-color:#a78bfa;background:rgba(167,139,250,.18)}.ng-legend .is-device{border-color:#60a5fa;background:rgba(96,165,250,.15)}.ng-legend .is-screen{width:11px;height:7px;border-radius:2px;border-color:#94a3b8}.ng-legend .is-flow{width:16px;height:0;border:0;border-top:2px solid #2dd4bf;border-radius:0}
   .ng-minimap{position:absolute;z-index:5;right:14px;bottom:14px;padding:5px;border:1px solid rgba(148,163,184,.14);border-radius:12px;background:rgba(5,8,16,.85);backdrop-filter:blur(12px)}.ng-minimap>button{display:block;margin-left:auto;min-width:44px;height:32px;border:0;background:transparent;color:#8fa1ba;font:700 9px/1 ui-monospace,monospace;cursor:pointer}.ng-minimap svg{display:block;width:190px;height:120px;border-radius:7px;background:#060b14}.ng-minimap line{stroke:rgba(148,163,184,.25);stroke-width:5}.ng-minimap circle{fill:#64748b}.ng-minimap circle.is-core{fill:#2dd4bf}.ng-minimap circle.is-artist{fill:#a78bfa}.ng-minimap circle.is-device{fill:#60a5fa}.ng-minimap__window{fill:rgba(96,165,250,.08);stroke:#93c5fd;stroke-width:6;vector-effect:non-scaling-stroke}
+  .ng-device__vote{fill:none;stroke-width:2;vector-effect:non-scaling-stroke}.ng-device__vote--yes{stroke:#4ade80;stroke-dasharray:3 4;opacity:.8}.ng-device__vote--no{stroke:#64748b;stroke-dasharray:1 5;opacity:.7}
+  .ng-screen__halo{fill:none;stroke-width:2.5;vector-effect:non-scaling-stroke;opacity:.85;animation:ng-halo 2.4s ease-in-out infinite}
+  .ng-device__reading rect{fill:rgba(42,33,8,.92);stroke:rgba(251,191,36,.55);stroke-width:1;vector-effect:non-scaling-stroke}.ng-device__reading text{fill:#fbbf24;font:800 8px/1 ui-monospace,monospace}
+  .ng-device--sensor{opacity:.88}
+  .ng-legend .is-voter{border-color:#4ade80;border-style:dashed}.ng-legend .is-latest{width:11px;height:7px;border-radius:2px;border-color:#2dd4bf;box-shadow:0 0 5px #2dd4bf}
+  .ng-toolbar button:disabled{opacity:.45;cursor:default}
+  @keyframes ng-halo{0%,100%{opacity:.35}50%{opacity:1}}
   @keyframes ng-stream{to{stroke-dashoffset:-17.1}}
   @media(max-width:700px){.ng-shell--full,.ng-shell--home{height:72svh;min-height:520px;border-radius:16px}.ng-toolbar{top:auto;bottom:12px;left:12px}.ng-toolbar button{padding:0 9px}.ng-toolbar button:last-child{font-size:10px}.ng-level{top:13px;right:13px}.ng-legend{display:none}.ng-minimap{right:12px;bottom:72px}.ng-minimap:not(.is-open){padding:0}.ng-minimap svg{width:150px;height:94px}}
-  @media(prefers-reduced-motion:reduce){.ng-flow{animation:none;stroke-dasharray:.1 17}.ng-core__aura,.ng-device__activity,.ng-artist__activity{animation:none}}
+  @media(prefers-reduced-motion:reduce){.ng-flow{animation:none;stroke-dasharray:.1 17}.ng-core__aura,.ng-device__activity,.ng-artist__activity,.ng-screen__halo{animation:none}}
 `;
