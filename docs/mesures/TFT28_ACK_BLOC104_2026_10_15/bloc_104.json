@@ -1,0 +1,76 @@
+{
+  "blockIndex": 104,
+  "blockHash": "ae6f263b9fcd14a4eecaa47eb5d44297e81bec46cce8c34d1c997971a58324ee",
+  "parentHash": "749ef19916cdcd48b4f509dc609d07305917c6503251e19d73a66a5975dc6de7",
+  "imageHash": "1bf586dccbbfc4121c73e0dded897c4107e637fe38a26d43de3bd68ea9c63d67",
+  "actionsHash": "c3e921601bcc3840457498b70317deeb9b8c6de69e5fdbeadd6e045a9d2f26cd",
+  "drawScore": 6,
+  "deviceId": "dev_7B4L17N3",
+  "minerDeviceId": "dev_7B4L17N3",
+  "ownerDeviceId": "dev_7B4L17N3",
+  "artistName": "Roubzi",
+  "poolScreen": "tft28",
+  "validatorIds": [
+    "dev_7B4L17N3",
+    "dev_MN67OG7R"
+  ],
+  "score": 0.2293,
+  "displayTime": 2525,
+  "minedAt": 1792048288173,
+  "frameId": "5cff3d84-63df-4fed-97dc-6d28c297ff19",
+  "workTitle": "Jolie Fleur",
+  "deviceOwnerName": "Roubzi",
+  "revalidated": [
+    {
+      "blockHash": "749ef19916cdcd48b4f509dc609d07305917c6503251e19d73a66a5975dc6de7",
+      "observerIds": [
+        "dev_KAD6PKC4"
+      ],
+      "confirmedAt": 1792048443164
+    },
+    {
+      "blockHash": "d6bfe6d83b1b88036e15b9f92a518fbe1608d9d298efaa7e7fd7118044fb3f6e",
+      "observerIds": [
+        "dev_KAD6PKC4"
+      ],
+      "confirmedAt": 1792048443164
+    },
+    {
+      "blockHash": "b5ec7a7217af283880b142c57204384e2ebb449467fb2f50e4cb5318e14dfeb7",
+      "observerIds": [
+        "dev_KAD6PKC4"
+      ],
+      "confirmedAt": 1792048443164
+    },
+    {
+      "blockHash": "4d23c852b507840c4cffad7c7b3f7ef8d1d2f94f6ef5ff6241fb139ddaa0fe63",
+      "observerIds": [
+        "dev_KAD6PKC4"
+      ],
+      "confirmedAt": 1792048443164
+    },
+    {
+      "blockHash": "d9cb9e4d197f8109eb2c6ef6ba6c0223f576c20a7150de6d8d1ede7d01e473c8",
+      "observerIds": [
+        "dev_KAD6PKC4"
+      ],
+      "confirmedAt": 1792048443164
+    }
+  ],
+  "obsConfirmed": true,
+  "podHashEnriched": "53cac3ba252254cc47adc7190daaf95afa89b3d08e04a10723f8408924a3e898",
+  "podGeometry": {
+    "sessionDurationMs": 54111,
+    "strokeCount": 6,
+    "gridCoverage": 0.484375,
+    "boundingBoxRatio": 0.4376953125,
+    "automationRatio": 0.0010256410256410256,
+    "colorCount": 2,
+    "moveActionCount": 0
+  },
+  "votesSummary": {
+    "v2": 2,
+    "v1": 0,
+    "rejects": 0
+  }
+}
