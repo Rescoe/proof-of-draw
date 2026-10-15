@@ -287,6 +287,6 @@ test("pull : en enforce un appareil inéligible n'est pas invité à valider (é
   const pull = read("app/api/pull/route.ts");
   assert.match(pull, /eligibilityModeFromEnv\(\) === "enforce"/);
   assert.match(pull, /voteGate\(\{ mode: "enforce"/);
-  assert.match(pull, /if \(!alreadyVoted && !notEligible\)/);
+  assert.match(pull, /if \(!alreadyVoted && !notEligible( && mayVote)?\)/);   // RECEPTION-MAINTENUE : « && mayVote » s'ajoute (un appareil non votant n'est jamais invité à valider)
   assert.doesNotMatch(pull.slice(pull.indexOf("Éligibilité (Lot 2"), pull.indexOf("Éligibilité (Lot 2") + 1500), /redis\.(get|mget|set|eval|smembers)/, "aucun accès Redis ajouté");
 });
