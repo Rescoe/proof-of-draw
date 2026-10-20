@@ -16,6 +16,7 @@ import { selectDelivery, withoutScenePointer, sceneRetryAfterSec, scenePullMeta,
 import { animPullMeta, withoutAnimPointer } from "@/lib/anim/pointer";
 import { eligibilityConfigFromEnv, eligibilityModeFromEnv, profileIdOf, voteGate } from "@/lib/eligibility";
 import { committeeGate, committeeModeFromEnv, currentWave } from "@/lib/committee";
+import { OTA_KILL_KEY, otaAnnouncement, otaClientCapable, otaDistModeFromEnv, otaTicketSecret, parseOtaSeqParam } from "@/lib/otaDistribution";
 
 const DEVICE_ID_REGEX = /^dev_[A-Z0-9]{8}$/;
 // Rate-limit ÉCHANTILLONNÉ (lib/pullBudget.ts) : 1 pull sur 8 compte ; > RL_SAMPLED_MAX dans la fenêtre = ≈ 32 pulls/min réels → 429.
@@ -93,11 +94,14 @@ export async function GET(req: NextRequest) {
     // Les clés de frame de TOUS les types d'écran sont lues (SCREEN_IDS) : on n'a plus besoin de lire l'appareil d'abord pour connaître ses écrans.
     // Coût d'un pull au repos : 1 commande (+ ≈ 0,125 de rate-limit échantillonné + ≈ 0,3 de présence toutes les 12 min). 5 avant le 05/10/2026.
     const FRAME_IDS = SCREEN_IDS as readonly string[];
+    // OTA (20/10/2026, INACTIF par défaut) : l'interrupteur d'urgence `ota:kill` n'est lu QUE si OTA_DIST_MODE=on, comme CLÉ DE PLUS du MGET existant (0 commande de plus ; mode off : liste de clés inchangée).
+    const otaOn = otaDistModeFromEnv() === "on";
     const raws = await redis.mget<unknown[]>(
       `bl:ip:${ip}`, blDevKey(deviceId), `device:${deviceId}`,
       ...FRAME_IDS.map((s) => frameKey(deviceId, s)),
       personalKey(deviceId), PULL_KEY_HEAD, PULL_KEY_CANDIDATE, PULL_KEY_VOTES,
       `chain:notify:${deviceId}`, `bench:mode:${deviceId}`, PULL_KEY_OBS_PENDING, HOT_KEY,
+      ...(otaOn ? [OTA_KILL_KEY] : []),
     );
     if (raws[0] !== null || raws[1] !== null) return forbidden("Accès refusé");
     let device: Device | null = null;
@@ -124,7 +128,8 @@ export async function GET(req: NextRequest) {
     const ownedNotif = (rest[4] as string | null) ?? null;
     const benchModeRaw = rest[5];
     const obsPending = rest[6] !== null && rest[6] !== undefined;
-    const networkHot = rest[7] !== null && rest[7] !== undefined;   // quelqu'un a dessiné / envoyé / ouvert l'atelier depuis < 30 min
+    const networkHot = rest[7] !== null && rest[7] !== undefined;
+    const otaKilled = otaOn && rest[8] !== null && rest[8] !== undefined;   // quelqu'un a dessiné / envoyé / ouvert l'atelier depuis < 30 min
     // Mode banc d'essai actif pour un écran compatible (TFT 2.8", TFT 1.8", OLED) : annoncé à l'appareil, qui passe en contrôle rapide.
     const benchMode = benchScreenOf(device.screens) !== null && benchModeRaw !== null && benchModeRaw !== undefined;
 
@@ -287,6 +292,19 @@ export async function GET(req: NextRequest) {
     // ── Banc d'essai d'animation (TFT 2.8" tactile uniquement) : 1 GET, seulement pour ces appareils ──
     // Quand le propriétaire a activé le mode, on le dit à l'appareil ; il passe alors en poll rapide sur /api/bench/poll.
 
+    // ── Annonce OTA (INACTIVE par défaut ; 0 commande Redis de plus) : seulement pour un firmware qui LIT `ota`, doté d'une clé d'appareil, quand le mode est « on », hors kill-switch et si une release lui est destinée.
+    // Les releases (fichiers du dépôt, vérifiées) ne sont chargées — dynamiquement — que dans ce cas ; un échec n'altère JAMAIS le reste de la réponse.
+    let otaAnnounce: ReturnType<typeof otaAnnouncement> = null;
+    if (otaOn && !otaKilled && otaClientCapable(device.firmware) && device.publicKey) {
+      try {
+        const secret = otaTicketSecret();
+        if (secret) {
+          const { otaReleases } = await import("@/lib/otaRegistry");
+          otaAnnounce = otaAnnouncement({ mode: "on", secret, killed: false, manifests: otaReleases().map((r) => r.manifest), device: { deviceId, firmware: device.firmware, publicKey: device.publicKey, otaSeq: parseOtaSeqParam(url.searchParams.get("o")) }, now: Date.now() });
+        }
+      } catch (e) { console.error("[pull] annonce OTA ignorée:", e instanceof Error ? e.message : "erreur"); }
+    }
+
     // ── Réponse ─────────────────────────────────────────────────────────────
     // Bloc `scene` : métadonnées SEULES — le binaire passe par /api/pull-frame?kind=scene.
     const sceneMeta = delivery.kind === "scene" ? scenePullMeta(delivery) : undefined;
@@ -300,6 +318,7 @@ export async function GET(req: NextRequest) {
       ...(device.sceneCapability?.sceneV1 ? { kind: delivery.kind } : {}),
       ...(sceneMeta ? { scene: sceneMeta } : {}),
       ...(animPointer ? { anim: animPointer } : {}),
+      ...(otaAnnounce ? { ota: otaAnnounce } : {}),
 
       // Métadonnées lues directement à la racine par le firmware — évite
       // le parsing imbriqué dans frame{} et fonctionne quel que soit le chemin
