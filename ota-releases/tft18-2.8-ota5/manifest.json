@@ -1,0 +1,31 @@
+{
+  "schema": "pod-ota-manifest-v2",
+  "releaseId": "tft18-2.8-ota5",
+  "family": "esp8266-tft18",
+  "profile": {
+    "board": "esp8266",
+    "screen": "tft18",
+    "flash": "4M2M"
+  },
+  "channel": "canary",
+  "firmwareVersion": "tft18-2.8",
+  "otaSeq": 5,
+  "minOtaSeq": 1,
+  "revokedSeqs": [],
+  "url": "/firmware/tft18-2.8-ota5/image.bin",
+  "size": 583024,
+  "sha256": "7947fc7dbcd47f4c14207edecd177aaaf28e229f9d1f654bcca1beb8c452f0a4",
+  "wave": {
+    "of": 100,
+    "upTo": 100
+  },
+  "canaryDevices": [
+    "dev_VIRBQRV1"
+  ],
+  "notes": "canari Internet ESP8266 TFT 1,8",
+  "signature": {
+    "alg": "rsa2048-pkcs1-sha256",
+    "keyId": "ota-a",
+    "sig": "JNGiXG0bg2vOFFWxOpVaX2s4JNMFCv8wAfWCrCbvcD9cx80ZddzAO+0fPKfYercoqq853+8sE/IA17+eXreE+dU4CCk0HlRhtna8YZ7aP3As2w9ra0rCLkL7Y8gCBM0iXQ8aSzE9KJXC2N707z7f2pPafufcETjpL8it87zYAMYBu/RxrYEokJPhBew6nDIfmM25VANhS1Xw/2giPyR4iGGB+cKzRQjNnwthbJiGLfYfLvR1HzofJIojaYhpAZsfPXy5SKnDvv9YYTUKy0vSfoY94+0oj9sOJ4RziG/lbgL9a88p+b3ENPw1CM8Qry068TAjUgzIi4YdAmMaAutT5g=="
+  }
+}
