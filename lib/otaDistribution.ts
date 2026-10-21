@@ -167,7 +167,7 @@ export async function otaImageResponse(d: FetchDeps): Promise<NextResponse> {
   const rel = d.loadRelease(d.releaseId);
   if (!rel) return fail("release inconnue", 404);
 
-  // Porte fermée : 503, mais la réponse (réservée à qui détient un défi HMAC valide, donc au porteur du secret) porte les EMPREINTES de la release chargée — de quoi prouver QUELLE release est déployée sans jamais
+  // Porte fermée : 503, mais la réponse (servie à tout porteur d'un défi HMAC valide — un défi peut s'obtenir via le pull non authentifié : ce n'est PAS une preuve de possession du secret ni un contrôle d'accès) porte les EMPREINTES de la release chargée — de quoi prouver QUELLE release est déployée sans jamais
   // ouvrir la distribution ni envoyer un octet de l'image. Faits publics (le manifeste et l'image sont dans le dépôt) ; aucun secret.
   if (await d.isKilled()) { log(`[ota-image] KILL device=${q.deviceId}`); return fail("distribution suspendue", 503, { "Retry-After": "3600", "X-Ota-Region-Sha256": rel.manifest.sha256, "X-Ota-File-Sha256": fileSha256(rel.file) }); }
   if (!(await d.preLimitOk())) return fail("trop de tentatives", 429, { "Retry-After": String(OTA_PRELIMIT_WINDOW_SEC) });
