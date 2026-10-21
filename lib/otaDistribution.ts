@@ -19,7 +19,9 @@ export const OTA_FETCH_DOMAIN = "pod-ota-fetch-v1";
 export const OTA_TICKET_MIN_SECRET = 32;
 export const OTA_TICKET_TTL_SEC = 1800;
 export const OTA_FETCH_LIMIT = 3;            // téléchargements par appareil
-export const OTA_FETCH_WINDOW_SEC = 3600;    // et par heure
+export const OTA_FETCH_WINDOW_SEC = 3600;    // et par heure — quota des téléchargements AUTHENTIFIÉS (signature d'appareil valide) : un tiers ne peut pas le consommer
+export const OTA_PRELIMIT_PER_WINDOW = 20;    // tentatives NON authentifiées par IP et par fenêtre (freine l'abus de Redis / du CPU sans toucher au quota de l'appareil)
+export const OTA_PRELIMIT_WINDOW_SEC = 600;
 /** Octets ajoutés à la région signée dans le fichier servi : signature RSA (256) + champ de longueur (4). */
 export const OTA_FILE_OVERHEAD = OTA_SIG_LEN + 4;
 
@@ -131,7 +133,9 @@ export interface FetchDeps {
   loadRelease: (releaseId: string) => OtaRelease | null;
   /** Interrupteur d'urgence (Redis) : true = tout est coupé. */
   isKilled: () => Promise<boolean>;
-  /** true = sous la limite. */
+  /** Limite des tentatives NON authentifiées, par IP du demandeur (jamais par appareil : un tiers ne doit pas pouvoir verrouiller un appareil). true = sous la limite. */
+  preLimitOk: () => Promise<boolean>;
+  /** Quota des téléchargements de l'appareil — consommé SEULEMENT après une signature d'appareil valide et une éligibilité. true = sous la limite. */
   rateLimitOk: (deviceId: string) => Promise<boolean>;
   loadDevice: (deviceId: string) => Promise<{ publicKey?: string; firmware: string; otaSeq?: number } | null>;
   log?: (line: string) => void;
@@ -142,9 +146,12 @@ const fail = (message: string, status: number, extra: Record<string, string> = {
  * Ordre des contrôles — AUCUN n'accède à Redis avant l'étape 6 :
  *  1. inactive (mode ≠ on, OTA_TICKET_SECRET ou OTA_TRUSTED_KEYS absents)         → 404 ;   2. nom de fichier ≠ image.bin ou release mal formée → 404 ;
  *  3. requête stricte                                                              → 400 ;   4. défi HMAC (temps constant)                       → 403 ;   5. non expiré → 410 ; release inconnue → 404 ;
- *  6. Redis : interrupteur d'urgence → 503 · limite de débit → 429 · appareil connu AVEC clé publique → 403 ;
+ *  6. Redis : interrupteur d'urgence → 503 · limite des tentatives non authentifiées PAR IP → 429 · appareil connu AVEC clé publique → 403 ;
  *  7. signature Ed25519 de l'appareil sur le message → 403 ;   8. éligibilité (famille, canal, canari, vague, date) → 403 ;
- *  9. 200 : octets exacts du fichier signé, Cache-Control private/no-store (jamais mis en cache partagé).
+ *  9. QUOTA de l'appareil (3 / h) → 429 : consommé seulement ici, donc seulement par une requête AUTHENTIFIÉE et éligible ;
+ * 10. 200 : octets exacts du fichier signé, Cache-Control private/no-store (jamais mis en cache partagé).
+ * Pourquoi : avant le 21/10/2026 le quota par appareil était compté AVANT la signature ; un tiers qui obtenait un défi (le pull n'est pas authentifié) pouvait envoyer 3 signatures invalides et faire refuser (429) l'appareil légitime.
+ * Coût Redis : requête refusée à la signature = 4 commandes (interrupteur 1, limite par IP 2, appareil 1) — comme avant ; téléchargement réussi = 6 (+ quota 2), une fois par version.
  */
 export async function otaImageResponse(d: FetchDeps): Promise<NextResponse> {
   const log = d.log ?? ((l: string) => console.log(l));
@@ -158,11 +165,12 @@ export async function otaImageResponse(d: FetchDeps): Promise<NextResponse> {
   if (!rel) return fail("release inconnue", 404);
 
   if (await d.isKilled()) { log(`[ota-image] KILL device=${q.deviceId}`); return fail("distribution suspendue", 503, { "Retry-After": "3600" }); }
-  if (!(await d.rateLimitOk(q.deviceId))) return fail("trop de téléchargements", 429, { "Retry-After": String(OTA_FETCH_WINDOW_SEC) });
+  if (!(await d.preLimitOk())) return fail("trop de tentatives", 429, { "Retry-After": String(OTA_PRELIMIT_WINDOW_SEC) });
   const dev = await d.loadDevice(q.deviceId);
   if (!dev || !dev.publicKey || !HEX64.test(dev.publicKey)) return fail("appareil inconnu ou sans clé", 403);
   if (!HEX128.test(q.sig) || !verifyEd25519(dev.publicKey, otaFetchMessage(q.deviceId, d.releaseId, q.exp, q.challenge), q.sig)) { log(`[ota-image] SIGNATURE REFUSEE device=${q.deviceId}`); return fail("signature d'appareil invalide", 403); }
   if (!pickRelease([rel.manifest], { deviceId: q.deviceId, firmware: dev.firmware, otaSeq: dev.otaSeq }, d.now)) return fail("appareil non éligible", 403);
+  if (!(await d.rateLimitOk(q.deviceId))) return fail("trop de téléchargements", 429, { "Retry-After": String(OTA_FETCH_WINDOW_SEC) });
 
   log(`[ota-image] OK device=${q.deviceId} release=${d.releaseId} seq=${rel.manifest.otaSeq}`);
   return new NextResponse(new Uint8Array(rel.file), {

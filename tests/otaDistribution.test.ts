@@ -12,6 +12,7 @@ import {
   OTA_ANNOUNCE_MAX_JSON, OTA_CLIENT_FIRMWARE, OTA_FILE_OVERHEAD, otaClientCapable, otaImagePath, otaAnnouncement, otaChallenge, otaFetchMessage, otaImageResponse, parseFetchQuery, pickRelease, verifyOtaChallenge,
   familyOfFirmware, type FetchDeps, type OtaRelease,
 } from "../lib/otaDistribution";
+import { probeUrl, interpret } from "../scripts/ota-probe-release";
 import { checkPublication, containsSecret, loadAllReleases, loadReleaseDir, trustedKeysFromEnv } from "../lib/otaReleases";
 
 const root = path.join(__dirname, "..");
@@ -91,23 +92,23 @@ test("requête : exactement d, e, c, g dans cet ordre, formats stricts", () => {
 
 // ── route : ordre des contrôles et coût Redis ──────────────────────────────────────────────────────────
 function deps(over: Partial<FetchDeps> = {}) {
-  const calls = { killed: 0, rate: 0, device: 0, release: 0 };
+  const calls = { killed: 0, pre: 0, rate: 0, device: 0, release: 0 };
   const exp = Math.floor(NOW / 1000) + 600, ch = otaChallenge(SECRET, DEVICE, R5.releaseId, exp);
   const sig = edSign(ed, otaFetchMessage(DEVICE, R5.releaseId, exp, ch));
   const d: FetchDeps = {
     mode: "on", secret: SECRET, trustedKeysPresent: true, now: NOW, releaseId: R5.releaseId, fileName: "image.bin", rawSearch: `?d=${DEVICE}&e=${exp}&c=${ch}&g=${sig}`,
     loadRelease: (id) => { calls.release++; return id === R5.releaseId ? { manifest: R5.manifest, file: R5.file } : null; },
-    isKilled: async () => { calls.killed++; return false; }, rateLimitOk: async () => { calls.rate++; return true; },
+    isKilled: async () => { calls.killed++; return false; }, preLimitOk: async () => { calls.pre++; return true; }, rateLimitOk: async () => { calls.rate++; return true; },
     loadDevice: async () => { calls.device++; return { publicKey: rawPub(ed), firmware: "tft18-2.4" }; }, log: () => {}, ...over,
   };
   return { d, calls, exp, ch, sig };
 }
-const redisCalls = (c: { killed: number; rate: number; device: number }) => c.killed + c.rate + c.device;
+const redisCalls = (c: { killed: number; pre: number; rate: number; device: number }) => c.killed + c.pre + c.rate + c.device;
 test("route : succès — octets EXACTS du fichier signé, jamais de cache partagé", async () => {
   const { d, calls } = deps(); const r = await otaImageResponse(d);
   assert.equal(r.status, 200); assert.equal(r.headers.get("Cache-Control"), "private, no-store"); assert.equal(r.headers.get("Content-Length"), String(R5.file.length));
   assert.ok(Buffer.from(await r.arrayBuffer()).equals(R5.file)); assert.equal(r.headers.get("X-Ota-Seq"), "5");
-  assert.deepEqual(calls, { killed: 1, rate: 1, device: 1, release: 1 }, "au plus 3 commandes Redis par téléchargement");
+  assert.deepEqual(calls, { killed: 1, pre: 1, rate: 1, device: 1, release: 1 }, "au plus 4 appels Redis par téléchargement (interrupteur, limite par IP, appareil, quota)");
 });
 test("route : tout refus AVANT l'étape 6 coûte ZÉRO commande Redis ; chaque refus a le bon statut et n'est jamais mis en cache", async () => {
   const cases: Array<[string, Partial<FetchDeps>, number]> = [
@@ -131,9 +132,27 @@ test("route : défi d'un AUTRE appareil, signature d'une autre clé, appareil in
   r = await otaImageResponse(deps({ loadDevice: async () => null }).d); assert.equal(r.status, 403);
   r = await otaImageResponse(deps({ loadDevice: async () => ({ firmware: "tft18-2.4" }) }).d); assert.equal(r.status, 403, "appareil sans clé publique enregistrée");
   const k = deps({ isKilled: async () => true }); r = await otaImageResponse(k.d); assert.equal(r.status, 503); assert.equal(r.headers.get("Retry-After"), "3600"); assert.equal(k.calls.device, 0, "coupé avant toute lecture d'appareil");
-  const rl = deps({ rateLimitOk: async () => false }); r = await otaImageResponse(rl.d); assert.equal(r.status, 429); assert.equal(rl.calls.device, 0);
+  const pl = deps({ preLimitOk: async () => false }); r = await otaImageResponse(pl.d); assert.equal(r.status, 429); assert.equal(pl.calls.device, 0, "limite par IP avant toute lecture d'appareil"); assert.equal(pl.calls.rate, 0); assert.equal(r.headers.get("Retry-After"), "600");
+  const rl = deps({ rateLimitOk: async () => false }); r = await otaImageResponse(rl.d); assert.equal(r.status, 429, "quota épuisé par des téléchargements authentifiés"); assert.equal(rl.calls.device, 1); assert.equal(r.headers.get("Retry-After"), "3600");
   r = await otaImageResponse(deps({ loadDevice: async () => ({ publicKey: rawPub(ed), firmware: R5.manifest.firmwareVersion }) }).d); assert.equal(r.status, 403, "déjà à jour");
   r = await otaImageResponse(deps({ loadDevice: async () => ({ publicKey: rawPub(ed), firmware: "eink29bwr-2.3" }) }).d); assert.equal(r.status, 403, "autre famille");
+});
+
+test("QUOTA : des signatures invalides (défi valide) ne consomment JAMAIS le quota de l'appareil ; la requête légitime qui suit garde ses 3 téléchargements", async () => {
+  let quota = 0, pre = 0; const LIMIT = 3, PRE = 20;
+  const x = deps({ preLimitOk: async () => ++pre <= PRE, rateLimitOk: async () => ++quota <= LIMIT });
+  const bad = (sig: string) => ({ ...x.d, rawSearch: `?d=${DEVICE}&e=${x.exp}&c=${x.ch}&g=${sig}` });
+  const forged = edSign(edOther, otaFetchMessage(DEVICE, R5.releaseId, x.exp, x.ch));
+  for (let i = 0; i < 8; i++) { const r = await otaImageResponse(bad(i % 2 ? forged : "0".repeat(128))); assert.equal(r.status, 403, "signature invalide #" + i); }
+  assert.equal(quota, 0, "aucune signature invalide n'a touché au quota de l'appareil");
+  for (let i = 1; i <= 3; i++) { const r = await otaImageResponse(x.d); assert.equal(r.status, 200, "téléchargement légitime " + i); }
+  assert.equal(quota, 3); const r4 = await otaImageResponse(x.d); assert.equal(r4.status, 429, "le quota reste un vrai plafond pour les téléchargements authentifiés");
+});
+test("LIMITE PAR IP : l'abus non authentifié est freiné (429 avant toute lecture d'appareil ni vérification Ed25519) sans toucher au quota de l'appareil", async () => {
+  let pre = 0, quota = 0, dev = 0; const x = deps({ preLimitOk: async () => ++pre <= 20, rateLimitOk: async () => { quota++; return true; }, loadDevice: async () => { dev++; return { publicKey: rawPub(ed), firmware: "tft18-2.4" }; } });
+  const forged = edSign(edOther, otaFetchMessage(DEVICE, R5.releaseId, x.exp, x.ch)); const bad = { ...x.d, rawSearch: `?d=${DEVICE}&e=${x.exp}&c=${x.ch}&g=${forged}` };
+  const codes: number[] = []; for (let i = 0; i < 30; i++) codes.push((await otaImageResponse(bad)).status);
+  assert.equal(codes.filter((c) => c === 403).length, 20); assert.equal(codes.filter((c) => c === 429).length, 10); assert.equal(dev, 20, "au-delà de la limite : 0 lecture d'appareil"); assert.equal(quota, 0);
 });
 
 // ── registre de releases & publication ──────────────────────────────────────────────────────────────────
@@ -188,20 +207,23 @@ export function distributionViolations(src: string): string[] {
   const pos = (s: string) => f.indexOf(s);
   if (pos("verifyOtaChallenge(") < 0 || pos("verifyOtaChallenge(") > pos("d.isKilled()")) v.push("le défi n'est plus vérifié AVANT Redis");
   if (pos("q.exp * 1000 <= d.now") < 0 || pos("q.exp * 1000 <= d.now") > pos("d.isKilled()")) v.push("l'expiration n'est plus vérifiée avant Redis");
-  if (pos("d.isKilled()") < 0 || pos("d.isKilled()") > pos("d.rateLimitOk(")) v.push("l'interrupteur d'urgence doit précéder la limite de débit");
-  if (pos("d.rateLimitOk(") > pos("d.loadDevice(")) v.push("la limite de débit doit précéder la lecture d'appareil");
+  if (pos("d.isKilled()") < 0 || pos("d.isKilled()") > pos("d.preLimitOk(")) v.push("l'interrupteur d'urgence doit précéder la limite par IP");
+  if (pos("d.preLimitOk(") < 0 || pos("d.preLimitOk(") > pos("d.loadDevice(")) v.push("la limite par IP (non authentifiée) doit précéder la lecture d'appareil");
+  if (pos("d.rateLimitOk(") < 0 || pos("d.rateLimitOk(") < pos("verifyEd25519(")) v.push("le quota de l'appareil ne doit être compté QU'APRÈS la signature d'appareil");
+  if (pos("d.rateLimitOk(") < pos("pickRelease(")) v.push("le quota de l'appareil ne doit pas être consommé par un appareil non éligible");
   if (!/if \(!HEX128\.test\(q\.sig\) \|\| !verifyEd25519\(dev\.publicKey, otaFetchMessage\(/.test(f) || pos("verifyEd25519(") > pos("pickRelease(")) v.push("la signature d'appareil n'est plus vérifiée avant l'éligibilité");
   if (!/"Cache-Control": "private, no-store"/.test(f)) v.push("l'image peut être mise en cache partagé");
   if (!/d\.mode !== "on" \|\| !d\.secret \|\| !d\.trustedKeysPresent/.test(f)) v.push("la route n'est plus inactive par défaut");
   if (/PRIVATE|privateKey|signManifest|cryptoSign/.test(code)) v.push("une clé privée / une signature apparaît côté serveur");
   return v;
 }
-test("contrat structurel de lib/otaDistribution.ts + 7 mutants", () => {
+test("contrat structurel de lib/otaDistribution.ts + 8 mutants", () => {
   const src = read("lib/otaDistribution.ts"); assert.deepEqual(distributionViolations(src), []);
   const muts: Array<[string, string, string]> = [
     ["défi après Redis", "if (!verifyOtaChallenge(d.secret, q.deviceId, d.releaseId, q.exp, q.challenge)) return fail(\"défi invalide\", 403);", "/* défi retiré */"],
     ["expiration retirée", "if (q.exp * 1000 <= d.now) return fail(\"défi expiré\", 410);", ""],
-    ["limite avant interrupteur", "if (await d.isKilled())", "if (!(await d.rateLimitOk(q.deviceId))) return fail(\"x\", 429); if (await d.isKilled())"],
+    ["limite par IP avant interrupteur", "if (await d.isKilled())", "if (!(await d.preLimitOk())) return fail(\"x\", 429); if (await d.isKilled())"],
+    ["quota compté AVANT la signature (le défaut audité)", "const dev = await d.loadDevice(q.deviceId);", "if (!(await d.rateLimitOk(q.deviceId))) return fail(\"x\", 429); const dev = await d.loadDevice(q.deviceId);"],
     ["signature d'appareil retirée", "if (!HEX128.test(q.sig) || !verifyEd25519(dev.publicKey,", "if (false && !verifyEd25519(dev.publicKey,"],
     ["cache public", "\"Cache-Control\": \"private, no-store\"", "\"Cache-Control\": \"public, max-age=3600\""],
     ["active par défaut", "d.mode !== \"on\" || !d.secret || !d.trustedKeysPresent", "false"],
@@ -253,4 +275,21 @@ test("annonce : compte l'octet — la taille réelle du JSON (mesurée) laisse d
 });
 test("annonce : un appareil déjà à la séquence de la release (otaSeq déclaré) ou plus récent n'est pas invité", () => {
   assert.equal(ann({ device: device({ otaSeq: 5 }) }), null); assert.equal(ann({ device: device({ otaSeq: 9 }) }), null); assert.ok(ann({ device: device({ otaSeq: 4 }) }));
+});
+
+test("SONDE DE PRÉSENCE (scripts/ota-probe-release.ts) : défi forgé + signature fausse ⇒ la réponse dit si la release est CHARGÉE ; un 400 ne le prouve pas", async () => {
+  const BASE = "https://exemple.invalid";
+  const run = async (over: Partial<FetchDeps> = {}, secret = SECRET) => {
+    const x = deps(over); const u = new URL(probeUrl(BASE, R5.releaseId, DEVICE, secret, NOW));
+    const r = await otaImageResponse({ ...x.d, rawSearch: u.search }); const error = String(((await r.json()) as { error?: string }).error ?? "");
+    return { status: r.status, text: interpret(r.status, error), calls: x.calls };
+  };
+  const closed = await run({ isKilled: async () => true }); assert.equal(closed.status, 503); assert.match(closed.text, /^PRÉSENTE.*FERMÉE/); assert.equal(closed.calls.device, 0, "porte fermée : la signature n'est jamais examinée, aucune lecture d'appareil");
+  const open = await run(); assert.equal(open.status, 403); assert.match(open.text, /^PRÉSENTE.*OUVERTE/);
+  const absent = await run({ loadRelease: () => null }); assert.equal(absent.status, 404); assert.match(absent.text, /^ABSENTE/); assert.equal(absent.calls.killed, 0, "release absente : 0 commande Redis");
+  const inactive = await run({ mode: "off" }); assert.equal(inactive.status, 404); assert.match(inactive.text, /^INACTIVE/);
+  const wrong = await run({}, "autre-secret-".repeat(4)); assert.equal(wrong.status, 403); assert.match(wrong.text, /^INCONCLUANT.*OTA_TICKET_SECRET/);
+  const bare = await otaImageResponse({ ...deps().d, rawSearch: "" }); assert.equal(bare.status, 400, "une requête sans paramètres répond 400 que la release existe ou non : ce n'est PAS une preuve de présence");
+  const noParams = await otaImageResponse({ ...deps({ loadRelease: () => null }).d, rawSearch: "" }); assert.equal(noParams.status, 400);
+  assert.doesNotMatch(probeUrl(BASE, R5.releaseId, DEVICE, SECRET, NOW), /autre|SECRET/);
 });
