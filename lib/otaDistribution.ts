@@ -1,4 +1,4 @@
-import { createHmac, timingSafeEqual } from "node:crypto";
+import { createHash, createHmac, timingSafeEqual } from "node:crypto";
 import { NextResponse } from "next/server";
 import { verifyEd25519 } from "@/lib/ed25519";
 import { eligibleForRelease, type OtaManifest, type OtaDeviceState } from "@/lib/otaManifest";
@@ -121,6 +121,9 @@ export function parseFetchQuery(rawSearch: string): FetchQuery {
 }
 
 export interface OtaRelease { manifest: OtaManifest; file: Buffer }
+const fileShaCache = new WeakMap<Buffer, string>();
+/** SHA-256 du fichier signé servi (mémorisé par buffer : une release est chargée une fois par instance). */
+export function fileSha256(file: Buffer): string { let h = fileShaCache.get(file); if (!h) { h = createHash("sha256").update(file).digest("hex"); fileShaCache.set(file, h); } return h; }
 export interface FetchDeps {
   mode: OtaDistMode;
   secret: string | null;
@@ -164,7 +167,9 @@ export async function otaImageResponse(d: FetchDeps): Promise<NextResponse> {
   const rel = d.loadRelease(d.releaseId);
   if (!rel) return fail("release inconnue", 404);
 
-  if (await d.isKilled()) { log(`[ota-image] KILL device=${q.deviceId}`); return fail("distribution suspendue", 503, { "Retry-After": "3600" }); }
+  // Porte fermée : 503, mais la réponse (réservée à qui détient un défi HMAC valide, donc au porteur du secret) porte les EMPREINTES de la release chargée — de quoi prouver QUELLE release est déployée sans jamais
+  // ouvrir la distribution ni envoyer un octet de l'image. Faits publics (le manifeste et l'image sont dans le dépôt) ; aucun secret.
+  if (await d.isKilled()) { log(`[ota-image] KILL device=${q.deviceId}`); return fail("distribution suspendue", 503, { "Retry-After": "3600", "X-Ota-Region-Sha256": rel.manifest.sha256, "X-Ota-File-Sha256": fileSha256(rel.file) }); }
   if (!(await d.preLimitOk())) return fail("trop de tentatives", 429, { "Retry-After": String(OTA_PRELIMIT_WINDOW_SEC) });
   const dev = await d.loadDevice(q.deviceId);
   if (!dev || !dev.publicKey || !HEX64.test(dev.publicKey)) return fail("appareil inconnu ou sans clé", 403);
