@@ -128,8 +128,8 @@ export async function GET(req: NextRequest) {
     const ownedNotif = (rest[4] as string | null) ?? null;
     const benchModeRaw = rest[5];
     const obsPending = rest[6] !== null && rest[6] !== undefined;
-    const networkHot = rest[7] !== null && rest[7] !== undefined;
-    const otaKilled = otaOn && rest[8] !== null && rest[8] !== undefined;   // quelqu'un a dessiné / envoyé / ouvert l'atelier depuis < 30 min
+    const networkHot = rest[7] !== null && rest[7] !== undefined;   // quelqu'un a dessiné / envoyé / ouvert l'atelier depuis < 30 min
+    const otaKilled = otaOn && rest[8] !== null && rest[8] !== undefined;   // ota:kill posé (lu seulement si OTA_DIST_MODE=on)
     // Mode banc d'essai actif pour un écran compatible (TFT 2.8", TFT 1.8", OLED) : annoncé à l'appareil, qui passe en contrôle rapide.
     const benchMode = benchScreenOf(device.screens) !== null && benchModeRaw !== null && benchModeRaw !== undefined;
 
