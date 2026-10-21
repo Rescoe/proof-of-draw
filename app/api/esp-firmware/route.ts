@@ -27,7 +27,7 @@ type FirmwareVariant = {
   statusWarning?: string;
 };
 
-export const FIRMWARE_VARIANTS: Record<string, FirmwareVariant> = {
+const FIRMWARE_VARIANTS: Record<string, FirmwareVariant> = {
   eink29bwr: { label: "pod-firmware-eink29bwr", board: "ESP8266 / NodeMCU", sources: [{ root: "esp8266", folder: "esp_eink_2.9BWR" }] },
   eink27bw: { label: "pod-firmware-eink27bw-oled", board: "ESP8266 / NodeMCU", sources: [{ root: "esp8266", folder: "esp_eink_2.7BW_OLED" }] },
   eink27bwSolo: { label: "pod-firmware-eink27bw-solo", board: "ESP8266 / NodeMCU", sources: [{ root: "esp8266", folder: "esp_eink_2.7BW" }] },
