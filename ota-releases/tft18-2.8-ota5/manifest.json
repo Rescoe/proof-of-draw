@@ -13,8 +13,8 @@
   "minOtaSeq": 1,
   "revokedSeqs": [],
   "url": "/firmware/tft18-2.8-ota5/image.bin",
-  "size": 583152,
-  "sha256": "0f2a137b10fbff461936e8d3e7324be3259899f5d5e49f157bfbf63b77431b6c",
+  "size": 583664,
+  "sha256": "718c3c9e5b137edab781c5bc32b86fafa7cba7dcdbc87da30bd26265dcbb8957",
   "wave": {
     "of": 100,
     "upTo": 100
@@ -22,10 +22,10 @@
   "canaryDevices": [
     "dev_VIRBQRV1"
   ],
-  "notes": "canari Internet ESP8266 TFT 1,8 (pile courante)",
+  "notes": "canari Internet ESP8266 TFT 1,8 (garde-fou de bloc, traces du tas)",
   "signature": {
     "alg": "rsa2048-pkcs1-sha256",
     "keyId": "ota-a",
-    "sig": "d3NrIcG7JciiEvR9kf8HDcC/b4kr0bjTQ+FonyhM/f4MuUAHVcRI/dzEgXyskKuLq9dfvQ04D7aBhFpi7gqSPt1Wzeupwc2l0M4smTxlJ/lR34BhgtpK1Ixec9PT7BFVeg2Xn6FRZlPiiCpgutSPsOBPTksKVTmpdE8+kA5hnXou1JPVh+onbb68rppoYNX7dUUufcAZR2lOz4pnor/Pk3WxRS5SiqYXzIwlSbfRLMPI1KyNWVUt/SIlnFXDYAL2wzlPfsfERrAqtkbosrtouF6/5d4zQrXwo6AyPsoIXX++19pEJlYX4zgFQ5tjw3gkfevE9Ywr8drZgWVEoXcWPg=="
+    "sig": "NDjJZrilpSNYmFarA82xbhENubA7dg87AYgwzvm9p+NMm4m+X7dqQfeawvpnTM9KAPIk4g4X2ZqSfER49jdqANWjwTLg8aJztWMlPz7eJqchjRWDxXSsCSxEKxQDhaENTnxHY6xZxVBUv2u7kiyhrT2c4mcn+Jggdrhk9Run4RSNiQG5rzrj1Q1Ahc2geYR0HPoEGVXumvbTYTah0ANfB21hlX5KfhVLhdlZMTUzu1PjAmDmGzN+BF9yhZ46oedXmBxVv0dZU/nyHwGJBFKLuWDNc1natQVuG6y9zfXVDpdry2dy2nHUBGMiMtTyF57tjI8RP6f6WyyyL9BrldfZ5w=="
   }
 }
