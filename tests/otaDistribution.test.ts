@@ -5,14 +5,14 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { generateKeyPairSync, sign as cryptoSign, createPublicKey } from "node:crypto";
+import { generateKeyPairSync, sign as cryptoSign, createPublicKey, createHash } from "node:crypto";
 import { canonicalManifestBytes, type OtaManifest } from "../lib/otaManifest";
 import { buildSignedFile, checkOffer, regionSha256 } from "../lib/otaTrailer";
 import {
   OTA_ANNOUNCE_MAX_JSON, OTA_CLIENT_FIRMWARE, OTA_FILE_OVERHEAD, otaClientCapable, otaImagePath, otaAnnouncement, otaChallenge, otaFetchMessage, otaImageResponse, parseFetchQuery, pickRelease, verifyOtaChallenge,
   familyOfFirmware, type FetchDeps, type OtaRelease,
 } from "../lib/otaDistribution";
-import { probeUrl, interpret } from "../scripts/ota-probe-release";
+import { probeUrl, interpret, identify } from "../scripts/ota-probe-release";
 import { checkPublication, containsSecret, loadAllReleases, loadReleaseDir, trustedKeysFromEnv } from "../lib/otaReleases";
 
 const root = path.join(__dirname, "..");
@@ -292,4 +292,33 @@ test("SONDE DE PRÉSENCE (scripts/ota-probe-release.ts) : défi forgé + signatu
   const bare = await otaImageResponse({ ...deps().d, rawSearch: "" }); assert.equal(bare.status, 400, "une requête sans paramètres répond 400 que la release existe ou non : ce n'est PAS une preuve de présence");
   const noParams = await otaImageResponse({ ...deps({ loadRelease: () => null }).d, rawSearch: "" }); assert.equal(noParams.status, 400);
   assert.doesNotMatch(probeUrl(BASE, R5.releaseId, DEVICE, SECRET, NOW), /autre|SECRET/);
+});
+
+test("EMPREINTE SANS OUVRIR LA PORTE : le 503 (porte fermée, défi valide) publie le SHA-256 du fichier servi et de la région ; deux releases de MÊME identifiant et MÊME séquence mais de contenu différent se distinguent ; aucune image n'est envoyée", async () => {
+  const sha = (b: Buffer) => createHash("sha256").update(b).digest("hex");
+  const BASE = "https://exemple.invalid";
+  const R5b = makeRelease(5, {}, "AUTRE contenu de firmware ".repeat(40));   // même releaseId (tft18-2.9-ota5) et même séquence que R5, autre image
+  assert.equal(R5b.releaseId, R5.releaseId); assert.notEqual(sha(R5b.file), sha(R5.file));
+  const probe = async (rel: typeof R5, over: Partial<FetchDeps> = {}) => {
+    const x = deps({ loadRelease: (id) => (id === rel.releaseId ? { manifest: rel.manifest, file: rel.file } : null), isKilled: async () => true, ...over });
+    const u = new URL(probeUrl(BASE, rel.releaseId, DEVICE, SECRET, NOW)); const r = await otaImageResponse({ ...x.d, rawSearch: u.search });
+    return { r, body: Buffer.from(await r.arrayBuffer()), calls: x.calls };
+  };
+  const a = await probe(R5), b = await probe(R5b);
+  for (const [p, rel] of [[a, R5], [b, R5b]] as const) {
+    assert.equal(p.r.status, 503); assert.equal(p.r.headers.get("x-ota-file-sha256"), sha(rel.file)); assert.equal(p.r.headers.get("x-ota-region-sha256"), rel.manifest.sha256);
+    assert.ok(p.body.length < 200, "le corps du 503 ne contient pas l'image"); assert.equal(p.calls.device, 0, "aucune lecture d'appareil, aucune signature examinée");
+  }
+  assert.notEqual(a.r.headers.get("x-ota-file-sha256"), b.r.headers.get("x-ota-file-sha256"), "le 503 distingue l'ancienne release de la nouvelle");
+  // identify() : attendu / différent / absent
+  assert.match(identify(a.r.headers, sha(R5.file), R5.manifest.sha256), /^RELEASE ATTENDUE/);
+  assert.match(identify(a.r.headers, sha(R5b.file)), /^RELEASE DIFFÉRENTE.*\(fichier\)/); assert.match(identify(a.r.headers, undefined, "0".repeat(64)), /\(région\)/);
+  assert.match(identify(a.r.headers), /aucune valeur attendue/);
+  assert.match(identify(new Headers()), /^EMPREINTE ABSENTE.*ANCIEN code/);
+  // jamais d'empreinte sur les autres refus (404 / 403 / 429 / 410) : réservée au 503 d'un défi VALIDE
+  for (const [name, over] of [["inactif", { mode: "off" as const }], ["release inconnue", { loadRelease: () => null }], ["limite par IP", { isKilled: async () => false, preLimitOk: async () => false }], ["porte ouverte", { isKilled: async () => false }]] as const) {
+    const p = await probe(R5, over as Partial<FetchDeps>); assert.notEqual(p.r.status, 503, name); assert.equal(p.r.headers.get("x-ota-file-sha256"), null, name);
+  }
+  // défi invalide : ni 503 ni empreinte
+  const x = deps({ isKilled: async () => true }); const bad = await otaImageResponse({ ...x.d, rawSearch: x.d.rawSearch.replace(/&c=[0-9a-f]{2}/, "&c=00") }); assert.equal(bad.status, 403); assert.equal(bad.headers.get("x-ota-file-sha256"), null);
 });
