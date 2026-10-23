@@ -1471,7 +1471,19 @@ bool doFetchFrame(const String& frameId, const String& frameSource) {
   hasDisplayedFrame     = true;
   lastFrameId           = frameId;
   frameReady            = true;
+// POD_BWR_BEGIN (24/10/2026 : l'ACK est un TLS ; avec les plans image vivants (2 x 4 736 o) le plus grand bloc libre ne suffisait plus sur le build OLED/capteur -> ACK perdu, affichage jamais enregistre. Plans liberes pendant l'ACK.)
+#if POD_WIFI_PORTAL
+  free(blackBuf); blackBuf = nullptr; free(redBuf); redBuf = nullptr;
+#endif
+// POD_BWR_END
   ackFrame(frameId);
+// POD_BWR_BEGIN
+#if POD_WIFI_PORTAL
+  blackBuf = (uint8_t*)malloc(BUF_SIZE); redBuf = (uint8_t*)malloc(BUF_SIZE);
+  if (!blackBuf || !redBuf) { Serial.println(F("[FETCHFRAME] malloc des plans apres l'ACK impossible — redemarrage")); ESP.restart(); }
+  memset(blackBuf, 0xFF, BUF_SIZE); memset(redBuf, 0xFF, BUF_SIZE);
+#endif
+// POD_BWR_END
   lastFrameWasConsensus = (frameSource == "consensus");
   pendingCandidateId    = "";
 
