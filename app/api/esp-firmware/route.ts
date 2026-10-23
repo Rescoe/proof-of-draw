@@ -28,10 +28,12 @@ type FirmwareVariant = {
 };
 
 const FIRMWARE_VARIANTS: Record<string, FirmwareVariant> = {
-  eink29bwr: { label: "pod-firmware-eink29bwr", board: "ESP8266 / NodeMCU", sources: [{ root: "esp8266", folder: "esp_eink_2.9BWR" }] },
+  eink29bwr: { label: "pod-firmware-eink29bwr", board: "ESP8266 / NodeMCU", sources: [{ root: "esp8266", folder: "esp_eink_2.9BWR" }],
+    statusWarning: "Profil de distribution du 23/10/2026 : portail Wi-Fi et mises à jour à distance (OTA signée) validés sur UNE carte ; l'association d'une carte neuve et le vote avec cette version n'ont pas été testés de bout en bout.", },
   eink27bw: { label: "pod-firmware-eink27bw-oled", board: "ESP8266 / NodeMCU", sources: [{ root: "esp8266", folder: "esp_eink_2.7BW_OLED" }] },
   eink27bwSolo: { label: "pod-firmware-eink27bw-solo", board: "ESP8266 / NodeMCU", sources: [{ root: "esp8266", folder: "esp_eink_2.7BW" }] },
-  tft18: { label: "pod-firmware-tft18", board: "ESP8266 / NodeMCU", sources: [{ root: "esp8266", folder: "esp_tft1.8" }] },
+  tft18: { label: "pod-firmware-tft18", board: "ESP8266 / NodeMCU", sources: [{ root: "esp8266", folder: "esp_tft1.8" }],
+    statusWarning: "Profil de distribution du 23/10/2026 : portail Wi-Fi et mises à jour à distance (OTA signée) validés sur UNE carte ; l'association d'une carte neuve et le vote avec cette version n'ont pas été testés de bout en bout.", },
   r4Eink29: {
     label: "pod-firmware-r4-eink29bwr",
     board: "Arduino UNO R4 WiFi",
@@ -113,6 +115,8 @@ export async function GET(req: NextRequest) {
       await addDirToZip(zip, dirPath, source.folder);
     }
 
+    // TFT 1,8″ et BWR 2,9″ : profil de distribution (Wi-Fi par le portail, OTA signée) — pas de secrets.h ni de WIFI_SSID à modifier
+    const portalOnly = config.sources.length > 0 && config.sources.every((source) => source.folder === "esp_tft1.8" || source.folder === "esp_eink_2.9BWR");
     // Ajouter un README succinct
     zip.file(
       "README.txt",
@@ -130,11 +134,22 @@ export async function GET(req: NextRequest) {
         "  2. Ne pas modifier l’adresse du serveur pour rejoindre le réseau public",
         config.board === "Arduino UNO R4 WiFi"
           ? "  3. Copier secrets.h.example en secrets.h, puis renseigner SECRET_WIFI_SSID et SECRET_WIFI_PASSWORD"
-          : "  3. Modifier WIFI_SSID et WIFI_PASSWORD dans le fichier .ino",
+          : portalOnly
+            ? "  3. Rien à modifier : le Wi-Fi se règle après le téléversement, depuis votre téléphone (portail « PoD-XXXX » affiché par la carte)"
+            : "  3. Modifier WIFI_SSID et WIFI_PASSWORD dans le fichier .ino",
         `  4. Sélectionner la bonne carte (${config.board}) puis téléverser`,
         "",
-        "Wi-Fi : réseau 2,4 GHz uniquement (WPA2) ; si vous changez de box, mettez à jour les identifiants Wi-Fi",
-        "et téléversez à nouveau. Moniteur série : 115200 bauds.",
+        ...(portalOnly
+          ? [
+              "Wi-Fi : réseau 2,4 GHz uniquement (WPA2). Aucun identifiant n'est dans le code : au premier démarrage la carte ouvre le Wi-Fi « PoD-XXXX »",
+              "(mot de passe affiché sur l'écran) ; scannez le QR n° 1, puis choisissez votre box dans la page qui s'ouvre (sinon http://192.168.4.1).",
+              "Pour changer de box : maintenir le bouton FLASH 2 s pendant la connexion au démarrage. Les mises à jour du firmware arrivent ensuite à distance (OTA signée).",
+              "Moniteur série : 115200 bauds.",
+            ]
+          : [
+              "Wi-Fi : réseau 2,4 GHz uniquement (WPA2) ; si vous changez de box, mettez à jour les identifiants Wi-Fi",
+              "et téléversez à nouveau. Moniteur série : 115200 bauds.",
+            ]),
         ...(config.statusWarning ? ["", `⚠ ${config.statusWarning}`] : []),
         "",
         "Bibliothèques Arduino requises (Gestionnaire de bibliothèques) :",

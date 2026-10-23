@@ -5,6 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { describeChoice, findCompiler, runProcess } from "./helpers/cppHarness";
 import { undoFix2 } from "./helpers/pullIdleFix";
+import { stripBwr, isBwrIno } from "./helpers/bwrStrip";
 
 // LOT8B2C-ESP8266-EINK29-CANARY-1 — canari de l'ESP8266 e-ink 2,9″ BWR (rendu v1, frame personnelle, AUCUN vote).
 // (1) règles statiques : drapeaux 0/0 au dépôt, OFF == firmware d'avant au texte près, tout le canari sous « #if POD_RENDER_V1 && POD_CANARY », rien de R4/WiFiS3 copié ;
@@ -12,7 +13,8 @@ import { undoFix2 } from "./helpers/pullIdleFix";
 // (3) contrôles négatifs : chaque garde supprimée est REFUSÉE par le harnais.
 // Rien ici n'est une mesure sur carte : BearSSL réel, tas réel, durées réelles et chien de garde matériel restent à observer (docs/LOT_8B2C_ESP8266_EINK29_CANARY_2026_10_12.md).
 const root = path.join(__dirname, "..");
-const read = (p: string) => fs.readFileSync(path.join(root, p), "utf8").replace(/\r\n/g, "\n");
+// le sketch BWR est lu SANS les ajouts du portail Wi-Fi / client OTA / profil de distribution (23/10/2026, tests/helpers/bwrStrip.ts) : ces tests portent sur le lot canari 8B2C
+const read = (p: string) => { const t = fs.readFileSync(path.join(root, p), "utf8").replace(/\r\n/g, "\n"); return isBwrIno(p) ? stripBwr(t) : t; };
 // 14/10/2026 : la version déclarée « 2.2 » devient « eink29bwr-2.3 » (reconnue par lib/voteCapability.ts) : les sauvegardes d'avant reçoivent la MÊME substitution avant comparaison.
 const readBackup = (p: string) => read(p).replace('\\"firmware\\":\\"2.2\\"', '\\"firmware\\":\\"eink29bwr-2.3\\"');
 const INO = "esp8266/esp_eink_2.9BWR/esp_eink_2.9BWR.ino";

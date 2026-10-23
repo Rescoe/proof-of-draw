@@ -85,7 +85,7 @@ class PodFeeder {
  public:
   // scratch : OLED ≥ 1 024 o ; EINK29BWR ≥ 4 736 o ; inutile (NULL) pour EINK27BW, TFT18, TFT28. Retourne false si le tampon est insuffisant.
   bool begin(PodScreenKind k, uint8_t* scratch, size_t scratchLen) {
-    kind_ = k; scratch_ = scratch; pos_ = 0; have_ = false; lo_ = 0;
+    kind_ = k; scratch_ = scratch; pos_ = 0; have_ = false; lo_ = 0; tftSeen_ = false; tftUniform_ = true; tftFirst_ = 0;
     switch (k) {
       case POD_OLED096:   w_ = 128; h_ = 64;  raw_ = 1024;   need_ = 1024; break;
       case POD_EINK27BW:  w_ = 176; h_ = 264; raw_ = 5808;   need_ = 0;    break;
@@ -100,6 +100,8 @@ class PodFeeder {
   }
   size_t rawBytes() const { return raw_; }
   size_t received() const { return pos_; }
+  /** Pour TFT : tous les pixels RGB565 sont-ils exactement identiques ? */
+  bool isUniformTft() const { return (kind_ == POD_TFT18 || kind_ == POD_TFT28) && tftSeen_ && tftUniform_; }
 
   void feed(const uint8_t* d, size_t n) {
     for (size_t i = 0; i < n && pos_ < raw_; i++, pos_++) {
@@ -111,7 +113,11 @@ class PodFeeder {
         case POD_TFT18:
         case POD_TFT28:
           if (!have_) { lo_ = b; have_ = true; }
-          else { m_.push((uint16_t)(lo_ | ((uint16_t)b << 8)) != 0xFFFF); have_ = false; }
+          else {
+            uint16_t px = (uint16_t)(lo_ | ((uint16_t)b << 8));
+            if (!tftSeen_) { tftFirst_ = px; tftSeen_ = true; } else if (px != tftFirst_) tftUniform_ = false;
+            m_.push(px != 0xFFFF); have_ = false;
+          }
           break;
         case POD_OLED096:
           scratch_[pos_] = b;   // page-major : on attend le tampon complet (1 024 o)
@@ -144,4 +150,6 @@ class PodFeeder {
   size_t raw_ = 0, need_ = 0, pos_ = 0;
   bool have_ = false;
   uint8_t lo_ = 0;
+  bool tftSeen_ = false, tftUniform_ = true;
+  uint16_t tftFirst_ = 0;
 };

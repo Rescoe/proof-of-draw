@@ -23,6 +23,15 @@ const MASTERS = {
   "podEdStack.h": "consensus-pod/src/adapters/podEdStack.h",
   // Transactions réseau/TLS sur pile dédiée (lot 8B-2B-2 NETSTACK-FIX1) : les CINQ firmwares UNO R4
   "podNetStack.h": "consensus-pod/src/adapters/podNetStack.h",
+  // Profil de distribution TFT 1,8″ + BWR 2,9″ (23/10/2026) : socle OTA signé, client OTA Internet (TLS authentifié), Wi-Fi hors binaire, portail de première connexion
+  "podOta.h": "consensus-pod/src/podOta.h",
+  "pod_ota_esp.h": "esp8266/_shared/pod_ota_esp.h",
+  "pod_ota_keys_test.h": "esp8266/_shared/pod_ota_keys_test.h",
+  "pod_ota_tls.h": "esp8266/_shared/pod_ota_tls.h",
+  "pod_ota_tls_roots.h": "esp8266/_shared/pod_ota_tls_roots.h",
+  "pod_wifi_cfg.h": "esp8266/_shared/pod_wifi_cfg.h",
+  "pod_wifi_portal.h": "esp8266/_shared/pod_wifi_portal.h",
+  "pod_wifi_portal_esp.h": "esp8266/_shared/pod_wifi_portal_esp.h",
 };
 const RENDER_ESP = ["esp8266/esp_eink_2.9BWR", "esp8266/esp_tft1.8", "esp8266/esp_eink_2.7BW", "esp8266/esp_eink_2.7BW_OLED"], RENDER_R4 = ["arduino_uno_r4/pod_uno_r4_eink29", "arduino_uno_r4/pod_uno_r4_tft18", "arduino_uno_r4/pod_uno_r4_eink27", "arduino_uno_r4/pod_uno_r4_eink27_oled"];
 const ED_STACK_R4 = [...RENDER_R4, "arduino_uno_r4/pod_uno_r4"];
@@ -42,6 +51,14 @@ const COPIES = {
   "crypto_uno_r4.h": RENDER_R4.map((d) => d + "/crypto_uno_r4.h"),
   "podEdStack.h": ED_STACK_R4.map((d) => d + "/podEdStack.h"),
   "podNetStack.h": ED_STACK_R4.map((d) => d + "/podNetStack.h"),
+  "podOta.h": ["esp8266/esp_tft1.8/podOta.h", "esp8266/esp_eink_2.9BWR/podOta.h"],
+  "pod_ota_esp.h": ["esp8266/esp_tft1.8/pod_ota_esp.h", "esp8266/esp_eink_2.9BWR/pod_ota_esp.h"],
+  "pod_ota_keys_test.h": ["esp8266/esp_tft1.8/pod_ota_keys_test.h", "esp8266/esp_eink_2.9BWR/pod_ota_keys_test.h"],
+  "pod_ota_tls.h": ["esp8266/esp_tft1.8/pod_ota_tls.h", "esp8266/esp_eink_2.9BWR/pod_ota_tls.h"],
+  "pod_ota_tls_roots.h": ["esp8266/esp_tft1.8/pod_ota_tls_roots.h", "esp8266/esp_eink_2.9BWR/pod_ota_tls_roots.h"],
+  "pod_wifi_cfg.h": ["esp8266/esp_tft1.8/pod_wifi_cfg.h", "esp8266/esp_eink_2.9BWR/pod_wifi_cfg.h"],
+  "pod_wifi_portal.h": ["esp8266/esp_tft1.8/pod_wifi_portal.h", "esp8266/esp_eink_2.9BWR/pod_wifi_portal.h"],
+  "pod_wifi_portal_esp.h": ["esp8266/esp_tft1.8/pod_wifi_portal_esp.h", "esp8266/esp_eink_2.9BWR/pod_wifi_portal_esp.h"],
 };
 module.exports = { MASTERS, COPIES };
 
