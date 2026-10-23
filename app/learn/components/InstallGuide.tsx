@@ -63,6 +63,8 @@ export function InstallGuide({ initialProfileId = "eink29bwr" }: { initialProfil
   const [selectedId, setSelectedId] = useState<InstallProfileId>(initialProfileId);
   const selected = INSTALL_PROFILES[selectedId];
   const board = BOARD_PROFILES[selected.boardId];
+  // TFT 1,8″ et BWR 2,9″ (ESP8266) : le Wi-Fi se règle depuis le téléphone par le portail de la carte (rien à modifier dans le code)
+  const usesPortal = selected.id === "eink29bwr" || selected.id === "tft18";
 
   function selectProfile(id: InstallProfileId) {
     const profile = INSTALL_PROFILES[id];
@@ -316,14 +318,23 @@ D6 = GPIO12    D7 = GPIO13    D8 = GPIO15`}</CodeBlock>
         </div>
       </InstallStep>
 
-      <InstallStep number={6} title="Ouvrir le code, renseigner le Wi-Fi et téléverser" icon={<Upload size={20} />} id="install-step-6">
+      <InstallStep number={6} title={usesPortal ? "Ouvrir le code, téléverser et régler le Wi-Fi" : "Ouvrir le code, renseigner le Wi-Fi et téléverser"} icon={<Upload size={20} />} id="install-step-6">
         <div id="configure" className={styles.anchorOffset} />
-        <Callout tone="info" title="Le point important : deux lignes seulement">
-          <p>
-            Pour rejoindre le réseau public Proof-of-Draw, ne modifiez pas l’adresse du serveur.
-            Vous devez uniquement remplir <Code>{selected.boardId === "unoR4" ? "SECRET_WIFI_SSID" : "WIFI_SSID"}</Code> et <Code>{selected.boardId === "unoR4" ? "SECRET_WIFI_PASSWORD" : "WIFI_PASSWORD"}</Code>.
-          </p>
-        </Callout>
+        {usesPortal ? (
+          <Callout tone="info" title="Rien à modifier dans le code">
+            <p>
+              Ce firmware ne contient pas votre Wi-Fi. Ne modifiez ni l’adresse du serveur ni le code : téléversez-le tel quel.
+              Au premier démarrage, la carte ouvre son propre Wi-Fi <Code>PoD-XXXX</Code> et vous réglez celui de votre box depuis votre téléphone (étape « Régler le Wi-Fi » ci-dessous).
+            </p>
+          </Callout>
+        ) : (
+          <Callout tone="info" title="Le point important : deux lignes seulement">
+            <p>
+              Pour rejoindre le réseau public Proof-of-Draw, ne modifiez pas l’adresse du serveur.
+              Vous devez uniquement remplir <Code>{selected.boardId === "unoR4" ? "SECRET_WIFI_SSID" : "WIFI_SSID"}</Code> et <Code>{selected.boardId === "unoR4" ? "SECRET_WIFI_PASSWORD" : "WIFI_PASSWORD"}</Code>.
+            </p>
+          </Callout>
+        )}
         <div className={styles.subSteps}>
           <div>
             <span>1</span>
@@ -338,8 +349,10 @@ D6 = GPIO12    D7 = GPIO13    D8 = GPIO15`}</CodeBlock>
           <div>
             <span>2</span>
             <div>
-              <h4>{selected.boardId === "unoR4" ? "Créer le fichier Wi-Fi privé" : "Trouver immédiatement les réglages Wi-Fi"}</h4>
-              {selected.boardId === "unoR4" ? (
+              <h4>{usesPortal ? "Ne rien modifier" : selected.boardId === "unoR4" ? "Créer le fichier Wi-Fi privé" : "Trouver immédiatement les réglages Wi-Fi"}</h4>
+              {usesPortal ? (
+                <p>Les réglages Wi-Fi ne sont plus dans le code : passez directement à l’étape suivante.</p>
+              ) : selected.boardId === "unoR4" ? (
                 <>
                   <p>Dans le dossier du firmware, copiez <Code>secrets.h.example</Code> et renommez la copie <Code>secrets.h</Code>. Ouvrez-la puis remplacez seulement les deux valeurs entre guillemets :</p>
                   <CodeBlock>{`#define SECRET_WIFI_SSID     "Nom exact de votre Wi-Fi"
@@ -355,11 +368,13 @@ const char* WIFI_PASSWORD = "Mot de passe de votre Wi-Fi";
 #define SERVER_URL "https://proof-of-draw.vercel.app"  // laisser tel quel`}</CodeBlock>
                 </>
               )}
-              <ul>
-                <li>Le SSID est le nom du réseau Wi-Fi affiché sur votre téléphone ou ordinateur.</li>
-                <li>Conservez les guillemets{selected.boardId === "esp8266" ? ", le point-virgule" : ""} et les majuscules/minuscules du mot de passe.</li>
-                <li>Utilisez un réseau Wi-Fi 2,4 GHz pour cette installation.</li>
-              </ul>
+              {usesPortal ? null : (
+                <ul>
+                  <li>Le SSID est le nom du réseau Wi-Fi affiché sur votre téléphone ou ordinateur.</li>
+                  <li>Conservez les guillemets{selected.boardId === "esp8266" ? ", le point-virgule" : ""} et les majuscules/minuscules du mot de passe.</li>
+                  <li>Utilisez un réseau Wi-Fi 2,4 GHz pour cette installation.</li>
+                </ul>
+              )}
             </div>
           </div>
           <div>
@@ -398,13 +413,29 @@ const char* WIFI_PASSWORD = "Mot de passe de votre Wi-Fi";
               ) : null}
             </div>
           </div>
+          {usesPortal ? (
+            <div>
+              <span>4</span>
+              <div>
+                <h4>Régler le Wi-Fi depuis votre téléphone (étape 1 sur 2)</h4>
+                <p>Au premier démarrage, l’écran affiche des codes QR et un nom de Wi-Fi <Code>PoD-XXXX</Code> avec un mot de passe de 8 caractères. Il vous faut un téléphone (ou un PC) en plus de celui qui partage éventuellement votre connexion.</p>
+                <ol>
+                  <li>Scannez le <strong>QR n° 1</strong> avec l’appareil photo : le téléphone rejoint le Wi-Fi <Code>PoD-XXXX</Code>. À la main : choisissez ce nom et saisissez le mot de passe affiché.</li>
+                  <li>Une page « Étape 1/2 » s’ouvre en général toute seule. Sinon, scannez le <strong>QR n° 2</strong> ou ouvrez <Code>http://192.168.4.1</Code> dans le navigateur. Si votre téléphone propose de rester connecté sans Internet, acceptez.</li>
+                  <li>Choisissez le Wi-Fi de votre box (2,4 GHz), saisissez son mot de passe (la case « Afficher le mot de passe » permet de vérifier), puis touchez <strong>Enregistrer</strong>.</li>
+                  <li>Remettez votre téléphone sur votre Wi-Fi habituel. La carte redémarre et se connecte à votre box ; sur un écran e-ink, l’affichage suivant peut demander environ 3 minutes.</li>
+                </ol>
+                <p>Si la connexion échoue (mauvais mot de passe, box éteinte), le portail se rouvre tout seul : recommencez. Pour changer de box plus tard, maintenez le bouton FLASH 2 secondes pendant la connexion au démarrage (ne le maintenez jamais pendant le branchement).</p>
+              </div>
+            </div>
+          ) : null}
         </div>
       </InstallStep>
 
       <InstallStep number={7} title="Laisser le premier démarrage se terminer" icon={<KeyRound size={20} />} id="install-step-7">
         <Callout tone="warning" title="Le premier affichage peut demander jusqu’à 15 minutes">
           <p>
-            Après le câblage et le téléversement du code avec votre Wi-Fi, ne débranchez pas la carte si l’écran semble encore vide.
+            Après le câblage et le téléversement du code{usesPortal ? " et le réglage du Wi-Fi" : " avec votre Wi-Fi"}, ne débranchez pas la carte si l’écran semble encore vide.
             La génération et l’affichage successif des clés, puis du QR code et du code d’appairage, peuvent prendre plusieurs minutes.
             Attendez jusqu’à <strong>15 minutes</strong> avant de commencer le dépannage.
           </p>
@@ -452,9 +483,11 @@ const char* WIFI_PASSWORD = "Mot de passe de votre Wi-Fi";
                 : "L’écran est alimenté depuis 3V3 et GND est commun.",
               "Le câblage correspond exactement au profil sélectionné en haut du guide.",
               "Le firmware téléchargé correspond à ce même profil.",
-              selected.boardId === "unoR4"
-                ? "SECRET_WIFI_SSID et SECRET_WIFI_PASSWORD sont remplis dans secrets.h."
-                : "WIFI_SSID et WIFI_PASSWORD sont remplis entre guillemets.",
+              usesPortal
+                ? "Le Wi-Fi de ma box a été saisi dans la page du portail « PoD-XXXX » de la carte (rien n’est à modifier dans le code)."
+                : selected.boardId === "unoR4"
+                  ? "SECRET_WIFI_SSID et SECRET_WIFI_PASSWORD sont remplis dans secrets.h."
+                  : "WIFI_SSID et WIFI_PASSWORD sont remplis entre guillemets.",
               "Le réseau Wi-Fi utilisé est disponible en 2,4 GHz.",
               `${board.shortName} et le bon port sont sélectionnés dans Arduino IDE.`,
               "Le téléversement s’est terminé sans erreur.",

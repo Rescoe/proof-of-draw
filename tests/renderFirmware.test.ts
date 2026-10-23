@@ -18,10 +18,10 @@ const readIno = (p: string) => { const m = /\/(pod_uno_r4[a-z0-9_]*)\.ino$/.exec
 const BACKUP = "firmware-backups/2026-10-08_avant-rendu-v1-canaris";
 const BACKUP2 = "firmware-backups/2026-10-08_avant-propagation-8b2b1";
 
-const SKETCHES: Array<{ name: string; ino: string; backup: string; drivers: Array<[string, string]>; crypto: string; family: "esp" | "r4"; fn?: string; states?: 2 | 3; scratch?: boolean }> = [
-  { name: "ESP8266 e-ink 2,9″", ino: "esp8266/esp_eink_2.9BWR/esp_eink_2.9BWR.ino", backup: `${BACKUP}/esp_eink_2.9BWR/esp_eink_2.9BWR.ino`,
+const SKETCHES: Array<{ name: string; ino: string; backup: string; drivers: Array<[string, string]>; crypto: string; family: "esp" | "r4"; fn?: string; states?: 2 | 3; scratch?: boolean; evolved?: boolean }> = [
+  { name: "ESP8266 e-ink 2,9″", evolved: true, ino: "esp8266/esp_eink_2.9BWR/esp_eink_2.9BWR.ino", backup: `${BACKUP}/esp_eink_2.9BWR/esp_eink_2.9BWR.ino`,
     drivers: [["esp8266/esp_eink_2.9BWR/epd2in9b_V4.h", `${BACKUP}/esp_eink_2.9BWR/epd2in9b_V4.h`], ["esp8266/esp_eink_2.9BWR/epd2in9b_V4.cpp", `${BACKUP}/esp_eink_2.9BWR/epd2in9b_V4.cpp`]], crypto: "crypto_esp8266.h", family: "esp" },
-  { name: "ESP8266 TFT 1,8″", ino: "esp8266/esp_tft1.8/esp_tft1.8.ino", backup: `${BACKUP}/esp_tft1.8/esp_tft1.8.ino`, drivers: [], crypto: "crypto_esp8266.h", family: "esp" },
+  { name: "ESP8266 TFT 1,8″", evolved: true, ino: "esp8266/esp_tft1.8/esp_tft1.8.ino", backup: `${BACKUP}/esp_tft1.8/esp_tft1.8.ino`, drivers: [], crypto: "crypto_esp8266.h", family: "esp" },
   { name: "UNO R4 e-ink 2,9″", ino: "arduino_uno_r4/pod_uno_r4_eink29/pod_uno_r4_eink29.ino", backup: `${BACKUP}/pod_uno_r4_eink29/pod_uno_r4_eink29.ino`,
     drivers: [["arduino_uno_r4/pod_uno_r4_eink29/epd29b.h", `${BACKUP}/pod_uno_r4_eink29/epd29b.h`]], crypto: "crypto_uno_r4.h", family: "r4", scratch: true },
   { name: "UNO R4 TFT 1,8″", ino: "arduino_uno_r4/pod_uno_r4_tft18/pod_uno_r4_tft18.ino", backup: `${BACKUP}/pod_uno_r4_tft18/pod_uno_r4_tft18.ino`, drivers: [], crypto: "crypto_uno_r4.h", family: "r4" },
@@ -65,7 +65,8 @@ for (const s of SKETCHES) {
     assert.match(src, new RegExp(`#if POD_RENDER_V1\\n#include "podRenderStream.h"\\n#include "${s.crypto.replace(".", "\\.")}"\\n(#include <new>\\n)?#endif`));
     assert.equal((src.match(/#include "podRender(Stream)?\.h"/g) ?? []).length, 1);
     // chemin désactivé == avant
-    assert.equal(offView(src), plain(read(s.backup).replace('\\"firmware\\":\\"2.2\\"', '\\"firmware\\":\\"eink29bwr-2.3\\"')), `${s.name} : la vue POD_RENDER_V1=0 diffère du firmware d'origine`);
+    // TFT 1,8″ et BWR 2,9″ (ESP8266) ONT VOLONTAIREMENT ÉVOLUÉ depuis ce lot (portail Wi-Fi, client OTA, profil de distribution du 23/10/2026, police) : leur vue « rendu désactivé » n'est plus identique à la sauvegarde du 08/10 ; les autres firmwares le restent
+    if (!s.evolved) assert.equal(offView(src), plain(read(s.backup).replace('\\"firmware\\":\\"2.2\\"', '\\"firmware\\":\\"eink29bwr-2.3\\"')), `${s.name} : la vue POD_RENDER_V1=0 diffère du firmware d'origine`);
     // aucun symbole du noyau hors des blocs actifs seulement avec 1
     const offOnly = offView(src);
     assert.doesNotMatch(offOnly, /PodEinkRenderer|PodTftRenderer|PodFrameHasher|PodPassHasher|podRender|POD_R_/);

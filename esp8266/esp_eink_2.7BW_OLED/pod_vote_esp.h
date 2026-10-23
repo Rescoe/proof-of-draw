@@ -26,6 +26,8 @@ struct PodCheck {
   size_t        bytes;     // octets lus
   char          hash[65];  // SHA-256 hex du contenu lu
   PodMetricsOut m;         // e, t, r, s en ppm
+  bool          tft;
+  bool          uniformTft; // vrai seulement si chaque pixel RGB565 est identique
   uint32_t      ms;        // durée totale (réseau compris) — à reporter au Serial pour les mesures
 };
 
@@ -49,17 +51,34 @@ inline bool podFetchAndCheck(const String& url, PodScreenKind kind, size_t expec
   if (!http.begin(client, url)) return false;
   http.setTimeout(20000);
   http.useHTTP10(true);          // Vercel : sinon encodage « chunked »
+  // Constat matériel du 18/10/2026 (TFT 1,8″) : « Soft WDT reset » puis, chien logiciel suspendu, « wdt reset » MATÉRIEL 8,4 s plus tard, DANS la poignée de main TLS de cette requête, à chaque vote : un BLOCAGE, pas un calcul long.
+  // Hypothèse (à confirmer par la mesure ci-dessous) : débordement de la pile « cont » de 4 Ko (1 328 o libres au plus profond du pull) : PodFeeder (≈ 420 o) + tampon de 256 o + PodCheck sur la pile s'ajoutent à doValidate/doValidateV2/HTTPClient/connect.
+  const uint32_t tNet = millis();
+  Serial.printf_P(PSTR("[VOTE-NET] avant GET candidate-frame : libre=%u bloc=%u pile-cont-libre=%u\n"), (unsigned)ESP.getFreeHeap(), (unsigned)ESP.getMaxFreeBlockSize(), (unsigned)ESP.getFreeContStack());
   int code = http.GET();
+  Serial.printf_P(PSTR("[VOTE-NET] GET candidate-frame -> %d en %lu ms pile-cont-libre=%u\n"), code, (unsigned long)(millis() - tNet), (unsigned)ESP.getFreeContStack());
   out->http = code;
   if (code != 200) { http.end(); return false; }
 
+#ifdef POD_VOTE_STATIC_WORK
+  static PodFeeder feeder;      // HORS de la pile cont (4 Ko) : voir le constat ci-dessus
+#else
   PodFeeder feeder;
+#endif
   if (!feeder.begin(kind, scratch, scratchLen) || feeder.rawBytes() != expectBytes) { http.end(); return false; }
+#ifdef POD_VOTE_STATIC_WORK
+  static br_sha256_context sha;   // BSS : ≈ 112 o de moins sur la pile cont
+#else
   br_sha256_context sha;
+#endif
   br_sha256_init(&sha);
 
   WiFiClient* stream = http.getStreamPtr();
+#ifdef POD_VOTE_STATIC_WORK
+  static uint8_t chunk[256];
+#else
   uint8_t chunk[256];
+#endif
   size_t total = 0;
   unsigned long start = millis();
   while (total < expectBytes && millis() - start < POD_FETCH_TIMEOUT_MS) {
@@ -86,12 +105,18 @@ inline bool podFetchAndCheck(const String& url, PodScreenKind kind, size_t expec
   out->bytes = total;
   if (total != expectBytes) return false;
 
+#ifdef POD_VOTE_STATIC_WORK
+  static uint8_t digest[32];
+#else
   uint8_t digest[32];
+#endif
   br_sha256_out(&sha, digest);
   static const char HEXCH[] = "0123456789abcdef";
   for (int i = 0; i < 32; i++) { out->hash[2 * i] = HEXCH[digest[i] >> 4]; out->hash[2 * i + 1] = HEXCH[digest[i] & 15]; }
   out->hash[64] = 0;
   if (!feeder.finish(&out->m)) return false;
+  out->uniformTft = feeder.isUniformTft();
+  out->tft = kind == POD_TFT18 || kind == POD_TFT28;
   out->ms = millis() - t0;
   out->ok = true;
   return true;
@@ -101,7 +126,7 @@ inline bool podFetchAndCheck(const String& url, PodScreenKind kind, size_t expec
 inline const char* podVerdict(const PodCheck& c, const String& announcedHash, bool* accept) {
   *accept = false;
   if (announcedHash != String(c.hash)) return "hash";
-  if (c.m.e == 0 && c.m.t == 0) return "blank";                     // image uniforme (vide ou pleine)
+  if (c.tft ? c.uniformTft : (c.m.e == 0 && c.m.t == 0)) return "blank";
   if (c.m.e > 980000UL && c.m.t > 900000UL) return "noise";         // bruit pur
   *accept = true;
   return "";

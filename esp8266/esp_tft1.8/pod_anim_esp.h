@@ -39,6 +39,7 @@ struct State {
   // Cartel de l'animation (fixe : certains écrans n'ont pas de tactile). À remplir AVANT acquire() avec ceux du pull ; relu au démarrage.
   String title = "", artist = "", ts = "";
   int    block = -1;
+  bool   resumed = false;     // vrai après la 1re tranche de lecture de CE clip : les suivantes reprennent sans repeindre le fond ni remplir le journal
   String pendingHash = "";    // pointeur reçu par le dernier pull (vide = aucun)
   size_t pendingBytes = 0;
 };
@@ -66,14 +67,14 @@ inline void begin(State& st) {
     Serial.println(F("[ANIM] clip de la flash incohérent : ignoré"));
     return;
   }
-  st.on = true; st.hash = h; st.bytes = n;
+  st.on = true; st.hash = h; st.bytes = n; st.resumed = false;
   Serial.printf_P(PSTR("[ANIM] clip trouvé en flash (bloc %s…, %u o) : lecture en boucle\n"), h.substring(0, 12).c_str(), (unsigned)n);
 }
 
 /** L'œuvre affichée n'est plus une animation : on oublie le clip. */
 inline void forget(State& st) {
   if (st.on) Serial.println(F("[ANIM] arrêt : nouvelle image fixe"));
-  st.on = false; st.hash = ""; st.bytes = 0;
+  st.on = false; st.hash = ""; st.bytes = 0; st.resumed = false;
   st.title = ""; st.artist = ""; st.ts = ""; st.block = -1;
   if (!st.fsOk) return;
   if (LittleFS.exists(FILE_META)) LittleFS.remove(FILE_META);
@@ -198,7 +199,7 @@ inline bool acquire(State& st, const String& serverUrl) {
     if (!LittleFS.rename(FILE_TMP, FILE_CLIP)) { Serial.println(F("[ANIM] renommage impossible")); LittleFS.remove(FILE_TMP); return false; }
     File m = LittleFS.open(FILE_META, "w");                            // clip COMPLET d'abord, marqueur ensuite
     if (m) { m.println(st.pendingHash); m.println((unsigned)n); m.println(st.title); m.println(st.artist); m.println(st.ts); m.println(st.block); m.close(); }
-    st.on = true; st.hash = st.pendingHash; st.bytes = n;
+    st.on = true; st.hash = st.pendingHash; st.bytes = n; st.resumed = false;
     Serial.printf_P(PSTR("[ANIM] clip reçu en %lu ms et rangé en flash : lecture en boucle (cartel : %s / %s)\n"), ms, st.title.c_str(), st.artist.c_str());
     return true;
   }
@@ -216,13 +217,28 @@ inline bool acquire(State& st, const String& serverUrl) {
   const podbench::Err perr = got ? podbench::parse(clip, n, pc, cur) : podbench::ERR_SIZE;
   free(cur); free(clip);
   if (!got || perr != podbench::OK) { Serial.printf_P(PSTR("[ANIM] clip refusé (%s)\n"), got ? podbench::errName(perr) : "téléchargement incomplet"); return false; }
-  st.on = true; st.hash = st.pendingHash; st.bytes = n;
+  st.on = true; st.hash = st.pendingHash; st.bytes = n; st.resumed = false;
   Serial.printf_P(PSTR("[ANIM] clip reçu en %lu ms, %u images (gardé par son hash, retéléchargé à chaque lecture)\n"), ms, (unsigned)pc.frames);
   return true;
 }
 
-/** Temps avant la prochaine tâche réseau → budget de lecture. */
-inline unsigned long budgetFromDue(long msUntilDue) { return msUntilDue < 0 ? 0UL : (unsigned long)msUntilDue; }
+/** Temps avant la prochaine tâche réseau → budget de lecture, BORNÉ par la tranche. */
+// POD_ANIM_SLICE_MS (> 0, défini par le firmware qui veut une animation COOPÉRATIVE) : une passe de lecture ne dépasse JAMAIS cette durée ; loop() repasse alors (OTA, vote, observation, pull, Wi-Fi)
+// au plus tard après la tranche + le temps d'afficher UNE image. 0 (défaut) = comportement d'avant : lecture jusqu'à la prochaine tâche réseau planifiée (≈ 15 min).
+// POD_ANIM_BUDGET_CAP_MS (CANARI de laboratoire seulement, jamais défini en production) : borne plus serrée encore, pour les mesures.
+#ifndef POD_ANIM_SLICE_MS
+#define POD_ANIM_SLICE_MS 0
+#endif
+inline unsigned long budgetFromDue(long msUntilDue) {
+  unsigned long b = msUntilDue < 0 ? 0UL : (unsigned long)msUntilDue;
+#if POD_ANIM_SLICE_MS > 0
+  if (b > (unsigned long)POD_ANIM_SLICE_MS) b = (unsigned long)POD_ANIM_SLICE_MS;
+#endif
+#ifdef POD_ANIM_BUDGET_CAP_MS
+  if (b > (unsigned long)POD_ANIM_BUDGET_CAP_MS) b = (unsigned long)POD_ANIM_BUDGET_CAP_MS;
+#endif
+  return b;
+}
 
 /**
  * Joue le clip EN BOUCLE pendant au plus `budgetMs`, puis rend la main (pull, vote… passent avant). Retourne false si la lecture est impossible
@@ -257,11 +273,12 @@ inline bool run(State& st, Presenter& P, const String& serverUrl, unsigned long 
     st.on = false;
     return false;
   }
-  Serial.printf_P(PSTR("[ANIM] lecture : %u images, %lu ms avant la prochaine tâche réseau, %s\n"), (unsigned)pc.frames, budgetMs, pc.loops == 0 ? "en boucle" : "boucles finies");
+  if (!st.resumed) Serial.printf_P(PSTR("[ANIM] lecture : %u images, passes de %lu ms au plus, %s\n"), (unsigned)pc.frames, budgetMs, pc.loops == 0 ? "en boucle" : "boucles finies");   // une fois par clip : les reprises ne remplissent pas le journal
   P.begin(pc);
   const unsigned long tEnd = millis() + budgetMs;
   unsigned long target = millis();
   P.play(pc, cur, [&](uint32_t, uint16_t delayMs) -> bool {
+    if (!st.on) return false;                                          // forget() appelé pendant la lecture : arrêt à l’image suivante
     target += delayMs;                                                 // horloge ABSOLUE : pas de dérive cumulée
     while ((long)(millis() - target) < 0) {
       if ((long)(millis() - tEnd) >= 0) return false;
@@ -270,7 +287,8 @@ inline bool run(State& st, Presenter& P, const String& serverUrl, unsigned long 
     return (long)(millis() - tEnd) < 0;
   });
   P.end();
-  free(clip); free(cur);                                               // libérés AVANT d'ouvrir une connexion TLS
+  st.resumed = st.on;                                                  // la passe suivante reprend sans repeindre le fond (le présentateur lit `resumed`)
+  free(clip); free(cur);                                            // libérés AVANT d'ouvrir une connexion TLS
   return true;
 }
 

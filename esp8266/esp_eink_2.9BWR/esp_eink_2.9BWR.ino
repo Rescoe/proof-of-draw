@@ -64,6 +64,37 @@
 
 // ─── CONFIG ────────────────────────────────────────────────────────────────
 // Wi-Fi : copier secrets.h.example en secrets.h (ignoré par git : les identifiants ne doivent JAMAIS être commités), puis renseigner SSID / mot de passe (2,4 GHz).
+// POD_BWR_BEGIN (première connexion sans fil, 22/10/2026 : même parcours que le TFT 1,8″ ; options à 0 = firmware d'avant, au texte près)
+// POD_WIFI_FROM_RECORD = 1 : AUCUN identifiant dans le binaire — SSID / mot de passe lus dans l'EEPROM (enregistrement de pod_wifi_cfg.h, octets 512..616).
+// POD_WIFI_MIGRATE = 1 (avec FROM_RECORD, build LOCAL par câble, JAMAIS publié) : inclut secrets.h et écrit l'enregistrement s'il manque ou diffère.
+// POD_WIFI_PORTAL = 1 (avec FROM_RECORD) : sans enregistrement, après un échec de connexion, bouton FLASH 2 s ou commande série WIFI-PORTAL : point d'accès « PoD-XXXX » + page locale.
+// Défaut 0 : NON essayé sur cette carte. docs/PORTAIL_WIFI_PREMIERE_CONNEXION_2026_10_22.md
+#ifndef POD_WIFI_FROM_RECORD
+#define POD_WIFI_FROM_RECORD 1             // PROFIL DE DISTRIBUTION (23/10/2026) : aucun identifiant dans le binaire, Wi-Fi saisi par le portail
+#endif
+#ifndef POD_WIFI_MIGRATE
+#define POD_WIFI_MIGRATE 0
+#endif
+#ifndef POD_WIFI_PORTAL
+#define POD_WIFI_PORTAL 1                  // PROFIL DE DISTRIBUTION (23/10/2026) : portail de première connexion
+#endif
+#if POD_WIFI_PORTAL && !POD_WIFI_FROM_RECORD
+  #error "POD_WIFI_PORTAL exige POD_WIFI_FROM_RECORD = 1"
+#endif
+#if POD_WIFI_FROM_RECORD
+  #include "pod_wifi_cfg.h"
+  #if POD_WIFI_PORTAL
+    #include "pod_wifi_portal_esp.h"
+  #endif
+  #if POD_WIFI_MIGRATE
+    #include "secrets.h"
+  #endif
+  static char g_wifiSsid[podwifi::SSID_MAX + 1];
+  static char g_wifiPass[podwifi::PASS_MAX + 1];
+  const char* WIFI_SSID     = g_wifiSsid;
+  const char* WIFI_PASSWORD = g_wifiPass;
+#else
+// POD_BWR_END
 #if __has_include("secrets.h")
   #include "secrets.h"
   const char* WIFI_SSID     = SECRET_WIFI_SSID;
@@ -72,13 +103,44 @@
   const char* WIFI_SSID     = "";            // ← renseigner (ou créer secrets.h)
   const char* WIFI_PASSWORD = "";
 #endif
+// POD_BWR_BEGIN
+#endif
+// POD_BWR_END
 
 
 #define SERVER_URL      "https://proof-of-draw.vercel.app"
 #define SCREEN_TYPE     "eink29bwr"
+// POD_BWR_BEGIN (client OTA Internet, lot B1, 22/10/2026 — options à 0 = firmware d'avant)
+// POD_OTA = 1 : socle de mise à jour signée (enregistrement d'état EEPROM 420..447, anti-downgrade, vérificateur RSA, trailer signé). POD_OTA_CLIENT = 1 (exige POD_OTA = 1 ET le Wi-Fi hors binaire) : client Internet
+// authentifié (TLS aux racines épinglées, jamais setInsecure) qui suit l'annonce `ota` de /api/pull. Famille liée à la signature : une image d'un autre écran est refusée. NON essayé sur la carte.
+#ifndef POD_OTA
+#define POD_OTA 1                          // PROFIL DE DISTRIBUTION (23/10/2026) : mises à jour signées activées (le dossier téléchargé contient les clés PUBLIQUES de publication)
+#endif
+#ifndef POD_OTA_CLIENT
+#define POD_OTA_CLIENT 1                   // PROFIL DE DISTRIBUTION (23/10/2026) : client OTA Internet (TLS authentifié) ; exige le Wi-Fi hors binaire
+#endif
+#ifndef POD_OTA_SEQ
+#define POD_OTA_SEQ 7
+#endif
+#define POD_OTA_FAMILY "esp8266-eink29bwr"
+#ifndef FIRMWARE_VERSION
+#define FIRMWARE_VERSION "eink29bwr-2.5"
+#endif
+#if defined(POD_OTA_CLIENT) && POD_OTA_CLIENT && !POD_WIFI_FROM_RECORD
+#error "POD_OTA_CLIENT exige POD_WIFI_FROM_RECORD = 1 (jamais d'identifiant Wi-Fi dans un binaire OTA)"
+#endif
+// POD_BWR_END
 #define PULL_INTERVAL   60000UL  // 1min
 #define VALIDATE_INTERVAL 30000UL // 30s — check si candidat en attente
+// POD_BWR_BEGIN
+#if POD_WIFI_PORTAL
+#define EINK_MIN_REFRESH_MS 180000UL  // 180 s minimum entre deux rafraîchissements — spec Waveshare (comme le 2,7″)
+#else
+// POD_BWR_END
 #define EINK_MIN_REFRESH_MS 10000UL
+// POD_BWR_BEGIN
+#endif
+// POD_BWR_END
 
 // ─── EEPROM layout ─────────────────────────────────────────────────────────
 // [0..31]   : clé privée ED25519 (32 bytes)
@@ -90,7 +152,15 @@
 // [99]      : owned_count  — nombre de slots valides (0-10)
 // [100..419]: owned slots  — 10 × 32 bytes = 320 bytes (hashes de blocs possédés)
 // [420..511]: réservé
+// POD_BWR_BEGIN
+#if POD_WIFI_FROM_RECORD
+#define EEPROM_SIZE           640   // [512..616] enregistrement Wi-Fi (105 o), [617..639] réservé ; les octets 0..511 ne bougent pas
+#else
+// POD_BWR_END
 #define EEPROM_SIZE           512
+// POD_BWR_BEGIN
+#endif
+// POD_BWR_END
 #define EEPROM_PRIVKEY_OFF    0
 #define EEPROM_BLOCKHASH_OFF  32
 #define EEPROM_FLAG_OFF       64
@@ -104,6 +174,15 @@
 #define EEPROM_OWNED_SLOTS_OFF 100
 #define OWNED_SLOTS_MAX        10
 #define OWNED_HASH_LEN         32   // 32 premiers chars du hash hex (suffisant pour ID unique)
+// POD_BWR_BEGIN
+#define EEPROM_OTA_OFF         420  // enregistrement d'état OTA (POD_OTA = 1), 28 octets : 420..447
+#define EEPROM_OTA_LEN         28
+static_assert(EEPROM_OTA_OFF >= EEPROM_OWNED_SLOTS_OFF + OWNED_SLOTS_MAX * OWNED_HASH_LEN, "zone OTA en collision avec les blocs possedes");
+static_assert(EEPROM_OTA_OFF + EEPROM_OTA_LEN <= 512, "zone OTA hors des octets existants");
+#if POD_OTA
+#include "pod_ota_esp.h"            // adaptateur du socle OTA (dépend de SERVER_URL, FIRMWARE_VERSION, EEPROM_OTA_OFF, POD_OTA_FAMILY, POD_OTA_SEQ : définis ci-dessus)
+#endif
+// POD_BWR_END
 
 // ─── ÉCRAN ─────────────────────────────────────────────────────────────────
 #define IMG_W    296
@@ -564,6 +643,16 @@ float computeComplexityScore(const uint8_t* blackBufPtr, const uint8_t* redBufPt
 // ─── HTTP HELPERS ───────────────────────────────────────────────────────────
 
 
+// POD_BWR_BEGIN
+#if POD_OTA_CLIENT
+// OTA Internet : preuve de possession de la clé d'identité = signature du défi du serveur. Appelée par pod_ota_esp.h AVANT tout TLS, au point sûr de loop().
+bool podOtaSignFetch(const char* msg, size_t n, uint8_t sig[64]) {
+  Ed25519::sign(sig, privateKey, publicKey, (const uint8_t*)msg, n);
+  return true;
+}
+const char* podOtaDeviceId() { return deviceId.c_str(); }
+#endif
+// POD_BWR_END
 bool httpPost(const String& path, const String& body, String& resp) {
   WiFiClientSecure client;
   client.setInsecure();
@@ -645,7 +734,7 @@ static const uint8_t FONT_5x7[][5] PROGMEM = {
   {0x3F,0x40,0x40,0x40,0x3F},{0x1F,0x20,0x40,0x20,0x1F},{0x3F,0x40,0x38,0x40,0x3F},
   {0x63,0x14,0x08,0x14,0x63},{0x07,0x08,0x70,0x08,0x07},{0x61,0x51,0x49,0x45,0x43},
   {0x00,0x36,0x36,0x00,0x00},{0x00,0x60,0x60,0x00,0x00},{0x08,0x08,0x08,0x08,0x08},
-  {0x02,0x01,0x02,0x04,0x02},{0x00,0x00,0x00,0x00,0x00},
+  {0x20,0x10,0x08,0x04,0x02},{0x00,0x00,0x00,0x00,0x00},
 };
 
 int charIndex(char c) {
@@ -790,7 +879,15 @@ size_t base64Decode(const char* src, size_t srcLen, uint8_t* dst, size_t dstMax)
 
 bool initDisplayForRefresh() {
   unsigned long elapsed = millis() - lastRefreshMs;
+// POD_BWR_BEGIN
+#if POD_WIFI_PORTAL
+  if (lastRefreshMs != 0 && elapsed < EINK_MIN_REFRESH_MS) {   // lastRefreshMs = 0 : rien n'a été rafraîchi depuis le démarrage → pas d'attente de 180 s
+#else
+// POD_BWR_END
   if (elapsed < EINK_MIN_REFRESH_MS) {
+// POD_BWR_BEGIN
+#endif
+// POD_BWR_END
     unsigned long wait = EINK_MIN_REFRESH_MS - elapsed;
     Serial.printf("[EINK] attente refresh %lums\n", wait);
     delay(wait);
@@ -814,7 +911,15 @@ bool refreshDisplay() {
 
 bool clearDisplayWhite() {
   unsigned long elapsed = millis() - lastRefreshMs;
+// POD_BWR_BEGIN
+#if POD_WIFI_PORTAL
+  if (lastRefreshMs != 0 && elapsed < EINK_MIN_REFRESH_MS) delay(EINK_MIN_REFRESH_MS - elapsed);
+#else
+// POD_BWR_END
   if (elapsed < EINK_MIN_REFRESH_MS) delay(EINK_MIN_REFRESH_MS - elapsed);
+// POD_BWR_BEGIN
+#endif
+// POD_BWR_END
 
   if (epd.Init() != 0) {
     Serial.println("[EINK] clearDisplayWhite: Init failed, skip");
@@ -992,7 +1097,15 @@ bool doRegister() {
   String pubHex     = keysLoaded ? bytesToHex(publicKey, 32) : "";
   String ownedHashes = loadOwnedHashesJson();  // ex: ["abc...","def..."] ou []
   String body = "{\"mac\":\"" + mac + "\",\"screens\":[\"" + SCREEN_TYPE + "\"],"
+// POD_BWR_BEGIN
+#if POD_OTA
+                "\"firmware\":\"" FIRMWARE_VERSION "\",\"publicKey\":\"" + pubHex + "\","
+#else
+// POD_BWR_END
                 "\"firmware\":\"eink29bwr-2.3\",\"publicKey\":\"" + pubHex + "\","
+// POD_BWR_BEGIN
+#endif
+// POD_BWR_END
                 "\"ownedHashes\":" + ownedHashes + "}";
   String resp;
 
@@ -1320,6 +1433,27 @@ bool doFetchFrame(const String& frameId, const String& frameSource) {
 
 
 // ─── PULL LÉGER ──────────────────────────────────────────────────────────────
+// POD_BWR_BEGIN
+#if POD_OTA_CLIENT
+/** Lit le bloc `ota` de /api/pull : champs copiés SANS troncature (trop long = refusé), puis validés et posés par podotaesp::acceptAnnouncement(). Le chemin de l'image n'est pas lu : il est calculé. */
+static void otaAnnounceFrom(JsonObject ot) {
+  podota::Announcement& a = podotaesp::g_ann;
+  memset(&a, 0, sizeof(a));
+  const char* r = ot["r"] | "";
+  const char* v = ot["v"] | "";
+  const char* c = ot["c"] | "";
+  const bool fits = strlen(r) <= podota::REL_MAX && strlen(v) <= podota::VERSION_MAX && strlen(c) == podota::HEX_CHAL;
+  const char* why = "champs";
+  if (fits) {
+    strcpy(a.rel, r); strcpy(a.ver, v); strcpy(a.chal, c);
+    a.seq = ot["s"] | 0UL; a.minSeq = ot["m"] | 0UL; a.size = ot["z"] | 0UL; a.exp = ot["e"] | 0UL; a.slot = (uint8_t)(ot["k"] | 2);
+    why = podotaesp::acceptAnnouncement();
+  }
+  if (why) { podotaesp::clearAnnouncement(); Serial.printf_P(PSTR("[OTA] annonce refusee : %s\n"), why); }
+  else Serial.printf_P(PSTR("[OTA] annonce acceptee : seq=%lu\n"), (unsigned long)podotaesp::g_ann.seq);
+}
+#endif
+// POD_BWR_END
 bool doPull() {
   free(blackBuf); blackBuf = nullptr;
   free(redBuf);   redBuf   = nullptr;
@@ -1342,6 +1476,11 @@ bool doPull() {
     HTTPClient http;
 
     String url = String(SERVER_URL) + "/api/pull?deviceId=" + deviceId;
+// POD_BWR_BEGIN
+#if POD_OTA_CLIENT
+    url += "&o="; url += String((unsigned long)podotaesp::installedSeq());       // séquence OTA installée : le serveur n'annonce pas à un appareil déjà à jour
+#endif
+// POD_BWR_END
     if (!http.begin(client, url)) {
       Serial.println("[PULL] begin() failed");
       return false;
@@ -1374,7 +1513,15 @@ bool doPull() {
       return false;
     }
 
+// POD_BWR_BEGIN
+#if POD_OTA_CLIENT
+    DynamicJsonDocument doc(3072);                  // +≈330 o : le bloc `ota` de l'annonce
+#else
+// POD_BWR_END
     DynamicJsonDocument doc(2048);
+// POD_BWR_BEGIN
+#endif
+// POD_BWR_END
     DeserializationError err = deserializeJson(doc, http.getStream());
     http.end();
 
@@ -1400,6 +1547,15 @@ bool doPull() {
     newFrameId     = doc["frameId"]     | "";
     pullRetryAfter = doc["retryAfter"]  | 60;
     if (pullRetryAfter <= 0) pullRetryAfter = 60;
+// POD_BWR_BEGIN
+#if POD_OTA_CLIENT
+    {
+      JsonObject ot = doc["ota"];
+      if (!ot.isNull()) otaAnnounceFrom(ot);
+      else podotaesp::clearAnnouncement();            // plus d'annonce (kill-switch, release retirée, appareil à jour) : aucune tentative sur un billet périmé
+    }
+#endif
+// POD_BWR_END
     if (newFrameId.length() == 0) {
       JsonObject frameObj = doc["frame"];
       if (!frameObj.isNull()) newFrameId = frameObj["frameId"] | "";
@@ -1700,6 +1856,172 @@ validate_realloc:
 
 
 
+// POD_BWR_BEGIN
+#if POD_WIFI_FROM_RECORD
+#if POD_WIFI_PORTAL
+// Capacité en OCTETS (mode octet, correction L, ISO 18004) des versions 1 à 8 : la bibliothèque QRCode ne vérifie rien (un texte trop long donne un QR illisible).
+static const uint8_t QR_L_BYTES[8] PROGMEM = { 17, 32, 53, 78, 106, 134, 154, 192 };
+static bool qrFits(int version, size_t len) { return version >= 1 && version <= 8 && len <= pgm_read_byte(&QR_L_BYTES[version - 1]); }
+/** Dessine un QR de côté P pixels (modules de largeur entière variable, bornes floor(i·P/n) : P exact, quelle que soit la version) dont le coin haut-gauche LOGIQUE est (x0, y0) ; renvoie P (0 si impossible). */
+static int portalDrawQr(uint8_t* buf, int x0, int y0, int P, const char* text) {
+  QRCode q; uint8_t qd[qrcode_getBufferSize(4)]; int ok = -1;
+  for (int v = 2; v <= 4 && ok != 0; v++) if (qrFits(v, strlen(text))) ok = qrcode_initText(&q, qd, v, ECC_LOW, text);
+  if (ok != 0) return 0;
+  const int n = q.size;
+  for (int my = 0; my < n; my++) for (int mx = 0; mx < n; mx++) if (qrcode_getModule(&q, mx, my))
+    for (int yy = (my * P) / n; yy < ((my + 1) * P) / n; yy++) for (int xx = (mx * P) / n; xx < ((mx + 1) * P) / n; xx++) setPixel(buf, x0 + xx, y0 + yy);
+  memset(qd, 0, sizeof qd);
+  return P;
+}
+/** Écran du portail e-ink : UNE image fixe (un rafraîchissement BWR coûte 15 à 45 s et la spec Waveshare impose 180 s entre deux rafraîchissements) avec les DEUX QR de MÊME taille : 1 = rejoindre le Wi-Fi de la carte, 2 = ouvrir la page locale ;
+ *  au milieu : nom et mot de passe de session (secours manuel) et adresse de secours, chacun SOUS son intitulé. Les autres appels (appareil connecté, enregistré) sont ignorés. Un marqueur en RTC fait attendre 180 s avant le prochain rafraîchissement après le redémarrage.
+ *  ⚠ Sur ce panneau l'axe y LOGIQUE est inversé à l'affichage (y = 0 est en BAS ; les glyphes de la police sont stockés à l'envers pour compenser) : toutes les positions ci-dessous sont données en position VISUELLE depuis le haut (yv) puis converties. */
+static bool g_portalDrawn = false;      // remis à false à l'ouverture de chaque session de portail
+static void portalScreen(const char* l1, const char* l2, const char* l3, const char* l4, const char* l5, const char* qr) {
+  (void)l2; (void)l4; (void)l5;
+  if (!qr || strncmp(qr, "WIFI:", 5) != 0) return;
+  if (g_portalDrawn) return;               // UNE image par session : chaque rafraîchissement coûte 15 à 45 s (et use l'écran)
+  g_portalDrawn = true;
+  uint8_t* tb = (uint8_t*)malloc(BUF_SIZE); uint8_t* tr = (uint8_t*)malloc(BUF_SIZE);
+  if (!tb || !tr) { free(tb); free(tr); Serial.println(F("[PORTAL] ecran e-ink : memoire insuffisante")); return; }
+  memset(tb, 0xFF, BUF_SIZE); memset(tr, 0xFF, BUF_SIZE);
+  auto cx = [](const String& s, int x0, int w) { return x0 + max(0, (w - (int)(s.length() * 6)) / 2); };
+  auto txt = [&](uint8_t* buf, int x, int yv, const String& s) { drawText(buf, x, IMG_H - 7 - yv, s); };      // texte dont le haut VISUEL est à yv (hauteur 7)
+  const int P = 72;                                                                 // côté commun des deux QR (≈ −17 % pour le premier)
+  String hdr = String("ETAPE ") + l1;                                               // « 1/2 Wi-Fi » ou « Echec Wi-Fi »
+  txt(tb, cx(hdr, 0, IMG_W), 3, hdr);
+  for (int x = 10; x < IMG_W - 10; x++) setPixel(tb, x, IMG_H - 1 - 13);            // filet sous l'en-tête (yv = 13)
+  const int qv = 20, qy = IMG_H - P - qv;                                           // QR : haut visuel à 20, coin logique qy
+  portalDrawQr(tb, 8, qy, P, qr);                                                   // QR 1 : rejoindre le Wi-Fi de la carte
+  portalDrawQr(tb, IMG_W - 8 - P, qy, P, "http://192.168.4.1/");                    // QR 2 : la page locale
+  txt(tb, cx("1: WI-FI", 8, P), qv + P + 4, "1: WI-FI");
+  txt(tb, cx("2: LA PAGE", IMG_W - 8 - P, P), qv + P + 4, "2: LA PAGE");
+  String nm = String(l3), pw = ""; const int k = nm.indexOf(" mdp:"); if (k > 0) { pw = nm.substring(k + 5); nm = nm.substring(0, k); }
+  const int mx = 88, mw = IMG_W - 2 * 88;                                           // colonne centrale
+  txt(tb, cx("RESEAU", mx, mw), 24, "RESEAU");               txt(tr, cx(nm, mx, mw), 34, nm);             // intitulé puis valeur, de haut en bas
+  txt(tb, cx("MOT DE PASSE", mx, mw), 52, "MOT DE PASSE");   txt(tr, cx(pw, mx, mw), 62, pw);
+  txt(tb, cx("SINON OUVRE", mx, mw), 80, "SINON OUVRE");     txt(tb, cx("192.168.4.1", mx, mw), 90, "192.168.4.1");
+  txt(tb, cx("APRES L ENREGISTREMENT: ECRAN PRET EN 3 MIN", 0, IMG_W), 116, "APRES L ENREGISTREMENT: ECRAN PRET EN 3 MIN");
+  Serial.println(F("[PORTAL] ecran e-ink : rafraichissement (15 a 45 s)"));
+  if (initDisplayForRefresh()) {
+    epd.Display(tb, tr); epd.Sleep(); lastRefreshMs = millis();
+    const uint32_t m[2] = { 0x45494E4Bu, ~0x45494E4Bu }; ESP.rtcUserMemoryWrite(16, (uint32_t*)m, sizeof m);   // « rafraîchi juste avant le redémarrage » : 180 s d'attente au prochain démarrage
+  }
+  free(tb); free(tr);
+}
+#endif
+/** EEPROM vue par pod_wifi_cfg.h : reload() RELIT la flash (EEPROM.begin), la seule preuve qu’une écriture a eu lieu. */
+struct WifiEeprom { int read(int a) { return EEPROM.read(a); } void write(int a, uint8_t v) { EEPROM.write(a, v); } bool commit() { return EEPROM.commit(); } void reload() { EEPROM.begin(EEPROM_SIZE); } };
+static WifiEeprom g_wifiEe;
+static_assert(podwifi::OFF >= 512, "enregistrement Wi-Fi en collision avec les octets existants");
+static_assert(podwifi::OFF + podwifi::LEN <= EEPROM_SIZE && podwifi::ZONE_END == EEPROM_SIZE, "enregistrement Wi-Fi hors de l'EEPROM");
+
+/** Lit une ligne du port série (sans fin de ligne) ; true quand une ligne COMPLÈTE est prête (une ligne trop longue est jetée). */
+static bool wifiReadLine(char* buf, size_t cap, size_t& n, bool& tooLong) {
+  while (Serial.available()) {
+    const int c = Serial.read();
+    if (c == '\r' || c == '\n') {
+      if (n == 0 && !tooLong) continue;
+      buf[n] = 0; n = 0;
+      if (tooLong) { tooLong = false; Serial.println(F("[WIFI] ligne trop longue : ignoree")); continue; }
+      return true;
+    }
+    if (n + 1 < cap) buf[n++] = (char)c; else tooLong = true;
+  }
+  return false;
+}
+
+/** Applique une commande série. true = l'EEPROM a changé (redémarrer). Aucun identifiant n'est jamais imprimé. */
+#if POD_WIFI_PORTAL
+static bool g_portalRequested = false;                // « WIFI-PORTAL » reçu sur le port série pendant la fenêtre de démarrage
+#endif
+static bool wifiHandleLine(const char* line) {
+#if POD_WIFI_PORTAL
+  if (strcmp(line, "WIFI-PORTAL") == 0) { g_portalRequested = true; Serial.println(F("[WIFI] portail de configuration demande")); return false; }
+#endif
+  char s[podwifi::SSID_MAX + 1], p[podwifi::PASS_MAX + 1];
+  const podwifi::Cmd c = podwifi::parseCommand(line, s, p);
+  bool changed = false;
+  if (c == podwifi::CMD_SET) {
+    if (podwifi::store(g_wifiEe, s, p)) { Serial.printf_P(PSTR("[WIFI] enregistrement ecrit et verifie (ssid %u o, mdp %u o) : redemarrage\n"), (unsigned)strlen(s), (unsigned)strlen(p)); changed = true; }
+    else Serial.println(F("[WIFI] ecriture REFUSEE ou non verifiee : rien d'enregistre"));
+  } else if (c == podwifi::CMD_CLEAR) {
+    if (podwifi::clear(g_wifiEe)) { Serial.println(F("[WIFI] enregistrement efface : redemarrage")); changed = true; }
+    else Serial.println(F("[WIFI] effacement non verifie"));
+  } else if (c == podwifi::CMD_BAD) Serial.println(F("[WIFI] commande invalide (WIFI-SETHEX <ssid hex>:<mdp hex> ; ssid 1..32 o, mdp vide ou 8..63 o)"));
+  memset(s, 0, sizeof s); memset(p, 0, sizeof p);
+  return changed;
+}
+
+#if POD_WIFI_PORTAL
+// Tampon de la ligne série du portail : alloué au tas à l'ouverture (aucune RAM statique de plus), libéré à la sortie.
+static char* g_plBuf = nullptr; static size_t g_plN = 0; static bool g_plTooLong = false;
+static bool portalTick() { return g_plBuf && wifiReadLine(g_plBuf, 224, g_plN, g_plTooLong) && wifiHandleLine(g_plBuf); }   // true : l'EEPROM a changé (commande série) → sortir et redémarrer
+/** Ouvre le portail de configuration. true = il s'est ouvert puis fermé (l'appelant REDÉMARRE : reprise normale ou nouvelle tentative) ; false = impossible à ouvrir (mémoire) → l'appelant garde son comportement d'avant. */
+static bool portalOpen(podportal::Reason why) {
+  g_plBuf = (char*)malloc(224); g_plN = 0; g_plTooLong = false; g_portalDrawn = false;
+  const podportalesp::Exit r = podportalesp::run(why, g_wifiEe, portalScreen, portalTick, g_wifiSsid, g_wifiPass);
+  free(g_plBuf); g_plBuf = nullptr;
+  Serial.printf_P(PSTR("[PORTAL] sortie code %u\n"), (unsigned)r);
+  return r != podportalesp::EXIT_FAILED;
+}
+#endif
+/** Wi-Fi hors binaire : charge l'enregistrement dans g_wifiSsid / g_wifiPass. ÉCHEC FERMÉ : sans enregistrement valide, AUCUNE connexion réseau n'est tentée (boucle de configuration série). */
+static void wifiRecordBoot() {
+#if POD_WIFI_MIGRATE
+  {
+    char s[podwifi::SSID_MAX + 1], p[podwifi::PASS_MAX + 1];
+    const bool same = podwifi::load(g_wifiEe, s, p) && strcmp(s, SECRET_WIFI_SSID) == 0 && strcmp(p, SECRET_WIFI_PASSWORD) == 0;
+    memset(s, 0, sizeof s); memset(p, 0, sizeof p);
+    if (!same) {
+      if (podwifi::store(g_wifiEe, SECRET_WIFI_SSID, SECRET_WIFI_PASSWORD)) Serial.println(F("[WIFI] migration : enregistrement EEPROM ecrit et verifie depuis la compilation"));
+      else Serial.println(F("[WIFI] migration IMPOSSIBLE (identifiants invalides ou ecriture non verifiee)"));
+    } else Serial.println(F("[WIFI] migration : l'enregistrement correspond deja"));
+  }
+#endif
+  char line[224]; size_t n = 0; bool tooLong = false;
+  if (podwifi::load(g_wifiEe, g_wifiSsid, g_wifiPass)) {
+    Serial.printf_P(PSTR("[WIFI] enregistrement valide (ssid %u o, mdp %u o) ; fenetre de configuration serie 1,5 s\n"), (unsigned)strlen(g_wifiSsid), (unsigned)strlen(g_wifiPass));
+    const unsigned long t0 = millis();
+    while (millis() - t0 < 1500UL) { if (wifiReadLine(line, sizeof line, n, tooLong) && wifiHandleLine(line)) { delay(200); ESP.restart(); } delay(10); }
+#if POD_WIFI_PORTAL
+    if (g_portalRequested && portalOpen(podportal::R_SERIAL)) { delay(300); ESP.restart(); }       // demandé par WIFI-PORTAL ; l'enregistrement actuel reste intact tant que rien n'est enregistré
+#endif
+    return;
+  }
+  memset(g_wifiSsid, 0, sizeof g_wifiSsid); memset(g_wifiPass, 0, sizeof g_wifiPass);
+#if POD_WIFI_PORTAL
+  if (portalOpen(podportal::R_NO_RECORD)) { delay(300); ESP.restart(); }                          // PREMIÈRE CONFIGURATION : point d'accès + page locale ; sans limite de durée
+  // impossible à ouvrir (mémoire) : repli sur la configuration série ci-dessous
+#endif
+  Serial.println(F("[WIFI] AUCUN enregistrement valide : reseau DESACTIVE. Envoyer WIFI-SETHEX <ssid hex>:<mdp hex> (outil wifi-provision.mjs) sur le port serie, 115200 bauds"));
+  unsigned long lastHint = millis();
+  for (;;) {
+    if (wifiReadLine(line, sizeof line, n, tooLong) && wifiHandleLine(line)) { delay(200); ESP.restart(); }
+    if (millis() - lastHint > 15000UL) { lastHint = millis(); Serial.println(F("[WIFI] en attente de WIFI-SETHEX (aucun reseau tente)")); }
+    delay(20);                                                                            // delay() nourrit le chien de garde
+  }
+}
+
+/** Reprise matérielle : cause du dernier reset (ESP.getResetInfoPtr()->reason : 0 mise sous tension, 1 WDT matériel, 2 exception, 3 Soft WDT, 4 redémarrage logiciel, 5 réveil, 6 reset externe). */
+static void resumeResetBanner() {
+  const rst_info* ri = ESP.getResetInfoPtr();
+  Serial.printf_P(PSTR("[RESET] cause=%u\n"), ri ? (unsigned)ri->reason : 99u);
+}
+
+/** Reprise matérielle : état PUBLIC de l'identité, borné (< 330 o). Jamais la clé privée, le SSID ni le mot de passe : « wifirec » n'est que le CRC-32 déjà stocké dans l'enregistrement. */
+static void resumeIdBanner() {
+  uint32_t c = 0xFFFFFFFFu;                                            // CRC-32 des 320 octets des emplacements de blocs possédés (des empreintes publiques)
+  for (int i = 0; i < OWNED_SLOTS_MAX * OWNED_HASH_LEN; i++) { c ^= (uint8_t)EEPROM.read(EEPROM_OWNED_SLOTS_OFF + i); for (int k = 0; k < 8; k++) c = (c >> 1) ^ (0xEDB88320u & (uint32_t)(-(int32_t)(c & 1u))); }
+  c = ~c;
+  char rec[9] = "aucun";
+  if (g_wifiSsid[0]) { uint32_t w = 0; for (int i = 3; i >= 0; i--) w = (w << 8) | (uint8_t)EEPROM.read(podwifi::OFF + podwifi::O_CRC + i); snprintf(rec, sizeof rec, "%08lx", (unsigned long)w); }
+  Serial.printf_P(PSTR("[RESUME-ID] device=%s paired=%s pub=%s block=%s owned=%u head=%u ownedcrc=%08lx wifirec=%s\n"),
+                  deviceId.c_str(), paired ? "oui" : "non", bytesToHex(publicKey, 32).c_str(), currentBlockHash.length() ? currentBlockHash.c_str() : "aucun",
+                  (unsigned)EEPROM.read(EEPROM_OWNED_COUNT_OFF), (unsigned)EEPROM.read(EEPROM_OWNED_HEAD_OFF), (unsigned long)c, rec);
+}
+#endif
+// POD_BWR_END
 // ─── SETUP / LOOP ───────────────────────────────────────────────────────────
 void setup() {
   Serial.begin(115200);
@@ -1709,17 +2031,47 @@ void setup() {
 #endif
 
   eepromInit();
+// POD_BWR_BEGIN
+#if POD_WIFI_FROM_RECORD
+  resumeResetBanner();
+#if POD_WIFI_PORTAL
+  { uint32_t m[2] = {0, 0}; const rst_info* ri = ESP.getResetInfoPtr(); if (ESP.rtcUserMemoryRead(16, m, sizeof m) && m[0] == 0x45494E4Bu && m[1] == ~0x45494E4Bu && ri && ri->reason == 4) { lastRefreshMs = millis(); Serial.println(F("[EINK] rafraichi juste avant ce redemarrage : 180 s d attente avant le prochain")); } const uint32_t z[2] = {0, 0}; ESP.rtcUserMemoryWrite(16, (uint32_t*)z, sizeof z); }
+#endif
+  wifiRecordBoot();                                  // Wi-Fi lu dans l'EEPROM ; sans enregistrement valide : portail (ou configuration série), jamais de réseau tenté
+#endif
+// POD_BWR_END
 
   WiFi.mode(WIFI_STA);
   WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
 
   Serial.print("[WIFI] Connexion");
   int i = 0;
+// POD_BWR_BEGIN
+#if POD_WIFI_PORTAL
+  // Bouton FLASH (GPIO0) maintenu 2 s PENDANT la connexion = ouvrir le portail (⚠ ne jamais le tenir enfoncé AU Reset : GPIO0 bas au Reset = mode téléchargement).
+  pinMode(0, INPUT_PULLUP);
+  bool wantPortal = false; uint32_t lowSince = 0;
+  while (WiFi.status() != WL_CONNECTED && i < 40 && !wantPortal) {
+    for (int k = 0; k < 10 && !wantPortal; k++) {
+      delay(50);
+      if (digitalRead(0) == LOW) { if (!lowSince) lowSince = millis(); else if (millis() - lowSince >= 2000UL) wantPortal = true; } else lowSince = 0;
+    }
+    i++; Serial.print(".");
+  }
+  Serial.println();
+  if (wantPortal || WiFi.status() != WL_CONNECTED) {
+    if (portalOpen(wantPortal ? podportal::R_BUTTON : podportal::R_CONNECT_FAILED)) { Serial.println(F("[PORTAL] redemarrage")); delay(500); ESP.restart(); }
+  }
+#else
+// POD_BWR_END
   while (WiFi.status() != WL_CONNECTED && i++ < 40) {
     delay(500);
     Serial.print(".");
   }
   Serial.println();
+// POD_BWR_BEGIN
+#endif
+// POD_BWR_END
   Serial.println("[WIFI] IP: " + WiFi.localIP().toString());
   Serial.printf("[HEAP] après WiFi: %u bytes\n", ESP.getFreeHeap());
 #if POD_RENDER_V1 && POD_CANARY
@@ -1762,16 +2114,34 @@ void setup() {
     Serial.println("[CHAIN] BlockHash restauré: " + currentBlockHash);
   }
 
+// POD_BWR_BEGIN
+#if POD_OTA
+  podotaesp::boot();   // état OTA : l'image qui tourne PRIME ; aucune annonce, aucun réseau
+#endif
+// POD_BWR_END
   while (!registered) {
     if (doRegister()) break;
     delay(5000);
   }
+// POD_BWR_BEGIN
+#if POD_WIFI_FROM_RECORD
+  resumeIdBanner();                                  // état PUBLIC de l'identité (jamais la clé privée, le SSID ni le mot de passe)
+#endif
+// POD_BWR_END
 #if POD_RENDER_V1 && POD_CANARY
   canaryStep(PCP_REGISTER, F("register OK"));
 #endif
 
   Serial.println("[BOOT] Premier pull immédiat...");
+// POD_BWR_BEGIN
+#if POD_OTA
+  if (doPull()) podotaesp::confirmHealthy();      // démarrage SAIN = register ET premier pull réussis
+#else
+// POD_BWR_END
   doPull();
+// POD_BWR_BEGIN
+#endif
+// POD_BWR_END
 
   lastPullMs     = millis();
   // Délai de sécurité : même si le pull de boot a reçu un candidat,
@@ -1827,5 +2197,19 @@ void loop() {
     }
   }
 
+// POD_BWR_BEGIN
+#if POD_OTA
+  // Point d'appel SÛR de l'OTA : aucun candidat, aucune observation. Les tampons image (9 472 o) sont LIBÉRÉS avant le TLS authentifié seulement quand une annonce est posée, puis réalloués.
+  if (pendingCandidateId.length() == 0 && pendingObsHashes.length() == 0) {
+    if (podotaesp::g_offerSet) { free(blackBuf); blackBuf = nullptr; free(redBuf); redBuf = nullptr; }
+    podotaesp::maybeRun();
+    if (!blackBuf || !redBuf) {
+      blackBuf = (uint8_t*)malloc(BUF_SIZE); redBuf = (uint8_t*)malloc(BUF_SIZE);
+      if (!blackBuf || !redBuf) { Serial.println(F("[OTA] malloc des tampons image impossible — redemarrage")); ESP.restart(); }
+      memset(blackBuf, 0xFF, BUF_SIZE); memset(redBuf, 0xFF, BUF_SIZE);
+    }
+  }
+#endif
+// POD_BWR_END
   delay(100);
 }
