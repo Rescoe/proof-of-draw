@@ -64,7 +64,7 @@ export function InstallGuide({ initialProfileId = "eink29bwr" }: { initialProfil
   const selected = INSTALL_PROFILES[selectedId];
   const board = BOARD_PROFILES[selected.boardId];
   // TFT 1,8″ et BWR 2,9″ (ESP8266) : le Wi-Fi se règle depuis le téléphone par le portail de la carte (rien à modifier dans le code)
-  const usesPortal = selected.id === "eink29bwr" || selected.id === "tft18";
+  const usesPortal = selected.id === "eink29bwr" || selected.id === "tft18" || selected.id === "eink27bwOled";
 
   function selectProfile(id: InstallProfileId) {
     const profile = INSTALL_PROFILES[id];
@@ -418,7 +418,7 @@ const char* WIFI_PASSWORD = "Mot de passe de votre Wi-Fi";
               <span>4</span>
               <div>
                 <h4>Régler le Wi-Fi depuis votre téléphone (étape 1 sur 2)</h4>
-                <p>Au premier démarrage, l’écran affiche des codes QR et un nom de Wi-Fi <Code>PoD-XXXX</Code> avec un mot de passe de 8 caractères. Il vous faut un téléphone (ou un PC) en plus de celui qui partage éventuellement votre connexion.</p>
+                <p>Au premier démarrage, {selected.id === "eink27bwOled" ? "le petit écran OLED" : "l’écran"} affiche {selected.id === "eink27bwOled" ? "un code QR" : "des codes QR"} et un nom de Wi-Fi <Code>PoD-XXXX</Code> avec un mot de passe de 8 caractères. Il vous faut un téléphone (ou un PC) en plus de celui qui partage éventuellement votre connexion.</p>
                 <ol>
                   <li>Scannez le <strong>QR n° 1</strong> avec l’appareil photo : le téléphone rejoint le Wi-Fi <Code>PoD-XXXX</Code>. À la main : choisissez ce nom et saisissez le mot de passe affiché.</li>
                   <li>Une page « Étape 1/2 » s’ouvre en général toute seule. Sinon, scannez le <strong>QR n° 2</strong> ou ouvrez <Code>http://192.168.4.1</Code> dans le navigateur. Si votre téléphone propose de rester connecté sans Internet, acceptez.</li>

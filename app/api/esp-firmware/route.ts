@@ -30,7 +30,8 @@ type FirmwareVariant = {
 const FIRMWARE_VARIANTS: Record<string, FirmwareVariant> = {
   eink29bwr: { label: "pod-firmware-eink29bwr", board: "ESP8266 / NodeMCU", sources: [{ root: "esp8266", folder: "esp_eink_2.9BWR" }],
     statusWarning: "Profil de distribution du 23/10/2026 : portail Wi-Fi et mises à jour à distance (OTA signée) validés sur UNE carte ; l'association d'une carte neuve et le vote avec cette version n'ont pas été testés de bout en bout.", },
-  eink27bw: { label: "pod-firmware-eink27bw-oled", board: "ESP8266 / NodeMCU", sources: [{ root: "esp8266", folder: "esp_eink_2.7BW_OLED" }] },
+  eink27bw: { label: "pod-firmware-eink27bw-oled", board: "ESP8266 / NodeMCU", sources: [{ root: "esp8266", folder: "esp_eink_2.7BW_OLED" }],
+    statusWarning: "Profil de distribution du 23/10/2026 : portail Wi-Fi (écran OLED) et mises à jour à distance (OTA signée) validés sur UNE carte ; marge mémoire de l'OTA très faible (tas minimal 608 o mesuré) ; l'association d'une carte neuve et le vote avec cette version n'ont pas été testés de bout en bout. Capteur DHT22 : option expérimentale, éteinte par défaut." },
   eink27bwSolo: { label: "pod-firmware-eink27bw-solo", board: "ESP8266 / NodeMCU", sources: [{ root: "esp8266", folder: "esp_eink_2.7BW" }] },
   tft18: { label: "pod-firmware-tft18", board: "ESP8266 / NodeMCU", sources: [{ root: "esp8266", folder: "esp_tft1.8" }],
     statusWarning: "Profil de distribution du 23/10/2026 : portail Wi-Fi et mises à jour à distance (OTA signée) validés sur UNE carte ; l'association d'une carte neuve et le vote avec cette version n'ont pas été testés de bout en bout.", },
@@ -116,7 +117,7 @@ export async function GET(req: NextRequest) {
     }
 
     // TFT 1,8″ et BWR 2,9″ : profil de distribution (Wi-Fi par le portail, OTA signée) — pas de secrets.h ni de WIFI_SSID à modifier
-    const portalOnly = config.sources.length > 0 && config.sources.every((source) => source.folder === "esp_tft1.8" || source.folder === "esp_eink_2.9BWR");
+    const portalOnly = config.sources.length > 0 && config.sources.every((source) => source.folder === "esp_tft1.8" || source.folder === "esp_eink_2.9BWR" || source.folder === "esp_eink_2.7BW_OLED");
     // Ajouter un README succinct
     zip.file(
       "README.txt",

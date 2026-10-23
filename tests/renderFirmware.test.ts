@@ -28,7 +28,7 @@ const SKETCHES: Array<{ name: string; ino: string; backup: string; drivers: Arra
   // lot 8B-2B-1 : les quatre derniers firmwares à cartel gravé (e-ink 2,7″, plan unique)
   { name: "ESP8266 e-ink 2,7″", ino: "esp8266/esp_eink_2.7BW/esp_eink_2.7BW.ino", backup: `${BACKUP2}/esp_eink_2.7BW/esp_eink_2.7BW.ino`, crypto: "crypto_esp8266.h", family: "esp", fn: "podRenderAndShowE27", states: 2,
     drivers: [["esp8266/esp_eink_2.7BW/epd2in7_V2.h", `${BACKUP2}/esp_eink_2.7BW/epd2in7_V2.h`], ["esp8266/esp_eink_2.7BW/epd2in7_V2.cpp", `${BACKUP2}/esp_eink_2.7BW/epd2in7_V2.cpp`]] },
-  { name: "ESP8266 e-ink 2,7″ + OLED", ino: "esp8266/esp_eink_2.7BW_OLED/esp_eink_2.7BW_OLED.ino", backup: `${BACKUP2}/esp_eink_2.7BW_OLED/esp_eink_2.7BW_OLED.ino`, crypto: "crypto_esp8266.h", family: "esp", fn: "podRenderAndShowE27", states: 2,
+  { name: "ESP8266 e-ink 2,7″ + OLED", evolved: true, ino: "esp8266/esp_eink_2.7BW_OLED/esp_eink_2.7BW_OLED.ino", backup: `${BACKUP2}/esp_eink_2.7BW_OLED/esp_eink_2.7BW_OLED.ino`, crypto: "crypto_esp8266.h", family: "esp", fn: "podRenderAndShowE27", states: 2,
     drivers: [["esp8266/esp_eink_2.7BW_OLED/epd2in7_V2.h", `${BACKUP2}/esp_eink_2.7BW_OLED/epd2in7_V2.h`], ["esp8266/esp_eink_2.7BW_OLED/epd2in7_V2.cpp", `${BACKUP2}/esp_eink_2.7BW_OLED/epd2in7_V2.cpp`]] },
   { name: "UNO R4 e-ink 2,7″", ino: "arduino_uno_r4/pod_uno_r4_eink27/pod_uno_r4_eink27.ino", backup: `${BACKUP2}/pod_uno_r4_eink27/pod_uno_r4_eink27.ino`, crypto: "crypto_uno_r4.h", family: "r4", states: 2, scratch: true,
     drivers: [["arduino_uno_r4/pod_uno_r4_eink27/epd2in7_V2.h", `${BACKUP2}/pod_uno_r4_eink27/epd2in7_V2.h`], ["arduino_uno_r4/pod_uno_r4_eink27/epd2in7_V2.cpp", `${BACKUP2}/pod_uno_r4_eink27/epd2in7_V2.cpp`]] },
