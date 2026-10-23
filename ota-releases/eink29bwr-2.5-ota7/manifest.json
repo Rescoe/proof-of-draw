@@ -1,0 +1,31 @@
+{
+  "schema": "pod-ota-manifest-v2",
+  "releaseId": "eink29bwr-2.5-ota7",
+  "family": "esp8266-eink29bwr",
+  "profile": {
+    "board": "esp8266",
+    "screen": "eink29bwr",
+    "flash": "4M2M"
+  },
+  "channel": "canary",
+  "firmwareVersion": "eink29bwr-2.5",
+  "otaSeq": 7,
+  "minOtaSeq": 1,
+  "revokedSeqs": [],
+  "url": "/firmware/eink29bwr-2.5-ota7/image.bin",
+  "size": 527456,
+  "sha256": "00c857778c5182eaf507e744e01b18ce0212e5c6caaed05ecb154c326d3a51b0",
+  "wave": {
+    "of": 100,
+    "upTo": 100
+  },
+  "canaryDevices": [
+    "dev_MN67OG7R"
+  ],
+  "notes": "BWR 2,9 B (essai OTA, canari sur dev_MN67OG7R)",
+  "signature": {
+    "alg": "rsa2048-pkcs1-sha256",
+    "keyId": "ota-a",
+    "sig": "AsOEH7kVgbj095tGvfH87FuFD189IGM16jsCCrOErDtKmL/mnPA+kblw+YYW5ZDs2tZiSV2CoaNqoLRWoSUeFw4898HL4Miz9/xVk8FI04K4+5yjb98oBOB2h2fG0cN2Fcx74Gh5UgtYiY977AG1+VkMPABBkkU3CclIvQ50Zx7dBhQaCFBRnZTmtxTF2dEg5My2rpBdHXRDDxXk/xavUx2W0sn43XXu00k6zNI7ouhugpsIo9aClTRTOGU4+9GaPcHDN+DgzfoWJI1itnO5t71gQ8PAesbpQejYnxum5Rs4m+A6jEFL0IETOYnwlKw9yk4Lc7ubTvqEIhIH/a2dKw=="
+  }
+}

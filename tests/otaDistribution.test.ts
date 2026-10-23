@@ -67,7 +67,7 @@ test("annonce : bornée (≤ 200 o de JSON), complète pour les contrôles de l'
 test("annonce : AUCUNE si inactive, sans secret, interrupteur d'urgence, déjà à jour, mauvaise famille, firmware inconnu, canari non listé, hors vague, pas encore active", () => {
   assert.equal(ann({ mode: "off" }), null); assert.equal(ann({ secret: null }), null); assert.equal(ann({ killed: true }), null);
   assert.equal(ann({ device: device({ firmware: R5.manifest.firmwareVersion }) }), null, "déjà à cette version");
-  assert.equal(ann({ device: device({ firmware: "eink29bwr-2.3" }) }), null, "autre famille");
+  assert.equal(ann({ device: device({ firmware: "eink27bw-2.1" }) }), null, "autre famille");
   assert.equal(ann({ device: device({ firmware: "inconnu" }) }), null);
   const canary = makeRelease(6, { channel: "canary", canaryDevices: ["dev_AAAAAAAA"] });
   assert.equal(ann({ manifests: [canary.manifest] }), null, "canari : appareil non listé");
@@ -79,7 +79,7 @@ test("annonce : AUCUNE si inactive, sans secret, interrupteur d'urgence, déjà 
 test("annonce : la release la plus récente éligible gagne ; une révocation ne rétrograde jamais", () => {
   const r6 = makeRelease(6); assert.equal(pickRelease([R5.manifest, r6.manifest], device(), NOW)?.otaSeq, 6);
   assert.equal(pickRelease([r6.manifest, R5.manifest], device(), NOW)?.otaSeq, 6);
-  assert.equal(familyOfFirmware("tft18-2.4"), "esp8266-tft18"); assert.equal(familyOfFirmware("eink29bwr-2.3"), ""); assert.equal(familyOfFirmware("constructor-1.1"), "");
+  assert.equal(familyOfFirmware("tft18-2.4"), "esp8266-tft18"); assert.equal(familyOfFirmware("eink27bw-2.1"), ""); assert.equal(familyOfFirmware("constructor-1.1"), "");
 });
 
 // ── requête ──────────────────────────────────────────────────────────────────────────────────────────
@@ -135,7 +135,7 @@ test("route : défi d'un AUTRE appareil, signature d'une autre clé, appareil in
   const pl = deps({ preLimitOk: async () => false }); r = await otaImageResponse(pl.d); assert.equal(r.status, 429); assert.equal(pl.calls.device, 0, "limite par IP avant toute lecture d'appareil"); assert.equal(pl.calls.rate, 0); assert.equal(r.headers.get("Retry-After"), "600");
   const rl = deps({ rateLimitOk: async () => false }); r = await otaImageResponse(rl.d); assert.equal(r.status, 429, "quota épuisé par des téléchargements authentifiés"); assert.equal(rl.calls.device, 1); assert.equal(r.headers.get("Retry-After"), "3600");
   r = await otaImageResponse(deps({ loadDevice: async () => ({ publicKey: rawPub(ed), firmware: R5.manifest.firmwareVersion }) }).d); assert.equal(r.status, 403, "déjà à jour");
-  r = await otaImageResponse(deps({ loadDevice: async () => ({ publicKey: rawPub(ed), firmware: "eink29bwr-2.3" }) }).d); assert.equal(r.status, 403, "autre famille");
+  r = await otaImageResponse(deps({ loadDevice: async () => ({ publicKey: rawPub(ed), firmware: "eink27bw-2.1" }) }).d); assert.equal(r.status, 403, "autre famille");
 });
 
 test("QUOTA : des signatures invalides (défi valide) ne consomment JAMAIS le quota de l'appareil ; la requête légitime qui suit garde ses 3 téléchargements", async () => {
@@ -265,7 +265,7 @@ test("publication hors ligne : release signée, contrôlée, relue par le regist
 test("annonce : réservée aux firmwares QUI LISENT `ota` (tft18 >= 2.7) et aux appareils ayant une clé publique ; un ancien firmware reçoit exactement la réponse d'avant", () => {
   for (const fw of ["tft18-2.6", "tft18-2.4", "tft18-1.9", "tft18-2.7abc", "tft18-2.7-x", "multiscreen-2.7", "r4tft28-2.7", ""]) assert.equal(ann({ device: device({ firmware: fw }) }), null, fw);
   for (const fw of ["tft18-2.7", "tft18-2.10", "tft18-3.0", "tft18-2.7.1"]) assert.ok(otaClientCapable(fw), fw);
-  assert.deepEqual(OTA_CLIENT_FIRMWARE, { tft18: [2, 7] }, "toute nouvelle famille cliente est une décision explicite");
+  assert.deepEqual(OTA_CLIENT_FIRMWARE, { tft18: [2, 7], eink29bwr: [2, 4] }, "toute nouvelle famille cliente est une décision explicite (BWR 2,9″ ajouté le 23/10/2026 sur demande du porteur)");
   assert.equal(ann({ device: device({ publicKey: undefined }) }), null, "sans clé publique : l'appareil ne pourrait pas signer son téléchargement");
   assert.equal(ann({ device: device({ publicKey: "zz" }) }), null);
 });
