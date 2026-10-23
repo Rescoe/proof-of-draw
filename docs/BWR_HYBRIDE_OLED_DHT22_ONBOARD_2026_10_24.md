@@ -32,3 +32,10 @@ RAM statique 37 932 → 37 996 o (avec `ONBOARD`) ; tas après Wi-Fi 39 632 – 
 - **OTA** : le client est actif (`eink29bwr-2.6`, séquence 8, famille `esp8266-eink29bwr`) mais la production n'annonce rien de plus que la séquence 7. **Aucune mise à jour OTA n'a été essayée avec OLED + capteur.** Le tas minimal pendant le téléchargement n'est pas mesuré dans cette configuration (BWR seul : 3 688 o ; multiscreen + capteur : environ 400 o). Ne pas publier de release stable pour cette combinaison avant mesure.
 - Un seul appareil, un seul essai ; l'OLED n'a pas été relu par un humain pour chaque écran ; le vote du dessin de test dépendait du correctif de présence ci-dessus.
 - Pas de déclencheur sans câble pour `ONBOARD` (à ajouter si utile : bouton).
+
+## ⚠ Constat matériel du 24/10/2026 : l'OLED ne tient pas avec le téléchargement de frame
+Avec `POD_OLED_STATUS=1` + `POD_SENSOR_DHT22=1` : tas avant `pull-frame` 37 680 o (plus grand bloc 31 320 o) contre 40 720 / 33 728 o pour le BWR OTA sans options. Les plans image (2 × 4 736 o) sont alloués AVANT le TLS : il reste environ 21,8 Ko contigus, le TLS du téléchargement échoue (`pull-frame → -1`, bloc #113 jamais affiché). L'OLED coûte environ 2,7 Ko de tas (tampon 1 Ko + bibliothèques). **Ne pas flasher `--oled` pour une carte qui doit afficher des œuvres.** Mesures statiques : base OTA 36 996 o, + DHT22 37 204 o, + OLED 37 692 o, les deux 37 996 o.
+
+Build validé sur la carte : **BWR + OTA + portail + DHT22 SANS OLED** (`--sensor`, RAM statique 37 204 o, tas avant téléchargement 40 552 o / bloc 33 152 o) : frame du bloc #113 reçue, affichée, **ACK 200**, mesures envoyées. Une première tentative de téléchargement a échoué (`-1`), la reprise 60 s plus tard a réussi : marge de tas faible.
+
+Correctif associé : l'ACK est un TLS ; plans libérés pendant l'ACK puis réalloués (`POD_WIFI_PORTAL`), sinon ACK perdu (`ack-frame → -1`) et affichage jamais enregistré côté serveur.
