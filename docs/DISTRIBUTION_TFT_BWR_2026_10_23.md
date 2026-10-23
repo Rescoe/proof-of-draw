@@ -32,3 +32,9 @@ Les options restent surchargeables par `-D` (les builds de laboratoire passent l
 3. PR avec `ota-releases/<id>/{manifest.json,image.bin}`, fusion, déploiement ; vérifier avec `scripts/ota-probe-release.ts` **porte fermée**.
 4. Ouvrir la porte (`DEL ota:kill`) par vagues (10 % puis plus), surveiller, refermer en cas de doute.
 Une release `canary` (liste d'appareils) est le moyen sûr d'essayer sur une carte ; `stable` touche tous les appareils éligibles de la famille.
+
+## Vérifications faites sur cette branche (hôte, 23/10/2026)
+- Compilation arduino-cli (cœur ESP8266 3.1.2, `nodemcuv2:eesz=4M2M`) **sans `secrets.h`**, options par défaut : BWR 36 996 o de RAM statique, TFT 38 884 o ; `tsc --noEmit` propre.
+- Tests adaptés et verts : `renderFirmware` (31), `benchHeaderCopies` (21), `podHeaderCopies` (38), `espStaticRam` (6), `canaryPrep` (5) ; `esp8266Eink29Canary` : 30 réussis / 4 échecs, **les mêmes 4 qu'avant ce travail** (harnais C++ hôte dépendant de l'environnement).
+- Suite complète : les échecs supplémentaires vus dans une exécution complète sont tous des harnais hôte du **TFT 2,8″ R4** (`tft28Host`, `tft28VoteCanary`, `tft28VoteHarness`), qui échouent **à l'identique, test par test, sur un arbre de travail issu de `main`** quand on les lance seuls (10 réussis / 21 échecs dans les deux cas) : dépendance de l'environnement, pas une régression de cette branche. À relancer dans le dépôt principal.
+- Les tests du portail Wi-Fi et de l'OTA restent sur la branche de laboratoire `claude/ota-1-manifest-contract` (ils dépendent de l'outillage `ota-lab/`).
