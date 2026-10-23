@@ -14,6 +14,9 @@ test("BWR : la famille de la release est esp8266-eink29bwr (celle du trailer sig
   assert.equal(familyOfFirmware("eink29bwr-2.4"), "esp8266-eink29bwr");
   assert.equal(familyOfFirmware("tft18-2.9"), "esp8266-tft18", "TFT inchangé");
   assert.equal(familyOfFirmware("eink27bw-2.1"), "", "famille inconnue = jamais éligible");
-  assert.deepEqual(Object.keys(OTA_FAMILIES).sort(), ["eink29bwr", "tft18"]);
-  assert.deepEqual(Object.keys(OTA_CLIENT_FIRMWARE).sort(), ["eink29bwr", "tft18"]);
+  assert.deepEqual(Object.keys(OTA_FAMILIES).sort(), ["eink29bwr", "multiscreen", "tft18"]);
+  assert.deepEqual(Object.keys(OTA_CLIENT_FIRMWARE).sort(), ["eink29bwr", "multiscreen", "tft18"]);
+  assert.equal(familyOfFirmware("multiscreen-2.6"), "esp8266-multiscreen");
+  assert.equal(otaClientCapable("multiscreen-2.6"), true);
+  assert.equal(otaClientCapable("multiscreen-2.5"), false, "l'ancien multiscreen ne reçoit rien");
 });

@@ -1,0 +1,31 @@
+{
+  "schema": "pod-ota-manifest-v2",
+  "releaseId": "multiscreen-2.7-ota7",
+  "family": "esp8266-multiscreen",
+  "profile": {
+    "board": "esp8266",
+    "screen": "multiscreen",
+    "flash": "4M2M"
+  },
+  "channel": "canary",
+  "firmwareVersion": "multiscreen-2.7",
+  "otaSeq": 7,
+  "minOtaSeq": 1,
+  "revokedSeqs": [],
+  "url": "/firmware/multiscreen-2.7-ota7/image.bin",
+  "size": 585840,
+  "sha256": "732fbc846caf3baa59106e312d48a4109746225cb57e2d1e5605bf80391da1a7",
+  "wave": {
+    "of": 100,
+    "upTo": 100
+  },
+  "canaryDevices": [
+    "dev_KAD6PKC4"
+  ],
+  "notes": "multiscreen e-ink 2,7 + OLED, essai OTA canari sur dev_KAD6PKC4",
+  "signature": {
+    "alg": "rsa2048-pkcs1-sha256",
+    "keyId": "ota-a",
+    "sig": "FNbwizIefxCFM9qVbRSFP9/rSGqGuVs/7zGZ1cLR9DczPnN+iXYl60VYPbFeP4yz7Vvl+h3E58ZyEK77Gytmz54YPNzaKMIDHpDJEFxjNs5Fa89jZftzpPThhW51n3u3vcxR9JEZp3eF9JZqd/Yy86pJ/YpihtMQcBne2+I6uw8Bahby8txURhl7ITddRlEP8j7qDurpmj/b1y6u+DwqXme5+BdJaHNFB3cLtLahPsp4P836ogDDEQox2+d1+fltIDSW8zFU4LKGKIZ4Lyhy4umQsqEhfGuyb40oPf2uXZeSs6x+NgoyvkrdWLuIsv677C0+pbpNRO7YOSs2WKKjMQ=="
+  }
+}
