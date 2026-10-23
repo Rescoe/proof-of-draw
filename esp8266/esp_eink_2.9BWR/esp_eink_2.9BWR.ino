@@ -224,6 +224,14 @@ uint8_t* redBuf   = nullptr;
 
 // ─── STATE ─────────────────────────────────────────────────────────────────
 String deviceId, pairCode, canvasUrl;
+// POD_BWR_BEGIN (commande série ONBOARD : réaffiche le QR « gérer cet ESP » même si la carte est déjà appairée — récupération d'accès, 24/10/2026)
+#if POD_WIFI_PORTAL
+static bool g_onboardRequested = false;               // « ONBOARD » reçu sur le port série pendant la fenêtre de démarrage
+#if POD_OLED_STATUS
+static void portalOledScreen(const char* l1, const char* l2, const char* l3, const char* l4, const char* l5, const char* qr);
+#endif
+#endif
+// POD_BWR_END
 bool   registered        = false;
 bool   paired            = false;
 bool   frameReady        = false;
@@ -1200,6 +1208,19 @@ bool doRegister() {
     String onboardUrl = String(SERVER_URL) + "/onboard?code=" + pairCode;
     displayQR(onboardUrl, pairCode, mac);
   } else {
+// POD_BWR_BEGIN
+#if POD_WIFI_PORTAL
+    if (g_onboardRequested) {
+      g_onboardRequested = false;
+      String onboardUrl = String(SERVER_URL) + "/onboard?code=" + pairCode;
+      Serial.println(F("[ONBOARD] affichage du QR de gestion (carte deja appairee) sur l'e-ink"));
+#if POD_OLED_STATUS
+      portalOledScreen("PoD", "Scanne", "ONB", "pour gerer", pairCode.c_str(), onboardUrl.c_str());
+#endif
+      displayQR(onboardUrl, pairCode, mac);
+    }
+#endif
+// POD_BWR_END
     Serial.println("[REGISTER] Déjà appairé, pas de QR");
   }
 
@@ -1939,7 +1960,10 @@ static void portalOledScreen(const char* l1, const char* l2, const char* l3, con
     line(64, 0, hdr, 10);
     if (pw.length()) { line(64, 11, nm.c_str(), 10); line(64, 21, "mdp:", 10); line(64, 30, pw.c_str(), 10); }
     else { line(64, 11, l2, 10); line(64, 23, l4, 10); line(64, 35, l5, 10); }
-    oled.setFont(&TomThumb); oled.setCursor(64, 49); oled.print("ou ouvre :"); oled.setCursor(64, 58); oled.print("192.168.4.1"); oled.setFont(nullptr);
+    oled.setFont(&TomThumb);
+    if (l3 && strcmp(l3, "ONB") == 0) { oled.setCursor(64, 49); oled.print("code d'appairage"); oled.setCursor(64, 58); oled.print("/onboard"); }
+    else { oled.setCursor(64, 49); oled.print("ou ouvre :"); oled.setCursor(64, 58); oled.print("192.168.4.1"); }
+    oled.setFont(nullptr);
   } else {
     line(0, 0, l1, 21); line(0, 16, l2, 21); line(0, 28, l3, 21); line(0, 40, l4, 21); line(0, 52, l5, 21);
   }
@@ -2060,6 +2084,7 @@ static bool g_portalRequested = false;                // « WIFI-PORTAL » reçu
 static bool wifiHandleLine(const char* line) {
 #if POD_WIFI_PORTAL
   if (strcmp(line, "WIFI-PORTAL") == 0) { g_portalRequested = true; Serial.println(F("[WIFI] portail de configuration demande")); return false; }
+  if (strcmp(line, "ONBOARD") == 0) { g_onboardRequested = true; Serial.println(F("[WIFI] page onboarding demandee")); return false; }
 #endif
   char s[podwifi::SSID_MAX + 1], p[podwifi::PASS_MAX + 1];
   const podwifi::Cmd c = podwifi::parseCommand(line, s, p);
