@@ -61,7 +61,7 @@ const COPIES = {
   "pod_wifi_cfg.h": ["esp8266/esp_tft1.8/pod_wifi_cfg.h", "esp8266/esp_eink_2.9BWR/pod_wifi_cfg.h", "esp8266/esp_eink_2.7BW_OLED/pod_wifi_cfg.h"],
   "pod_wifi_portal.h": ["esp8266/esp_tft1.8/pod_wifi_portal.h", "esp8266/esp_eink_2.9BWR/pod_wifi_portal.h", "esp8266/esp_eink_2.7BW_OLED/pod_wifi_portal.h"],
   "pod_wifi_portal_esp.h": ["esp8266/esp_tft1.8/pod_wifi_portal_esp.h", "esp8266/esp_eink_2.9BWR/pod_wifi_portal_esp.h", "esp8266/esp_eink_2.7BW_OLED/pod_wifi_portal_esp.h"],
-  "pod_dht22.h": ["esp8266/esp_eink_2.7BW_OLED/pod_dht22.h", "esp8266/esp_eink_2.9BWR/pod_dht22.h"],
+  "pod_dht22.h": ["esp8266/esp_eink_2.7BW_OLED/pod_dht22.h", "esp8266/esp_eink_2.9BWR/pod_dht22.h", "esp8266/esp_tft1.8/pod_dht22.h"],
 };
 module.exports = { MASTERS, COPIES };
 

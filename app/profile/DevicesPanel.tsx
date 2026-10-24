@@ -17,7 +17,7 @@ import { animCapable, ANIM_POINTER_FIRMWARE } from "@/lib/anim/pointer";
 import { InlineEdit } from "./InlineEdit";
 import { GiveDeviceModal } from "./GiveDeviceModal";
 import { SensorButton, SensorSummary } from "./SensorPanel";
-import { isSensorScreens, measureKindsOf } from "@/lib/measures";
+import { isSensorScreens, showsMeasures } from "@/lib/measures";
 
 // ── Utilitaires ──────────────────────────────────────────────────────────────
 
@@ -473,7 +473,7 @@ function DeviceCard({ d, open, onToggle, onRenamed, profile, children }: {
           </div>
         </div>
         <div className="dev-actions" style={{ display: "flex", gap: "0.4rem", flexShrink: 0 }}>
-          {measureKindsOf(d).length > 0 && <SensorButton d={d} />}
+          {showsMeasures(d, !!d.latest) && <SensorButton d={d} />}
           {!isSensorScreens(d.screens) && (<><DrawMenu d={d} /><DrawMenu d={d} mode="animate" /></>)}
           <button
             type="button" onClick={onToggle} aria-expanded={open}

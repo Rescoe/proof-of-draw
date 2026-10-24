@@ -1,0 +1,31 @@
+{
+  "schema": "pod-ota-manifest-v2",
+  "releaseId": "tft18-2.10-ota7",
+  "family": "esp8266-tft18",
+  "profile": {
+    "board": "esp8266",
+    "screen": "tft18",
+    "flash": "4M2M"
+  },
+  "channel": "canary",
+  "firmwareVersion": "tft18-2.10",
+  "otaSeq": 7,
+  "minOtaSeq": 1,
+  "revokedSeqs": [],
+  "url": "/firmware/tft18-2.10-ota7/image.bin",
+  "size": 616432,
+  "sha256": "58cbfa97d870935d1c5027c8c74f68eb3ad404cfdd62e1b9386a8a260ee0aa84",
+  "wave": {
+    "of": 100,
+    "upTo": 100
+  },
+  "canaryDevices": [
+    "dev_VIRBQRV1"
+  ],
+  "notes": "tft18-2.10 : capteur DHT22 sur D3 (lecture 30 min, envoi horaire), canari ciblé sur un appareil",
+  "signature": {
+    "alg": "rsa2048-pkcs1-sha256",
+    "keyId": "ota-a",
+    "sig": "iaAbJiiz7mf+1vIQMz8ZD5zWgPtWUe13kSF10zHNqAB5dS7u14ktVcEEXxEkqSUq7hc/J077bMBplgdqAr/SOly68WddQDYOLeybVQkjDYdS8nDtRDc1DXUeLu0RYLPPBaEAA45mvnXdX74AsRdfU3BNA6ijt72Svz3wo3vHWvAKtqpUSK2ybZ0oIDzt2monT9Y+3LFpB+jHnqfPBbHNkc9L1EAdY91jGkCRmA3l+davLafpbPg3wVJpV7ya6YeLyWxZW8VOAXqLMIpXCxSBklkJq6UZsCnvmRecMKWlXoISBQfl1Oq1Gsi0V/xVuHfRTAY9dsu3QLK2gxp+tHh1TA=="
+  }
+}

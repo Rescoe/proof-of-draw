@@ -146,6 +146,20 @@
 #if POD_WIFI_PORTAL && !POD_WIFI_FROM_RECORD
   #error "POD_WIFI_PORTAL exige POD_WIFI_FROM_RECORD = 1"
 #endif
+// POD_SENSOR_DHT22 = 1 (avec POD_WIFI_PORTAL) : DHT22 sur D3 (GPIO0), libre sur ce montage (TFT : D0 RST, D1 DC, D2 CS, D5 SCK, D7 MOSI). Lecture toutes les 30 min, envoi toutes les heures à /api/sensor
+// (le serveur refuse < 50 min). Le firmware DÉCLARE sensors:["temp","hum"] à /api/register ; l'interface n'affiche « Mesures » qu'après une VRAIE mesure reçue (aucun capteur branché = aucun menu). 24/10/2026.
+#ifndef POD_SENSOR_DHT22
+#define POD_SENSOR_DHT22 0
+#endif
+#ifndef POD_DHT_PIN
+#define POD_DHT_PIN D3
+#endif
+#if POD_SENSOR_DHT22 && !POD_WIFI_PORTAL
+  #error "POD_SENSOR_DHT22 exige POD_WIFI_PORTAL = 1 (et POD_WIFI_FROM_RECORD = 1)"
+#endif
+#if POD_SENSOR_DHT22
+#include "pod_dht22.h"
+#endif
 #if POD_WIFI_FROM_RECORD
   #include "pod_wifi_cfg.h"
   #if POD_WIFI_PORTAL
@@ -1047,6 +1061,9 @@ bool doRegister() {
   String ownedHashes = loadOwnedHashesJson();
   String body = "{\"mac\":\"" + mac + "\",\"screens\":[\"" + SCREEN_TYPE + "\"],"
                 "\"firmware\":\"" + String(FIRMWARE_VERSION) + "\","
+#if POD_SENSOR_DHT22
+                "\"sensors\":[\"temp\",\"hum\"],"
+#endif
                 "\"publicKey\":\"" + pubHex + "\","
                 // Capacité scene-v1 : strictement la forme du contrat (note 37 §6) ; toute autre valeur = pas de scene-v1.
                 "\"sceneCapability\":{\"sceneV1\":true,\"maxPackageBytes\":4096,\"maxEntities\":24,"
@@ -2138,6 +2155,34 @@ void setup() {
 }
 
 // ─── LOOP ────────────────────────────────────────────────────────────────────
+#if POD_SENSOR_DHT22
+static poddht::State g_dht; static bool g_dhtInit = false;
+/** Appelé à chaque tour de loop() : lecture (≈ 6 ms) ou envoi (un POST TLS) quand l'échéance est atteinte ; jamais pendant un vote, une observation, avant l'appairage ou sans Wi-Fi. */
+static void sensorService() {
+  if (!registered || !paired || WiFi.status() != WL_CONNECTED) return;
+  if (pendingCandidateId.length() > 0 || pendingObsHashes.length() > 0 || g_bench.mode) return;
+  const uint32_t now = millis();
+  if (!g_dhtInit) { g_dhtInit = true; poddht::init(g_dht, now); pinMode(POD_DHT_PIN, INPUT_PULLUP); Serial.println(F("[DHT22] actif : lecture toutes les 30 min, envoi toutes les heures (premiere lecture dans 20 s)")); }
+  const poddht::Action a = poddht::next(g_dht, now);
+  if (a == poddht::A_READ) {
+    int t = 0, h = 0; const bool ok = poddht::read(POD_DHT_PIN, t, h);
+    poddht::onRead(g_dht, now, ok, t, h);
+    if (ok) Serial.printf_P(PSTR("[DHT22] %d.%d C, %d.%d %% (en attente d'envoi : %u)\n"), t / 10, abs(t % 10), h / 10, h % 10, (unsigned)g_dht.n);
+    else Serial.printf_P(PSTR("[DHT22] lecture impossible (capteur absent, mal cable ou somme fausse) — nouvel essai dans 5 min (echecs : %lu)\n"), (unsigned long)g_dht.readFails);
+  } else if (a == poddht::A_SEND) {
+    char body[260]; const size_t n = poddht::buildBody(g_dht, now, deviceId.c_str(), pairCode.c_str(), (int)WiFi.RSSI(), body, sizeof body);
+    if (n == 0) { Serial.println(F("[DHT22] corps trop grand : envoi abandonne")); poddht::onSend(g_dht, now, poddht::S_FAIL, 0); return; }
+    String resp; bool ok = false;
+    if (ESP.getMaxFreeBlockSize() >= 18000) ok = httpPost("/api/sensor", String(body), resp);      // sinon pas de TLS possible : échec propre, nouvel essai dans 5 min
+    else Serial.printf_P(PSTR("[DHT22] tas contigu insuffisant pour un TLS (%u o) — envoi reporte\n"), (unsigned)ESP.getMaxFreeBlockSize());
+    memset(body, 0, sizeof body);
+    if (!ok) { Serial.println(F("[DHT22] envoi echoue — nouvel essai dans 5 min")); poddht::onSend(g_dht, millis(), poddht::S_FAIL, 0); }
+    else if (resp.indexOf("\"stored\":false") >= 0) { const uint32_t ns = poddht::parseNextSec(resp.c_str()); Serial.printf_P(PSTR("[DHT22] serveur : trop tot (attente %lu s) — lectures conservees\n"), (unsigned long)ns); poddht::onSend(g_dht, millis(), poddht::S_TOO_SOON, ns); }
+    else { Serial.println(F("[DHT22] mesures envoyees et stockees")); poddht::onSend(g_dht, millis(), poddht::S_OK, 0); }
+  }
+}
+#endif
+
 void loop() {
   unsigned long now = millis();
 
@@ -2177,6 +2222,9 @@ void loop() {
 #if POD_OTA_CANARY
   podcanary::tick();
   if (pendingCandidateId.length() == 0 && pendingObsHashes.length() == 0 && !g_bench.mode) { podcanary::service(); g_anim.resumed = false; }
+#endif
+#if POD_SENSOR_DHT22
+  sensorService();
 #endif
 #if POD_OTA
   // Point d'appel SÛR de l'OTA : aucun TLS ouvert, aucun candidat de vote, aucune observation, banc d'essai inactif. Sans annonce posée, retourne aussitôt (aucune annonce n'est branchée à /api/pull dans ce lot).
