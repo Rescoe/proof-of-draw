@@ -18,6 +18,18 @@
 
 Une case `OTA` ne garantit pas que toute future variante de la famille a été validée : elle prouve seulement le client OTA et la combinaison qui a réellement traversé le canari.
 
+## Vocabulaire : le montage physique n'est pas le firmware
+
+Un **montage** (ce qu'on branche) et un **profil** (le firmware qui le pilote) ne sont pas la même chose. Ce qui compte pour mettre à jour une carte à distance, c'est le **profil** installé : sa famille OTA, sa version, sa séquence.
+
+| Montage physique | Profil / firmware réellement installé | Famille OTA | Ce que fait chaque composant |
+|---|---|---|---|
+| **Multiscreen** : e-ink 2,7″ noir et blanc + OLED | `multiscreen` | `esp8266-multiscreen` | l'e-ink **et** l'OLED sont deux écrans du réseau (l'OLED reçoit des œuvres et des animations) |
+| **« Multiscreen BWR + DHT22 »** de `dev_T46HBXG1` (e-ink 2,9″ **trois couleurs** + OLED branché + DHT22) | **`eink29bwr` + DHT22** (`eink29bwr-2.6`, séquence 8) | `esp8266-eink29bwr` | l'e-ink 2,9″ est le seul écran du réseau ; le DHT22 mesure et envoie ; **l'OLED est branché mais NON piloté (éteint)** : sa mémoire empêche le téléchargement des œuvres |
+| Cible future « BWR + OLED réseau + DHT22 » | **n'existe pas** : un nouveau profil à construire (chantiers connus) | à créer | l'OLED recevrait des frames comme sur le multiscreen |
+
+Conséquence pratique : une mise à jour à distance de la carte de `dev_T46HBXG1` est une release de la famille `esp8266-eink29bwr`, **ciblée sur cet appareil**, **sans OLED** tant que la mémoire n'est pas récupérée ; elle ne peut pas être une release `multiscreen`.
+
 ## Profils ESP8266
 
 | Profil déclaré | Écran(s) réseau | Modules additionnels | Vote / affichage réel | Portail Wi-Fi | OTA Internet | DHT22 | État à distribuer |
@@ -26,7 +38,7 @@ Une case `OTA` ne garantit pas que toute future variante de la famille a été v
 | `tft18` | TFT ST7735S 1,8″ | DHT22 sur D3/GPIO0 | `C` pour l'ajout capteur ; socle écran/V2 prouvé ci-dessus | hérite du profil TFT | release canari `tft18-2.10-ota7` (séquence 7) **publiée et annoncée** par le serveur (pull simulé en production, 24/10) ; **installation non observée plus d'une heure après l'ouverture de la porte** : aucune demande de téléchargement `[ota-image]` visible côté serveur, la carte semble refuser avant de télécharger (cause inconnue, pas de journal série) | `C` : tests + compilation (binaire 616 368 o, RAM statique 39 092 o) ; aucune lecture de DHT22 observée sur cette carte | `EXP` — OTA **non aboutie** ; ne pas la présenter comme fonctionnelle |
 | `eink29bwr` | e-ink 2,9″ BWR | — | `V2` : vote, frame, affichage et ACK observés | `P` : portail à deux QR observé | `OTA` : `eink29bwr-2.4` → `2.5`, identité/Wi-Fi conservés, flash relue | — | profil public ; un seul appareil et un seul OTA complet |
 | `eink29bwr` | e-ink 2,9″ BWR | OLED 0,96″ d'état/portail + DHT22 D3 | **`M` : l'OLED et le DHT22 fonctionnent, mais le téléchargement d'une frame ÉCHOUE** (tas avant `pull-frame` 37 680 o / plus grand bloc 31 320 o, contre 40 720 / 33 728 o pour le BWR OTA : `pull-frame → -1`, bloc #113 jamais affiché sur la carte `dev_T46HBXG1`) | `M` : portail OLED (QR) observé | non essayée (carte reflashée sans OLED) | `M` : DHT22 lu (13 °C, 92 %) et `/api/sensor` 200 | **`INCOMPATIBLE` pour afficher des œuvres** — l'OLED coûte ≈ 2,7 Ko de tas ; ne jamais distribuer |
-| `eink29bwr` | e-ink 2,9″ BWR | DHT22 D3 (sans OLED) | **`V2` : bloc #114 « Libourne » miné par `dev_T46HBXG1` (validateurs v2 = 2, rejets 0), affichage + ACK 200** (relevés serveur publics, 24/10) | `P` hérité (portail, ONBOARD) | client actif (`eink29bwr-2.6`, séquence 8), **aucune mise à jour reçue** ; marge de tas mince (1 échec de téléchargement sur 2 avant réussite) | `M` : lecture + envoi, mesures stockées | canari matériel réussi sur UNE carte ; `EXP` pour la distribution (OTA de cette variante non prouvée) |
+| `eink29bwr` | e-ink 2,9″ BWR | DHT22 D3 (OLED éventuellement branché mais **non piloté**) | **`V2` : bloc #114 « Libourne » miné par `dev_T46HBXG1` (validateurs v2 = 2, rejets 0), affichage + ACK 200** (relevés serveur publics, 24/10) | `P` hérité (portail, ONBOARD) | client actif (`eink29bwr-2.6`, séquence 8), **aucune mise à jour reçue** ; marge de tas mince (1 échec de téléchargement sur 2 avant réussite) | `M` : lecture + envoi, mesures stockées | canari matériel réussi sur UNE carte ; `EXP` pour la distribution (OTA de cette variante non prouvée) |
 | `eink29bwr` | e-ink 2,9″ BWR | DHT22 D3 + température/humidité gravées dans le cartel (`eink29bwr-2.7`, séquence 8) | `C` seulement | `C` | `C` | `C` | `EXP` — compilé, jamais flashé ; test avec `dev_MN67OG7R` prévu |
 | `multiscreen` | e-ink 2,7″ BW + OLED 0,96″ | — | `V2` : vote, deux affichages et ACK observés (bloc #103) | `P` : portail OLED, Wi-Fi et conservation d'identité observés | `OTA` : `multiscreen-2.6` → `2.7`, flash relue ; seulement 608 o de tas min. | — | canari réussi, **pas stable** tant que la marge OTA n'est pas améliorée |
 | `multiscreen` | e-ink 2,7″ BW + OLED 0,96″ | DHT22 sur D3/GPIO0 | carte flashée sans capteur, démarrage/absence capteur observés | hérite du portail OLED | aucune OTA de l'image capteur ; marge estimée ≈ 400 o après OTA | `C` + chemin sans capteur `M`; vraie lecture et envoi non observés (l'image **déclarait** des capteurs sans en avoir : le menu « Mesures » apparaissait à tort ; corrigé côté serveur, PR #7 : le menu exige une vraie mesure) | `EXP` — ne pas publier |
