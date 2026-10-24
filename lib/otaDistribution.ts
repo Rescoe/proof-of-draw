@@ -162,20 +162,22 @@ export async function otaImageResponse(d: FetchDeps): Promise<NextResponse> {
   if (d.fileName !== "image.bin" || !RELEASE_ID.test(d.releaseId)) return fail("introuvable", 404);
   const q = parseFetchQuery(d.rawSearch);
   if (!q.ok) return fail(q.error, 400);
-  if (!verifyOtaChallenge(d.secret, q.deviceId, d.releaseId, q.exp, q.challenge)) return fail("défi invalide", 403);
-  if (q.exp * 1000 <= d.now) return fail("défi expiré", 410);
+  // Observabilité (24/10/2026) : toute requête qui a une forme valide mais est refusée laisse UNE ligne (motif, appareil, release) ; jamais de défi, de signature ni de secret.
+  const rej = (m: string, s: number, x: Record<string, string> = {}) => { log(`[ota-image] REFUS ${s} ${m} device=${q.deviceId} release=${d.releaseId}`); return fail(m, s, x); };
+  if (!verifyOtaChallenge(d.secret, q.deviceId, d.releaseId, q.exp, q.challenge)) return rej("défi invalide", 403);
+  if (q.exp * 1000 <= d.now) return rej("défi expiré", 410);
   const rel = d.loadRelease(d.releaseId);
-  if (!rel) return fail("release inconnue", 404);
+  if (!rel) return rej("release inconnue", 404);
 
   // Porte fermée : 503, mais la réponse (servie à tout porteur d'un défi HMAC valide — un défi peut s'obtenir via le pull non authentifié : ce n'est PAS une preuve de possession du secret ni un contrôle d'accès) porte les EMPREINTES de la release chargée — de quoi prouver QUELLE release est déployée sans jamais
   // ouvrir la distribution ni envoyer un octet de l'image. Faits publics (le manifeste et l'image sont dans le dépôt) ; aucun secret.
   if (await d.isKilled()) { log(`[ota-image] KILL device=${q.deviceId}`); return fail("distribution suspendue", 503, { "Retry-After": "3600", "X-Ota-Region-Sha256": rel.manifest.sha256, "X-Ota-File-Sha256": fileSha256(rel.file) }); }
-  if (!(await d.preLimitOk())) return fail("trop de tentatives", 429, { "Retry-After": String(OTA_PRELIMIT_WINDOW_SEC) });
+  if (!(await d.preLimitOk())) return rej("trop de tentatives", 429, { "Retry-After": String(OTA_PRELIMIT_WINDOW_SEC) });
   const dev = await d.loadDevice(q.deviceId);
-  if (!dev || !dev.publicKey || !HEX64.test(dev.publicKey)) return fail("appareil inconnu ou sans clé", 403);
+  if (!dev || !dev.publicKey || !HEX64.test(dev.publicKey)) return rej("appareil inconnu ou sans clé", 403);
   if (!HEX128.test(q.sig) || !verifyEd25519(dev.publicKey, otaFetchMessage(q.deviceId, d.releaseId, q.exp, q.challenge), q.sig)) { log(`[ota-image] SIGNATURE REFUSEE device=${q.deviceId}`); return fail("signature d'appareil invalide", 403); }
-  if (!pickRelease([rel.manifest], { deviceId: q.deviceId, firmware: dev.firmware, otaSeq: dev.otaSeq }, d.now)) return fail("appareil non éligible", 403);
-  if (!(await d.rateLimitOk(q.deviceId))) return fail("trop de téléchargements", 429, { "Retry-After": String(OTA_FETCH_WINDOW_SEC) });
+  if (!pickRelease([rel.manifest], { deviceId: q.deviceId, firmware: dev.firmware, otaSeq: dev.otaSeq }, d.now)) return rej("appareil non éligible", 403);
+  if (!(await d.rateLimitOk(q.deviceId))) return rej("trop de téléchargements", 429, { "Retry-After": String(OTA_FETCH_WINDOW_SEC) });
 
   log(`[ota-image] OK device=${q.deviceId} release=${d.releaseId} seq=${rel.manifest.otaSeq}`);
   return new NextResponse(new Uint8Array(rel.file), {
