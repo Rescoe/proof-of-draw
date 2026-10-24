@@ -360,6 +360,10 @@ route `/api/candidate-clip` (ticket HMAC `CLIP_TICKET_SECRET`), mode `ANIM_V3_MO
 
 **BWR 2,9″ + DHT22, commande ONBOARD, preuve de vote (24/10/2026)** : `docs/BWR_HYBRIDE_OLED_DHT22_ONBOARD_2026_10_24.md`. Options `POD_OLED_STATUS` / `POD_SENSOR_DHT22` (0 par défaut = sketch d'avant, testé). **L'OLED NE TIENT PAS avec le téléchargement de frame** (tas −2,7 Ko : plus grand bloc 31 320 o, `pull-frame → −1`) : ne jamais flasher `--oled` sur une carte qui doit afficher des œuvres ; build validé = BWR + OTA + portail + DHT22 sans OLED (`eink29bwr-2.6`, séquence 8, tas avant téléchargement 40 552 o, marge mince). Commande série `ONBOARD` (fenêtre de démarrage 1,5 s) : QR `/onboard?code=…` sur l'e-ink même si la carte est appairée (récupération d'accès, cookie perdu). Plans image libérés pendant l'ACK (sinon `ack-frame → −1`). **Bug de présence corrigé (non déployé)** : `presenceStale` ne regarde que `lastPing` (register ne rafraîchit que `lastSeen` ; une carte redémarrée souvent restait « inactive » > 45 min : `validate-candidate` refusait le vote). Preuve de bout en bout (relevés serveur, `dev_T46HBXG1`) : bloc #114 miné par la carte, validateurs v2 = 2, affichage + ACK. **OTA à distance non essayée sur cette carte.**
 
+### Matrice matérielle — règle de maintenance
+
+`docs/MATRICE_COMPATIBILITE_MATERIELLE.md` est la source canonique des profils matériels, de leurs versions, de leurs modules et de leur niveau de preuve. À chaque nouveau build, flash, essai matériel ou release OTA, mets à jour la ligne concernée dans le même lot. Distingue impérativement `C` (compilé), `M` (carte), `V2` (vote/affichage réel) et `OTA` (mise à jour Internet prouvée) ; ne présente jamais une combinaison capteur/écran comme validée par déduction. Une option ne rejoint la page Installer publique qu'après le niveau de preuve défini par la matrice.
+
 ## Non-goals
 
 Ne pas faire :
