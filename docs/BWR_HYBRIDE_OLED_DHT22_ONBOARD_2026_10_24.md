@@ -39,3 +39,6 @@ Avec `POD_OLED_STATUS=1` + `POD_SENSOR_DHT22=1` : tas avant `pull-frame` 37 680 
 Build validé sur la carte : **BWR + OTA + portail + DHT22 SANS OLED** (`--sensor`, RAM statique 37 204 o, tas avant téléchargement 40 552 o / bloc 33 152 o) : frame du bloc #113 reçue, affichée, **ACK 200**, mesures envoyées. Une première tentative de téléchargement a échoué (`-1`), la reprise 60 s plus tard a réussi : marge de tas faible.
 
 Correctif associé : l'ACK est un TLS ; plans libérés pendant l'ACK puis réalloués (`POD_WIFI_PORTAL`), sinon ACK perdu (`ack-frame → -1`) et affichage jamais enregistré côté serveur.
+
+## Preuve de bout en bout (24/10/2026, relevés serveur publics)
+Build `eink29bwr-2.6` séquence 8, BWR + OTA + portail + DHT22 (sans OLED), carte `dev_T46HBXG1`, sans reset pendant l'essai : **bloc #114 « Libourne » miné par `dev_T46HBXG1`**, validateurs `dev_MN67OG7R` + `dev_T46HBXG1`, `votesSummary` v2 = 2 / v1 = 0 / rejets = 0 ; affichage du bloc 114 enregistré par la vue réseau (ACK reçu). Le journal série de cette phase n'est pas disponible (lecteur COM4 en boucle sur un fragment) : la preuve est côté serveur. Réserve : un seul essai, une seule carte ; marge de tas faible (un téléchargement de frame a échoué une fois avant de réussir 60 s plus tard).
