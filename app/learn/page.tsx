@@ -21,7 +21,7 @@ export const metadata: Metadata = {
 
 function parsePath(value: string | string[] | undefined): LearnPath | null {
   const path = Array.isArray(value) ? value[0] : value;
-  return path === "install" || path === "no-esp" || path === "network" || path === "power" || path === "synthesis" || path === "compat" || path === "help" ? path : null;
+  return path === "install" || path === "no-esp" || path === "network" || path === "power" || path === "synthesis" || path === "help" ? path : null;
 }
 
 export default async function LearnPage({
@@ -48,13 +48,16 @@ export default async function LearnPage({
             {path === "network" ? <ExpertDocumentation /> : null}
             {path === "power" ? <PowerPath /> : null}
             {path === "synthesis" ? <SynthesisPath /> : null}
-            {path === "compat" ? <CompatibilityMatrix /> : null}
             {path === "help" ? <Troubleshooting /> : null}
           </div>
         </div>
       ) : null}
       <div className={styles.roadmapWrap}>
         <Roadmap />
+      </div>
+      {/* La matrice de compatibilité est toujours visible, juste après la feuille de route : vue d'ensemble de l'état de chaque équipement */}
+      <div className={styles.roadmapWrap}>
+        <CompatibilityMatrix />
       </div>
     </main>
   );

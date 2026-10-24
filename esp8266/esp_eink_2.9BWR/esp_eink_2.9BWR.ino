@@ -135,6 +135,14 @@
 #if POD_SENSOR_DHT22
 #include "pod_dht22.h"
 #endif
+// POD_SENSOR_DISPLAY = 1 (avec POD_SENSOR_DHT22) : la température et l'humidité sont GRAVÉES en rouge dans la bande haute du cartel (« 21.4C 72% »), et l'écran est rafraîchi à CHAQUE lecture valide (30 min)
+// depuis la dernière frame sauvegardée en flash brute (planes propres + textes du cartel) : aucun téléchargement, aucune requête serveur. Un rafraîchissement e-ink dure 15 à 45 s, 180 s minimum entre deux.
+#ifndef POD_SENSOR_DISPLAY
+#define POD_SENSOR_DISPLAY 0
+#endif
+#if POD_SENSOR_DISPLAY && !POD_SENSOR_DHT22
+#error "POD_SENSOR_DISPLAY exige POD_SENSOR_DHT22 = 1"
+#endif
 // POD_BWR_END
 // POD_BWR_BEGIN (client OTA Internet, lot B1, 22/10/2026 — options à 0 = firmware d'avant)
 // POD_OTA = 1 : socle de mise à jour signée (enregistrement d'état EEPROM 420..447, anti-downgrade, vérificateur RSA, trailer signé). POD_OTA_CLIENT = 1 (exige POD_OTA = 1 ET le Wi-Fi hors binaire) : client Internet
@@ -225,6 +233,10 @@ uint8_t* redBuf   = nullptr;
 // ─── STATE ─────────────────────────────────────────────────────────────────
 String deviceId, pairCode, canvasUrl;
 // POD_BWR_BEGIN (commande série ONBOARD : réaffiche le QR « gérer cet ESP » même si la carte est déjà appairée — récupération d'accès, 24/10/2026)
+#if POD_SENSOR_DISPLAY
+static char g_envLine[20] = "";                       // « 21.4C 72% » (vide = aucune mesure)
+static uint32_t g_envAtMs = 0;                        // millis() de la dernière lecture valide (0 = jamais)
+#endif
 #if POD_WIFI_PORTAL
 static bool g_onboardRequested = false;               // « ONBOARD » reçu sur le port série pendant la fenêtre de démarrage
 #if POD_OLED_STATUS
@@ -796,6 +808,19 @@ void drawText(uint8_t* buf, int x, int y, const String& text) {
 }
 
 int textWidth(const String& t) { return t.length() * 6; }
+// POD_BWR_BEGIN
+#if POD_SENSOR_DISPLAY
+/** Glyphe « % » absent de la police 5×7 : mêmes conventions que FONT_5x7 (colonnes, bit 0 = ligne du haut VISUELLE sur ce panneau). */
+static const uint8_t ENV_PCT[5] PROGMEM = {0x23,0x13,0x08,0x64,0x62};
+static int envTextWidth(const char* t) { return (int)strlen(t) * 6; }
+static void envDrawText(uint8_t* buf, int x, int y, const char* t) {
+  for (; *t; t++, x += 6) {
+    if (*t == '%') { for (int c = 0; c < 5; c++) { const uint8_t bits = pgm_read_byte(&ENV_PCT[c]); for (int rr = 0; rr < 7; rr++) if (bits & (0x40 >> rr)) setPixel(buf, x + c, y + rr); } }
+    else drawChar(buf, x, y, *t);
+  }
+}
+#endif
+// POD_BWR_END
 
 // ─── CARTEL HELPERS (E-Ink 2.9" BWR — 296×128, colonnes-majeures) ──────────
 
@@ -835,6 +860,16 @@ void burnEinkCartel_29(uint8_t* bBuf, uint8_t* rBuf,
   while (topLine.length() > 0 && textWidth(topLine) > IMG_W - 4)
     topLine.remove(topLine.length() - 1);
   int topX = max(0, (IMG_W - textWidth(topLine)) / 2);
+// POD_BWR_BEGIN
+#if POD_SENSOR_DISPLAY
+  if (g_envLine[0] && (uint32_t)(millis() - g_envAtMs) < 7200000UL) {   // une mesure de plus de 2 h n'est plus affichée
+    const int envW = envTextWidth(g_envLine);
+    while (topLine.length() > 0 && textWidth(topLine) > IMG_W - 4 - envW - 8) topLine.remove(topLine.length() - 1);
+    topX = 3;                                                          // date + bloc à gauche, T/H à droite, EN ROUGE
+    envDrawText(rBuf ? rBuf : bBuf, IMG_W - 3 - envW, 3, g_envLine);
+  }
+#endif
+// POD_BWR_END
   drawText(bBuf, topX, 2, topLine);
 
   // ── Bande basse ──────────────────────────────────────────────────────────
@@ -980,6 +1015,59 @@ bool clearDisplayWhite() {
 }
 
 
+// POD_BWR_BEGIN
+#if POD_SENSOR_DISPLAY
+// Frame PROPRE (avant la gravure du cartel) sauvegardée en flash brute : 3 secteurs de 4 Ko à 0x3F0000, dans la partition de fichiers de 2 Mo (eesz=4M2M) que ce firmware n'utilise pas (aucun système de fichiers monté :
+// 0 octet de RAM statique de plus). Disposition : en-tête de 256 o (écrit EN DERNIER : une coupure en cours d'écriture laisse un en-tête invalide) · plan noir · plan rouge. Un effacement de 3 secteurs par frame affichée.
+#define ENV_FLASH_BASE  0x3F0000UL
+#define ENV_HDR_SIZE    256
+struct EnvHdr { char magic[4]; int32_t block; uint8_t lt, la, ls, pad; char txt[ENV_HDR_SIZE - 12]; };   // titre, artiste, horodatage : concaténés, chacun terminé par \0
+static_assert(sizeof(EnvHdr) == ENV_HDR_SIZE, "en-tete de frame sauvegardee : 256 octets");
+static_assert((BUF_SIZE % 4) == 0 && (ENV_HDR_SIZE + 2 * BUF_SIZE) <= 3 * 4096, "la frame sauvegardee doit tenir dans 3 secteurs, alignee sur 4 octets");
+static void envSaveFrame() {
+  if (!blackBuf || !redBuf) return;
+  EnvHdr* h = (EnvHdr*)malloc(sizeof(EnvHdr));
+  if (!h) { Serial.println(F("[ENV] malloc de l'en-tete impossible : frame non sauvegardee")); return; }
+  memset(h, 0, sizeof *h); memcpy(h->magic, "PDF1", 4); h->block = (int32_t)currentBlockIndex;
+  const String t = pendingWorkTitle.substring(0, 90), a = pendingArtistName.substring(0, 90), ts = pendingDisplayTs.substring(0, 40);
+  h->lt = (uint8_t)t.length(); h->la = (uint8_t)a.length(); h->ls = (uint8_t)ts.length();
+  memcpy(h->txt, t.c_str(), h->lt); memcpy(h->txt + h->lt + 1, a.c_str(), h->la); memcpy(h->txt + h->lt + h->la + 2, ts.c_str(), h->ls);
+  bool ok = true;
+  ESP.wdtFeed();
+  for (uint32_t i = 0; i < 3 && ok; i++) ok = ESP.flashEraseSector(ENV_FLASH_BASE / 4096 + i);
+  if (ok) ok = ESP.flashWrite(ENV_FLASH_BASE + ENV_HDR_SIZE, (uint32_t*)blackBuf, BUF_SIZE);
+  if (ok) ok = ESP.flashWrite(ENV_FLASH_BASE + ENV_HDR_SIZE + BUF_SIZE, (uint32_t*)redBuf, BUF_SIZE);
+  if (ok) ok = ESP.flashWrite(ENV_FLASH_BASE, (uint32_t*)h, ENV_HDR_SIZE);
+  free(h);
+  Serial.println(ok ? F("[ENV] frame sauvegardee en flash (3 secteurs) pour les rafraichissements de mesure") : F("[ENV] ECHEC de la sauvegarde de la frame en flash"));
+}
+/** Redessine la dernière frame sauvegardée avec la mesure courante, SANS réseau. Un seul rafraîchissement (pas de blanc préalable) : 15 à 45 s, 180 s minimum depuis le précédent. */
+static void envRefresh() {
+  if (!hasDisplayedFrame) return;                                      // rien n'a été affiché depuis le démarrage : le chemin normal gravera la mesure
+  EnvHdr* h = (EnvHdr*)malloc(sizeof(EnvHdr));
+  if (!h) return;
+  bool good = ESP.flashRead(ENV_FLASH_BASE, (uint32_t*)h, ENV_HDR_SIZE) && memcmp(h->magic, "PDF1", 4) == 0 && (size_t)h->lt + h->la + h->ls + 3 <= sizeof h->txt;
+  String t, a, ts; int block = -1;
+  if (good) { const char* p = h->txt; t = String(p); p += h->lt + 1; a = String(p); p += h->la + 1; ts = String(p); block = (int)h->block; }
+  free(h);
+  const bool own = good && (!blackBuf || !redBuf);
+  if (own) { free(blackBuf); free(redBuf); blackBuf = (uint8_t*)malloc(BUF_SIZE); redBuf = (uint8_t*)malloc(BUF_SIZE); if (!blackBuf || !redBuf) { free(blackBuf); free(redBuf); blackBuf = redBuf = nullptr; good = false; } }
+  if (good) good = ESP.flashRead(ENV_FLASH_BASE + ENV_HDR_SIZE, (uint32_t*)blackBuf, BUF_SIZE) && ESP.flashRead(ENV_FLASH_BASE + ENV_HDR_SIZE + BUF_SIZE, (uint32_t*)redBuf, BUF_SIZE);
+  if (!good) { Serial.println(F("[ENV] frame sauvegardee absente ou invalide : pas de mise a jour")); if (own) { free(blackBuf); free(redBuf); blackBuf = redBuf = nullptr; } return; }
+  burnEinkCartel_29(blackBuf, redBuf, t, a, ts, block);
+  Serial.printf_P(PSTR("[ENV] mise a jour de l'affichage : %s (bloc %d)\n"), g_envLine, block);
+  if (!refreshDisplay()) Serial.println(F("[ENV] rafraichissement impossible : nouvel essai a la prochaine lecture"));
+  if (own) { free(blackBuf); free(redBuf); blackBuf = redBuf = nullptr; }
+}
+/** Appelé après chaque lecture du DHT22. */
+static void envOnRead(bool ok, int t10, int h10) {
+  if (!ok) return;
+  snprintf(g_envLine, sizeof g_envLine, "%s%d.%dC %d%%", t10 < 0 ? "-" : "", abs(t10) / 10, abs(t10) % 10, (h10 + 5) / 10);
+  g_envAtMs = millis(); if (g_envAtMs == 0) g_envAtMs = 1;
+  envRefresh();
+}
+#endif
+// POD_BWR_END
 // ─── AFFICHAGE CLÉ PUBLIQUE (unique au premier boot) ───────────────────────
 void displayPublicKey() {
   memset(blackBuf, 0xFF, BUF_SIZE);
@@ -1417,6 +1505,11 @@ bool doFetchFrame(const String& frameId, const String& frameSource) {
   if (hasDisplayedFrame) clearDisplayWhite();
   if (podRenderAndShow() != 2) {   // 2 = rendu calculé ET remis au pilote
 #else
+// POD_BWR_BEGIN
+#if POD_SENSOR_DISPLAY
+  envSaveFrame();
+#endif
+// POD_BWR_END
   // ── Cartel (bandes de métadonnées en haut et bas) ────────────────────────
   burnEinkCartel_29(blackBuf, redBuf,
                     pendingWorkTitle, pendingArtistName,
@@ -1994,6 +2087,9 @@ static void sensorService() {
   if (a == poddht::A_READ) {
     int t = 0, h = 0; const bool ok = poddht::read(POD_DHT_PIN, t, h);
     poddht::onRead(g_dht, now, ok, t, h);
+#if POD_SENSOR_DISPLAY
+    envOnRead(ok, t, h);
+#endif
     if (ok) Serial.printf_P(PSTR("[DHT22] %d.%d C, %d.%d %% (en attente d'envoi : %u)\n"), t / 10, abs(t % 10), h / 10, h % 10, (unsigned)g_dht.n);
     else Serial.printf_P(PSTR("[DHT22] lecture impossible (capteur absent, mal cable ou somme fausse) — nouvel essai dans 5 min (echecs : %lu)\n"), (unsigned long)g_dht.readFails);
 #if POD_OLED_STATUS

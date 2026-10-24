@@ -1,6 +1,6 @@
 import styles from "../learn.module.css";
 
-export type LearnPath = "install" | "no-esp" | "network" | "power" | "synthesis" | "compat" | "help";
+export type LearnPath = "install" | "no-esp" | "network" | "power" | "synthesis" | "help";
 
 const groups = [
   {
@@ -12,7 +12,7 @@ const groups = [
       ["/learn?path=install#firmware", "Firmware et Wi-Fi"],
       ["/learn?path=install#configure", "Téléverser"],
       ["/learn?path=install#onboard", "Associer l’écran"],
-      ["/learn?path=compat#compatibilite", "Compatibilité matérielle"],
+      ["/learn#compatibilite", "Compatibilité matérielle"],
       ["/learn?path=help#depannage", "Dépannage Wi-Fi et mises à jour"],
     ],
   },
@@ -29,6 +29,7 @@ const groups = [
       ["/learn?path=synthesis#synthese", "Synthèse technique"],
       ["/learn?path=synthesis#synth-niveaux", "Niveaux d’assurance"],
       ["#feuille-de-route", "Feuille de route"],
+      ["#compatibilite", "Matrice de compatibilité"],
     ],
   },
 ];
