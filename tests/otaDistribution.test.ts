@@ -220,8 +220,8 @@ export function distributionViolations(src: string): string[] {
 test("contrat structurel de lib/otaDistribution.ts + 8 mutants", () => {
   const src = read("lib/otaDistribution.ts"); assert.deepEqual(distributionViolations(src), []);
   const muts: Array<[string, string, string]> = [
-    ["défi après Redis", "if (!verifyOtaChallenge(d.secret, q.deviceId, d.releaseId, q.exp, q.challenge)) return fail(\"défi invalide\", 403);", "/* défi retiré */"],
-    ["expiration retirée", "if (q.exp * 1000 <= d.now) return fail(\"défi expiré\", 410);", ""],
+    ["défi après Redis", "if (!verifyOtaChallenge(d.secret, q.deviceId, d.releaseId, q.exp, q.challenge)) return rej(\"défi invalide\", 403);", "/* défi retiré */"],
+    ["expiration retirée", "if (q.exp * 1000 <= d.now) return rej(\"défi expiré\", 410);", ""],
     ["limite par IP avant interrupteur", "if (await d.isKilled())", "if (!(await d.preLimitOk())) return fail(\"x\", 429); if (await d.isKilled())"],
     ["quota compté AVANT la signature (le défaut audité)", "const dev = await d.loadDevice(q.deviceId);", "if (!(await d.rateLimitOk(q.deviceId))) return fail(\"x\", 429); const dev = await d.loadDevice(q.deviceId);"],
     ["signature d'appareil retirée", "if (!HEX128.test(q.sig) || !verifyEd25519(dev.publicKey,", "if (false && !verifyEd25519(dev.publicKey,"],

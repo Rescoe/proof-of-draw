@@ -303,6 +303,7 @@ export async function GET(req: NextRequest) {
           otaAnnounce = otaAnnouncement({ mode: "on", secret, killed: false, manifests: otaReleases().map((r) => r.manifest), device: { deviceId, firmware: device.firmware, publicKey: device.publicKey, otaSeq: parseOtaSeqParam(url.searchParams.get("o")) }, now: Date.now() });
         }
       } catch (e) { console.error("[pull] annonce OTA ignorée:", e instanceof Error ? e.message : "erreur"); }
+      if (otaAnnounce) console.log(`[ota-announce] device=${deviceId} firmware=${device.firmware} installee=${parseOtaSeqParam(url.searchParams.get("o")) ?? "?"} release=${otaAnnounce.r}`);   // observabilité : une ligne par pull qui annonce une release (aucun secret, pas de défi)
     }
 
     // ── Réponse ─────────────────────────────────────────────────────────────
