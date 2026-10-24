@@ -56,6 +56,7 @@ export function LearnHome() {
           <Link className={styles.secondaryButton} href="/learn?path=help#depannage">Dépannage / notice</Link>
           <Link className={styles.secondaryButton} href="/learn?path=power#consommation">Consommation électrique</Link>
           <Link className={styles.secondaryButton} href="#feuille-de-route">Feuille de route</Link>
+          <Link className={styles.secondaryButton} href="#compatibilite">Matrice de compatibilité</Link>
         </div>
       </div>
 

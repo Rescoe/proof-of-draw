@@ -67,8 +67,11 @@ test("synthèse technique : la table des firmwares ne dit « Testé en réel » 
 });
 
 test("page Apprendre : la matrice est rendue depuis le fichier (aucune copie), reliée à la navigation et tracée par le déploiement", () => {
-  assert.match(read("app/learn/page.tsx"), /path === "compat" \? <CompatibilityMatrix \/>/);
-  assert.match(read("app/learn/components/LearnNavigation.tsx"), /path=compat#compatibilite/);
+  const page = read("app/learn/page.tsx");
+  assert.ok(page.indexOf("<CompatibilityMatrix />") > page.indexOf("<Roadmap />"), "la matrice doit être rendue JUSTE APRÈS la feuille de route, toujours visible");
+  assert.doesNotMatch(page, /path === "compat"/, "plus de parcours séparé : la matrice est sur la page d'accueil d'Apprendre");
+  assert.match(read("app/learn/components/LearnNavigation.tsx"), /"#compatibilite"/);
+  assert.match(read("app/learn/components/LearnHome.tsx"), /href="#compatibilite"/);
   assert.match(read("app/learn/components/CompatibilityMatrix.tsx"), /loadHardwareMatrix\(\)/);
   assert.match(read("next.config.ts"), /"\/learn": \[[^\]]*MATRICE_COMPATIBILITE_MATERIELLE\.md/);
 });
