@@ -100,3 +100,31 @@ test("dépannage : le document existe, couvre les cas Wi-Fi/portail/accès/OTA/b
   assert.match(read("app/learn/components/InstallGuide.tsx"), /path=help#depannage/);
   assert.match(read("next.config.ts"), /DEPANNAGE_INSTALLATION\.md/);
 });
+
+import { VOTE_V2_FIRMWARE } from "../lib/voteCapability";
+test("matrice : le tableau « qui vote en V2, qui est mis à jour à distance » est identique au code serveur (seuils de vote, seuils OTA, version téléchargeable)", () => {
+  const t = tables.find((x) => x.head[0] === "Famille")!;
+  assert.ok(t, "tableau absent de la matrice");
+  const ver = (s: string) => { const m = /^(\d+)\.(\d+)$/.exec(s.trim()); return m ? ([Number(m[1]), Number(m[2])] as [number, number]) : null; };
+  const seen = new Set<string>();
+  for (const r of t.rows) {
+    const fams = (r[0].match(/`([a-z0-9]+)`/g) ?? []).map((x) => x.replace(/`/g, ""));
+    for (const fam of fams) {
+      seen.add(fam);
+      if (fam === "r4dht22") continue;                                   // capteur seul : ne vote pas
+      assert.deepEqual(ver(r[1]), VOTE_V2_FIRMWARE[fam], `${fam} : seuil de vote de la matrice ≠ lib/voteCapability.ts`);
+      const ota = OTA_CLIENT_FIRMWARE[fam];
+      assert.deepEqual(ver(r[2]), ota ?? null, `${fam} : seuil OTA de la matrice ≠ lib/otaDistribution.ts`);
+    }
+  }
+  for (const fam of Object.keys(VOTE_V2_FIRMWARE)) assert.ok(seen.has(fam), `famille ${fam} du serveur absente de la matrice`);
+  // version téléchargeable (sketch) = version de la colonne 4, pour les familles ESP8266 et R4 recensées
+  const sketches: Record<string, string> = { tft18: "esp8266/esp_tft1.8/esp_tft1.8.ino", eink29bwr: "esp8266/esp_eink_2.9BWR/esp_eink_2.9BWR.ino", multiscreen: "esp8266/esp_eink_2.7BW_OLED/esp_eink_2.7BW_OLED.ino", eink27bw: "esp8266/esp_eink_2.7BW/esp_eink_2.7BW.ino",
+    r4tft28: "arduino_uno_r4/pod_uno_r4/pod_uno_r4.ino", r4eink29: "arduino_uno_r4/pod_uno_r4_eink29/pod_uno_r4_eink29.ino", r4eink27: "arduino_uno_r4/pod_uno_r4_eink27/pod_uno_r4_eink27.ino", r4multiscreen: "arduino_uno_r4/pod_uno_r4_eink27_oled/pod_uno_r4_eink27_oled.ino", r4tft18: "arduino_uno_r4/pod_uno_r4_tft18/pod_uno_r4_tft18.ino" };
+  for (const r of t.rows) for (const fam of (r[0].match(/`([a-z0-9]+)`/g) ?? []).map((x) => x.replace(/`/g, ""))) {
+    if (!sketches[fam]) continue;
+    const v = /#define FIRMWARE_VERSION\s+"([a-z0-9]+)-(\d+\.\d+)"/.exec(read(sketches[fam]))!;
+    assert.equal(v[1], fam); assert.equal(v[2], r[3].trim(), `${fam} : version téléchargeable ${v[2]} ≠ matrice ${r[3]}`);
+  }
+  assert.deepEqual(parseInline("voir [le guide](/learn?path=install#wiring) ou [x](https://evil.example)").map((p) => p.kind), ["text", "link", "text"], "seuls les liens internes sont des liens");
+});

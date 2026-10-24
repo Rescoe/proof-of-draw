@@ -1,13 +1,13 @@
 # Dépannage : première connexion, Wi-Fi, mises à jour
 
-> Ce que l'utilisateur doit faire, **quand** il doit le faire, et quoi vérifier si ça ne marche pas. Valable pour les profils ESP8266 qui ont le portail Wi-Fi (TFT 1,8″, e-ink 2,9″ BWR, multiscreen 2,7″ + OLED).
+> Ce que l'utilisateur doit faire, **quand** il doit le faire, et quoi vérifier si ça ne marche pas. Valable pour les profils ESP8266 qui ont le portail Wi-Fi (TFT 1,8″, e-ink 2,9″ BWR, multiscreen 2,7″ + OLED). Pas encore installé ? [Choisir mon écran et installer](/learn?path=install#installer) · [Câbler](/learn?path=install#wiring) · [Firmware et Wi-Fi](/learn?path=install#firmware) · [Associer l’écran](/learn?path=install#onboard).
 > Cette page est le rendu direct de `docs/DEPANNAGE_INSTALLATION.md` ; elle ne dit que ce qui a été observé ou documenté, et signale le reste comme non vérifié.
 
 ## Le parcours normal, dans l'ordre
 
-1. **Brancher la carte** sur un chargeur ou un port USB et **attendre**. Une carte e-ink met 15 à 45 secondes à dessiner un écran ; elle peut clignoter. Ne pas la débrancher pendant ce temps.
-2. **Si la carte n'a pas (ou plus) de Wi-Fi enregistré**, elle ouvre son propre Wi-Fi nommé `PoD-XXXX` et affiche à l'écran son **mot de passe** (8 caractères, valable pour cette session).
-3. **Avec un autre appareil que celui qui partage sa connexion** (si votre téléphone sert de box, utilisez un ordinateur ou un second téléphone) : scanner le **premier QR** de l'écran, ou rejoindre `PoD-XXXX` à la main avec le mot de passe affiché.
+1. **Brancher la carte** (après avoir [téléversé le firmware](/learn?path=install#configure)) sur un chargeur ou un port USB et **attendre**. Une carte e-ink met 15 à 45 secondes à dessiner un écran ; elle peut clignoter. Ne pas la débrancher pendant ce temps.
+2. **Si la carte n'a pas (ou plus) de Wi-Fi enregistré**, elle ouvre son propre Wi-Fi nommé `PoD-XXXX` et affiche à l'écran son **mot de passe** (8 caractères, valable pour cette session). Le **nombre de QR dépend de l'écran** : l'e-ink 2,9″ BWR en affiche deux (rejoindre le Wi-Fi, ouvrir la page) ; le TFT 1,8″ et l'OLED du multiscreen en affichent un seul (rejoindre le Wi-Fi) avec l'adresse écrite.
+3. **Avec un autre appareil que celui qui partage sa connexion** (si votre téléphone sert de box, utilisez un ordinateur ou un second téléphone) : scanner le **QR « rejoindre le Wi-Fi »** de l'écran, ou rejoindre `PoD-XXXX` à la main avec le mot de passe affiché.
 4. Une page s'ouvre toute seule. **Sinon**, ouvrir le navigateur et taper `http://192.168.4.1`.
 5. Choisir son Wi-Fi dans la liste (ou taper son nom exactement, majuscules et espaces compris), entrer le mot de passe, **Enregistrer**.
 6. Quand la page dit « enregistré », **reconnecter son téléphone à sa box habituelle**. La carte redémarre seule (≈ 30 secondes). **Ne pas la débrancher.**
@@ -35,13 +35,15 @@ La carte garde son ancien Wi-Fi. Au démarrage chez soi, si ce réseau n'existe 
 
 ## Retrouver l'accès à un écran déjà appairé
 
+À lire aussi : [Associer l’écran](/learn?path=install#onboard).
+
 Le profil d'un écran est lié à son code d'appairage. Si le navigateur qui l'avait appairé est perdu (ouvert dans une application comme Snapchat, nouveau téléphone, cookie effacé), **ouvrir** `https://proof-of-draw.vercel.app/onboard?code=<CODE>` **dans Chrome ou Safari**, avec le code affiché sur l'écran de la carte ou donné par le propriétaire. Aucune réinitialisation n'est nécessaire. Pour donner l'accès à un autre ordinateur : « Autoriser un autre équipement » dans le profil.
 
 ## Mises à jour à distance (OTA) : ce qu'on peut en attendre
 
 - La carte reçoit une annonce au prochain contact avec le serveur (de 5 à 15 minutes). Elle télécharge et redémarre seule ; **ne pas la débrancher** pendant ce temps.
 - Si **rien ne change**, c'est que la carte a refusé ou échoué (mémoire, horloge, vote en cours). L'ancienne version continue de fonctionner. Un redémarrage manuel de la carte relance une tentative.
-- Les profils avec marge mémoire très faible peuvent échouer : voir la page « Compatibilité matérielle ».
+- Les profils avec marge mémoire très faible peuvent échouer : voir la page [Compatibilité matérielle](/learn?path=compat#compatibilite).
 - Récupération par câble USB : toujours possible.
 
 ## Branchements qui piègent
@@ -49,7 +51,7 @@ Le profil d'un écran est lié à son code d'appairage. Si le navigateur qui l'a
 - **DHT22 sur D3 (GPIO0)** : le débrancher pour téléverser par câble USB ; le rebrancher ensuite. Il ne gêne pas le démarrage normal.
 - **Alimentation 3,3 V uniquement** pour les écrans et capteurs ; jamais 5 V.
 - **COM inaccessible dans l'IDE Arduino / téléversement refusé** : fermer tout moniteur série (l'IDE ou un autre programme) ; si le port reste « occupé », débrancher et rebrancher le câble, puis redémarrer l'ordinateur en dernier recours.
-- **OLED + e-ink 2,9″ BWR** : l'OLED du BWR empêche le téléchargement des œuvres (mémoire) et n'est pas proposé : voir la matrice.
+- **OLED + e-ink 2,9″ BWR** : l'OLED du BWR empêche le téléchargement des œuvres (mémoire) et n'est pas proposé : voir la [matrice de compatibilité](/learn?path=compat#compatibilite).
 
 ## Si rien ne marche
 

@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import Link from "next/link";
 import { Callout } from "./ContentPrimitives";
 import { parseInline, type MatrixBlock } from "../../../lib/hardwareMatrix";
 import styles from "../learn.module.css";
@@ -6,7 +7,7 @@ import styles from "../learn.module.css";
 // Rendu commun des documents markdown du dépôt affichés dans « Apprendre » (matrice de compatibilité, dépannage) : la page est le rendu DIRECT du fichier, aucune copie à tenir à jour.
 
 function Inline({ text }: { text: string }): ReactNode {
-  return <>{parseInline(text).map((p, i) => p.kind === "strong" ? <strong key={i}>{p.text}</strong> : p.kind === "code" ? <code key={i} className={styles.inlineCode}>{p.text}</code> : <span key={i}>{p.text}</span>)}</>;
+  return <>{parseInline(text).map((p, i) => p.kind === "link" ? <Link key={i} href={p.href!}>{p.text}</Link> : p.kind === "strong" ? <strong key={i}>{p.text}</strong> : p.kind === "code" ? <code key={i} className={styles.inlineCode}>{p.text}</code> : <span key={i}>{p.text}</span>)}</>;
 }
 
 export function Block({ block }: { block: MatrixBlock }) {

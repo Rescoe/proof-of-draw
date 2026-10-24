@@ -58,6 +58,23 @@ Les essais OTA R4 de laboratoire ont prouvé le mécanisme de reprogrammation Wi
 - **BWR 2,9″ + OLED en second écran du réseau** (comme le multiscreen) : aujourd'hui l'OLED du BWR n'affiche que l'état (Wi-Fi, mesure) et il est **désactivé** parce qu'il empêche le téléchargement des frames. Pistes : récupérer au moins 3 Ko de tas (pilote OLED minimal sans bibliothèque Adafruit, un seul tampon de page ; libération avant chaque TLS). Un OLED qui reçoit des frames serait un **nouveau profil** (famille OTA propre, préfixe de vote, page Installer), pas une option.
 - **Mise à jour à distance du TFT + DHT22** : release `tft18-2.10-ota7` publiée, installation non aboutie ; cause à établir (journaux serveur d'observabilité, puis essai sur place).
 
+## Qui vote en V2, qui peut être mis à jour à distance (par famille de firmware)
+
+Le serveur reconnaît une famille par le **préfixe de la version déclarée** à l'enregistrement. Une carte dont la version est **plus ancienne que le minimum** ne compte pas dans le quorum, ne reçoit pas de candidat et ne peut pas voter (403) ; les capteurs seuls ne votent jamais. La colonne « a voté » ne dit **que ce qui a été observé** sur une vraie carte.
+
+| Famille | Vote V2 dès (serveur) | Client OTA dès (serveur) | Version dans le téléchargement | A voté en V2 sur carte | OTA prouvée |
+|---|---|---|---|---|---|
+| `tft18` | 2.4 | 2.7 | 2.9 | oui (bloc #111, 22/10) | oui : 2.7 → 2.8 ; 2.9 → 2.10 **non aboutie** |
+| `eink29bwr` | 2.3 | 2.4 | 2.5 | oui (#101, 14/10 ; #114, 24/10) | oui : 2.4 → 2.5 |
+| `multiscreen` | 2.5 | 2.6 | 2.7 | oui (#103, 14/10) | oui : 2.6 → 2.7 (marge 608 o) |
+| `eink27bw` | 2.1 | — | 2.1 | **non** (jamais essayé en V2) | non |
+| `r4tft28` | 2.5 | — | 2.5 | oui (#100 et #103, 14/10) | non (pas de client OTA applicatif) |
+| `r4eink29` | 1.1 | — | 1.1 | oui (#100 et #101, 14/10) | non |
+| `r4eink27`, `r4multiscreen`, `r4tft18` | 1.1 | — | 1.1 | **non** (compilés seulement) | non |
+| `r4dht22` (capteur seul) | ne vote pas | — | 1.3 | sans objet | non |
+
+Les valeurs « dès » viennent de `lib/voteCapability.ts` (`VOTE_V2_FIRMWARE`) et `lib/otaDistribution.ts` (`OTA_CLIENT_FIRMWARE`) ; un test compare ce tableau au code.
+
 ## Règle de composition : éviter l'explosion combinatoire
 
 Un firmware public est défini par :

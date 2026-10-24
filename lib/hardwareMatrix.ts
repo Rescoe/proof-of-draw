@@ -57,16 +57,17 @@ export function parseMatrixMarkdown(src: string): MatrixBlock[] {
   return out;
 }
 
-export type InlinePart = { kind: "text" | "strong" | "code"; text: string };
-/** `code`, **gras** ; le reste est du texte brut (jamais interprété comme HTML : le rendu passe par React). */
+export type InlinePart = { kind: "text" | "strong" | "code" | "link"; text: string; href?: string };
+/** `code`, **gras**, [lien](/chemin-interne ou #ancre) — seuls les liens internes sont acceptés (jamais d'URL externe ni de schéma) ; le reste est du texte brut (jamais interprété comme HTML : le rendu passe par React). */
 export function parseInline(text: string): InlinePart[] {
   const parts: InlinePart[] = [];
-  const re = /(\*\*[^*]+\*\*|`[^`]+`)/g;
+  const re = /(\*\*[^*]+\*\*|`[^`]+`|\[[^\]]+\]\((?:\/|#)[^)\s]*\))/g;
   let last = 0, m: RegExpExecArray | null;
   while ((m = re.exec(text))) {
     if (m.index > last) parts.push({ kind: "text", text: text.slice(last, m.index) });
     const tok = m[0];
-    parts.push(tok.startsWith("**") ? { kind: "strong", text: tok.slice(2, -2) } : { kind: "code", text: tok.slice(1, -1) });
+    if (tok.startsWith("[")) { const lm = /^\[([^\]]+)\]\(([^)]*)\)$/.exec(tok)!; parts.push({ kind: "link", text: lm[1], href: lm[2] }); }
+    else parts.push(tok.startsWith("**") ? { kind: "strong", text: tok.slice(2, -2) } : { kind: "code", text: tok.slice(1, -1) });
     last = m.index + tok.length;
   }
   if (last < text.length) parts.push({ kind: "text", text: text.slice(last) });
