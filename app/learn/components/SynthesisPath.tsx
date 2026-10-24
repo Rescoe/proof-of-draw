@@ -21,7 +21,7 @@ const firmwares = [
   ["ESP8266", "TFT 1,8″", "Oui", "Testé en réel"],
   ["ESP8266", "e-ink 2,7″ seul", "Oui (code livré)", "À essayer"],
   ["UNO R4 WiFi", "e-ink 2,9″ BWR", "Oui", "Testé en réel"],
-  ["UNO R4 WiFi", "e-ink 2,7″ seul · e-ink 2,7″ + OLED · TFT 1,8″", "Oui", "Testé en réel"],
+  ["UNO R4 WiFi", "e-ink 2,7″ seul · e-ink 2,7″ + OLED · TFT 1,8″", "Oui (code livré)", "À essayer"],
   ["UNO R4 WiFi", "TFT 2,8″ tactile", "Oui", "Testé en réel"],
 ];
 

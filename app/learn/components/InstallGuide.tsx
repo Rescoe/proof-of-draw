@@ -180,6 +180,10 @@ export function InstallGuide({ initialProfileId = "eink29bwr" }: { initialProfil
         <Callout tone="warning" title="Combinaison disponible, validation matérielle en attente">
           <p>{selected.statusNote}</p>
         </Callout>
+      ) : selected.statusNote ? (
+        <Callout tone="info" title="Ce qui a été observé sur du matériel">
+          <p>{selected.statusNote}</p>
+        </Callout>
       ) : null}
 
       <InstallStep number={2} title="Préparer le matériel" icon={<Cpu size={20} />} id="install-step-2">
@@ -325,6 +329,7 @@ D6 = GPIO12    D7 = GPIO13    D8 = GPIO15`}</CodeBlock>
             <p>
               Ce firmware ne contient pas votre Wi-Fi. Ne modifiez ni l’adresse du serveur ni le code : téléversez-le tel quel.
               Au premier démarrage, la carte ouvre son propre Wi-Fi <Code>PoD-XXXX</Code> et vous réglez celui de votre box depuis votre téléphone (étape « Régler le Wi-Fi » ci-dessous).
+              Un problème de connexion ? <Link href="/learn?path=help#depannage">Voir le dépannage</Link>.
             </p>
           </Callout>
         ) : (
@@ -418,10 +423,10 @@ const char* WIFI_PASSWORD = "Mot de passe de votre Wi-Fi";
               <span>4</span>
               <div>
                 <h4>Régler le Wi-Fi depuis votre téléphone (étape 1 sur 2)</h4>
-                <p>Au premier démarrage, {selected.id === "eink27bwOled" ? "le petit écran OLED" : "l’écran"} affiche {selected.id === "eink27bwOled" ? "un code QR" : "des codes QR"} et un nom de Wi-Fi <Code>PoD-XXXX</Code> avec un mot de passe de 8 caractères. Il vous faut un téléphone (ou un PC) en plus de celui qui partage éventuellement votre connexion.</p>
+                <p>Au premier démarrage, {selected.id === "eink27bwOled" ? "le petit écran OLED" : "l’écran"} affiche {selected.id === "eink29bwr" ? "des codes QR" : "un code QR"} et un nom de Wi-Fi <Code>PoD-XXXX</Code> avec un mot de passe de 8 caractères. Il vous faut un téléphone (ou un PC) en plus de celui qui partage éventuellement votre connexion.</p>
                 <ol>
-                  <li>Scannez le <strong>QR n° 1</strong> avec l’appareil photo : le téléphone rejoint le Wi-Fi <Code>PoD-XXXX</Code>. À la main : choisissez ce nom et saisissez le mot de passe affiché.</li>
-                  <li>Une page « Étape 1/2 » s’ouvre en général toute seule. Sinon, scannez le <strong>QR n° 2</strong> ou ouvrez <Code>http://192.168.4.1</Code> dans le navigateur. Si votre téléphone propose de rester connecté sans Internet, acceptez.</li>
+                  <li>Scannez {selected.id === "eink29bwr" ? <>le <strong>QR n° 1</strong></> : <>le <strong>QR</strong></>} avec l’appareil photo : le téléphone rejoint le Wi-Fi <Code>PoD-XXXX</Code>. À la main : choisissez ce nom et saisissez le mot de passe affiché.</li>
+                  <li>Une page « Étape 1/2 » s’ouvre en général toute seule. Sinon, {selected.id === "eink29bwr" ? <>scannez le <strong>QR n° 2</strong> ou ouvrez</> : <>ouvrez</>} <Code>http://192.168.4.1</Code> dans le navigateur. Si votre téléphone propose de rester connecté sans Internet, acceptez.</li>
                   <li>Choisissez le Wi-Fi de votre box (2,4 GHz), saisissez son mot de passe (la case « Afficher le mot de passe » permet de vérifier), puis touchez <strong>Enregistrer</strong>.</li>
                   <li>Remettez votre téléphone sur votre Wi-Fi habituel. La carte redémarre et se connecte à votre box ; sur un écran e-ink, l’affichage suivant peut demander environ 3 minutes.</li>
                 </ol>

@@ -32,14 +32,15 @@ const FIRMWARE_VARIANTS: Record<string, FirmwareVariant> = {
     statusWarning: "Profil de distribution du 23/10/2026 : portail Wi-Fi et mises à jour à distance (OTA signée) validés sur UNE carte ; l'association d'une carte neuve et le vote avec cette version n'ont pas été testés de bout en bout.", },
   eink27bw: { label: "pod-firmware-eink27bw-oled", board: "ESP8266 / NodeMCU", sources: [{ root: "esp8266", folder: "esp_eink_2.7BW_OLED" }],
     statusWarning: "Profil de distribution du 23/10/2026 : portail Wi-Fi (écran OLED) et mises à jour à distance (OTA signée) validés sur UNE carte ; marge mémoire de l'OTA très faible (tas minimal 608 o mesuré) ; l'association d'une carte neuve et le vote avec cette version n'ont pas été testés de bout en bout. Capteur DHT22 : option expérimentale, éteinte par défaut." },
-  eink27bwSolo: { label: "pod-firmware-eink27bw-solo", board: "ESP8266 / NodeMCU", sources: [{ root: "esp8266", folder: "esp_eink_2.7BW" }] },
+  eink27bwSolo: { label: "pod-firmware-eink27bw-solo", board: "ESP8266 / NodeMCU", sources: [{ root: "esp8266", folder: "esp_eink_2.7BW" }],
+    statusWarning: "PORT NON ESSAYÉ SUR LE MATÉRIEL : e-ink 2,7 pouces seul sur ESP8266, vote réel v2 compilé uniquement. Le multiscreen est le profil éprouvé (voir la matrice de compatibilité).", },
   tft18: { label: "pod-firmware-tft18", board: "ESP8266 / NodeMCU", sources: [{ root: "esp8266", folder: "esp_tft1.8" }],
     statusWarning: "Profil de distribution du 23/10/2026 : portail Wi-Fi et mises à jour à distance (OTA signée) validés sur UNE carte ; l'association d'une carte neuve et le vote avec cette version n'ont pas été testés de bout en bout.", },
   r4Eink29: {
     label: "pod-firmware-r4-eink29bwr",
     board: "Arduino UNO R4 WiFi",
     sources: [{ root: "arduino_uno_r4", folder: "pod_uno_r4_eink29" }],
-    statusWarning: "Cette combinaison compile et a été testée côté protocole, mais sa validation sur écran physique reste à confirmer.",
+    statusWarning: "Vote réel v2, réception et affichage observés sur une UNO R4 (14/10/2026). Pas de mise à jour à distance (OTA) pour les profils UNO R4. Voir la matrice de compatibilité (page Apprendre).",
   },
   r4Eink27: {
     label: "pod-firmware-r4-eink27bw",
@@ -63,7 +64,7 @@ const FIRMWARE_VARIANTS: Record<string, FirmwareVariant> = {
     label: "pod-firmware-r4-tft28",
     board: "Arduino UNO R4 WiFi",
     sources: [{ root: "arduino_uno_r4", folder: "pod_uno_r4" }],
-    statusWarning: "Cette combinaison compile et a été testée côté protocole, mais sa validation sur écran physique reste à confirmer.",
+    statusWarning: "Vote réel v2, réception, affichage et ACK observés sur une UNO R4 (14/10/2026). Animations et microSD qualifiées à part ; pas de mise à jour à distance (OTA). Voir la matrice de compatibilité (page Apprendre).",
   },
   all: {
     label: "pod-firmware-all",

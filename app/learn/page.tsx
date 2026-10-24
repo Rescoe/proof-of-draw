@@ -7,7 +7,9 @@ import type { LearnPath } from "./components/LearnNavigation";
 import { LegacyHashRedirect } from "./components/LegacyHashRedirect";
 import { NoEspPath } from "./components/NoEspPath";
 import { PowerPath } from "./components/PowerPath";
+import { CompatibilityMatrix } from "./components/CompatibilityMatrix";
 import { Roadmap } from "./components/Roadmap";
+import { Troubleshooting } from "./components/Troubleshooting";
 import { SynthesisPath } from "./components/SynthesisPath";
 import { resolveInstallProfileId } from "./data/installProfiles";
 import styles from "./learn.module.css";
@@ -19,7 +21,7 @@ export const metadata: Metadata = {
 
 function parsePath(value: string | string[] | undefined): LearnPath | null {
   const path = Array.isArray(value) ? value[0] : value;
-  return path === "install" || path === "no-esp" || path === "network" || path === "power" || path === "synthesis" ? path : null;
+  return path === "install" || path === "no-esp" || path === "network" || path === "power" || path === "synthesis" || path === "compat" || path === "help" ? path : null;
 }
 
 export default async function LearnPage({
@@ -46,6 +48,8 @@ export default async function LearnPage({
             {path === "network" ? <ExpertDocumentation /> : null}
             {path === "power" ? <PowerPath /> : null}
             {path === "synthesis" ? <SynthesisPath /> : null}
+            {path === "compat" ? <CompatibilityMatrix /> : null}
+            {path === "help" ? <Troubleshooting /> : null}
           </div>
         </div>
       ) : null}

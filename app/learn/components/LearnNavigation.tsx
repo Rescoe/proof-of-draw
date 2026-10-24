@@ -1,6 +1,6 @@
 import styles from "../learn.module.css";
 
-export type LearnPath = "install" | "no-esp" | "network" | "power" | "synthesis";
+export type LearnPath = "install" | "no-esp" | "network" | "power" | "synthesis" | "compat" | "help";
 
 const groups = [
   {
@@ -12,6 +12,8 @@ const groups = [
       ["/learn?path=install#firmware", "Firmware et Wi-Fi"],
       ["/learn?path=install#configure", "Téléverser"],
       ["/learn?path=install#onboard", "Associer l’écran"],
+      ["/learn?path=compat#compatibilite", "Compatibilité matérielle"],
+      ["/learn?path=help#depannage", "Dépannage Wi-Fi et mises à jour"],
     ],
   },
   {

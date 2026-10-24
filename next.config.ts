@@ -10,6 +10,8 @@ const nextConfig: NextConfig = {
   outputFileTracingIncludes: {
     "/api/pull": ["./ota-releases/**/*"],
     "/firmware/[release]/[file]": ["./ota-releases/**/*"],
+    // Page Apprendre : la matrice de compatibilité (docs/) est lue à l'exécution du rendu serveur — source unique, aucune copie.
+    "/learn": ["./docs/MATRICE_COMPATIBILITE_MATERIELLE.md", "./docs/DEPANNAGE_INSTALLATION.md"],
   },
   async headers() {
     return [
