@@ -74,6 +74,10 @@ export function parseInline(text: string): InlinePart[] {
 }
 
 export const HARDWARE_MATRIX_FILE = "docs/MATRICE_COMPATIBILITE_MATERIELLE.md";
-export function loadHardwareMatrix(root: string = process.cwd()): MatrixBlock[] {
-  return parseMatrixMarkdown(fs.readFileSync(path.join(root, HARDWARE_MATRIX_FILE), "utf8"));
+export const TROUBLESHOOTING_FILE = "docs/DEPANNAGE_INSTALLATION.md";
+/** Rendu serveur de n'importe quel document markdown du dépôt (chemin relatif à la racine, jamais fourni par l'utilisateur). */
+export function loadMarkdownDoc(file: string, root: string = process.cwd()): MatrixBlock[] {
+  return parseMatrixMarkdown(fs.readFileSync(path.join(root, file), "utf8"));
 }
+export function loadHardwareMatrix(root: string = process.cwd()): MatrixBlock[] { return loadMarkdownDoc(HARDWARE_MATRIX_FILE, root); }
+export function loadTroubleshooting(root: string = process.cwd()): MatrixBlock[] { return loadMarkdownDoc(TROUBLESHOOTING_FILE, root); }

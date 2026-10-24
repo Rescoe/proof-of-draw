@@ -329,6 +329,7 @@ D6 = GPIO12    D7 = GPIO13    D8 = GPIO15`}</CodeBlock>
             <p>
               Ce firmware ne contient pas votre Wi-Fi. Ne modifiez ni l’adresse du serveur ni le code : téléversez-le tel quel.
               Au premier démarrage, la carte ouvre son propre Wi-Fi <Code>PoD-XXXX</Code> et vous réglez celui de votre box depuis votre téléphone (étape « Régler le Wi-Fi » ci-dessous).
+              Un problème de connexion ? <Link href="/learn?path=help#depannage">Voir le dépannage</Link>.
             </p>
           </Callout>
         ) : (

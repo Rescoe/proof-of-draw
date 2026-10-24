@@ -70,7 +70,7 @@ test("page Apprendre : la matrice est rendue depuis le fichier (aucune copie), r
   assert.match(read("app/learn/page.tsx"), /path === "compat" \? <CompatibilityMatrix \/>/);
   assert.match(read("app/learn/components/LearnNavigation.tsx"), /path=compat#compatibilite/);
   assert.match(read("app/learn/components/CompatibilityMatrix.tsx"), /loadHardwareMatrix\(\)/);
-  assert.match(read("next.config.ts"), /"\/learn": \["\.\/docs\/MATRICE_COMPATIBILITE_MATERIELLE\.md"\]/);
+  assert.match(read("next.config.ts"), /"\/learn": \[[^\]]*MATRICE_COMPATIBILITE_MATERIELLE\.md/);
 });
 
 test("firmwares ESP8266 téléchargeables : options capteur/OLED à 0, version et famille compatibles avec le client OTA et la release de production", () => {
@@ -84,4 +84,19 @@ test("firmwares ESP8266 téléchargeables : options capteur/OLED à 0, version e
     assert.equal(/#define POD_OTA_FAMILY "([^"]+)"/.exec(src)![1], OTA_FAMILIES[fam]);
     assert.equal(/#define POD_OTA_CLIENT 1/.test(src), true, `${f} : le profil téléchargeable inclut le client OTA`);
   }
+});
+
+import { TROUBLESHOOTING_FILE } from "../lib/hardwareMatrix";
+test("dépannage : le document existe, couvre les cas Wi-Fi/portail/accès/OTA/branchements, est rendu depuis le fichier et relié au parcours d'installation", () => {
+  const doc = parseMatrixMarkdown(read(TROUBLESHOOTING_FILE));
+  const titles = doc.filter((b) => b.kind === "h").map((b) => (b as { text: string }).text);
+  for (const t of ["Le parcours normal, dans l'ordre", "Si la page de configuration ne s'ouvre pas ou refuse l'enregistrement", "Retrouver l'accès à un écran déjà appairé", "Branchements qui piègent", "Si rien ne marche"]) assert.ok(titles.includes(t), "section absente : " + t);
+  const tbl = doc.find((b) => b.kind === "table") as Extract<MatrixBlock, { kind: "table" }>;
+  assert.ok(tbl.rows.length >= 6); for (const r of tbl.rows) assert.equal(r.length, tbl.head.length);
+  assert.match(read(TROUBLESHOOTING_FILE), /192\.168\.4\.1/);
+  assert.match(read(TROUBLESHOOTING_FILE), /Ne jamais maintenir le bouton FLASH enfoncé quand on branche la carte/);
+  assert.match(read("app/learn/components/Troubleshooting.tsx"), /loadTroubleshooting\(\)/);
+  assert.match(read("app/learn/page.tsx"), /path === "help" \? <Troubleshooting \/>/);
+  assert.match(read("app/learn/components/InstallGuide.tsx"), /path=help#depannage/);
+  assert.match(read("next.config.ts"), /DEPANNAGE_INSTALLATION\.md/);
 });
