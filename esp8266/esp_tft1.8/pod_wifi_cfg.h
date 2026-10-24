@@ -19,9 +19,12 @@
 
 namespace podwifi {
 
-static const int OFF = 512;                  // premier octet de l'enregistrement dans l'EEPROM
+#ifndef POD_WIFI_REC_OFF
+#define POD_WIFI_REC_OFF 512                 // défaut : TFT 1,8″ et BWR 2,9″ ; le multiscreen (image OLED sauvegardée en 99..1122) place l'enregistrement après ses 1540 octets
+#endif
+static const int OFF = POD_WIFI_REC_OFF;     // premier octet de l'enregistrement dans l'EEPROM
 static const int LEN = 105;                  // longueur de l'enregistrement
-static const int ZONE_END = 640;             // fin de la zone réservée (EEPROM_SIZE avec l'enregistrement)
+static const int ZONE_END = OFF + 128;        // fin de la zone réservée (512 + 128 = 640 par défaut : EEPROM_SIZE avec l'enregistrement)
 static const int SSID_MAX = 32, PASS_MAX = 63, PASS_MIN = 8;
 static const int O_LEN_SSID = 4, O_LEN_PASS = 5, O_SSID = 6, O_PASS = 38, O_CRC = 101;
 

@@ -4,6 +4,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { describeChoice, findCompiler, runProcess } from "./helpers/cppHarness";
+import { stripMs, isMsIno } from "./helpers/msStrip";
 
 // LOT8B2C-ESP8266-EINK27-OLED-CANARY-1 — canari de l'ESP8266 e-ink 2,7″ BW + OLED (rendu v1, frame personnelle, AUCUN vote).
 // (1) règles statiques : drapeaux 0/0 au dépôt, OFF == firmware d'avant au texte près, tout le canari sous « #if POD_RENDER_V1 && POD_CANARY », rien de R4/WiFiS3, OLED inchangé ;
@@ -11,7 +12,8 @@ import { describeChoice, findCompiler, runProcess } from "./helpers/cppHarness";
 // (3) contrôles négatifs : chaque garde supprimée est REFUSÉE par le harnais.
 // Rien ici n'est une mesure sur carte : BearSSL réel, tas réel, durées BUSY réelles, orientation physique et chien de garde matériel restent à observer (docs/LOT_8B2C_ESP8266_EINK27_OLED_CANARY_2026_10_13.md).
 const root = path.join(__dirname, "..");
-const read = (p: string) => fs.readFileSync(path.join(root, p), "utf8").replace(/\r\n/g, "\n");
+// le sketch du multiscreen est lu SANS les ajouts du portail Wi-Fi / client OTA / capteur / profil de distribution (23/10/2026, tests/helpers/msStrip.ts) : ces tests portent sur le lot canari 8B2C
+const read = (p: string) => { const t = fs.readFileSync(path.join(root, p), "utf8").replace(/\r\n/g, "\n"); return isMsIno(p) ? stripMs(t) : t; };
 const DIR = "esp8266/esp_eink_2.7BW_OLED";
 const INO = `${DIR}/esp_eink_2.7BW_OLED.ino`;
 const DRV = `${DIR}/epd2in7_V2.cpp`;

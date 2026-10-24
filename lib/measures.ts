@@ -63,6 +63,14 @@ export const MEASURE_PRESENCE_REFRESH_MS = 12 * 3600 * 1000;
 export function isSensorScreens(screens: unknown): boolean {
   return Array.isArray(screens) && screens.length === 1 && screens[0] === SENSOR_SCREEN;
 }
+/**
+ * Le menu « Mesures » d'un appareil AVEC écran n'apparaît que si une VRAIE mesure a été reçue (24/10/2026) : `sensors` n'est qu'une déclaration du firmware (capacité), pas la preuve qu'un capteur est branché.
+ * Un capteur seul (pseudo-écran « sensor ») reste affiché dès sa déclaration. `hasMeasure` = une mesure existe pour cet appareil.
+ */
+export function showsMeasures(d: { screens?: unknown; sensors?: unknown }, hasMeasure: boolean): boolean {
+  if (measureKindsOf(d).length === 0) return false;
+  return isSensorScreens(d.screens) || hasMeasure;
+}
 /** Grandeurs mesurées par un appareil : `sensors` déclarées (filtrées), à défaut temp + hum pour un capteur historique « sensor ». */
 export function measureKindsOf(d: { screens?: unknown; sensors?: unknown }): MeasureKind[] {
   if (Array.isArray(d.sensors)) {

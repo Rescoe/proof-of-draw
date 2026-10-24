@@ -8,7 +8,8 @@ test("présence : réécrite seulement quand elle a plus de 10 min ; « en ligne
   assert.equal(presenceStale({ lastSeen: now - 5 * 60_000, lastPing: now - 5 * 60_000 }, now), false, "vu il y a 5 min : pas d'écriture");
   assert.equal(presenceStale({ lastSeen: now - 11 * 60_000, lastPing: now - 11 * 60_000 }, now), true);
   assert.equal(presenceStale({}, now), true, "jamais vu : on écrit");
-  assert.equal(presenceStale({ lastSeen: now - 20 * 60_000, lastPing: now - 2 * 60_000 }, now), false, "le plus récent des deux compte");
+  assert.equal(presenceStale({ lastSeen: now - 20 * 60_000, lastPing: now - 2 * 60_000 }, now), false, "lastPing récent : pas d'écriture");
+  assert.equal(presenceStale({ lastSeen: now - 1000, lastPing: now - 30 * 60_000 }, now), true, "register récent mais lastPing périmé : on réécrit (sinon validate-candidate refuse le vote)");
 });
 
 test("cohérence : même avec le pull dormant (15 min), un écran vivant n'est jamais « hors ligne » ni exclu du quorum entre deux écritures de présence", () => {

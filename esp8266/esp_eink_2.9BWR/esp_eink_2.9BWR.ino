@@ -110,6 +110,32 @@
 
 #define SERVER_URL      "https://proof-of-draw.vercel.app"
 #define SCREEN_TYPE     "eink29bwr"
+// POD_BWR_BEGIN (hybride léger BWR 2,9″ + OLED 0,96″ d'état/portail + capteur DHT22, EXPÉRIMENTAL 23/10/2026 ; options à 0 = firmware d'avant ; NON essayé sur la carte)
+// POD_OLED_STATUS = 1 : un OLED SSD1306 128×64 (I2C : SDA D6, SCL D4) affiche le portail (QR + textes, dynamique) et l'état (Wi-Fi, appairage, dernière mesure). Ce n'est PAS un second écran du réseau (aucune frame ne lui est envoyée).
+// POD_SENSOR_DHT22 = 1 : DHT22 sur D3 (GPIO0) ; lecture toutes les 30 min, envoi toutes les heures à /api/sensor (le serveur refuse < 50 min). Exigent POD_WIFI_PORTAL = 1.
+// Broches : l'e-ink BWR prend D0 D1 D2 D8 (+ SPI D5 D7) comme le 2,7″ du multiscreen ; l'OLED D4 D6 ; le DHT22 D3 : aucun conflit.
+#ifndef POD_OLED_STATUS
+#define POD_OLED_STATUS 0
+#endif
+#ifndef POD_SENSOR_DHT22
+#define POD_SENSOR_DHT22 0
+#endif
+#ifndef POD_DHT_PIN
+#define POD_DHT_PIN D3
+#endif
+#if (POD_OLED_STATUS || POD_SENSOR_DHT22) && !POD_WIFI_PORTAL
+#error "POD_OLED_STATUS / POD_SENSOR_DHT22 exigent POD_WIFI_PORTAL = 1 (et POD_WIFI_FROM_RECORD = 1)"
+#endif
+#if POD_OLED_STATUS
+#include <Wire.h>
+#include <Adafruit_GFX.h>
+#include <Adafruit_SSD1306.h>
+#include <Fonts/TomThumb.h>
+#endif
+#if POD_SENSOR_DHT22
+#include "pod_dht22.h"
+#endif
+// POD_BWR_END
 // POD_BWR_BEGIN (client OTA Internet, lot B1, 22/10/2026 — options à 0 = firmware d'avant)
 // POD_OTA = 1 : socle de mise à jour signée (enregistrement d'état EEPROM 420..447, anti-downgrade, vérificateur RSA, trailer signé). POD_OTA_CLIENT = 1 (exige POD_OTA = 1 ET le Wi-Fi hors binaire) : client Internet
 // authentifié (TLS aux racines épinglées, jamais setInsecure) qui suit l'annonce `ota` de /api/pull. Famille liée à la signature : une image d'un autre écran est refusée. NON essayé sur la carte.
@@ -198,6 +224,14 @@ uint8_t* redBuf   = nullptr;
 
 // ─── STATE ─────────────────────────────────────────────────────────────────
 String deviceId, pairCode, canvasUrl;
+// POD_BWR_BEGIN (commande série ONBOARD : réaffiche le QR « gérer cet ESP » même si la carte est déjà appairée — récupération d'accès, 24/10/2026)
+#if POD_WIFI_PORTAL
+static bool g_onboardRequested = false;               // « ONBOARD » reçu sur le port série pendant la fenêtre de démarrage
+#if POD_OLED_STATUS
+static void portalOledScreen(const char* l1, const char* l2, const char* l3, const char* l4, const char* l5, const char* qr);
+#endif
+#endif
+// POD_BWR_END
 bool   registered        = false;
 bool   paired            = false;
 bool   frameReady        = false;
@@ -1098,6 +1132,11 @@ bool doRegister() {
   String ownedHashes = loadOwnedHashesJson();  // ex: ["abc...","def..."] ou []
   String body = "{\"mac\":\"" + mac + "\",\"screens\":[\"" + SCREEN_TYPE + "\"],"
 // POD_BWR_BEGIN
+#if POD_SENSOR_DHT22
+                "\"sensors\":[\"temp\",\"hum\"],"                                              // grandeurs déclarées : sans elles /api/sensor refuse (400) cet appareil
+#endif
+// POD_BWR_END
+// POD_BWR_BEGIN
 #if POD_OTA
                 "\"firmware\":\"" FIRMWARE_VERSION "\",\"publicKey\":\"" + pubHex + "\","
 #else
@@ -1169,6 +1208,19 @@ bool doRegister() {
     String onboardUrl = String(SERVER_URL) + "/onboard?code=" + pairCode;
     displayQR(onboardUrl, pairCode, mac);
   } else {
+// POD_BWR_BEGIN
+#if POD_WIFI_PORTAL
+    if (g_onboardRequested) {
+      g_onboardRequested = false;
+      String onboardUrl = String(SERVER_URL) + "/onboard?code=" + pairCode;
+      Serial.println(F("[ONBOARD] affichage du QR de gestion (carte deja appairee) sur l'e-ink"));
+#if POD_OLED_STATUS
+      portalOledScreen("PoD", "Scanne", "ONB", "pour gerer", pairCode.c_str(), onboardUrl.c_str());
+#endif
+      displayQR(onboardUrl, pairCode, mac);
+    }
+#endif
+// POD_BWR_END
     Serial.println("[REGISTER] Déjà appairé, pas de QR");
   }
 
@@ -1419,7 +1471,19 @@ bool doFetchFrame(const String& frameId, const String& frameSource) {
   hasDisplayedFrame     = true;
   lastFrameId           = frameId;
   frameReady            = true;
+// POD_BWR_BEGIN (24/10/2026 : l'ACK est un TLS ; avec les plans image vivants (2 x 4 736 o) le plus grand bloc libre ne suffisait plus sur le build OLED/capteur -> ACK perdu, affichage jamais enregistre. Plans liberes pendant l'ACK.)
+#if POD_WIFI_PORTAL
+  free(blackBuf); blackBuf = nullptr; free(redBuf); redBuf = nullptr;
+#endif
+// POD_BWR_END
   ackFrame(frameId);
+// POD_BWR_BEGIN
+#if POD_WIFI_PORTAL
+  blackBuf = (uint8_t*)malloc(BUF_SIZE); redBuf = (uint8_t*)malloc(BUF_SIZE);
+  if (!blackBuf || !redBuf) { Serial.println(F("[FETCHFRAME] malloc des plans apres l'ACK impossible — redemarrage")); ESP.restart(); }
+  memset(blackBuf, 0xFF, BUF_SIZE); memset(redBuf, 0xFF, BUF_SIZE);
+#endif
+// POD_BWR_END
   lastFrameWasConsensus = (frameSource == "consensus");
   pendingCandidateId    = "";
 
@@ -1862,6 +1926,97 @@ validate_realloc:
 // Capacité en OCTETS (mode octet, correction L, ISO 18004) des versions 1 à 8 : la bibliothèque QRCode ne vérifie rien (un texte trop long donne un QR illisible).
 static const uint8_t QR_L_BYTES[8] PROGMEM = { 17, 32, 53, 78, 106, 134, 154, 192 };
 static bool qrFits(int version, size_t len) { return version >= 1 && version <= 8 && len <= pgm_read_byte(&QR_L_BYTES[version - 1]); }
+#if POD_OLED_STATUS
+Adafruit_SSD1306 oled(128, 64, &Wire, -1);
+static bool g_oledReady = false, g_oledTried = false;
+/** Initialise l'OLED une seule fois ; false si absent (aucune alerte répétée, le firmware continue sans). */
+static bool ensureOLEDReady() {
+  if (g_oledReady) return true;
+  if (g_oledTried) return false;
+  g_oledTried = true;
+  Wire.begin(D6, D4); Wire.setClock(100000); delay(10);
+  g_oledReady = oled.begin(SSD1306_SWITCHCAPVCC, 0x3C);
+  Serial.println(g_oledReady ? F("[OLED] pret") : F("[OLED] absent : le firmware continue sans"));
+  if (g_oledReady) { oled.clearDisplay(); oled.display(); }
+  return g_oledReady;
+}
+/** État sur 4 lignes de 21 caractères (jamais d'identifiant Wi-Fi). */
+static void oledStatus(const char* a, const char* b, const char* c, const char* d) {
+  if (!ensureOLEDReady()) return;
+  oled.clearDisplay(); oled.setTextColor(SSD1306_WHITE); oled.setTextSize(1);
+  const char* ln[4] = { a, b, c, d };
+  for (int i = 0; i < 4; i++) { oled.setCursor(0, i * 16); for (int k = 0; ln[i] && ln[i][k] && k < 21; k++) oled.write(ln[i][k]); }
+  oled.display();
+}
+/** Écran du portail sur l'OLED (identique au multiscreen) : QR de 62 px à gauche, 10 caractères par ligne à droite, adresse de secours EN ENTIER (police 3×5). */
+static void portalOledScreen(const char* l1, const char* l2, const char* l3, const char* l4, const char* l5, const char* qr) {
+  if (!ensureOLEDReady()) return;
+  oled.clearDisplay();
+  const bool hasQr = qr && qr[0];
+  if (hasQr) {
+    QRCode q; uint8_t qd[qrcode_getBufferSize(4)]; int ok = -1;
+    for (int v = 2; v <= 4 && ok != 0; v++) if (qrFits(v, strlen(qr))) ok = qrcode_initText(&q, qd, v, ECC_LOW, qr);
+    if (ok == 0) {
+      const int px = q.size * 2, x0 = 2, y0 = (64 - px) / 2;
+      oled.fillRect(0, y0 - 2, px + 4, px + 4, SSD1306_WHITE);
+      for (int y = 0; y < q.size; y++) for (int x = 0; x < q.size; x++) if (qrcode_getModule(&q, x, y)) oled.fillRect(x0 + x * 2, y0 + y * 2, 2, 2, SSD1306_BLACK);
+    }
+    memset(qd, 0, sizeof qd);
+  }
+  oled.setTextColor(SSD1306_WHITE); oled.setTextSize(1);
+  auto line = [&](int x, int y, const char* s, int maxc) { oled.setCursor(x, y); for (int i = 0; s && s[i] && i < maxc; i++) oled.write(s[i]); };
+  if (hasQr) {
+    String nm = String(l3), pw = ""; const int k = nm.indexOf(" mdp:"); if (k > 0) { pw = nm.substring(k + 5); nm = nm.substring(0, k); }
+    char hdr[12]; strncpy(hdr, l1 ? l1 : "", sizeof hdr - 1); hdr[sizeof hdr - 1] = 0;
+    if (strlen(hdr) > 10) { char* d = hdr; for (const char* p = hdr; *p; p++) if (*p != '-') *d++ = *p; *d = 0; }
+    line(64, 0, hdr, 10);
+    if (pw.length()) { line(64, 11, nm.c_str(), 10); line(64, 21, "mdp:", 10); line(64, 30, pw.c_str(), 10); }
+    else { line(64, 11, l2, 10); line(64, 23, l4, 10); line(64, 35, l5, 10); }
+    oled.setFont(&TomThumb);
+    if (l3 && strcmp(l3, "ONB") == 0) { oled.setCursor(64, 49); oled.print("code d'appairage"); oled.setCursor(64, 58); oled.print("/onboard"); }
+    else { oled.setCursor(64, 49); oled.print("ou ouvre :"); oled.setCursor(64, 58); oled.print("192.168.4.1"); }
+    oled.setFont(nullptr);
+  } else {
+    line(0, 0, l1, 21); line(0, 16, l2, 21); line(0, 28, l3, 21); line(0, 40, l4, 21); line(0, 52, l5, 21);
+  }
+  oled.display();
+}
+#endif
+#if POD_SENSOR_DHT22
+static poddht::State g_dht; static bool g_dhtInit = false;
+/** Appelé à chaque tour de loop() : lecture (≈ 6 ms) ou envoi (un POST TLS : tampons image LIBÉRÉS avant, réalloués après) quand l'échéance est atteinte ; jamais pendant un vote, une observation, avant l'appairage ou sans Wi-Fi. */
+static void sensorService() {
+  if (!registered || !paired || WiFi.status() != WL_CONNECTED) return;
+  if (pendingCandidateId.length() > 0 || pendingObsHashes.length() > 0) return;
+  const uint32_t now = millis();
+  if (!g_dhtInit) { g_dhtInit = true; poddht::init(g_dht, now); pinMode(POD_DHT_PIN, INPUT_PULLUP); Serial.println(F("[DHT22] actif : lecture toutes les 30 min, envoi toutes les heures (premiere lecture dans 20 s)")); }
+  const poddht::Action a = poddht::next(g_dht, now);
+  if (a == poddht::A_READ) {
+    int t = 0, h = 0; const bool ok = poddht::read(POD_DHT_PIN, t, h);
+    poddht::onRead(g_dht, now, ok, t, h);
+    if (ok) Serial.printf_P(PSTR("[DHT22] %d.%d C, %d.%d %% (en attente d'envoi : %u)\n"), t / 10, abs(t % 10), h / 10, h % 10, (unsigned)g_dht.n);
+    else Serial.printf_P(PSTR("[DHT22] lecture impossible (capteur absent, mal cable ou somme fausse) — nouvel essai dans 5 min (echecs : %lu)\n"), (unsigned long)g_dht.readFails);
+#if POD_OLED_STATUS
+    { char l2[22], l3[22]; if (ok) snprintf(l2, sizeof l2, "T %d.%d C  H %d.%d %%", t / 10, abs(t % 10), h / 10, h % 10); else snprintf(l2, sizeof l2, "capteur: aucune lecture");
+      snprintf(l3, sizeof l3, "lectures %lu echecs %lu", (unsigned long)g_dht.reads, (unsigned long)g_dht.readFails); oledStatus("PoD eink29bwr + DHT22", l2, l3, deviceId.c_str()); }
+#endif
+  } else if (a == poddht::A_SEND) {
+    char body[260]; const size_t n = poddht::buildBody(g_dht, now, deviceId.c_str(), pairCode.c_str(), (int)WiFi.RSSI(), body, sizeof body);
+    if (n == 0) { Serial.println(F("[DHT22] corps trop grand : envoi abandonne")); poddht::onSend(g_dht, now, poddht::S_FAIL, 0); return; }
+    free(blackBuf); blackBuf = nullptr; free(redBuf); redBuf = nullptr;         // règle du projet : aucun tampon image vivant pendant un TLS
+    String resp; bool ok = false;
+    if (ESP.getMaxFreeBlockSize() >= 18000) ok = httpPost("/api/sensor", String(body), resp);      // sinon pas de TLS possible : échec propre, nouvel essai dans 5 min
+    else Serial.printf_P(PSTR("[DHT22] tas contigu insuffisant pour un TLS (%u o) — envoi reporte\n"), (unsigned)ESP.getMaxFreeBlockSize());
+    memset(body, 0, sizeof body);
+    blackBuf = (uint8_t*)malloc(BUF_SIZE); redBuf = (uint8_t*)malloc(BUF_SIZE);
+    if (!blackBuf || !redBuf) { Serial.println(F("[DHT22] malloc des tampons image impossible — redemarrage")); ESP.restart(); }
+    memset(blackBuf, 0xFF, BUF_SIZE); memset(redBuf, 0xFF, BUF_SIZE);
+    if (!ok) { Serial.println(F("[DHT22] envoi echoue — nouvel essai dans 5 min")); poddht::onSend(g_dht, millis(), poddht::S_FAIL, 0); }
+    else if (resp.indexOf("\"stored\":false") >= 0) { const uint32_t ns = poddht::parseNextSec(resp.c_str()); Serial.printf_P(PSTR("[DHT22] serveur : trop tot (attente %lu s) — lectures conservees\n"), (unsigned long)ns); poddht::onSend(g_dht, millis(), poddht::S_TOO_SOON, ns); }
+    else { Serial.println(F("[DHT22] mesures envoyees et stockees")); poddht::onSend(g_dht, millis(), poddht::S_OK, 0); }
+  }
+}
+#endif
 /** Dessine un QR de côté P pixels (modules de largeur entière variable, bornes floor(i·P/n) : P exact, quelle que soit la version) dont le coin haut-gauche LOGIQUE est (x0, y0) ; renvoie P (0 si impossible). */
 static int portalDrawQr(uint8_t* buf, int x0, int y0, int P, const char* text) {
   QRCode q; uint8_t qd[qrcode_getBufferSize(4)]; int ok = -1;
@@ -1878,6 +2033,9 @@ static int portalDrawQr(uint8_t* buf, int x0, int y0, int P, const char* text) {
  *  ⚠ Sur ce panneau l'axe y LOGIQUE est inversé à l'affichage (y = 0 est en BAS ; les glyphes de la police sont stockés à l'envers pour compenser) : toutes les positions ci-dessous sont données en position VISUELLE depuis le haut (yv) puis converties. */
 static bool g_portalDrawn = false;      // remis à false à l'ouverture de chaque session de portail
 static void portalScreen(const char* l1, const char* l2, const char* l3, const char* l4, const char* l5, const char* qr) {
+#if POD_OLED_STATUS
+  portalOledScreen(l1, l2, l3, l4, l5, qr);                  // rapide et dynamique : suit « appareil connecté », « enregistré »…
+#endif
   (void)l2; (void)l4; (void)l5;
   if (!qr || strncmp(qr, "WIFI:", 5) != 0) return;
   if (g_portalDrawn) return;               // UNE image par session : chaque rafraîchissement coûte 15 à 45 s (et use l'écran)
@@ -1938,6 +2096,7 @@ static bool g_portalRequested = false;                // « WIFI-PORTAL » reçu
 static bool wifiHandleLine(const char* line) {
 #if POD_WIFI_PORTAL
   if (strcmp(line, "WIFI-PORTAL") == 0) { g_portalRequested = true; Serial.println(F("[WIFI] portail de configuration demande")); return false; }
+  if (strcmp(line, "ONBOARD") == 0) { g_onboardRequested = true; Serial.println(F("[WIFI] page onboarding demandee")); return false; }
 #endif
   char s[podwifi::SSID_MAX + 1], p[podwifi::PASS_MAX + 1];
   const podwifi::Cmd c = podwifi::parseCommand(line, s, p);
@@ -2073,6 +2232,11 @@ void setup() {
 #endif
 // POD_BWR_END
   Serial.println("[WIFI] IP: " + WiFi.localIP().toString());
+// POD_BWR_BEGIN
+#if POD_OLED_STATUS
+  oledStatus("PoD eink29bwr", "Wi-Fi connecte", WiFi.localIP().toString().c_str(), "enregistrement...");
+#endif
+// POD_BWR_END
   Serial.printf("[HEAP] après WiFi: %u bytes\n", ESP.getFreeHeap());
 #if POD_RENDER_V1 && POD_CANARY
   canaryStep(PCP_WIFI, F("wifi connecte"));
@@ -2127,6 +2291,9 @@ void setup() {
 #if POD_WIFI_FROM_RECORD
   resumeIdBanner();                                  // état PUBLIC de l'identité (jamais la clé privée, le SSID ni le mot de passe)
 #endif
+#if POD_OLED_STATUS
+  oledStatus("PoD eink29bwr", paired ? "Appaire : oui" : "Appaire : non", deviceId.c_str(), WiFi.localIP().toString().c_str());
+#endif
 // POD_BWR_END
 #if POD_RENDER_V1 && POD_CANARY
   canaryStep(PCP_REGISTER, F("register OK"));
@@ -2161,6 +2328,11 @@ void loop() {
     if (!doRegister()) { delay(5000); return; }
   }
 
+// POD_BWR_BEGIN
+#if POD_SENSOR_DHT22
+  sensorService();
+#endif
+// POD_BWR_END
   // ─── Pull périodique ───────────────────────────────────────────────────
   if (now - lastPullMs >= nextPullIntervalMs) {
     String prevCandidateId = pendingCandidateId;

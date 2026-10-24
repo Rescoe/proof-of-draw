@@ -10,7 +10,7 @@ import { readShownRecords, type DisplayKV } from "@/lib/displayState";
 import { animCapable } from "@/lib/anim/pointer";
 import { publicDeviceId } from "@/lib/network/publicId";
 import { hardwareOfFirmware, type Hardware } from "@/lib/network/hardware";
-import { MEASURE_INDEX_KEY, MEASURE_ONLINE_MS, SENSOR_SCREEN, measKey, measureKindsOf, toDeviceMeasures, type DeviceMeasures } from "@/lib/measures";
+import { MEASURE_INDEX_KEY, MEASURE_ONLINE_MS, SENSOR_SCREEN, measKey, measureKindsOf, showsMeasures, toDeviceMeasures, type DeviceMeasures } from "@/lib/measures";
 
 // Ré-exporté pour compatibilité avec les composants qui importent ScreenType
 export type ScreenType = ScreenId;
@@ -160,6 +160,7 @@ export function toNetworkDevice(
   const screens = (Array.isArray(device.screens) ? device.screens : []).filter((s) => s !== SENSOR_SCREEN);
   const kinds = measureKindsOf(device);
   const measures = kinds.length > 0 ? toDeviceMeasures(kinds, latestMeasureRaw) : undefined;
+  const showMeasures = showsMeasures(device, !!measures?.latest);   // une déclaration de capteur sans mesure reçue (aucun capteur branché) n'affiche rien
   // Un capteur est en ligne s'il a MESURÉ récemment (sa fiche n'est réécrite que toutes les 12 h)
   const measuredAtMs = measures?.latest ? measures.latest.t * 1000 : 0;
   const animationScreens = screens.filter((s) => animCapable({ screens, firmware: device.firmware }, s));
@@ -177,7 +178,7 @@ export function toNetworkDevice(
       const meta = getScreenMeta(screen);
       return { screen, label: meta.label, description: meta.description };
     }),
-    ...(measures ? { measures } : {}),
+    ...(measures && showMeasures ? { measures } : {}),
     lastSeen:   Math.max(device.lastSeen ?? 0, measuredAtMs),
     lastPing:   Math.max(device.lastPing ?? 0, measuredAtMs),
     framesSent: device.framesSent ?? 0,

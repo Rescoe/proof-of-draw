@@ -269,3 +269,12 @@ test("PROFIL : une carte sans écran affiche ses mesures (pas de conversion, de 
   assert.deepEqual(kindsOfGroup(["temp", "hum", "rssi", "lat", "dl"], "link"), ["rssi", "lat", "dl"]);
   assert.deepEqual(kindsOfGroup(["temp", "hum"], "link"), []);
 });
+
+import { showsMeasures } from "../lib/measures";
+test("showsMeasures : un appareil AVEC écran n'affiche « Mesures » que s'il a reçu une vraie mesure ; un capteur seul dès sa déclaration", () => {
+  const screenDeclared = { screens: ["tft18"], sensors: ["temp", "hum"] };
+  assert.equal(showsMeasures(screenDeclared, false), false, "déclaration sans mesure : aucun capteur branché");
+  assert.equal(showsMeasures(screenDeclared, true), true);
+  assert.equal(showsMeasures({ screens: ["tft18"] }, true), false, "firmware sans déclaration : jamais");
+  assert.equal(showsMeasures({ screens: ["sensor"], sensors: ["temp", "hum"] }, false), true, "capteur seul : visible dès la déclaration");
+});

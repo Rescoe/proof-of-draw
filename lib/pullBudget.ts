@@ -25,7 +25,8 @@ export const RL_SAMPLED_BLACKLIST = 40;
 export const rlSampled = (rand: number, rate: number = RL_SAMPLE_RATE): boolean => rand < rate;
 
 export function presenceStale(d: { lastSeen?: number; lastPing?: number }, now: number): boolean {
-  return Math.max(d.lastSeen ?? 0, d.lastPing ?? 0) <= now - PRESENCE_REFRESH_MS;
+  // lastPing seul : /api/register rafraichit lastSeen a chaque demarrage, mais validate-candidate et le quorum lisent lastPing. Avec max(lastSeen,lastPing), une carte redemarree souvent restait "inactive" (vote refuse, 24/10/2026).
+  return (d.lastPing ?? 0) <= now - PRESENCE_REFRESH_MS;
 }
 
 // ─── Mode actif / dormant ─────────────────────────────────────────────────────
