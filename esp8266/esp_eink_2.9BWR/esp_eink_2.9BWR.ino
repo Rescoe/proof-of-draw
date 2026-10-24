@@ -140,6 +140,13 @@
 #ifndef POD_SENSOR_DISPLAY
 #define POD_SENSOR_DISPLAY 0
 #endif
+// POD_FRAME_CHUNK = 1 : la frame (9 472 o) est téléchargée en 4 morceaux de POD_FRAME_CHUNK_LEN octets (/api/pull-frame?off=&len=) avec un tampon TLS de réception de POD_TLS_RX octets au lieu de 16 Ko :
+// ≈ 12 Ko de tas en plus pendant le téléchargement (sonde du 24/10/2026 : tas minimal avec les plans alloués 9,8 Ko -> 22,1 Ko). Si le serveur ne connaît pas encore les morceaux, repli AUTOMATIQUE sur le téléchargement d'un seul tenant.
+#ifndef POD_FRAME_CHUNK
+#define POD_FRAME_CHUNK 0
+#endif
+#define POD_FRAME_CHUNK_LEN 2368u   // 4 736 / 2 : un morceau ne traverse jamais la frontière noir / rouge
+#define POD_TLS_RX          4096    // tampon de réception TLS : un morceau + ses en-têtes tiennent largement (mesuré : un corps de 4 Ko passe avec 3 072)
 #if POD_SENSOR_DISPLAY && !POD_SENSOR_DHT22
 #error "POD_SENSOR_DISPLAY exige POD_SENSOR_DHT22 = 1"
 #endif
@@ -1392,6 +1399,43 @@ static uint8_t podRenderAndShow() {
 }
 #endif
 
+// POD_BWR_BEGIN
+#if POD_FRAME_CHUNK
+static_assert((BUF_SIZE % POD_FRAME_CHUNK_LEN) == 0, "un morceau ne doit pas traverser la frontière entre les deux plans");
+/** Remplit blackBuf puis redBuf par morceaux. 1 = complet ; 0 = pas de frame (404) ; 2 = le serveur ne sait pas découper (repli sur l'ancien mode) ; -1 = échec (plans à libérer par l'appelant). */
+static int fetchFrameChunked() {
+  const size_t total = 2 * (size_t)BUF_SIZE;
+  uint32_t minHeap = 0xFFFFFFFFu;
+  for (size_t off = 0; off < total; off += POD_FRAME_CHUNK_LEN) {
+    const size_t len = (total - off) < POD_FRAME_CHUNK_LEN ? (total - off) : POD_FRAME_CHUNK_LEN;
+    uint8_t* dst = off < (size_t)BUF_SIZE ? blackBuf + off : redBuf + (off - BUF_SIZE);
+    int result = -1;
+    {   // une session TLS par morceau, détruite à la sortie du bloc (tampon de réception réduit)
+      WiFiClientSecure client; client.setInsecure(); client.setBufferSizes(POD_TLS_RX, 512);
+      HTTPClient http;
+      const String url = String(SERVER_URL) + "/api/pull-frame?deviceId=" + deviceId + "&fmt=bin&off=" + String((unsigned)off) + "&len=" + String((unsigned)len);
+      if (http.begin(client, url)) {
+        http.setTimeout(20000); http.useHTTP10(true);
+        const int code = http.GET();
+        const uint32_t h = ESP.getFreeHeap(); if (h < minHeap) minHeap = h;
+        if (code == 404 && off == 0) result = 0;
+        else if (code != 200) Serial.printf_P(PSTR("[FETCHFRAME] morceau %u : HTTP %d\n"), (unsigned)off, code);
+        else if (http.getSize() != (int)len) { Serial.printf_P(PSTR("[FETCHFRAME] morceau %u : %d o au lieu de %u (serveur sans morceaux)\n"), (unsigned)off, http.getSize(), (unsigned)len); result = (off == 0) ? 2 : -1; }
+        else {
+          WiFiClient* st = http.getStreamPtr(); size_t got = 0; unsigned long t0 = millis();
+          while (got < len && millis() - t0 < 15000) { if (st->available()) { const size_t n = st->readBytes(dst + got, len - got); if (n > 0) got += n; } else delay(10); const uint32_t hh = ESP.getFreeHeap(); if (hh < minHeap) minHeap = hh; }
+          if (got == len) result = 1; else Serial.printf_P(PSTR("[FETCHFRAME] morceau %u incomplet : %u / %u\n"), (unsigned)off, (unsigned)got, (unsigned)len);
+        }
+        http.end();
+      } else Serial.println(F("[FETCHFRAME] begin() impossible"));
+    }
+    if (result != 1) return result;
+  }
+  Serial.printf_P(PSTR("[FETCHFRAME] frame reçue par morceaux de %u o, tampon TLS %u o, tas minimal %u o\n"), (unsigned)POD_FRAME_CHUNK_LEN, (unsigned)POD_TLS_RX, (unsigned)minHeap);
+  return 1;
+}
+#endif
+// POD_BWR_END
 // ─── FETCH FRAME (route séparée, heap propre après pull léger) ──────────────
 // ─── FETCH FRAME ─────────────────────────────────────────────────────────────
 bool doFetchFrame(const String& frameId, const String& frameSource) {
@@ -1418,6 +1462,16 @@ bool doFetchFrame(const String& frameId, const String& frameSource) {
   }
 #endif
 
+// POD_BWR_BEGIN
+#if POD_FRAME_CHUNK
+  {
+    const int fc = fetchFrameChunked();
+    if (fc == 1) goto frameTlsDone;                       // plans remplis : l'ancien téléchargement d'un seul tenant est sauté
+    if (fc == 0) { Serial.println(F("[FETCHFRAME] Pas de frame")); free(blackBuf); blackBuf = nullptr; free(redBuf); redBuf = nullptr; return true; }
+    if (fc < 0)  { Serial.println(F("[FETCHFRAME] lecture par morceaux échouée")); free(blackBuf); blackBuf = nullptr; free(redBuf); redBuf = nullptr; return false; }
+  }                                                       // fc == 2 : serveur sans morceaux → repli sur le téléchargement historique ci-dessous
+#endif
+// POD_BWR_END
   {
     WiFiClientSecure client;
     client.setInsecure();
@@ -1495,6 +1549,11 @@ bool doFetchFrame(const String& frameId, const String& frameSource) {
       return false;
     }
   }
+// POD_BWR_BEGIN
+#if POD_FRAME_CHUNK
+frameTlsDone:
+#endif
+// POD_BWR_END
   // TLS fermé ici — le panel a eu le temps de finir son refresh précédent
 #if POD_RENDER_V1 && POD_CANARY
   canaryAfterTls();
