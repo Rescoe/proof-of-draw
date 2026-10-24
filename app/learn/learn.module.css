@@ -1386,6 +1386,12 @@
 }
 
 /* ─── Synthèse technique (parcours 04) ─────────────────────────────────────── */
+.matrixH {
+  margin: 1.6rem 0 0.6rem;
+  font-size: 1.05rem;
+  color: var(--text);
+}
+
 .synthTableWrap {
   margin: 0.8rem 0;
   overflow-x: auto;

@@ -180,6 +180,10 @@ export function InstallGuide({ initialProfileId = "eink29bwr" }: { initialProfil
         <Callout tone="warning" title="Combinaison disponible, validation matérielle en attente">
           <p>{selected.statusNote}</p>
         </Callout>
+      ) : selected.statusNote ? (
+        <Callout tone="info" title="Ce qui a été observé sur du matériel">
+          <p>{selected.statusNote}</p>
+        </Callout>
       ) : null}
 
       <InstallStep number={2} title="Préparer le matériel" icon={<Cpu size={20} />} id="install-step-2">

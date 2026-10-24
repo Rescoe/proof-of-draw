@@ -86,6 +86,7 @@ La page publique ne doit jamais présenter une option DHT22, OLED ou trafic comm
 3. le niveau de preuve réel (`C`, `M`, `P`, `V2`, `OTA`) et le lien vers le journal/procédure ;
 4. la décision de diffusion : expérimental, canari ciblé, stable ou interdit ;
 5. la page Installer/README seulement lorsque le profil devient publiable.
+6. **La page « Apprendre → Compatibilité matérielle » est le rendu direct de ce fichier** (aucune copie) ; `tests/hardwareMatrix.test.ts` doit passer : il vérifie que les profils d'installation (`testedOnHardware`), les avertissements de `/api/esp-firmware`, la table de la synthèse technique et les firmwares téléchargeables (options capteur/OLED à 0, version compatible avec le client OTA) restent cohérents avec cette matrice. Un test qui échoue signale qu'une moitié n'a pas été mise à jour dans le même lot.
 
 Interdit de faire passer une case de `C` à `M`, `V2` ou `OTA` sans journal matériel archivé. Interdit aussi de déduire qu'une variante capteur est sûre parce que le firmware sans capteur a réussi une OTA.
 

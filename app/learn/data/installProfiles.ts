@@ -107,7 +107,8 @@ export const INSTALL_PROFILES: Record<InstallProfileId, InstallProfile> = {
     moduleReference: "Waveshare 2.7inch e-Paper V2",
     shortDescription: "Écran e-ink noir et blanc utilisé seul, sans OLED secondaire.",
     wiringIntro: "Reliez les huit fils du module aux broches D0 à D8 indiquées sur le NodeMCU.",
-    wiring: [WIRING.eink27bw], specificLibraries: [], accent: "#e5e7eb", testedOnHardware: true,
+    wiring: [WIRING.eink27bw], specificLibraries: [], accent: "#e5e7eb", testedOnHardware: false,
+    statusNote: "Port ESP8266 avec vote réel v2 (eink27bw-2.1) compilé, jamais essayé sur une carte. Le multiscreen (même e-ink 2,7″ avec un OLED) est le profil éprouvé : voir la matrice de compatibilité.",
   },
   eink27bwOled: {
     id: "eink27bwOled", boardId: "esp8266", installScreenId: "eink27bwOled",
@@ -147,8 +148,8 @@ export const INSTALL_PROFILES: Record<InstallProfileId, InstallProfile> = {
     moduleReference: "Waveshare 2.9inch e-Paper B V4",
     shortDescription: "Le même e-ink trois couleurs, piloté par une UNO R4 WiFi avec buffers statiques.",
     wiringIntro: "Utilisez le SPI matériel de la R4 : DIN sur D11 et CLK sur D13, puis les quatre lignes de contrôle.",
-    wiring: [WIRING.r4Eink29], specificLibraries: [], accent: "#ef4444", testedOnHardware: false,
-    statusNote: "Le firmware compile et son lecteur réseau est testé sur PC, mais cette combinaison doit encore être validée sur une carte physique.",
+    wiring: [WIRING.r4Eink29], specificLibraries: [], accent: "#ef4444", testedOnHardware: true,
+    statusNote: "Vote réel v2, réception et affichage observés sur une UNO R4 (blocs #100 et #101, 14/10/2026, firmware r4eink29-1.1). Pas de mise à jour à distance (OTA) pour les profils UNO R4 : voir la matrice de compatibilité.",
   },
   r4Eink27: {
     id: "r4Eink27", boardId: "unoR4", installScreenId: "eink27bwSolo",
@@ -208,8 +209,8 @@ export const INSTALL_PROFILES: Record<InstallProfileId, InstallProfile> = {
       { name: "Adafruit BusIO", version: "dernière version", purpose: "Bus matériel utilisé par les pilotes Adafruit." },
       { name: "Adafruit STMPE610", version: "dernière version", purpose: "Contrôleur tactile du shield." },
     ],
-    accent: "#2dd4bf", testedOnHardware: false,
-    statusNote: "Le firmware, le serveur et le lecteur HTTP sont vérifiés sans matériel ; le parcours complet Wi-Fi, tactile et microSD reste à tester sur la carte.",
+    accent: "#2dd4bf", testedOnHardware: true,
+    statusNote: "Vote réel v2, réception, affichage et ACK observés sur une UNO R4 (14/10/2026, firmware r4tft28-2.5). Les animations et la microSD sont qualifiées à part ; pas de mise à jour à distance (OTA) : voir la matrice de compatibilité.",
   },
 };
 
