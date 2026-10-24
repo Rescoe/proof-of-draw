@@ -53,6 +53,11 @@ Une case `OTA` ne garantit pas que toute future variante de la famille a été v
 
 Les essais OTA R4 de laboratoire ont prouvé le mécanisme de reprogrammation Wi-Fi et la conservation de l'état sur une R4 de canari. Ils ne constituent **pas** encore un client OTA applicatif distribué pour les profils R4 ci-dessus.
 
+## Chantiers connus (non commencés, à ne pas présenter comme disponibles)
+
+- **BWR 2,9″ + OLED en second écran du réseau** (comme le multiscreen) : aujourd'hui l'OLED du BWR n'affiche que l'état (Wi-Fi, mesure) et il est **désactivé** parce qu'il empêche le téléchargement des frames. Pistes : récupérer au moins 3 Ko de tas (pilote OLED minimal sans bibliothèque Adafruit, un seul tampon de page ; libération avant chaque TLS). Un OLED qui reçoit des frames serait un **nouveau profil** (famille OTA propre, préfixe de vote, page Installer), pas une option.
+- **Mise à jour à distance du TFT + DHT22** : release `tft18-2.10-ota7` publiée, installation non aboutie ; cause à établir (journaux serveur d'observabilité, puis essai sur place).
+
 ## Règle de composition : éviter l'explosion combinatoire
 
 Un firmware public est défini par :
