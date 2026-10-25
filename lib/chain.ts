@@ -41,6 +41,7 @@ import { voterKey, type CandidateEligibility } from "@/lib/eligibility";
 import { blockReceiptsEnabled, prepareBlockV2, sealBlockV2, type MinerCommit, type ReceiptsDoc } from "@/lib/blockReceipts";
 import type { CandidateCommittee } from "@/lib/committee";
 import { drawMiner, minerDeviceFor } from "@/lib/podProtocolV3";
+import { walkCanonicalChain, type WalkResult } from "@/lib/chainWalk";
 
 export interface Block {
   blockIndex: number;
@@ -270,6 +271,26 @@ export async function getBlockImages(hashes: string[]): Promise<(BlockImagePaylo
     if (!raw) return null;
     try { return typeof raw === "string" ? (JSON.parse(raw) as BlockImagePayload) : (raw as BlockImagePayload); } catch { return null; }
   });
+}
+
+/**
+ * Toute la chaîne CANONIQUE (de la tête au genesis, sans images) pour l'explorateur /gallery. Lecture seule.
+ * Quota Redis : la chaîne sous une tête donnée ne change jamais ; le résultat est donc mis en cache PAR HASH DE TÊTE (cache de données Next, partagé entre les invocations) :
+ * une requête de galerie coûte 1 GET (la tête) tant qu'aucun bloc n'est miné, et un parcours complet (≈ 1 LRANGE + 1 MGET + 1 GET par bloc au-delà des 100 derniers) seulement après un nouveau bloc.
+ */
+export async function getCanonicalChain(): Promise<WalkResult> {
+  const head = await getChainHead();
+  if (!head) return { blocks: [], complete: true };
+  return unstable_cache(
+    async (_headHash: string) => walkCanonicalChain({
+      head: async () => head,
+      recent: async () => (await redis.lrange<string>(KEY_RECENT, 0, RECENT_MAX - 1)) ?? [],
+      many: getBlocksAligned,
+      one: getBlockByHash,
+    }),
+    ["canonical-chain"],
+    { revalidate: 86400, tags: ["recent-blocks"] },
+  )(head.blockHash);
 }
 
 // ── Lecture groupée pour /api/pull (quota Redis : tout part dans UN SEUL MGET) ──────────────────────────────────────────────
