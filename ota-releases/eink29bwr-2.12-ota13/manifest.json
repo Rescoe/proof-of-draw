@@ -1,0 +1,31 @@
+{
+  "schema": "pod-ota-manifest-v2",
+  "releaseId": "eink29bwr-2.12-ota13",
+  "family": "esp8266-eink29bwr",
+  "profile": {
+    "board": "esp8266",
+    "screen": "eink29bwr",
+    "flash": "4M2M"
+  },
+  "channel": "canary",
+  "firmwareVersion": "eink29bwr-2.12",
+  "otaSeq": 13,
+  "minOtaSeq": 1,
+  "revokedSeqs": [],
+  "url": "/firmware/eink29bwr-2.12-ota13/image.bin",
+  "size": 550320,
+  "sha256": "3fa93fbc3a0d0fc987f72d98de68801eed3f9a7deca31971a189ec24908f717a",
+  "wave": {
+    "of": 100,
+    "upTo": 100
+  },
+  "canaryDevices": [
+    "dev_MN67OG7R"
+  ],
+  "notes": "BANC dev_MN67OG7R : memes sources que 2.12 pour dev_T46HBXG1, sequence 13, diagnostic du demarrage",
+  "signature": {
+    "alg": "rsa2048-pkcs1-sha256",
+    "keyId": "ota-a",
+    "sig": "tB2VZBzU3bPYyLhImDgQ7/PmkZKrggx3oum9CD0J/zC65XV3kNEtrLazgXk4yXyFAZFYgtPIdTjLn1BVpOhQkfxHZV2zWsNLPw/7D3GmkfeeAQUJv2OtuS3EQiGPMAEjdt0DAOuCFgpnVi8LioA6VvecpXYl4CPDgOusULdqqawLUqoYUenPNgnstDtoaxBpIqAT38P8w+fpOAGrt0l36VK9ysmlKuFnMHIaJbmwKlZ7TP7dawcVjjQi4XNTlaQsvWcY7rsGPboRz8qt8tmbFwZCj8+fDKnBa9OffLrv5JSs5e/sSStjmk2sVWd2YVt4UHr2ITJ0KH0PEwvBA4+r6Q=="
+  }
+}
