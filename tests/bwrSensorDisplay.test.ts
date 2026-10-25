@@ -43,9 +43,11 @@ test("BWR surimpression : le rafraîchissement n'a lieu que si la mesure affich�
 test("BWR surimpression v2 (25/10/2026) : mise en page à capteur (date+bloc+titre / mesure + heure du relevé / artiste), mesure gravée persistée, rafraîchissement possible après un redémarrage", () => {
   assert.match(ino, /#include "pod_civil\.h"/);
   assert.match(ino, /"%s%d\.%dC %d\.%d%%"/, "température ET humidité avec une décimale");
-  assert.match(ino, /clearRows29\(bBuf, BAND \+ 1, 2 \* BAND\)/, "deuxième bande réservée à la mesure");
-  assert.match(ino, /releve %s/);
-  assert.match(ino, /if \(envLayout && artistName\.length\(\) > 0\) botLine = artistName;/, "le titre est en haut : l'artiste seul reste en bas");
+  assert.match(ino, /const int MB = 9;/, "bande de mesure de 9 lignes seulement");
+  assert.match(ino, /clearRows29\(bBuf, 0, MB - 1\)/);
+  assert.match(ino, /hi \+= " - " \+ artistName;/, "une seule bande d'information : date, bloc, titre et artiste fusionnés");
+  assert.doesNotMatch(ino, /envLayout/, "plus de troisième bande");
+  assert.doesNotMatch(ino, /releve %s/);
   assert.match(ino, /#define ENV_EE_OFF 620/);
   const refresh = ino.slice(ino.indexOf("static void envRefresh()"), ino.indexOf("static void envEePersist") > 0 ? ino.indexOf("/** Heure locale de l'écran") : undefined);
   assert.doesNotMatch(refresh.split("\n").slice(0, 3).join("\n"), /hasDisplayedFrame/, "plus d'exigence de frame affichée depuis le démarrage");

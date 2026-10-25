@@ -70,13 +70,13 @@
 // POD_WIFI_PORTAL = 1 (avec FROM_RECORD) : sans enregistrement, après un échec de connexion, bouton FLASH 2 s ou commande série WIFI-PORTAL : point d'accès « PoD-XXXX » + page locale.
 // Défaut 0 : NON essayé sur cette carte. docs/PORTAIL_WIFI_PREMIERE_CONNEXION_2026_10_22.md
 #ifndef POD_WIFI_FROM_RECORD
-#define POD_WIFI_FROM_RECORD 1             // PROFIL DE DISTRIBUTION (23/10/2026) : aucun identifiant dans le binaire, Wi-Fi saisi par le portail
+#define POD_WIFI_FROM_RECORD 0
 #endif
 #ifndef POD_WIFI_MIGRATE
 #define POD_WIFI_MIGRATE 0
 #endif
 #ifndef POD_WIFI_PORTAL
-#define POD_WIFI_PORTAL 1                  // PROFIL DE DISTRIBUTION (23/10/2026) : portail de première connexion
+#define POD_WIFI_PORTAL 0
 #endif
 #if POD_WIFI_PORTAL && !POD_WIFI_FROM_RECORD
   #error "POD_WIFI_PORTAL exige POD_WIFI_FROM_RECORD = 1"
@@ -158,17 +158,14 @@
 // POD_OTA = 1 : socle de mise à jour signée (enregistrement d'état EEPROM 420..447, anti-downgrade, vérificateur RSA, trailer signé). POD_OTA_CLIENT = 1 (exige POD_OTA = 1 ET le Wi-Fi hors binaire) : client Internet
 // authentifié (TLS aux racines épinglées, jamais setInsecure) qui suit l'annonce `ota` de /api/pull. Famille liée à la signature : une image d'un autre écran est refusée. NON essayé sur la carte.
 #ifndef POD_OTA
-#define POD_OTA 1                          // PROFIL DE DISTRIBUTION (23/10/2026) : mises à jour signées activées (le dossier téléchargé contient les clés PUBLIQUES de publication)
-#endif
-#ifndef POD_OTA_CLIENT
-#define POD_OTA_CLIENT 1                   // PROFIL DE DISTRIBUTION (23/10/2026) : client OTA Internet (TLS authentifié) ; exige le Wi-Fi hors binaire
+#define POD_OTA 0
 #endif
 #ifndef POD_OTA_SEQ
-#define POD_OTA_SEQ 7
+#define POD_OTA_SEQ 1
 #endif
 #define POD_OTA_FAMILY "esp8266-eink29bwr"
 #ifndef FIRMWARE_VERSION
-#define FIRMWARE_VERSION "eink29bwr-2.5"
+#define FIRMWARE_VERSION "eink29bwr-2.3"
 #endif
 #if defined(POD_OTA_CLIENT) && POD_OTA_CLIENT && !POD_WIFI_FROM_RECORD
 #error "POD_OTA_CLIENT exige POD_WIFI_FROM_RECORD = 1 (jamais d'identifiant Wi-Fi dans un binaire OTA)"
@@ -875,7 +872,28 @@ void burnEinkCartel_29(uint8_t* bBuf, uint8_t* rBuf,
   const int BAND = 13;  // hauteur des bandes en pixels
 // POD_BWR_BEGIN
 #if POD_SENSOR_DISPLAY
-  bool envLayout = false;   // écran avec capteur et mesure récente : bande haute = date + bloc + titre ; deuxième bande = mesure ; bande basse = artiste
+  // Écran avec capteur et mesure récente : bande basse VISUELLE (lignes logiques 0..8, axe y inversé) = mesure en rouge, 9 lignes seulement ;
+  // bande haute VISUELLE = « date #bloc titre - artiste » ; tout le reste est l'image (une bande de moins qu'avant la fusion).
+  if (g_envLine[0] && (uint32_t)(millis() - g_envAtMs) < 7200000UL) {   // une mesure de plus de 2 h n'est plus affichée
+    const int MB = 9;
+    clearRows29(bBuf, 0, MB - 1); if (rBuf) clearRows29(rBuf, 0, MB - 1);
+    drawHLine29(bBuf, MB);
+    char ln[48]; char when[12];
+    if (podcivil::formatShort(g_envMeasLocal, when)) snprintf(ln, sizeof ln, "%s  %s", g_envLine, when); else snprintf(ln, sizeof ln, "%s", g_envLine);
+    envDrawText(rBuf ? rBuf : bBuf, max(0, (IMG_W - envTextWidth(ln)) / 2), 1, ln);
+    g_envEngT10 = g_envT10; g_envEngH10 = g_envH10; g_envEngAtMs = millis(); if (g_envEngAtMs == 0) g_envEngAtMs = 1;   // ce qui va être sur le panneau
+    g_envPersistPending = true;
+    String hi = ts.length() > 0 ? ts : "PROOF-OF-DRAW";
+    if (blockIndex >= 0) hi += " #" + String(blockIndex);
+    if (workTitle.length() > 0) hi += " " + workTitle;
+    if (artistName.length() > 0) hi += " - " + artistName;
+    while (hi.length() > 0 && textWidth(hi) > IMG_W - 6) hi.remove(hi.length() - 1);
+    const int hiSep = IMG_H - BAND - 1;
+    clearRows29(bBuf, hiSep + 1, IMG_H - 1); if (rBuf) clearRows29(rBuf, hiSep + 1, IMG_H - 1);
+    drawHLine29(bBuf, hiSep);
+    drawText(bBuf, 3, hiSep + 2, hi);
+    return;
+  }
 #endif
 // POD_BWR_END
 
@@ -889,23 +907,6 @@ void burnEinkCartel_29(uint8_t* bBuf, uint8_t* rBuf,
   while (topLine.length() > 0 && textWidth(topLine) > IMG_W - 4)
     topLine.remove(topLine.length() - 1);
   int topX = max(0, (IMG_W - textWidth(topLine)) / 2);
-// POD_BWR_BEGIN
-#if POD_SENSOR_DISPLAY
-  if (g_envLine[0] && (uint32_t)(millis() - g_envAtMs) < 7200000UL) {   // une mesure de plus de 2 h n'est plus affichée
-    envLayout = true;
-    if (workTitle.length() > 0) { topLine += " " + workTitle; while (topLine.length() > 0 && textWidth(topLine) > IMG_W - 6) topLine.remove(topLine.length() - 1); }   // le titre passe en haut
-    topX = 3;
-    // deuxième bande (lignes 14 à 26) : « 14.4C 78.2%  releve 25/10 10:09 », EN ROUGE
-    clearRows29(bBuf, BAND + 1, 2 * BAND); if (rBuf) clearRows29(rBuf, BAND + 1, 2 * BAND);
-    drawHLine29(bBuf, 2 * BAND + 1);
-    char ln[48]; char when[12];
-    if (podcivil::formatShort(g_envMeasLocal, when)) snprintf(ln, sizeof ln, "%s  releve %s", g_envLine, when); else snprintf(ln, sizeof ln, "%s", g_envLine);
-    envDrawText(rBuf ? rBuf : bBuf, 3, BAND + 3, ln);
-    g_envEngT10 = g_envT10; g_envEngH10 = g_envH10; g_envEngAtMs = millis(); if (g_envEngAtMs == 0) g_envEngAtMs = 1;   // ce qui va être sur le panneau
-    g_envPersistPending = true;
-  }
-#endif
-// POD_BWR_END
   drawText(bBuf, topX, 2, topLine);
 
   // ── Bande basse ──────────────────────────────────────────────────────────
@@ -921,11 +922,6 @@ void burnEinkCartel_29(uint8_t* bBuf, uint8_t* rBuf,
     botLine = artistName;
   else if (workTitle.length() > 0)
     botLine = workTitle;
-// POD_BWR_BEGIN
-#if POD_SENSOR_DISPLAY
-  if (envLayout && artistName.length() > 0) botLine = artistName;      // le titre est déjà dans la bande haute
-#endif
-// POD_BWR_END
   if (botLine.length() == 0) botLine = "Proof-of-Draw";
 
   while (botLine.length() > 0 && textWidth(botLine) > IMG_W - 4)
