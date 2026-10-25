@@ -1,0 +1,31 @@
+{
+  "schema": "pod-ota-manifest-v2",
+  "releaseId": "eink29bwr-2.9-ota9",
+  "family": "esp8266-eink29bwr",
+  "profile": {
+    "board": "esp8266",
+    "screen": "eink29bwr",
+    "flash": "4M2M"
+  },
+  "channel": "canary",
+  "firmwareVersion": "eink29bwr-2.9",
+  "otaSeq": 9,
+  "minOtaSeq": 1,
+  "revokedSeqs": [],
+  "url": "/firmware/eink29bwr-2.9-ota9/image.bin",
+  "size": 535776,
+  "sha256": "b2097eb1d9b1b15601869df55fa7e522c7d0f4ddc846f4ad76c9b4e818cb5ef3",
+  "wave": {
+    "of": 100,
+    "upTo": 100
+  },
+  "canaryDevices": [
+    "dev_MN67OG7R"
+  ],
+  "notes": "eink29bwr-2.9 : frame par morceaux, textes en flash, temperature/humidite gravees (1 decimale, heure du releve, fuseau), canari banc dev_MN67OG7R",
+  "signature": {
+    "alg": "rsa2048-pkcs1-sha256",
+    "keyId": "ota-a",
+    "sig": "vjCaApt128EBKWa3mHfmGHmx9UcN45zycV6bGFlfwZJwmtfQIw4txVxO7buwt2wN4cKAnPME0wi7IqJ4RGJwi1NyYMZKb59qN9jW8VHr0YkP+bQV3LV9wMJOn/sEQxMITIfRFdwRBrDMap+puHkq+m01Fri46TwozI0GPTVJHgOqazDmwavVn4kq4K7utpS3NxGSLnxUXlz4t6nfHAsRL9WnqqjVveDcJcLFW49HvYX2uTFfsvYN9+2K3Okpid3OFb9cbiBoix75B3htmtfm5CxRugPJZ9gMtyYcJd/nAO+fXBRQZZXO3sJspzjdxBVtk6wEIfVFHrSZQ05OPfxRrg=="
+  }
+}
