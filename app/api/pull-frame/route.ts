@@ -6,9 +6,21 @@ import { frameKey, parseStoredFrame, oldestFrame, type StoredFrame } from "@/lib
 import { SCREEN_IDS } from "@/lib/screenProfiles";
 import { isSceneScreen, selectDelivery } from "@/lib/scene/delivery";
 import { getScenePackage } from "@/lib/scene/store";
+import { parseFrameSlice } from "@/lib/frameSlice";
 
 const DEVICE_ID_REGEX = /^dev_[A-Z0-9]{8}$/;
 const personalKey = (deviceId: string) => `personal:frame:${deviceId}`;
+
+/** Réponse binaire : complète (comportement historique) ou, avec ?off=&len=, un MORCEAU de ≤ 4 Ko (lib/frameSlice.ts). */
+function binResponse(bytes: Uint8Array, url: URL): NextResponse {
+  const sl = parseFrameSlice(url.searchParams.get("off"), url.searchParams.get("len"), bytes.length);
+  if (!sl.ok) return NextResponse.json({ error: sl.error }, { status: 400 });
+  const body = sl.whole ? bytes : bytes.subarray(sl.off, sl.end);
+  return new NextResponse(new Uint8Array(body), {
+    status: 200,
+    headers: { "Content-Type": "application/octet-stream", "Content-Length": String(body.length), "X-Frame-Total": String(bytes.length) },
+  });
+}
 
 export async function GET(req: NextRequest) {
   try {
@@ -111,13 +123,7 @@ export async function GET(req: NextRequest) {
         const redBytes   = Buffer.from(red,   "base64");
         const combined   = Buffer.concat([blackBytes, redBytes]); // 9472 bytes
 
-        return new NextResponse(combined, {
-          status: 200,
-          headers: {
-            "Content-Type":   "application/octet-stream",
-            "Content-Length": String(combined.length),
-          },
-        });
+        return binResponse(combined, url);
       }
       return NextResponse.json({ frameId, ...payload });
     }
@@ -133,13 +139,7 @@ export async function GET(req: NextRequest) {
       if (fmt === "bin") {
         const bytes = Buffer.from(buffer, "base64");
 
-        return new NextResponse(bytes, {
-          status: 200,
-          headers: {
-            "Content-Type":   "application/octet-stream",
-            "Content-Length": String(bytes.length),
-          },
-        });
+        return binResponse(bytes, url);
       }
       return NextResponse.json({ frameId, ...payload });
     }
@@ -155,13 +155,7 @@ export async function GET(req: NextRequest) {
       if (fmt === "bin") {
         const bytes = Buffer.from(buffer, "base64");
 
-        return new NextResponse(bytes, {
-          status: 200,
-          headers: {
-            "Content-Type":   "application/octet-stream",
-            "Content-Length": String(bytes.length),
-          },
-        });
+        return binResponse(bytes, url);
       }
       return NextResponse.json({ frameId, ...payload });
     }
@@ -178,13 +172,7 @@ export async function GET(req: NextRequest) {
       if (fmt === "bin") {
         const bytes = Buffer.from(buffer, "base64");
 
-        return new NextResponse(new Uint8Array(bytes), {
-          status: 200,
-          headers: {
-            "Content-Type":   "application/octet-stream",
-            "Content-Length": String(bytes.length),
-          },
-        });
+        return binResponse(bytes, url);
       }
       return NextResponse.json({ frameId, ...payload });
     }
