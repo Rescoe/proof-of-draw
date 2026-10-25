@@ -1,0 +1,31 @@
+{
+  "schema": "pod-ota-manifest-v2",
+  "releaseId": "eink29bwr-2.11-ota11",
+  "family": "esp8266-eink29bwr",
+  "profile": {
+    "board": "esp8266",
+    "screen": "eink29bwr",
+    "flash": "4M2M"
+  },
+  "channel": "canary",
+  "firmwareVersion": "eink29bwr-2.11",
+  "otaSeq": 11,
+  "minOtaSeq": 1,
+  "revokedSeqs": [],
+  "url": "/firmware/eink29bwr-2.11-ota11/image.bin",
+  "size": 550240,
+  "sha256": "dc64d662cb833540b0cb8cf48a8d94b9c4968b7e0869a81097dc37c3e5728a7a",
+  "wave": {
+    "of": 100,
+    "upTo": 100
+  },
+  "canaryDevices": [
+    "dev_MN67OG7R"
+  ],
+  "notes": "eink29bwr-2.11 : variante OLED (etat/portail) + DHT22 + frame par morceaux, canari banc dev_MN67OG7R",
+  "signature": {
+    "alg": "rsa2048-pkcs1-sha256",
+    "keyId": "ota-a",
+    "sig": "k+G+akvVB4HZmS2tfkQqJ5CVPgAtQPMqxLgTUgm+7Jcibi+nxo0hjWYZU909BNN8F2fuKp73VFsxlqNH5miZh8PLjTn/h8C24THa+nNSqUx08NDN4KYujBhFJkF9wYLeH0wS1yzUHwXw2lzq15XixjXdzz30us3LeRvQwWXvtfxgrmB1GIhwy2Z0jQcKpaEN3EmCJWwV/h2ZuHb45sintDlzqHQvPUbaj8Rl1y9jj/kPQtPKAbgMWxeSwaoGwC/brM6teNUL6ZemmjUg5qMj8/innzTXcON54E7qaWJbrnXYoNtSno0X94pRWxo5r6ffVOgDHI7E63hQuEiHUzFxRA=="
+  }
+}
