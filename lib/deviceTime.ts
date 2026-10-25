@@ -39,6 +39,11 @@ export function parseParisCartelTs(ts: string | null | undefined): number | null
   utc = naive - utcOffsetMinutes("Europe/Paris", utc) * 60000;
   return utc;
 }
+/** Instant (ms) → « JJ/MM/AAAA HH:MM (Paris) », format historique du cartel : date de MINAGE du bloc dont on renvoie l'image (« Afficher sur mon écran »), pas celle de la tête de chaîne. */
+export function parisCartelTs(epochMs: number): string {
+  const p = partsIn("Europe/Paris", epochMs);
+  return `${pad2(p.day)}/${pad2(p.month)}/${p.year} ${pad2(p.hour)}:${pad2(p.minute)} (Paris)`;
+}
 /** Horodatage du cartel d'un écran à capteur : heure locale courte « JJ/MM HH:MM », sans « (Paris) » ; null si le texte source est inconnu. */
 export function cartelTimestampFor(ts: string | null | undefined, tz: string): string | null {
   const ms = parseParisCartelTs(ts);

@@ -1,7 +1,7 @@
 // tests/deviceTime.test.ts — fuseau horaire par appareil (25/10/2026).
 import test from "node:test";
 import assert from "node:assert/strict";
-import { DEFAULT_TIMEZONE, cartelTimestampFor, formatLocalShort, isValidTimezone, parseParisCartelTs, timezoneOf, utcOffsetMinutes } from "../lib/deviceTime";
+import { DEFAULT_TIMEZONE, cartelTimestampFor, formatLocalShort, isValidTimezone, parisCartelTs, parseParisCartelTs, timezoneOf, utcOffsetMinutes } from "../lib/deviceTime";
 
 test("validation du fuseau : noms IANA connus acceptés, tout le reste refusé", () => {
   for (const ok of ["Europe/Paris", "America/New_York", "Asia/Tokyo", "UTC", "America/Argentina/Buenos_Aires"]) assert.equal(isValidTimezone(ok), true, ok);
@@ -35,4 +35,12 @@ test("aller-retour : parse puis formatage à Paris redonne l'heure d'origine (ho
     const ms = parseParisCartelTs(s)!; assert.ok(ms > 0, s);
     assert.equal(formatLocalShort(ms, "Europe/Paris"), s.slice(0, 5) + " " + s.slice(11, 16), s);
   }
+});
+
+test("parisCartelTs : date de minage du bloc renvoyé (et non celle de la tête de chaîne), aller-retour avec parseParisCartelTs, heure d'été et d'hiver", () => {
+  const summer = Date.UTC(2026, 5, 6, 4, 56);      // 06/06/2026 06:56 à Paris (UTC+2)
+  assert.equal(parisCartelTs(summer), "06/06/2026 06:56 (Paris)");
+  const winter = Date.UTC(2026, 0, 15, 11, 5);     // 15/01/2026 12:05 à Paris (UTC+1)
+  assert.equal(parisCartelTs(winter), "15/01/2026 12:05 (Paris)");
+  assert.equal(parseParisCartelTs(parisCartelTs(summer)), summer);
 });

@@ -23,6 +23,7 @@ import { decodeClip } from "@/lib/bench/clip";
 import { posterFor, type AnimScreen } from "@/lib/anim/block";
 import { getIP, isBlacklisted, forbidden } from "@/lib/rateLimit";
 import { markHot } from "@/lib/hot";
+import { parisCartelTs } from "@/lib/deviceTime";
 
 const DEVICE_ID_REGEX = /^dev_[A-Z0-9]{8}$/;
 const HASH_REGEX      = /^[0-9a-f]{64}$/;
@@ -66,6 +67,7 @@ export async function POST(req: NextRequest) {
   let workTitle: string | undefined;
   let drawArtistName: string | undefined;
   let blockIndex: number | undefined;     // n° du bloc d'origine : le cartel de l'écran doit afficher CELUI-LÀ, pas la tête de chaîne
+  let displayTs: string | undefined;      // date de minage du bloc d'origine (sinon /api/pull retombait sur celle de la tête de chaîne)
   let animPtr: AnimPointer | null = null; // bloc d'ANIMATION : l'écran rapatrie le clip et le joue en boucle
 
   if (source === "human") {
@@ -75,6 +77,7 @@ export async function POST(req: NextRequest) {
     workTitle = block.workTitle;
     drawArtistName = block.drawArtistName ?? block.artistName;
     blockIndex = block.blockIndex;
+    if (typeof block.minedAt === "number") displayTs = parisCartelTs(block.minedAt);
     if (block.kind === "animation") {
       // Le clip est le même pour tous les écrans dynamiques : il se réaffiche sur n'importe lequel de TES écrans dont le firmware (version déclarée) lit les
       // animations (TFT 2.8", TFT 1.8", OLED) — l'affiche est rendue pour CET écran depuis le clip. Jamais sur un e-ink ni sur un firmware ancien.
@@ -97,6 +100,7 @@ export async function POST(req: NextRequest) {
     workTitle = block.workTitle;
     drawArtistName = block.drawArtistName ?? block.artistName;
     blockIndex = block.blockIndex;
+    if (typeof block.minedAt === "number") displayTs = parisCartelTs(block.minedAt);
     // Bloc natif de l'écran cible dans la même œuvre, s'il existe
     const key = anaGroupKey(block);
     const sibling = (await getRecentAnaWorks()).find((w) => w.groupKey === key)
@@ -124,7 +128,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Trop d'envois (10/heure max par écran)" }, { status: 429 });
 
   const stored = JSON.stringify({
-    payload: { ...payload, screen, ...(animPtr ? { anim: animPtr } : {}), ...(workTitle ? { workTitle } : {}), ...(drawArtistName ? { drawArtistName } : {}), ...(typeof blockIndex === "number" ? { blockIndex } : {}) },
+    payload: { ...payload, screen, ...(animPtr ? { anim: animPtr } : {}), ...(workTitle ? { workTitle } : {}), ...(drawArtistName ? { drawArtistName } : {}), ...(typeof blockIndex === "number" ? { blockIndex } : {}), ...(displayTs ? { displayTs } : {}) },
     frameId:   crypto.randomUUID(),
     createdAt: Date.now(),
     personal:  true,
