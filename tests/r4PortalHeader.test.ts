@@ -20,3 +20,12 @@ test("l'en-tête du portail R4 tient dans son tampon, avec une marge, pour les c
   assert.ok(text.length > 259, "garde-fou du test : l'ancien tampon de 260 o aurait tronqué cet en-tête");
   assert.match(fn, /hn >= \(int\)sizeof h\) return;/, "jamais d'en-tête tronqué envoyé");
 });
+
+test("la requête est lue en FLUX : seuls la 1re ligne, Content-Length et le corps sont gardés (les en-têtes d'un téléphone dépassent 600 o)", () => {
+  const fn = src.slice(src.indexOf("static bool __attribute__((noinline)) serveOnce("), src.indexOf("typedef void (*ScreenFn)"));
+  assert.doesNotMatch(fn, /strstr\(c->req, "\r\n\r\n"\)/, "plus de recherche de la fin des en-têtes dans un tampon borné");
+  assert.match(fn, /strncasecmp\(name, "content-length:", 15\) == 0/, "Content-Length insensible à la casse");
+  assert.match(fn, /state == 2/);
+  assert.match(fn, /strncmp\(c->line1, "POST \/save ", 11\) == 0 && state == 2/);
+  assert.match(src, /char line1\[48\]/);
+});

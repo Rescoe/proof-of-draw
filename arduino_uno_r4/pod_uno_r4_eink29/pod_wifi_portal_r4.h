@@ -19,7 +19,7 @@ namespace podportalr4 {
 enum Exit : uint8_t { EXIT_SAVED = 1, EXIT_TIMEOUT = 2, EXIT_FAILED = 5 };
 
 static const int PAGE_CAP = 384;        // tampon de la page : la page est envoyée EN FLUX par morceaux (Buf::stream) ; sert aussi de zone de travail au traitement du formulaire (304 o)
-static const int REQ_CAP = 640;         // requête HTTP lue (en-têtes + corps du formulaire : 4 champs, mot de passe de 63 octets au plus)
+static const int REQ_CAP = 640;         // CORPS du formulaire (4 champs, tout en %XX au pire : ≈ 500 o) ; les en-têtes ne sont pas conservés
 static const int NETS_CAP = 6;          // réseaux proposés (les plus forts)
 
 /** EEPROM vue par pod_wifi_cfg.h : lecture directe, écriture groupée (UNE réécriture du bloc de flash pour tout l'enregistrement), relecture réelle (la flash de données se lit en direct). */
@@ -36,7 +36,8 @@ struct Ctx {
   int nNets;
   char apName[9], apPass[9], tok[17];
   char page[PAGE_CAP];
-  char req[REQ_CAP];
+  char req[REQ_CAP];          // CORPS de la requête (le formulaire) ; la 1re ligne est dans line1
+  char line1[48];
   podportal::Session sess;
   podportal::FormResult shown;
   bool saved; uint32_t savedAt; unsigned savedS, savedP;
@@ -44,6 +45,7 @@ struct Ctx {
   Ee ee;
   // relevé de la dernière requête (journalisé HORS transaction par la boucle)
   uint16_t dbgN; int dbgRead; uint32_t dbgSent, dbgWrote; char dbgLine[32];
+  uint16_t dbgWant, dbgGot;   // Content-Length annoncé / octets de corps reçus
   uint8_t dbgForm;            // 0 = pas un formulaire ; 1 = traité
   uint8_t dbgCode;            // FormResult (0 = F_OK)
   uint8_t dbgStore;           // 0 = pas tenté, 1 = écrit et relu, 2 = ÉCHEC
@@ -168,35 +170,52 @@ static void __attribute__((noinline)) handleSave(WiFiClient& cl, Ctx* c, const c
   }
 }
 
-/** Un tour de boucle : accepte au plus UN client, lit sa requête (2 s au plus), répond, ferme. true = une requête a été traitée. S'exécute dans une transaction PodNet (pile dédiée). */
+/** Un tour de boucle : accepte au plus UN client, lit sa requête (2,5 s au plus), répond, ferme. true = une requête a été traitée. S'exécute dans une transaction PodNet (pile dédiée).
+ *  Lecture en FLUX (essai du 25/10/2026) : les en-têtes d'un navigateur de téléphone dépassent 600 octets (Referer, Origin, langues, agent…) ; l'ancienne lecture les rangeait dans un tampon de 640 o, le corps du
+ *  formulaire n'y entrait plus et la requête POST était prise pour une page inconnue (redirection vers le formulaire : « la page se rafraîchit et rien ne se passe »). On ne garde plus que la 1re ligne, la valeur de
+ *  Content-Length et le CORPS ; le reste des en-têtes est lu et jeté, quelle que soit sa taille. */
 static bool __attribute__((noinline)) serveOnce(Ctx* c) {
   WiFiClient cl = c->server->available();
   if (!cl) return false;
-  int n = 0, bodyAt = -1, want = 0;
+  uint8_t chunk[64];
+  char name[20];                                // début de la ligne d'en-tête courante (assez pour « Content-Length: 1234 »)
+  int state = 0;                                // 0 = 1re ligne, 1 = en-têtes, 2 = corps
+  int lineLen = 0, l1 = 0, want = 0, got = 0, total = 0;
   const uint32_t t0 = millis();
-  c->req[0] = 0;
-  while (millis() - t0 < 2000UL && n < REQ_CAP - 1) {
+  c->req[0] = 0; c->line1[0] = 0;
+  while (millis() - t0 < 2500UL && total < 8192) {
     const int a = cl.available();
     if (a <= 0) { if (!cl.connected()) break; delay(5); continue; }
-    const int k = cl.read((uint8_t*)c->req + n, (size_t)((a < REQ_CAP - 1 - n) ? a : REQ_CAP - 1 - n));
+    const int k = cl.read(chunk, (size_t)(a < (int)sizeof chunk ? a : (int)sizeof chunk));
     if (k <= 0) { delay(5); continue; }
-    n += k; c->req[n] = 0;
-    if (bodyAt < 0) {
-      const char* e = strstr(c->req, "\r\n\r\n");
-      if (e) {
-        bodyAt = (int)(e + 4 - c->req);
-        const char* cl_ = strstr(c->req, "Content-Length:");
-        if (!cl_) cl_ = strstr(c->req, "content-length:");
-        if (cl_) want = atoi(cl_ + 15);
-        if (want < 0 || want > 400) want = 0;                           // corps anormal : lu tel quel, refusé par la validation
+    total += k;
+    for (int i = 0; i < k; i++) {
+      const char ch = (char)chunk[i];
+      if (state == 2) { if (got < REQ_CAP - 1 && got < want) c->req[got++] = ch; continue; }
+      if (ch == '\r') continue;
+      if (ch != '\n') {
+        if (state == 0) { if (l1 < (int)sizeof c->line1 - 1) c->line1[l1++] = ch; }
+        else if (lineLen < (int)sizeof name - 1) name[lineLen] = ch;
+        lineLen++;
+        continue;
       }
+      // fin de ligne
+      if (state == 0) { c->line1[l1] = 0; state = 1; }
+      else if (lineLen == 0) { state = 2; }                                // ligne vide : fin des en-têtes
+      else {
+        const int nl = lineLen < (int)sizeof name - 1 ? lineLen : (int)sizeof name - 1;
+        name[nl] = 0;
+        if (nl >= 15 && strncasecmp(name, "content-length:", 15) == 0) { want = atoi(name + 15); if (want < 0) want = 0; if (want > REQ_CAP - 1) want = REQ_CAP - 1; }
+      }
+      lineLen = 0;
     }
-    if (bodyAt >= 0 && n >= bodyAt + want) break;
+    if (state == 2 && got >= want) break;
   }
-  c->dbgN++; c->dbgRead = n; g_sentAsked = 0; g_sentAccepted = 0;
-  { int i = 0; for (; i < 31 && c->req[i] && c->req[i] != '\r' && c->req[i] != '\n'; i++) c->dbgLine[i] = (c->req[i] >= 0x20 && c->req[i] < 0x7F) ? c->req[i] : '?'; c->dbgLine[i] = 0; }
-  if (strncmp(c->req, "POST /save ", 11) == 0 && bodyAt >= 0) handleSave(cl, c, c->req + bodyAt);
-  else if (strncmp(c->req, "GET / ", 6) == 0) showForm(cl, c);
+  c->req[got] = 0;
+  c->dbgN++; c->dbgRead = total; c->dbgWant = (uint16_t)want; c->dbgGot = (uint16_t)got; g_sentAsked = 0; g_sentAccepted = 0;
+  { int i = 0; for (; i < 31 && c->line1[i]; i++) c->dbgLine[i] = (c->line1[i] >= 0x20 && c->line1[i] < 0x7F) ? c->line1[i] : '?'; c->dbgLine[i] = 0; }
+  if (strncmp(c->line1, "POST /save ", 11) == 0 && state == 2) handleSave(cl, c, c->req);
+  else if (strncmp(c->line1, "GET / ", 6) == 0) showForm(cl, c);
   else sendRedirect(cl);
   cl.flush();
   delay(30);
@@ -245,7 +264,7 @@ static Exit __attribute__((noinline)) run(podportal::Reason reason, const uint8_
     c->dbgForm = 0;
     if (!podNetRun(turn, &ni)) { logf("[PORTAL] transaction en echec : %s (erreur %u, marge %u o)", podNetWhy(ni), (unsigned)ni.err, (unsigned)ni.margin); if (++fails >= 25) { logf("[PORTAL] transactions en echec (%s) : arret", podNetWhy(ni)); result = EXIT_FAILED; break; } delay(200); }
     else fails = 0;
-    if (did) logf("[PORTAL] requete #%u \"%s\" : %d o lus, %lu o a envoyer, %lu o acceptes par le module", (unsigned)c->dbgN, c->dbgLine, c->dbgRead, (unsigned long)c->dbgSent, (unsigned long)c->dbgWrote);
+    if (did) logf("[PORTAL] requete #%u \"%s\" : %d o lus (corps %u/%u), %lu o a envoyer, %lu o acceptes par le module", (unsigned)c->dbgN, c->dbgLine, c->dbgRead, (unsigned)c->dbgGot, (unsigned)c->dbgWant, (unsigned long)c->dbgSent, (unsigned long)c->dbgWrote);
     if (did && c->dbgForm) logf("[PORTAL] formulaire : champs t/s/m/p = %u/%u/%u/%u o (255 = absent), resultat %u (0 = OK), ecriture %u (1 = OK, 2 = ECHEC), tas avant ecriture %lu o", (unsigned)c->dbgLen[0], (unsigned)c->dbgLen[1], (unsigned)c->dbgLen[2], (unsigned)c->dbgLen[3], (unsigned)c->dbgCode, (unsigned)c->dbgStore, (unsigned long)c->dbgHeap);
     if (c->saved && millis() - c->savedAt > 2500UL) { result = EXIT_SAVED; break; }
     if (!c->saved && podportal::sessionExpired(c->sess, millis())) { logf("[PORTAL] fin de session"); result = EXIT_TIMEOUT; break; }
