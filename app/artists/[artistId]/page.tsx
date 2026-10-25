@@ -8,6 +8,8 @@ import Link from "next/link";
 import { BlockFrameCanvas } from "@/app/BlockFrameCanvas";
 import type { BlockImagePayload } from "@/lib/chain";
 import { SCREEN_PROFILES } from "@/lib/screenProfiles";
+import type { MeasureKind } from "@/lib/measures";
+import ArtistSensors from "./ArtistSensors";
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -52,6 +54,7 @@ interface ArtistDevice {
   framesSent: number;
   publicMode: boolean;
   lastSeen:   number;
+  sensors?:   MeasureKind[];
 }
 
 interface ArtistBlock {
@@ -290,7 +293,7 @@ export default function ArtistDetailPage() {
   const [data,    setData]    = useState<ArtistPageData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error,   setError]   = useState<string | null>(null);
-  const [tab,     setTab]     = useState<"blocks" | "devices">("blocks");
+  const [tab,     setTab]     = useState<"blocks" | "devices" | "sensors">("blocks");
 
   useEffect(() => {
     if (!artistId) return;
@@ -336,6 +339,7 @@ export default function ArtistDetailPage() {
   const { profile, devices, blocks, profileImage } = data;
   const artistBlocks = blocks.filter((b) => b.isArtist);
   const minedBlocks  = blocks.filter((b) => !b.isArtist); // mineur ou propriétaire
+  const sensorDevices = devices.filter((d) => (d.sensors?.length ?? 0) > 0);
   const onlineDevices = devices.filter((d) => d.isOnline).length;
 
   return (
@@ -410,6 +414,7 @@ export default function ArtistDetailPage() {
         {([
           { key: "blocks",  label: `Blocs (${blocks.length})` },
           { key: "devices", label: `ESP (${devices.length})` },
+          ...(sensorDevices.length > 0 ? [{ key: "sensors", label: `Capteurs (${sensorDevices.length})` } as const] : []),
         ] as const).map(({ key, label }) => (
           <button
             key={key}
@@ -466,6 +471,9 @@ export default function ArtistDetailPage() {
           </>
         )
       )}
+
+      {/* ── Tab Capteurs (historique public) ── */}
+      {tab === "sensors" && <ArtistSensors devices={sensorDevices} />}
 
       {/* ── Tab ESP ── */}
       {tab === "devices" && (

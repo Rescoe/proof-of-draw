@@ -17,6 +17,7 @@ import {
 export const dynamic = "force-dynamic";
 
 import { ONLINE_MS } from "@/lib/pullBudget";
+import { measureKindsOf } from "@/lib/measures";
 
 export async function GET(
   _req: NextRequest,
@@ -67,6 +68,8 @@ export async function GET(
         framesSent: d.framesSent,
         publicMode: d.publicMode ?? false,
         lastSeen:   d.lastSeen,
+        // capteurs PUBLICS seulement (l'interrupteur « mesures publiques » du propriétaire reste souverain)
+        ...(d.measuresPublic !== false && measureKindsOf(d).length > 0 ? { sensors: measureKindsOf(d) } : {}),
       }));
 
     const [blocks, profileImage] = await Promise.all([
