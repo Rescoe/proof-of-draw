@@ -37,6 +37,11 @@ export function ArtistPanel({ artist, displays, isolated, onToggleIsolation, onS
         <span>activité {relativeTime(summary.lastActivity)}</span>
       </div>
 
+      {artist.artistKey.startsWith("a:") && (
+        <a className="ap__isolate" href={`/artists/${encodeURIComponent(artist.artistKey.slice(2))}`} style={{ display: "block", textAlign: "center", textDecoration: "none", marginBottom: 6 }}>
+          👤 Voir le profil et les capteurs
+        </a>
+      )}
       <button type="button" className={`ap__isolate${isolated ? " is-on" : ""}`} onClick={onToggleIsolation} aria-pressed={isolated}>
         {isolated ? "✕ Quitter l’isolation" : "◎ Isoler cet artiste sur la carte"}
       </button>
