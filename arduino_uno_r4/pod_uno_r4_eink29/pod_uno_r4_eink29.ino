@@ -1207,6 +1207,12 @@ static void __attribute__((noinline)) portalScreen(const char* apName, const cha
   drawText(redBuf, centerX(mdp), 40, mdp);                             // secours manuel, entre les deux QR
   drawText(blackBuf, centerX(String("OU")), 56, String("OU"));
   (void)l2;
+  // Numéro d'affichage (compteur en flash de données, octets 640..641) + secondes depuis le démarrage : la carte n'a PAS d'horloge avant d'être en ligne, ce numéro dit si l'écran a été redessiné depuis la dernière fois (même numéro = pas de nouvel affichage).
+  uint16_t num = (uint16_t)(EEPROM.read(640) | (EEPROM.read(641) << 8)); if (num == 0xFFFF) num = 0; num++;
+  EEPROM.update(640, (uint8_t)(num & 0xFF)); EEPROM.update(641, (uint8_t)(num >> 8));
+  const String stamp = String("AFFICHAGE #") + String((unsigned)num) + String("  T+") + String((unsigned long)(millis() / 1000UL)) + String("S");
+  drawText(blackBuf, centerX(stamp), 118, stamp);
+  logf("[PORTAL] affichage n°%u (T+%lu s)", (unsigned)num, (unsigned long)(millis() / 1000UL));
   persistFrameId("");
   lastFrameId = "";
   refreshPanel(false);
