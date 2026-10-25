@@ -18,8 +18,13 @@ Règle (demandée par le porteur le 25/10/2026) : **toute demande faite pendant 
 | 10 | 25/10 | TFT 1,8″ (`dev_VIRBQRV1`) : série pendant l'annonce OTA pour comprendre pourquoi la carte ne télécharge pas ; image allégée (textes en flash, morceaux, DHT22). Prévu le 26/10 au soir. | à faire |
 | 11 | 25/10 | Version `2.12` envoyée à `dev_T46HBXG1` : état à confirmer après le rebranchement par son propriétaire (matrice à mettre à jour). | en attente |
 | 12 | 25/10 | `docs/MATRICE_COMPATIBILITE_MATERIELLE.md` : ajouter UNO R4 e-ink + portail (`r4eink29-1.2`) quand l'essai matériel est fait. | en attente |
+| 13 | 25/10 | **Pourquoi le TFT 1,8″ (`dev_VIRBQRV1`) ne vote pas** alors qu'il est actif et invité (tire toutes les 15 min, annonce OTA reçue) : série pendant un candidat. Tant que ce n'est pas réglé, le quorum vivant l'exclut automatiquement. | à faire (26/10 au soir) |
+| 14 | 25/10 | **Rejetés — animations** : un dessin rejeté qui est une animation (ex. « zombie mouche ») doit être reconnu comme tel (`kind: "animation"` dans l'entrée de la liste) et, au clic, se **voir en entier** (lecture du clip), pas seulement l'image fixe. | à faire |
+| 15 | 25/10 | **Reprendre un dessin rejeté ou publié** : tout le monde peut ouvrir un dessin rejeté (ou déjà publié) dans l'éditeur, le modifier et le soumettre comme **nouveau** dessin, à condition qu'il ait été **modifié** (comparaison des pixels / de l'empreinte avec l'original). Le bloc d'origine (validé ou rejeté) n'est jamais effacé ni modifié ; la filiation (« d'après le bloc #N / le rejet X ») est consignée. À cadrer : droits d'auteur affichés, anti-spam (limite par profil), format d'entrée de l'éditeur Pod Studio. | à cadrer puis faire |
 
 ## Fait (dernier en tête)
+
+- [x] 25/10 — **Quorum vivant** (`lib/quorumHealth.ts`, `lib/quorumResponsive.ts`) : un appareil actif qui ne vote pas pour un candidat arrivé à expiration reçoit un « manque » (`missedVotes`) et sort du quorum (seuil `QUORUM_MAX_MISSED`, défaut 1) ; dès qu'il vote il y revient. Cause des rejets « sans quorum » depuis 2 jours : réseau de 4 (MN67, R4, TFT 1,8″ muet, un 4ᵉ) pour 3 votes nécessaires, 2 reçus. Un candidat miné ou refusé par décision ne pénalise personne. Interrupteur : `DEVICE_LOG=off` pour le journal.
 
 - [x] 25/10 — Journal par appareil, 7 jours, onglet « Journal » de « Gérer » (`lib/deviceLog.ts`, commit `affa3f6` sur `main`).
 - [x] 25/10 — Rejetés : lecture qui enregistre les candidats expirés (plus de « N+1 »), carte « En attente de validation » avec les votes, motif détaillé, image des rejetés (`affa3f6`).

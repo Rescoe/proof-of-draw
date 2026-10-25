@@ -10,6 +10,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { redis } from "@/lib/redis";
 import { getCurrentCandidate, getVotes } from "@/lib/chain";
 import { reconcileLostCandidate, type ArchiveKV } from "@/lib/rejectedArchive";
+import { settleExpired } from "@/lib/quorumHealth";
 import { describeVote, type VoteLike } from "@/lib/validationSummary";
 
 export interface RejectedDraw {
@@ -62,7 +63,8 @@ async function pendingCandidate(): Promise<PendingCandidate | null> {
 
 export async function GET(_req: NextRequest) {
   // Un candidat expiré sans décision est enregistré dès maintenant, pas au candidat suivant (au mieux : un échec ne bloque pas la lecture).
-  await reconcileLostCandidate(redis as unknown as ArchiveKV).catch((e) => console.error("[rejected-draws] réconciliation échouée:", e instanceof Error ? e.message : "erreur"));
+  const lost = await reconcileLostCandidate(redis as unknown as ArchiveKV).catch((e) => { console.error("[rejected-draws] réconciliation échouée:", e instanceof Error ? e.message : "erreur"); return null; });
+  if (lost) await settleExpired(lost.candidateId);   // quorum vivant : les appareils actifs qui n'ont pas voté pour ce candidat expiré sortent du quorum (lib/quorumHealth.ts)
 
   const [raw, pending] = await Promise.all([redis.lrange<string>("rejected:draws", 0, 49), pendingCandidate()]);
 

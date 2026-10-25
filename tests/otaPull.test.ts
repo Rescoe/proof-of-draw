@@ -21,6 +21,7 @@ const redisProxy = new Proxy({}, { get: (_t, p: string) => fake[p] ?? (async (..
 const redisPath = require.resolve("../lib/redis");
 require.cache[redisPath] = { id: redisPath, filename: redisPath, loaded: true, exports: { redis: redisProxy } } as unknown as NodeJS.Module;
 
+process.env.DEVICE_LOG = "off";   // le journal par appareil (lib/deviceLog.ts) ajoute UNE commande à un pull non répété : ce test mesure le pull SEUL
 const ed = generateKeyPairSync("ed25519");
 const pubHex = (ed.publicKey.export({ type: "spki", format: "der" }) as Buffer).subarray(-32).toString("hex");
 const rsa = generateKeyPairSync("rsa", { modulusLength: 2048 });

@@ -42,6 +42,7 @@ import { applyReputation, reputationEntries } from "@/lib/reputation";
 import { blockReceiptsEnabled } from "@/lib/blockReceipts";
 import { voteAdmission } from "@/lib/voteCapability";
 import { dropArchive, recordRejected, type ArchiveKV } from "@/lib/rejectedArchive";
+import { noteVote } from "@/lib/quorumHealth";
 
 const DEVICE_ID_REGEX = /^dev_[A-Z0-9]{8}$/;
 const BLACKLIST_TTL = parseInt(process.env.BLACKLIST_TTL_SECONDS ?? "604800");
@@ -205,6 +206,7 @@ async function POST_(req: NextRequest) {
       // Reçu signé du bloc (BLOCK_RECEIPTS=true seulement) : clé publique au moment du vote et, pour un vote v2, le hash brut signé
       ...(blockReceiptsEnabled() ? { ...(device.publicKey ? { pk: device.publicKey } : {}), ...(isV2 && typeof (body as Record<string, unknown>).rawHash === "string" ? { rawHash: String((body as Record<string, unknown>).rawHash) } : {}) } : {}) };
     const cast = await castVote(vote, candidate, prefetchedVotes);
+    if (cast.added) await noteVote(candidate.candidateId, device);   // quorum vivant : mémorise le votant et réhabilite l'appareil (lib/quorumHealth.ts)
     let { quorumReached, voteCount, needed } = cast;
     const { rejectCount } = cast;
     let outcome: CommitteeOutcome | null = null;

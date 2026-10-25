@@ -28,8 +28,11 @@ export function cleanText(s: unknown, max = 200): string {
   return String(s ?? "").replace(/[\u0000-\u001f\u007f]/g, " ").replace(/\s+/g, " ").trim().slice(0, max);
 }
 
+/** Interrupteur d'urgence : DEVICE_LOG=off arrête toute écriture du journal (aucune commande Redis de plus). */
+export const deviceLogDisabled = () => String(process.env.DEVICE_LOG ?? "").trim().toLowerCase() === "off";
+
 export async function devLog(deviceId: string, kind: string, message: string, now: number = Date.now()): Promise<void> {
-  if (!DEVICE_RE.test(deviceId)) return;
+  if (deviceLogDisabled() || !DEVICE_RE.test(deviceId)) return;
   const entry: DevLogEntry = { t: now, k: cleanText(kind, 16), m: cleanText(message) };
   try { await redis.eval(LOG_SCRIPT, [devLogKey(deviceId)], [JSON.stringify(entry), String(DEVLOG_KEEP), String(DEVLOG_TTL_SEC)]); }
   catch (e) { console.error("[devlog] écriture impossible:", e instanceof Error ? e.message : "erreur"); }
@@ -110,6 +113,7 @@ const KIND: Record<string, string> = { register: "register", pull: "pull", "pull
 
 export function withDeviceLog(route: string, handler: Handler): Handler {
   return async (req: NextRequest) => {
+    if (deviceLogDisabled()) return handler(req);
     let body: Record<string, unknown> | null = null;
     if (req.method !== "GET") {
       try {
@@ -117,7 +121,7 @@ export function withDeviceLog(route: string, handler: Handler): Handler {
         if ((req.headers.get("content-type") ?? "").includes("json") && len > 0 && len <= 16384) body = await req.clone().json();
       } catch { body = null; }
     }
-    const res = await handler(req);
+    let res = await handler(req);
     try {
       const url = new URL(req.url);
       let deviceId = url.searchParams.get("deviceId") ?? (typeof body?.deviceId === "string" ? body.deviceId : "");
@@ -125,7 +129,10 @@ export function withDeviceLog(route: string, handler: Handler): Handler {
       const type = res.headers.get("content-type") ?? "";
       const size = Number(res.headers.get("content-length") ?? "0");
       if (type.includes("json") && (size === 0 || size <= 8192)) {
-        try { json = await res.clone().json(); } catch { json = null; }
+        // Lecture du texte puis réponse RECONSTRUITE à l'identique (statut, en-têtes, corps) : plus sûr qu'un clone() du flux (essai du 25/10 : « Body has already been read » sous charge).
+        const text = await res.text();
+        res = new Response(text, { status: res.status, statusText: res.statusText, headers: res.headers });
+        try { json = JSON.parse(text); } catch { json = null; }
       }
       if (!deviceId && typeof json?.deviceId === "string") deviceId = json.deviceId;
       if (!DEVICE_RE.test(deviceId)) return res;

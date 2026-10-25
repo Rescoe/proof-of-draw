@@ -6,6 +6,7 @@ import { redis } from "@/lib/redis";
 import { getDevice, getGlobalActiveCount, getPoolSnapshot } from "@/lib/deviceStore";
 import { getChainHead } from "@/lib/chain";
 import { archiveOnCreate, reconcileLostCandidate, type ArchiveKV } from "@/lib/rejectedArchive";
+import { settleLostPrevious } from "@/lib/quorumHealth";
 import { committeeEnforceBlockedByGuard, committeeModeFromEnv, planCandidateCommittee, waveDelayMsFromEnv, type CandidateCommittee } from "@/lib/committee";
 import { blockReceiptsEnabled } from "@/lib/blockReceipts";
 import { animV3EnforceRequested, animV3ModeFromEnv } from "@/lib/animV3Mode";
@@ -203,6 +204,7 @@ export async function POST(req: NextRequest) {
   // Éligibilité des votants (Lot 2, ELIGIBILITY_MODE) : « off » (défaut) = EXACTEMENT le comportement historique ; « shadow » = plan calculé et journalisé, quorum inchangé ;
   // « enforce » = quorum en PROFILS éligibles (auteur exclu, une voix par profil ; bootstrap étiqueté sous 3 profils indépendants). Même lecture Redis que getGlobalActiveCount.
   const eligMode = eligibilityModeFromEnv();
+  await settleLostPrevious();   // quorum vivant : le candidat précédent, expiré sans quorum, pénalise les appareils actifs qui n'ont pas voté AVANT le calcul de la taille du réseau (lib/quorumHealth.ts)
   let poolSize: number;
   let eligibility: CandidateEligibility | undefined;
   let committee: CandidateCommittee | undefined;

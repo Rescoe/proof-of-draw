@@ -9,6 +9,7 @@ import type { SceneCapability } from "@/lib/scene/spec";
 import { generateLinkCode, type LinkCodeStatus } from "@/lib/linkCode";
 import { isSensorScreens, measureKindsOf, type MeasureKind } from "@/lib/measures";
 import { participatesInVoteNetwork } from "@/lib/voteCapability";
+import { isResponsiveVoter } from "@/lib/quorumResponsive";
 
 export interface Device {
   deviceId:   string;
@@ -17,6 +18,8 @@ export interface Device {
   firmware:   string;
   artistName?: string;              // rétrocompat — remplacé par ArtistProfile.displayName
   deviceName?: string;             // nom humain de l'appareil (distinct du nom d'artiste)
+  missedVotes?: number;            // candidats expirés sans son vote alors qu'il était actif et capable de voter (lib/quorumHealth.ts) ; au-delà du seuil il ne compte plus dans le quorum
+  lastVoteAt?: number;             // dernier vote enregistré
   timezone?: string;               // fuseau IANA choisi par le propriétaire (heure du cartel et des mesures) ; absent = Europe/Paris
   measuresPublic?: boolean;        // mesures (capteurs) visibles dans la vue réseau et l'historique public ; absent ou true = PUBLIQUES (défaut), false = privées (le propriétaire décoche)
   artistId?:  string;              // lien vers ArtistProfile
@@ -430,6 +433,7 @@ export async function getGlobalActiveCount(activeWindowMs = ACTIVE_WINDOW_MS): P
       const isActive  = now - d.lastPing < activeWindowMs;
       if (isSensorScreens(d.screens)) return null;   // un capteur seul ne vote pas (entrée héritée d'avant le correctif du 12/10/2026)
       if (!participatesInVoteNetwork(d)) return null;   // 14/10/2026 : un firmware qui ne sait pas voter en v2 n'est pas compté dans le quorum
+      if (!isResponsiveVoter(d)) return null;           // 25/10/2026 : un appareil actif qui ne vote jamais (candidats expirés sans son vote) sort du quorum jusqu'à son prochain vote
       return (isPaired && isActive) ? d : null;
     } catch {
       return null;
@@ -456,7 +460,7 @@ export async function getPoolSnapshot(activeWindowMs = ACTIVE_WINDOW_MS): Promis
   const devices: Device[] = [];
   for (const raw of values) {
     if (!raw) continue;
-    try { const d = typeof raw === "string" ? JSON.parse(raw) : (raw as Device); if (!isSensorScreens(d.screens) && participatesInVoteNetwork(d)) devices.push(d); } catch { /* entrée illisible : ignorée */ }   // un capteur seul n'est jamais un validateur
+    try { const d = typeof raw === "string" ? JSON.parse(raw) : (raw as Device); if (!isSensorScreens(d.screens) && participatesInVoteNetwork(d) && isResponsiveVoter(d)) devices.push(d); } catch { /* entrée illisible : ignorée */ }   // un capteur seul n'est jamais un validateur
   }
   const legacy = devices.filter((d) => !!(d.artistId || d.artistName) && now - d.lastPing < activeWindowMs).length;
   return { devices, legacyCount: Math.max(1, legacy) };
