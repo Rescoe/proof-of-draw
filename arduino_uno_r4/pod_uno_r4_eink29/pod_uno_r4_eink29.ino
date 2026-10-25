@@ -1210,9 +1210,11 @@ static void __attribute__((noinline)) portalScreen(const char* apName, const cha
   // Numéro d'affichage (compteur en flash de données, octets 640..641) + secondes depuis le démarrage : la carte n'a PAS d'horloge avant d'être en ligne, ce numéro dit si l'écran a été redessiné depuis la dernière fois (même numéro = pas de nouvel affichage).
   uint16_t num = (uint16_t)(EEPROM.read(640) | (EEPROM.read(641) << 8)); if (num == 0xFFFF) num = 0; num++;
   EEPROM.update(640, (uint8_t)(num & 0xFF)); EEPROM.update(641, (uint8_t)(num >> 8));
-  const String stamp = String("T: ") + String((unsigned long)(millis() / 1000UL)) + String(" S");   // court et centré : n'empiète pas sur les légendes des QR
-  drawText(blackBuf, centerX(stamp), 118, stamp);
-  logf("[PORTAL] affichage n°%u (T+%lu s)", (unsigned)num, (unsigned long)(millis() / 1000UL));
+  // Code de contrôle ALÉATOIRE de 6 chiffres hexadécimaux (24 bits), tiré à chaque dessin : l'horloge depuis le démarrage valait toujours ~9 s (le portail se dessine juste après le boot), donc inutile.
+  // Un code différent de celui d'avant = l'écran a bien été redessiné ; le même code = il ne l'a pas été. Très petit (police 5×7), dans le coin bas droit : ne gêne ni les QR ni leurs légendes.
+  char code[8]; snprintf(code, sizeof code, "%06lX", (unsigned long)(podportalr4::rndNext() & 0xFFFFFFUL));
+  drawText(blackBuf, IMG_W - 6 * 6 - 3, IMG_H - 9, String(code));
+  logf("[PORTAL] affichage n°%u, code de controle %s", (unsigned)num, code);
   persistFrameId("");
   lastFrameId = "";
   refreshPanel(false);
