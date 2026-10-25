@@ -17,6 +17,7 @@ export interface Device {
   firmware:   string;
   artistName?: string;              // rétrocompat — remplacé par ArtistProfile.displayName
   deviceName?: string;             // nom humain de l'appareil (distinct du nom d'artiste)
+  timezone?: string;               // fuseau IANA choisi par le propriétaire (heure du cartel et des mesures) ; absent = Europe/Paris
   artistId?:  string;              // lien vers ArtistProfile
   pairCode:   string;   // sensible — jamais exposé publiquement
   lastSeen:   number;
@@ -116,6 +117,7 @@ export interface OwnedDevice {
   deviceId:   string;
   artistName?: string;
   deviceName?: string;
+  timezone?: string;
   artistId?:  string;
   screens:    string[];
   firmware:   string;
@@ -196,6 +198,7 @@ export function toOwnedDevice(d: Device): OwnedDevice {
     deviceId:           d.deviceId,
     artistName:         d.artistName,
     deviceName:         d.deviceName,
+    timezone:           d.timezone,
     artistId:           d.artistId,
     screens:            d.screens,
     firmware:           d.firmware,
@@ -803,6 +806,15 @@ export async function resetDeviceKey(deviceId: string): Promise<{ hadKey: boolea
 /**
  * Renomme un appareil (deviceName distinct de artistName).
  */
+/** Fuseau horaire de l'appareil (validé par l'appelant : lib/deviceTime.isValidTimezone). */
+export async function setDeviceTimezone(deviceId: string, timezone: string): Promise<Device | null> {
+  const device = await getDevice(deviceId);
+  if (!device) return null;
+  device.timezone = timezone;
+  await saveDevice(device);
+  return device;
+}
+
 export async function setDeviceName(deviceId: string, deviceName: string): Promise<Device | null> {
   const device = await getDevice(deviceId);
   if (!device) return null;

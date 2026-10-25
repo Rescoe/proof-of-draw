@@ -247,6 +247,7 @@ function ManagePanel({ d, devices, profile, tab, setTab, onReload, onGive, onAsk
   const [mergeTyped, setMergeTyped] = useState("");
   const [mergeMsg, setMergeMsg] = useState("");
   const [err, setErr] = useState<string | null>(null);
+  const [tz, setTz] = useState(d.timezone ?? "Europe/Paris");
   const others = devices.filter((o) => o.deviceId !== d.deviceId);
 
   async function run(key: string, fn: () => Promise<void>) {
@@ -304,6 +305,30 @@ function ManagePanel({ d, devices, profile, tab, setTab, onReload, onGive, onAsk
           >
             <Switch name="Œuvres d'agent IA" on={!!d.acceptsAnaArt} busy={busy === "ana"} onChange={() => toggle("ana", "accepts-ana-art", { enabled: !d.acceptsAnaArt })} />
           </SettingRow>
+          <div style={{ padding: "0.7rem 0", borderTop: "1px solid var(--border)" }}>
+            <div style={{ fontSize: "0.85rem", fontWeight: 600 }}>Fuseau horaire de l&apos;écran</div>
+            <p style={{ ...muted, marginTop: 2, marginBottom: "0.55rem" }}>
+              Heure affichée dans le cartel et sur les relevés d&apos;un écran avec capteur. Par défaut : Europe/Paris. Utilisez le nom officiel (exemples : Europe/Lisbon, America/New_York, Asia/Tokyo).
+            </p>
+            <div style={{ display: "flex", alignItems: "center", gap: "0.6rem", flexWrap: "wrap" }}>
+              <input
+                aria-label="Fuseau horaire" list={`tz-${d.deviceId}`} value={tz} onChange={(e) => setTz(e.target.value)} maxLength={64} spellCheck={false}
+                style={{ padding: "0.4rem 0.6rem", borderRadius: 8, border: "1px solid var(--border)", background: "var(--bg)", color: "var(--text)", fontSize: "0.82rem", minWidth: 220 }}
+              />
+              <datalist id={`tz-${d.deviceId}`}>
+                {["Europe/Paris", "Europe/London", "Europe/Lisbon", "Europe/Madrid", "Europe/Berlin", "Europe/Rome", "Europe/Athens", "Europe/Moscow", "Atlantic/Reykjavik", "Africa/Casablanca", "Africa/Algiers", "Africa/Dakar", "America/New_York", "America/Chicago", "America/Denver", "America/Los_Angeles", "America/Montreal", "America/Mexico_City", "America/Sao_Paulo", "America/Argentina/Buenos_Aires", "Asia/Dubai", "Asia/Kolkata", "Asia/Bangkok", "Asia/Shanghai", "Asia/Tokyo", "Australia/Sydney", "Pacific/Auckland", "Indian/Reunion", "Pacific/Tahiti", "America/Martinique", "UTC"].map((z) => <option key={z} value={z} />)}
+              </datalist>
+              <button
+                type="button" disabled={busy === "tz" || tz.trim() === (d.timezone ?? "Europe/Paris")}
+                onClick={() => run("tz", async () => {
+                  const { ok, data } = await postJson("/api/devices/timezone", { deviceId: d.deviceId, timezone: tz.trim() });
+                  if (!ok) setErr(typeof data.error === "string" ? data.error : "Échec de l'enregistrement");
+                  onReload();
+                })}
+                style={{ padding: "0.4rem 0.9rem", borderRadius: 8, border: "1px solid var(--accent)", background: "rgba(124,107,255,0.1)", color: "var(--accent)", fontSize: "0.8rem", cursor: "pointer", fontWeight: 600 }}
+              >{busy === "tz" ? "…" : "Enregistrer"}</button>
+            </div>
+          </div>
           <div style={{ padding: "0.7rem 0", borderTop: "1px solid var(--border)" }}>
             <div style={{ fontSize: "0.85rem", fontWeight: 600 }}>Dessins d&apos;autres écrans</div>
             <p style={{ ...muted, marginTop: 2, marginBottom: "0.55rem" }}>
