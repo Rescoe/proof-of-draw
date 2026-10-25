@@ -57,6 +57,7 @@ Conséquence pratique : une mise à jour à distance de la carte de `dev_T46HBXG
 
 | Profil déclaré | Écran(s) réseau | Modules | Vote / affichage réel | OTA Internet de production | Capteur / notes | État |
 |---|---|---|---|---|---|---|
+| `r4tft28-2.6` (branche `claude/r4-tft28-portail-vote`, non fusionnée) | TFT 2,8″ tactile + portail Wi-Fi | portail `M` (25/10/2026 : AP, enregistrement, connexion, register) ; image affichée ; vote v2 observé (bloc #118) — un seul essai, une carte | — | — | à fusionner après adaptation des tests |
 | `r4tft28-2.5` | TFT 2,8″ tactile | microSD, animations | `V2` : vote réel ; affichage/ACK observés | — | animations : fonctionnalités distinctes, à qualifier par essai matériel dédié | matériel de vote validé ; OTA applicative non portée/validée comme pour ESP8266 |
 | `r4eink29-1.1` | e-ink 2,9″ BWR | — | `V2` : vote réel et affichage observés | — | pile R4 sécurisée par les lots dédiés | matériel de vote validé ; OTA applicative non validée |
 | `r4dht22-1.3` | aucun (`sensor`) | DHT22 | n'est ni écran ni votant | — | `M` : DHT22 → `/api/sensor` 200 observé | profil capteur validé par câble ; pas d'OTA |

@@ -11,7 +11,7 @@ Document de reprise : ce qui est fait, ce qui est prouvé, ce qui attend, et dan
 | `dev_T46HBXG1` « Claude 2 » | ESP8266 + e-ink 2,9″ BWR + OLED + DHT22 | chez l'ami, à distance | `2.12` téléchargée le 25/10 mais non appliquée ; en attente de son rebranchement |
 | `dev_VIRBQRV1` | ESP8266 + TFT 1,8″ | chez le porteur | `tft18-2.9`, ne télécharge pas la release `tft18-2.10-ota7` ; diagnostic prévu le 26/10 au soir |
 | UNO R4 WiFi + e-ink BWR | R4 e-ink 2,9″ | chez le porteur | disponible pour les essais R4 |
-| autres cartes et écrans (dont le TFT 2,8″) | — | **indisponibles** | le travail TFT 2,8″ ne peut pas être essayé en ce moment |
+| UNO R4 + TFT 2,8″ | `r4tft28-2.6` | **essayé le 25/10 soir** | portail Wi-Fi validé de bout en bout (point d'accès, enregistrement, connexion, register), vote v2 observé dans le bloc #118, image reçue et affichée (confirmé par le porteur) ; branche `claude/r4-tft28-portail-vote` @355e5f2 poussée, PAS encore fusionnée |
 
 ## 2. État des chantiers
 
@@ -26,7 +26,7 @@ Document de reprise : ce qui est fait, ce qui est prouvé, ce qui attend, et dan
 | Cartel d'une frame personnelle | corrigé côté serveur (date de minage du bloc d'origine) | vérifier sur un écran |
 | Pilote e-ink 2,9″ V4 | `ReadBusy` probablement à polarité inversée : 3 × 15 s de délai par rafraîchissement, écran blanc 2 à 4 minutes ; **non corrigé** | essai sur le banc (jamais d'abord à distance) |
 | UNO R4 e-ink 2,9″ : vote v2 et OTA | vote v2 observé en production (14/10) ; OTA R4-B : lot hors matériel livré, **jamais essayé sur carte** | protocole `docs/PROTOCOLE_MATERIEL_R4B_2026_10_17.md`, étape S1 seulement avec un GO explicite |
-| UNO R4 + TFT 2,8″ | canari sans vote validé (13/10) ; voie de vote non traitée (marge statique 120 o) | **bloqué : carte indisponible** |
+| UNO R4 + TFT 2,8″ | canari sans vote validé (13/10) ; voie de vote non traitée (marge statique 120 o) | essayé le 25/10 (portail + image) ; vote réel : marge statique 120 o à traiter ; fusion de la branche à faire |
 
 ## 3. Règles apprises ce jour
 
