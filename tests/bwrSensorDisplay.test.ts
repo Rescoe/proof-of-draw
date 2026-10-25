@@ -30,3 +30,12 @@ test("BWR surimpression : la ligne T/H tient dans la bande du cartel avec la dat
   const topLine = "24/10/2026 14:03 (Paris) #115".length * 6;
   assert.ok(3 + topLine + 8 + envW <= IMG_W - 3, `date + bloc (${topLine}px) + T/H (${envW}px) doivent tenir sur ${IMG_W}px`);
 });
+
+test("BWR surimpression : le rafraîchissement n'a lieu que si la mesure affichée change utilement (seuils) ou si la gravure a plus de 3 h", () => {
+  assert.match(ino, /#define POD_ENV_MIN_DT10\s+5\b/);
+  assert.match(ino, /#define POD_ENV_MIN_DH10\s+30\b/);
+  assert.match(ino, /#define POD_ENV_MAX_AGE_MS\s+10800000UL/);
+  const on = ino.slice(ino.indexOf("static void envOnRead("));
+  assert.match(on, /if \(never \|\| moved \|\| old\) envRefresh\(\);/);
+  assert.match(ino, /g_envEngT10 = g_envT10;/, "la mesure gravée est mémorisée au moment de la gravure");
+});

@@ -243,6 +243,14 @@ String deviceId, pairCode, canvasUrl;
 #if POD_SENSOR_DISPLAY
 static char g_envLine[20] = "";                       // « 21.4C 72% » (vide = aucune mesure)
 static uint32_t g_envAtMs = 0;                        // millis() de la dernière lecture valide (0 = jamais)
+// Un rafraîchissement e-ink use l'écran (Waveshare : ≥ 180 s entre deux, 1 000 000 de rafraîchissements « en usage normal ») : on ne rafraîchit que si la mesure AFFICHÉE aurait changé
+// de façon utile (température ≥ 0,5 °C, humidité ≥ 3 %) ou si l'affichage a plus de 3 h. Valeurs en dixièmes ; « gravé » = ce qui est réellement sur le panneau.
+#define POD_ENV_MIN_DT10   5                          // 0,5 °C
+#define POD_ENV_MIN_DH10   30                         // 3 % d'humidité
+#define POD_ENV_MAX_AGE_MS 10800000UL                 // 3 h : on relit quand même, pour que l'âge de la mesure affichée reste borné
+static int g_envT10 = 0, g_envH10 = 0;                // dernière mesure lue
+static int g_envEngT10 = 0, g_envEngH10 = 0;          // mesure gravée sur l'écran
+static uint32_t g_envEngAtMs = 0;                     // millis() de la dernière gravure (0 = jamais)
 #endif
 #if POD_WIFI_PORTAL
 static bool g_onboardRequested = false;               // « ONBOARD » reçu sur le port série pendant la fenêtre de démarrage
@@ -874,6 +882,7 @@ void burnEinkCartel_29(uint8_t* bBuf, uint8_t* rBuf,
     while (topLine.length() > 0 && textWidth(topLine) > IMG_W - 4 - envW - 8) topLine.remove(topLine.length() - 1);
     topX = 3;                                                          // date + bloc à gauche, T/H à droite, EN ROUGE
     envDrawText(rBuf ? rBuf : bBuf, IMG_W - 3 - envW, 3, g_envLine);
+    g_envEngT10 = g_envT10; g_envEngH10 = g_envH10; g_envEngAtMs = millis(); if (g_envEngAtMs == 0) g_envEngAtMs = 1;   // ce qui va être sur le panneau
   }
 #endif
 // POD_BWR_END
@@ -1071,7 +1080,12 @@ static void envOnRead(bool ok, int t10, int h10) {
   if (!ok) return;
   snprintf(g_envLine, sizeof g_envLine, "%s%d.%dC %d%%", t10 < 0 ? "-" : "", abs(t10) / 10, abs(t10) % 10, (h10 + 5) / 10);
   g_envAtMs = millis(); if (g_envAtMs == 0) g_envAtMs = 1;
-  envRefresh();
+  g_envT10 = t10; g_envH10 = h10;
+  const bool never = (g_envEngAtMs == 0);
+  const bool moved = abs(t10 - g_envEngT10) >= POD_ENV_MIN_DT10 || abs(h10 - g_envEngH10) >= POD_ENV_MIN_DH10;
+  const bool old   = (uint32_t)(millis() - g_envEngAtMs) >= POD_ENV_MAX_AGE_MS;
+  if (never || moved || old) envRefresh();
+  else Serial.printf_P(PSTR("[ENV] mesure peu changee (%s, gravee il y a %lu min) : pas de rafraichissement e-ink\n"), g_envLine, (unsigned long)((millis() - g_envEngAtMs) / 60000UL));
 }
 #endif
 // POD_BWR_END
