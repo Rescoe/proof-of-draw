@@ -12,6 +12,8 @@ import { benchScreenOf } from "@/lib/bench/screens";
 import { parseChainHeadRaw, parseCandidateRaw, PULL_KEY_HEAD, PULL_KEY_CANDIDATE, PULL_KEY_VOTES, PULL_KEY_OBS_PENDING, popObsTask } from "@/lib/chain";
 import type { ChainSummary } from "@/lib/chain";
 import { maybeCheckAnaFeed } from "@/lib/anaFeed";
+import { cartelTimestampFor, timezoneOf, utcOffsetMinutes } from "@/lib/deviceTime";
+import { measureKindsOf } from "@/lib/measures";
 import { selectDelivery, withoutScenePointer, sceneRetryAfterSec, scenePullMeta, type DeliverySelection } from "@/lib/scene/delivery";
 import { animPullMeta, withoutAnimPointer } from "@/lib/anim/pointer";
 import { eligibilityConfigFromEnv, eligibilityModeFromEnv, profileIdOf, voteGate } from "@/lib/eligibility";
@@ -267,6 +269,17 @@ export async function GET(req: NextRequest) {
       blockIndex:     typeof fm?.["blockIndex"] === "number" ? (fm["blockIndex"] as number) : (chainSummary?.blockIndex ?? -1),
     };
 
+    // ── Écran AVEC capteur (25/10/2026) : heure locale de l'écran. L'horodatage du cartel est écrit dans le fuseau choisi (« JJ/MM HH:MM », sans « (Paris) ») et la carte reçoit l'heure du serveur
+    // (`now`, secondes UTC) et le décalage courant (`tzo`, minutes) pour dater ses mesures. UNIQUEMENT pour un appareil qui a déclaré des capteurs : les autres firmwares (documents JSON dimensionnés au plus juste)
+    // reçoivent exactement la réponse d'avant.
+    let timeMeta: { now: number; tzo: number } | null = null;
+    if (measureKindsOf(device).length > 0) {
+      const tz = timezoneOf(device), nowMs = Date.now();
+      const local = cartelTimestampFor(cartelMeta.displayTs, tz);
+      if (local) cartelMeta.displayTs = local;
+      timeMeta = { now: Math.floor(nowMs / 1000), tzo: utcOffsetMinutes(tz, nowMs) };
+    }
+
     // ── Tâche d'observation (device idle → revalide des blocs antérieurs) ────
     // L'ESP n'affiche rien de nouveau — il envoie juste une confirmation serveur.
     // La tâche est dépilée de la queue uniquement quand le device est vraiment idle.
@@ -325,6 +338,7 @@ export async function GET(req: NextRequest) {
       // le parsing imbriqué dans frame{} et fonctionne quel que soit le chemin
       // (BYPASS, validation, fallback)
       cartelMeta,
+      ...(timeMeta ?? {}),
 
       // frame{} conservé pour compatibilité anciens firmwares
       frame: frameMeta
