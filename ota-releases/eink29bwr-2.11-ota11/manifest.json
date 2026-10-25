@@ -13,8 +13,8 @@
   "minOtaSeq": 1,
   "revokedSeqs": [],
   "url": "/firmware/eink29bwr-2.11-ota11/image.bin",
-  "size": 550240,
-  "sha256": "dc64d662cb833540b0cb8cf48a8d94b9c4968b7e0869a81097dc37c3e5728a7a",
+  "size": 550336,
+  "sha256": "9013794468ea34762d2781d40253d8e78d4a713ba1799dfe34519db906b4e625",
   "wave": {
     "of": 100,
     "upTo": 100
@@ -22,10 +22,10 @@
   "canaryDevices": [
     "dev_MN67OG7R"
   ],
-  "notes": "eink29bwr-2.11 : variante OLED (etat/portail) + DHT22 + frame par morceaux, canari banc dev_MN67OG7R",
+  "notes": "BANC SEULEMENT eink29bwr-2.11 : variante OLED+DHT22+morceaux avec 2048 o de tas reserves pour SIMULER l'OLED sur dev_MN67OG7R (aucun OLED branche) ; ne jamais cibler un autre appareil",
   "signature": {
     "alg": "rsa2048-pkcs1-sha256",
     "keyId": "ota-a",
-    "sig": "k+G+akvVB4HZmS2tfkQqJ5CVPgAtQPMqxLgTUgm+7Jcibi+nxo0hjWYZU909BNN8F2fuKp73VFsxlqNH5miZh8PLjTn/h8C24THa+nNSqUx08NDN4KYujBhFJkF9wYLeH0wS1yzUHwXw2lzq15XixjXdzz30us3LeRvQwWXvtfxgrmB1GIhwy2Z0jQcKpaEN3EmCJWwV/h2ZuHb45sintDlzqHQvPUbaj8Rl1y9jj/kPQtPKAbgMWxeSwaoGwC/brM6teNUL6ZemmjUg5qMj8/innzTXcON54E7qaWJbrnXYoNtSno0X94pRWxo5r6ffVOgDHI7E63hQuEiHUzFxRA=="
+    "sig": "pdUpTtaGigf3RGTGwSZXr2umFpgCa8O56if7mYq09MRT+RxFFa+HK0xCPuDdwvDkbUyteNYbiIpwSrHSvenxNGbTRo57sWa/8ErQIEDxci3wADjB/AlV9suzaPnwyptYlBaHUQTa9TJP11EP0GVh3J5g2JU6hdNxZsCwsnQinRj5NoSejQyEb8Nwil8+RdXyK5fqMSKsqktardaRUvVJf5qkVPpVNLjM0eKAnXvMZ9FFc99PAr13I5gYUT0cIW5V7XctsiJj/XDxnoJbmnrBcZMmyuIkK+vP0dOkqBO8aXEz2MXyDf/dBgCgMUOJN96E5J4CW46b4dKEnjztz3vXvw=="
   }
 }
