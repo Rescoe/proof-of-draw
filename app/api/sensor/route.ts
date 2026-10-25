@@ -14,8 +14,8 @@ import {
 } from "@/lib/measures";
 
 const ID_RE = /^dev_[A-Z0-9]{8}$/;
-const PUBLIC_HOURS = 48;
-const PUBLIC_MAX_ENTRIES = 600;   // 48 h à 5 min = 576
+const PUBLIC_HOURS = 48;          // fenêtre par défaut de l'historique public
+const PUBLIC_MAX_HOURS = 744;     // 31 jours au plus (MEASURE_KEEP entrées), si le propriétaire a rendu ses mesures publiques
 
 export async function POST(req: NextRequest) {
   const ip = getIP(req);
@@ -71,12 +71,15 @@ export async function GET(req: NextRequest) {
     if (!ID_RE.test(deviceId)) return NextResponse.json({ error: "deviceId invalide" }, { status: 400 });
 
     if (sp.get("public") === "1") {
-      // Vue réseau publique : 48 h au plus, sans identifiant d'artiste. Seuls les appareils DÉCLARÉS capteurs sont lisibles (index meas:devices ; 1 SISMEMBER).
-      if (!(await redis.sismember("meas:devices", deviceId))) return NextResponse.json({ error: "aucune mesure" }, { status: 404 });
-      const raws = await redis.lrange(measKey(deviceId), 0, PUBLIC_MAX_ENTRIES - 1);
+      // Historique PUBLIC, sans identifiant d'artiste : seulement si le propriétaire a rendu les mesures de cet appareil publiques (réglage « Mesures publiques ») ; 48 h par défaut, jusqu'à 31 jours (?hours=).
+      // Réponse identique (404) pour « jamais mesuré » et « mesures privées » : rien ne se déduit de la requête. Seuls les appareils DÉCLARÉS capteurs sont lisibles (index meas:devices ; 1 SISMEMBER).
+      const [indexed, device] = await Promise.all([redis.sismember("meas:devices", deviceId), getDevice(deviceId)]);
+      if (!indexed || device?.measuresPublic !== true) return NextResponse.json({ error: "aucune mesure" }, { status: 404 });
+      const wanted = sp.get("hours") ? Math.min(clampHours(sp.get("hours")), PUBLIC_MAX_HOURS) : PUBLIC_HOURS;
+      const raws = await redis.lrange(measKey(deviceId), 0, MEASURE_KEEP - 1);
       const all = decodeMeasures(raws as unknown[]);
       const newest = all[0]?.t ?? 0;
-      const measures = all.filter((m) => m.t >= newest - PUBLIC_HOURS * 3600);
+      const measures = all.filter((m) => m.t >= newest - wanted * 3600);
       return NextResponse.json({ deviceId, measures }, { headers: { "Cache-Control": "public, s-maxage=120, stale-while-revalidate=300" } });
     }
 

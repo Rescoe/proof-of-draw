@@ -305,6 +305,14 @@ function ManagePanel({ d, devices, profile, tab, setTab, onReload, onGive, onAsk
           >
             <Switch name="Œuvres d'agent IA" on={!!d.acceptsAnaArt} busy={busy === "ana"} onChange={() => toggle("ana", "accepts-ana-art", { enabled: !d.acceptsAnaArt })} />
           </SettingRow>
+          {(d.sensors?.length ?? 0) > 0 && (
+            <SettingRow
+              title="Mesures publiques"
+              desc={d.measuresPublic ? "Les mesures de ce capteur (température, humidité…) sont visibles par tous dans la vue réseau, avec leur historique (jusqu'à 31 jours)." : "Les mesures restent privées : visibles par vous seul, dans « Mesures » de votre profil."}
+            >
+              <Switch name="Mesures publiques" on={!!d.measuresPublic} busy={busy === "meas"} onChange={() => toggle("meas", "measures-public", { enabled: !d.measuresPublic })} />
+            </SettingRow>
+          )}
           <div style={{ padding: "0.7rem 0", borderTop: "1px solid var(--border)" }}>
             <div style={{ fontSize: "0.85rem", fontWeight: 600 }}>Fuseau horaire de l&apos;écran</div>
             <p style={{ ...muted, marginTop: 2, marginBottom: "0.55rem" }}>
