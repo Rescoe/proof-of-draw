@@ -42,7 +42,10 @@ struct Ctx {
   bool saved; uint32_t savedAt; unsigned savedS, savedP;
   WiFiServer* server;
   Ee ee;
+  // relevé de la dernière requête (journalisé HORS transaction par la boucle)
+  uint16_t dbgN; int dbgRead; uint32_t dbgSent, dbgWrote; char dbgLine[32];
 };
+static uint32_t g_sentAsked = 0, g_sentAccepted = 0;
 
 // ── aléa : réserve SHA-256 d'entropie analogique + gigue d'horloge, puis flux en mode compteur (même niveau que la génération des clés du firmware) ─────────────────────────────────────────────────────────
 static uint8_t g_rndPool[32];
@@ -91,7 +94,7 @@ static bool __attribute__((noinline)) formField(const char* body, const char* ke
 }
 
 static void __attribute__((noinline)) sendAll(WiFiClient& cl, const char* p, size_t n) {
-  while (n > 0) { const size_t k = n > 256 ? 256 : n; cl.write((const uint8_t*)p, k); p += k; n -= k; }
+  while (n > 0) { const size_t k = n > 256 ? 256 : n; const size_t w = cl.write((const uint8_t*)p, k); g_sentAsked += (uint32_t)k; g_sentAccepted += (uint32_t)w; p += k; n -= k; }
 }
 struct Sink { WiFiClient* cl; };
 static void flushCb(void* ctx, const char* d, size_t n) { sendAll(*static_cast<Sink*>(ctx)->cl, d, n); }
@@ -174,12 +177,15 @@ static bool __attribute__((noinline)) serveOnce(Ctx* c) {
     }
     if (bodyAt >= 0 && n >= bodyAt + want) break;
   }
+  c->dbgN++; c->dbgRead = n; g_sentAsked = 0; g_sentAccepted = 0;
+  { int i = 0; for (; i < 31 && c->req[i] && c->req[i] != '\r' && c->req[i] != '\n'; i++) c->dbgLine[i] = (c->req[i] >= 0x20 && c->req[i] < 0x7F) ? c->req[i] : '?'; c->dbgLine[i] = 0; }
   if (strncmp(c->req, "POST /save ", 11) == 0 && bodyAt >= 0) handleSave(cl, c, c->req + bodyAt);
   else if (strncmp(c->req, "GET / ", 6) == 0) showForm(cl, c);
   else sendRedirect(cl);
   cl.flush();
   delay(30);
   cl.stop();
+  c->dbgSent = g_sentAsked; c->dbgWrote = g_sentAccepted;
   return true;
 }
 
@@ -222,6 +228,7 @@ static Exit __attribute__((noinline)) run(podportal::Reason reason, const uint8_
     auto turn = [&]() { did = serveOnce(c); };
     if (!podNetRun(turn, &ni)) { if (++fails >= 25) { logf("[PORTAL] transactions en echec (%s) : arret", podNetWhy(ni)); result = EXIT_FAILED; break; } delay(200); }
     else fails = 0;
+    if (did) logf("[PORTAL] requete #%u \"%s\" : %d o lus, %lu o a envoyer, %lu o acceptes par le module", (unsigned)c->dbgN, c->dbgLine, c->dbgRead, (unsigned long)c->dbgSent, (unsigned long)c->dbgWrote);
     if (c->saved && millis() - c->savedAt > 2500UL) { result = EXIT_SAVED; break; }
     if (!c->saved && podportal::sessionExpired(c->sess, millis())) { logf("[PORTAL] fin de session"); result = EXIT_TIMEOUT; break; }
     if (tick && tick()) { result = EXIT_TIMEOUT; break; }
