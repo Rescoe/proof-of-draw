@@ -87,6 +87,9 @@ Le serveur reconnaît une famille par le **préfixe de la version déclarée** �
 
 Les valeurs « dès » viennent de `lib/voteCapability.ts` (`VOTE_V2_FIRMWARE`) et `lib/otaDistribution.ts` (`OTA_CLIENT_FIRMWARE`) ; un test compare ce tableau au code.
 
+- **Affichages récurrents choisis par l'utilisateur** (température, temps de trajet TomTom, etc.) : étude chiffrée (durée de vie de l'e-ink, quota TomTom de 2 500 requêtes/jour, budget Redis) et conception dans `docs/AFFICHAGE_RECURRENT_EINK_DUREE_DE_VIE_ET_TOMTOM_2026_10_25.md`. Rien n'est construit ; la température gravée du BWR en est le premier cas.
+- **Marge mémoire TLS des ESP8266** : cause du plantage OOM et corrections en cours (textes en flash, frame par morceaux) dans `docs/MARGE_MEMOIRE_ESP8266_TLS_2026_10_24.md`.
+
 ## Règle de composition : éviter l'explosion combinatoire
 
 Un firmware public est défini par :

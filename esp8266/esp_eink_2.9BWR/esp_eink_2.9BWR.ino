@@ -140,6 +140,13 @@
 #ifndef POD_SENSOR_DISPLAY
 #define POD_SENSOR_DISPLAY 0
 #endif
+// POD_FRAME_CHUNK = 1 : la frame (9 472 o) est téléchargée en 4 morceaux de POD_FRAME_CHUNK_LEN octets (/api/pull-frame?off=&len=) avec un tampon TLS de réception de POD_TLS_RX octets au lieu de 16 Ko :
+// ≈ 12 Ko de tas en plus pendant le téléchargement (sonde du 24/10/2026 : tas minimal avec les plans alloués 9,8 Ko -> 22,1 Ko). Si le serveur ne connaît pas encore les morceaux, repli AUTOMATIQUE sur le téléchargement d'un seul tenant.
+#ifndef POD_FRAME_CHUNK
+#define POD_FRAME_CHUNK 0
+#endif
+#define POD_FRAME_CHUNK_LEN 2368u   // 4 736 / 2 : un morceau ne traverse jamais la frontière noir / rouge
+#define POD_TLS_RX          4096    // tampon de réception TLS : un morceau + ses en-têtes tiennent largement (mesuré : un corps de 4 Ko passe avec 3 072)
 #if POD_SENSOR_DISPLAY && !POD_SENSOR_DHT22
 #error "POD_SENSOR_DISPLAY exige POD_SENSOR_DHT22 = 1"
 #endif
@@ -236,6 +243,14 @@ String deviceId, pairCode, canvasUrl;
 #if POD_SENSOR_DISPLAY
 static char g_envLine[20] = "";                       // « 21.4C 72% » (vide = aucune mesure)
 static uint32_t g_envAtMs = 0;                        // millis() de la dernière lecture valide (0 = jamais)
+// Un rafraîchissement e-ink use l'écran (Waveshare : ≥ 180 s entre deux, 1 000 000 de rafraîchissements « en usage normal ») : on ne rafraîchit que si la mesure AFFICHÉE aurait changé
+// de façon utile (température ≥ 0,5 °C, humidité ≥ 3 %) ou si l'affichage a plus de 3 h. Valeurs en dixièmes ; « gravé » = ce qui est réellement sur le panneau.
+#define POD_ENV_MIN_DT10   5                          // 0,5 °C
+#define POD_ENV_MIN_DH10   30                         // 3 % d'humidité
+#define POD_ENV_MAX_AGE_MS 10800000UL                 // 3 h : on relit quand même, pour que l'âge de la mesure affichée reste borné
+static int g_envT10 = 0, g_envH10 = 0;                // dernière mesure lue
+static int g_envEngT10 = 0, g_envEngH10 = 0;          // mesure gravée sur l'écran
+static uint32_t g_envEngAtMs = 0;                     // millis() de la dernière gravure (0 = jamais)
 #endif
 #if POD_WIFI_PORTAL
 static bool g_onboardRequested = false;               // « ONBOARD » reçu sur le port série pendant la fenêtre de démarrage
@@ -410,11 +425,11 @@ void loadKeysFromEEPROM() {
   uint8_t derived[32];
   Ed25519::derivePublicKey(derived, privateKey);
   if (memcmp(derived, publicKey, 32) != 0) {
-    Serial.println("[KEYS] Clé publique EEPROM incohérente → recalcul depuis clé privée");
+    Serial.println(F("[KEYS] Clé publique EEPROM incohérente → recalcul depuis clé privée"));
     memcpy(publicKey, derived, 32);
     for (int i = 0; i < 32; i++) EEPROM.write(EEPROM_PUBKEY_OFF + i, publicKey[i]);
     EEPROM.commit();
-    Serial.println("[KEYS] Clé publique corrigée et sauvegardée");
+    Serial.println(F("[KEYS] Clé publique corrigée et sauvegardée"));
   }
   keysLoaded = true;
 }
@@ -467,7 +482,7 @@ void saveOwnedBlockHash(const String& fullHash) {
       if ((char)EEPROM.read(off + j) != h[j]) match = false;
     }
     if (match) {
-      Serial.println("[OWNED] Hash déjà stocké, skip");
+      Serial.println(F("[OWNED] Hash déjà stocké, skip"));
       return;
     }
   }
@@ -484,7 +499,7 @@ void saveOwnedBlockHash(const String& fullHash) {
   EEPROM.write(EEPROM_OWNED_COUNT_OFF, count);
   EEPROM.commit();
 
-  Serial.printf("[OWNED] Bloc sauvegardé: %s... (%u/%u slots)\n",
+  Serial.printf_P(PSTR("[OWNED] Bloc sauvegardé: %s... (%u/%u slots)\n"),
                 h.substring(0, 8).c_str(), count, OWNED_SLOTS_MAX);
 }
 
@@ -525,7 +540,7 @@ String loadOwnedHashesJson() {
 // Clé publique = point sur la courbe Ed25519 — vraie cryptographie asymétrique
 
 void generateKeys() {
-  Serial.println("[KEYS] Génération paire ED25519...");
+  Serial.println(F("[KEYS] Génération paire ED25519..."));
 
   // Seed multi-sources pour maximiser l'entropie sur ESP8266
   randomSeed(analogRead(A0) ^ millis() ^ (uint32_t)WiFi.RSSI());
@@ -540,7 +555,7 @@ void generateKeys() {
   keysLoaded = true;
 
   saveKeysToEEPROM();
-  Serial.println("[KEYS] Paire ED25519 générée et sauvegardée");
+  Serial.println(F("[KEYS] Paire ED25519 générée et sauvegardée"));
   Serial.println("[KEYS] PubKey: " + bytesToHex(publicKey, 32));
 }
 
@@ -680,7 +695,7 @@ float computeComplexityScore(const uint8_t* blackBufPtr, const uint8_t* redBufPt
   float score = entropy * 0.4f + transitions * 0.4f + rle * 0.2f;
   if (score > 1.0f) score = 1.0f;
 
-  Serial.printf("[METRICS] entropy=%.3f transitions=%.3f rle=%.3f score=%.3f\n",
+  Serial.printf_P(PSTR("[METRICS] entropy=%.3f transitions=%.3f rle=%.3f score=%.3f\n"),
                 entropy, transitions, rle, score);
 
   return score;
@@ -710,7 +725,7 @@ bool httpPost(const String& path, const String& body, String& resp) {
   Serial.println("[HTTP POST] body len: " + String(body.length()));
 
   if (!http.begin(client, url)) {
-    Serial.println("[HTTP POST] begin() failed");
+    Serial.println(F("[HTTP POST] begin() failed"));
     return false;
   }
 
@@ -720,7 +735,7 @@ bool httpPost(const String& path, const String& body, String& resp) {
   int code = http.POST(body);
   resp = (code > 0) ? http.getString() : "";
 
-  Serial.printf("[HTTP POST] %s → %d\n", path.c_str(), code);
+  Serial.printf_P(PSTR("[HTTP POST] %s → %d\n"), path.c_str(), code);
   if (code > 0) Serial.println("[HTTP POST] resp: " + resp);
 
   http.end();
@@ -733,7 +748,7 @@ bool httpGet(const String& path, String& resp, int* codeOut = nullptr) {
 
   HTTPClient http;
   if (!http.begin(client, String(SERVER_URL) + path)) {
-    Serial.println("[HTTP GET] begin() failed");
+    Serial.println(F("[HTTP GET] begin() failed"));
     return false;
   }
 
@@ -749,7 +764,7 @@ bool httpGet(const String& path, String& resp, int* codeOut = nullptr) {
 
   http.end();
 
-  Serial.printf("[HTTP GET] %s → %d (%u bytes)\n", path.c_str(), code, resp.length());
+  Serial.printf_P(PSTR("[HTTP GET] %s → %d (%u bytes)\n"), path.c_str(), code, resp.length());
   return code == 200 || code == 429;
 }
 
@@ -867,6 +882,7 @@ void burnEinkCartel_29(uint8_t* bBuf, uint8_t* rBuf,
     while (topLine.length() > 0 && textWidth(topLine) > IMG_W - 4 - envW - 8) topLine.remove(topLine.length() - 1);
     topX = 3;                                                          // date + bloc à gauche, T/H à droite, EN ROUGE
     envDrawText(rBuf ? rBuf : bBuf, IMG_W - 3 - envW, 3, g_envLine);
+    g_envEngT10 = g_envT10; g_envEngH10 = g_envH10; g_envEngAtMs = millis(); if (g_envEngAtMs == 0) g_envEngAtMs = 1;   // ce qui va être sur le panneau
   }
 #endif
 // POD_BWR_END
@@ -915,7 +931,7 @@ bool doObsConfirm() {
 
   String resp;
   bool ok = httpPost("/api/obs-confirm", body, resp);
-  Serial.printf("[OBS-CONFIRM] ok=%d resp=%s\n", ok, resp.c_str());
+  Serial.printf_P(PSTR("[OBS-CONFIRM] ok=%d resp=%s\n"), ok, resp.c_str());
   pendingObsHashes = "";
   pendingObsTarget = "";
   return ok;
@@ -958,13 +974,13 @@ bool initDisplayForRefresh() {
 #endif
 // POD_BWR_END
     unsigned long wait = EINK_MIN_REFRESH_MS - elapsed;
-    Serial.printf("[EINK] attente refresh %lums\n", wait);
+    Serial.printf_P(PSTR("[EINK] attente refresh %lums\n"), wait);
     delay(wait);
   }
   // Nourrir le watchdog avant les boucles busy du driver e-paper (jusqu'à ~3s)
   ESP.wdtFeed();
   if (epd.Init() != 0) {
-    Serial.println("[EINK] Init failed");
+    Serial.println(F("[EINK] Init failed"));
     return false;
   }
   return true;
@@ -991,7 +1007,7 @@ bool clearDisplayWhite() {
 // POD_BWR_END
 
   if (epd.Init() != 0) {
-    Serial.println("[EINK] clearDisplayWhite: Init failed, skip");
+    Serial.println(F("[EINK] clearDisplayWhite: Init failed, skip"));
     lastRefreshMs = millis();
     return false;
   }
@@ -1000,7 +1016,7 @@ bool clearDisplayWhite() {
   uint8_t* tmpRed   = (uint8_t*)malloc(BUF_SIZE);
   if (!tmpBlack || !tmpRed) {
     free(tmpBlack); free(tmpRed);
-    Serial.println("[EINK] clearDisplayWhite: malloc failed, skip");
+    Serial.println(F("[EINK] clearDisplayWhite: malloc failed, skip"));
     lastRefreshMs = millis();
     return false;
   }
@@ -1064,7 +1080,12 @@ static void envOnRead(bool ok, int t10, int h10) {
   if (!ok) return;
   snprintf(g_envLine, sizeof g_envLine, "%s%d.%dC %d%%", t10 < 0 ? "-" : "", abs(t10) / 10, abs(t10) % 10, (h10 + 5) / 10);
   g_envAtMs = millis(); if (g_envAtMs == 0) g_envAtMs = 1;
-  envRefresh();
+  g_envT10 = t10; g_envH10 = h10;
+  const bool never = (g_envEngAtMs == 0);
+  const bool moved = abs(t10 - g_envEngT10) >= POD_ENV_MIN_DT10 || abs(h10 - g_envEngH10) >= POD_ENV_MIN_DH10;
+  const bool old   = (uint32_t)(millis() - g_envEngAtMs) >= POD_ENV_MAX_AGE_MS;
+  if (never || moved || old) envRefresh();
+  else Serial.printf_P(PSTR("[ENV] mesure peu changee (%s, gravee il y a %lu min) : pas de rafraichissement e-ink\n"), g_envLine, (unsigned long)((millis() - g_envEngAtMs) / 60000UL));
 }
 #endif
 // POD_BWR_END
@@ -1105,12 +1126,12 @@ void displayPublicKey() {
 
   refreshDisplay();
 
-  Serial.println("[KEYS] Clé publique affichée. L'utilisateur a 60s pour noter.");
-  Serial.print("[KEYS] Public key: "); Serial.println(pubHex);
+  Serial.println(F("[KEYS] Clé publique affichée. L'utilisateur a 60s pour noter."));
+  Serial.print(F("[KEYS] Public key: ")); Serial.println(pubHex);
 
   // On attend que l'utilisateur note la clé
   delay(60000);
-  Serial.println("[KEYS] Délai écoulé, suite du boot...");
+  Serial.println(F("[KEYS] Délai écoulé, suite du boot..."));
 }
 
 // ─── QR CODE (identique v1.5 avec adaptation) ──────────────────────────────
@@ -1176,7 +1197,7 @@ void displayKeyMaterialOnce() {
   String privHex = bytesToHex(privateKey, 32);
 
   // NE PAS imprimer la clé privée sur Serial — reste strictement dans l'EEPROM
-  Serial.println("[KEYS] Affichage clé publique (une seule fois)");
+  Serial.println(F("[KEYS] Affichage clé publique (une seule fois)"));
   Serial.println("[KEYS] PubKey: " + pubHex);
 
   String title = "PROOF-OF-DRAW KEYS";
@@ -1236,20 +1257,20 @@ bool doRegister() {
                 "\"ownedHashes\":" + ownedHashes + "}";
   String resp;
 
-  Serial.printf("[REGISTER] heap avant: %u\n", ESP.getFreeHeap());
+  Serial.printf_P(PSTR("[REGISTER] heap avant: %u\n"), ESP.getFreeHeap());
 
   if (!httpPost("/api/register", body, resp)) {
-    Serial.println("[REGISTER] Echec HTTP");
+    Serial.println(F("[REGISTER] Echec HTTP"));
     return false;
   }
 
-  Serial.printf("[REGISTER] heap après: %u\n", ESP.getFreeHeap());
+  Serial.printf_P(PSTR("[REGISTER] heap après: %u\n"), ESP.getFreeHeap());
   Serial.println("[REGISTER] resp: " + resp);
 
   DynamicJsonDocument doc(768);
   DeserializationError err = deserializeJson(doc, resp);
   if (err) {
-    Serial.print("[REGISTER] JSON error: ");
+    Serial.print(F("[REGISTER] JSON error: "));
     Serial.println(err.c_str());
     return false;
   }
@@ -1264,18 +1285,18 @@ bool doRegister() {
   Serial.println("[REGISTER] paired: " + String(paired ? "oui" : "non"));
 
   if (!einkReady) {
-    Serial.printf("[HEAP] avant malloc: %u bytes\n", ESP.getFreeHeap());
+    Serial.printf_P(PSTR("[HEAP] avant malloc: %u bytes\n"), ESP.getFreeHeap());
     blackBuf = (uint8_t*)malloc(BUF_SIZE);
     redBuf   = (uint8_t*)malloc(BUF_SIZE);
     if (!blackBuf || !redBuf) {
-      Serial.println("[EINK] ERREUR malloc — heap insuffisant");
+      Serial.println(F("[EINK] ERREUR malloc — heap insuffisant"));
       registered = false;
       return false;
     }
     memset(blackBuf, 0xFF, BUF_SIZE);
     memset(redBuf,   0xFF, BUF_SIZE);
     einkReady = true;
-    Serial.printf("[HEAP] après malloc: %u bytes\n", ESP.getFreeHeap());
+    Serial.printf_P(PSTR("[HEAP] après malloc: %u bytes\n"), ESP.getFreeHeap());
   }
 
   if (!paired && !onboardingAlreadyShown()) {
@@ -1287,12 +1308,12 @@ bool doRegister() {
 
     setOnboardingShown();
 
-    Serial.println("[REGISTER] Restart dans 3s pour libérer heap TLS...");
+    Serial.println(F("[REGISTER] Restart dans 3s pour libérer heap TLS..."));
     delay(3000);
     ESP.restart();
   } else if (!paired) {
     // Boots suivants non appairés : ré-afficher le QR (clé publique déjà vue, pas besoin de la reafficher)
-    Serial.println("[REGISTER] Non appairé — ré-affichage QR code...");
+    Serial.println(F("[REGISTER] Non appairé — ré-affichage QR code..."));
     String onboardUrl = String(SERVER_URL) + "/onboard?code=" + pairCode;
     displayQR(onboardUrl, pairCode, mac);
   } else {
@@ -1309,7 +1330,7 @@ bool doRegister() {
     }
 #endif
 // POD_BWR_END
-    Serial.println("[REGISTER] Déjà appairé, pas de QR");
+    Serial.println(F("[REGISTER] Déjà appairé, pas de QR"));
   }
 
   return true;
@@ -1329,7 +1350,7 @@ bool doRegister() {
 
 // ─── DEBUG HEAP ─────────────────────────────────────────────────────────────
 void logHeapState(const char* tag) {
-  Serial.printf("[%s] heap=%u maxBlock=%u frag=%u%%\n",
+  Serial.printf_P(PSTR("[%s] heap=%u maxBlock=%u frag=%u%%\n"),
                 tag,
                 ESP.getFreeHeap(),
                 ESP.getMaxFreeBlockSize(),
@@ -1392,6 +1413,43 @@ static uint8_t podRenderAndShow() {
 }
 #endif
 
+// POD_BWR_BEGIN
+#if POD_FRAME_CHUNK
+static_assert((BUF_SIZE % POD_FRAME_CHUNK_LEN) == 0, "un morceau ne doit pas traverser la frontière entre les deux plans");
+/** Remplit blackBuf puis redBuf par morceaux. 1 = complet ; 0 = pas de frame (404) ; 2 = le serveur ne sait pas découper (repli sur l'ancien mode) ; -1 = échec (plans à libérer par l'appelant). */
+static int fetchFrameChunked() {
+  const size_t total = 2 * (size_t)BUF_SIZE;
+  uint32_t minHeap = 0xFFFFFFFFu;
+  for (size_t off = 0; off < total; off += POD_FRAME_CHUNK_LEN) {
+    const size_t len = (total - off) < POD_FRAME_CHUNK_LEN ? (total - off) : POD_FRAME_CHUNK_LEN;
+    uint8_t* dst = off < (size_t)BUF_SIZE ? blackBuf + off : redBuf + (off - BUF_SIZE);
+    int result = -1;
+    {   // une session TLS par morceau, détruite à la sortie du bloc (tampon de réception réduit)
+      WiFiClientSecure client; client.setInsecure(); client.setBufferSizes(POD_TLS_RX, 512);
+      HTTPClient http;
+      const String url = String(SERVER_URL) + "/api/pull-frame?deviceId=" + deviceId + "&fmt=bin&off=" + String((unsigned)off) + "&len=" + String((unsigned)len);
+      if (http.begin(client, url)) {
+        http.setTimeout(20000); http.useHTTP10(true);
+        const int code = http.GET();
+        const uint32_t h = ESP.getFreeHeap(); if (h < minHeap) minHeap = h;
+        if (code == 404 && off == 0) result = 0;
+        else if (code != 200) Serial.printf_P(PSTR("[FETCHFRAME] morceau %u : HTTP %d\n"), (unsigned)off, code);
+        else if (http.getSize() != (int)len) { Serial.printf_P(PSTR("[FETCHFRAME] morceau %u : %d o au lieu de %u (serveur sans morceaux)\n"), (unsigned)off, http.getSize(), (unsigned)len); result = (off == 0) ? 2 : -1; }
+        else {
+          WiFiClient* st = http.getStreamPtr(); size_t got = 0; unsigned long t0 = millis();
+          while (got < len && millis() - t0 < 15000) { if (st->available()) { const size_t n = st->readBytes(dst + got, len - got); if (n > 0) got += n; } else delay(10); const uint32_t hh = ESP.getFreeHeap(); if (hh < minHeap) minHeap = hh; }
+          if (got == len) result = 1; else Serial.printf_P(PSTR("[FETCHFRAME] morceau %u incomplet : %u / %u\n"), (unsigned)off, (unsigned)got, (unsigned)len);
+        }
+        http.end();
+      } else Serial.println(F("[FETCHFRAME] begin() impossible"));
+    }
+    if (result != 1) return result;
+  }
+  Serial.printf_P(PSTR("[FETCHFRAME] frame reçue par morceaux de %u o, tampon TLS %u o, tas minimal %u o\n"), (unsigned)POD_FRAME_CHUNK_LEN, (unsigned)POD_TLS_RX, (unsigned)minHeap);
+  return 1;
+}
+#endif
+// POD_BWR_END
 // ─── FETCH FRAME (route séparée, heap propre après pull léger) ──────────────
 // ─── FETCH FRAME ─────────────────────────────────────────────────────────────
 bool doFetchFrame(const String& frameId, const String& frameSource) {
@@ -1403,7 +1461,7 @@ bool doFetchFrame(const String& frameId, const String& frameSource) {
   blackBuf = (uint8_t*)malloc(BUF_SIZE);
   redBuf   = (uint8_t*)malloc(BUF_SIZE);
   if (!blackBuf || !redBuf) {
-    Serial.println("[FETCHFRAME] malloc pixel failed");
+    Serial.println(F("[FETCHFRAME] malloc pixel failed"));
     free(blackBuf); blackBuf = nullptr;
     free(redBuf);   redBuf   = nullptr;
     return false;
@@ -1418,6 +1476,16 @@ bool doFetchFrame(const String& frameId, const String& frameSource) {
   }
 #endif
 
+// POD_BWR_BEGIN
+#if POD_FRAME_CHUNK
+  {
+    const int fc = fetchFrameChunked();
+    if (fc == 1) goto frameTlsDone;                       // plans remplis : l'ancien téléchargement d'un seul tenant est sauté
+    if (fc == 0) { Serial.println(F("[FETCHFRAME] Pas de frame")); free(blackBuf); blackBuf = nullptr; free(redBuf); redBuf = nullptr; return true; }
+    if (fc < 0)  { Serial.println(F("[FETCHFRAME] lecture par morceaux échouée")); free(blackBuf); blackBuf = nullptr; free(redBuf); redBuf = nullptr; return false; }
+  }                                                       // fc == 2 : serveur sans morceaux → repli sur le téléchargement historique ci-dessous
+#endif
+// POD_BWR_END
   {
     WiFiClientSecure client;
     client.setInsecure();
@@ -1425,7 +1493,7 @@ bool doFetchFrame(const String& frameId, const String& frameSource) {
 
     String url = String(SERVER_URL) + "/api/pull-frame?deviceId=" + deviceId + "&fmt=bin";
     if (!http.begin(client, url)) {
-      Serial.println("[FETCHFRAME] begin() failed");
+      Serial.println(F("[FETCHFRAME] begin() failed"));
       free(blackBuf); blackBuf = nullptr;
       free(redBuf);   redBuf   = nullptr;
       return false;
@@ -1434,14 +1502,14 @@ bool doFetchFrame(const String& frameId, const String& frameSource) {
     http.useHTTP10(true);
 
     int code = http.GET();
-    Serial.printf("[HTTP GET] /api/pull-frame → %d\n", code);
+    Serial.printf_P(PSTR("[HTTP GET] /api/pull-frame → %d\n"), code);
 #if POD_RENDER_V1 && POD_CANARY
     canaryStep(PCP_TLS_OPEN, F("TLS ouvert (BearSSL alloue)"));
 #endif
 
     if (code == 404) {
       http.end();
-      Serial.println("[FETCHFRAME] Pas de frame");
+      Serial.println(F("[FETCHFRAME] Pas de frame"));
       free(blackBuf); blackBuf = nullptr;
       free(redBuf);   redBuf   = nullptr;
       return true;
@@ -1449,7 +1517,7 @@ bool doFetchFrame(const String& frameId, const String& frameSource) {
 
     if (code != 200) {
       http.end();
-      Serial.printf("[FETCHFRAME] HTTP error: %d\n", code);
+      Serial.printf_P(PSTR("[FETCHFRAME] HTTP error: %d\n"), code);
       free(blackBuf); blackBuf = nullptr;
       free(redBuf);   redBuf   = nullptr;
       return false;
@@ -1486,15 +1554,20 @@ bool doFetchFrame(const String& frameId, const String& frameSource) {
 #endif
     http.end();
 
-    Serial.printf("[FETCHFRAME] lu black=%u red=%u expected=%u\n", bRead, rRead, BUF_SIZE);
+    Serial.printf_P(PSTR("[FETCHFRAME] lu black=%u red=%u expected=%u\n"), bRead, rRead, BUF_SIZE);
 
     if (bRead != BUF_SIZE || rRead != BUF_SIZE) {
-      Serial.println("[FETCHFRAME] lecture incomplète");
+      Serial.println(F("[FETCHFRAME] lecture incomplète"));
       free(blackBuf); blackBuf = nullptr;
       free(redBuf);   redBuf   = nullptr;
       return false;
     }
   }
+// POD_BWR_BEGIN
+#if POD_FRAME_CHUNK
+frameTlsDone:
+#endif
+// POD_BWR_END
   // TLS fermé ici — le panel a eu le temps de finir son refresh précédent
 #if POD_RENDER_V1 && POD_CANARY
   canaryAfterTls();
@@ -1526,7 +1599,7 @@ bool doFetchFrame(const String& frameId, const String& frameSource) {
 #if POD_RENDER_V1 && POD_CANARY
     Serial.println(F("[CANARY] ECHEC rendu/affichage : AUCUN ACK, tampons liberes, nouvel essai au prochain pull (pas de polling accelere)"));
 #endif
-    Serial.println("[FETCHFRAME] refreshDisplay failed — frame conservée côté serveur");
+    Serial.println(F("[FETCHFRAME] refreshDisplay failed — frame conservée côté serveur"));
     free(blackBuf); blackBuf = nullptr;
     free(redBuf);   redBuf   = nullptr;
     frameReady = false;
@@ -1580,7 +1653,7 @@ bool doFetchFrame(const String& frameId, const String& frameSource) {
   lastFrameWasConsensus = (frameSource == "consensus");
   pendingCandidateId    = "";
 
-  Serial.printf("[FETCHFRAME] ✅ affichée frameId=%s source=%s\n",
+  Serial.printf_P(PSTR("[FETCHFRAME] ✅ affichée frameId=%s source=%s\n"),
                 frameId.c_str(), frameSource.c_str());
   logHeapState("FETCHFRAME-AFTER");
   return true;
@@ -1639,14 +1712,14 @@ bool doPull() {
 #endif
 // POD_BWR_END
     if (!http.begin(client, url)) {
-      Serial.println("[PULL] begin() failed");
+      Serial.println(F("[PULL] begin() failed"));
       return false;
     }
     http.setTimeout(20000);
     http.useHTTP10(true);
 
     int code = http.GET();
-    Serial.printf("[HTTP GET] /api/pull → %d\n", code);
+    Serial.printf_P(PSTR("[HTTP GET] /api/pull → %d\n"), code);
 
     if (code == 429) {
       String rresp = http.getString();
@@ -1657,7 +1730,7 @@ bool doPull() {
         retrySec = rateDoc["retryAfter"] | 60;
         if (retrySec <= 0) retrySec = 60;
       }
-      Serial.printf("[PULL] 429 rate limit, retryAfter=%d s\n", retrySec);
+      Serial.printf_P(PSTR("[PULL] 429 rate limit, retryAfter=%d s\n"), retrySec);
       unsigned long retryMs = (unsigned long)retrySec * 1000UL;
       if (retryMs > PULL_INTERVAL) retryMs = PULL_INTERVAL;
       lastPullMs = millis() - (PULL_INTERVAL - retryMs);
@@ -1666,7 +1739,7 @@ bool doPull() {
 
     if (code != 200) {
       http.end();
-      Serial.printf("[PULL] HTTP error: %d\n", code);
+      Serial.printf_P(PSTR("[PULL] HTTP error: %d\n"), code);
       return false;
     }
 
@@ -1683,7 +1756,7 @@ bool doPull() {
     http.end();
 
     if (err) {
-      Serial.print("[PULL] JSON error: ");
+      Serial.print(F("[PULL] JSON error: "));
       Serial.println(err.c_str());
       logHeapState("PULL-JSON-ERR");
       return false;
@@ -1725,7 +1798,7 @@ bool doPull() {
       pendingArtistName = cm["drawArtistName"] | "";
       pendingDisplayTs  = cm["displayTs"]      | "";
       currentBlockIndex = cm["blockIndex"]     | currentBlockIndex;
-      Serial.printf("[PULL] cartel: title=%s artist=%s ts=%s bloc=%d\n",
+      Serial.printf_P(PSTR("[PULL] cartel: title=%s artist=%s ts=%s bloc=%d\n"),
                     pendingWorkTitle.c_str(), pendingArtistName.c_str(),
                     pendingDisplayTs.c_str(), currentBlockIndex);
     }
@@ -1744,7 +1817,7 @@ bool doPull() {
         }
         pendingObsHashes += "]";
         pendingObsTarget = obsObj["targetBlockHash"] | "";
-        Serial.printf("[PULL] obsTask hashes=%u target=%s\n",
+        Serial.printf_P(PSTR("[PULL] obsTask hashes=%u target=%s\n"),
                       hArr.size(), pendingObsTarget.c_str());
       }
     }
@@ -1770,14 +1843,14 @@ bool doPull() {
     // Activité détectée (frame ou candidat) → retour au rythme nominal
     nextPullIntervalMs = PULL_INTERVAL;
   }
-  Serial.printf("[PULL] nextInterval=%lus (retryAfter=%d)\n",
+  Serial.printf_P(PSTR("[PULL] nextInterval=%lus (retryAfter=%d)\n"),
                 nextPullIntervalMs / 1000UL, pullRetryAfter);
 
   if (newBlockHash.length() > 0 && newBlockHash != currentBlockHash) {
     currentBlockHash  = newBlockHash;
     currentBlockIndex = newBlockIndex;
     saveBlockHashToEEPROM(currentBlockHash);
-    Serial.printf("[PULL] Nouveau bloc #%d hash=%s...\n",
+    Serial.printf_P(PSTR("[PULL] Nouveau bloc #%d hash=%s...\n"),
                   currentBlockIndex, currentBlockHash.substring(0, 12).c_str());
   }
 
@@ -1787,18 +1860,18 @@ bool doPull() {
   }
 
   if (newFrameSource == "none" || newFrameId.length() == 0) {
-    Serial.println("[PULL] Aucune frame");
+    Serial.println(F("[PULL] Aucune frame"));
     logHeapState("PULL-DONE-NONE");
     return true;
   }
 
   if (newFrameId == lastFrameId) {
-    Serial.println("[PULL] Frame déjà affichée (frameId identique)");
+    Serial.println(F("[PULL] Frame déjà affichée (frameId identique)"));
     frameReady = true;
     return true;
   }
 
-  Serial.printf("[PULL] Nouvelle frame frameId=%s source=%s → fetch\n",
+  Serial.printf_P(PSTR("[PULL] Nouvelle frame frameId=%s source=%s → fetch\n"),
                 newFrameId.c_str(), newFrameSource.c_str());
 
   bool fetchOk = doFetchFrame(newFrameId, newFrameSource);
@@ -1808,7 +1881,7 @@ bool doPull() {
   // boucle infinie pull → échec → pull immédiat → échec → ...
   // La prochaine tentative sera dans PULL_INTERVAL (60s).
   if (!fetchOk) {
-    Serial.println("[PULL] doFetchFrame failed — prochaine tentative dans 60s");
+    Serial.println(F("[PULL] doFetchFrame failed — prochaine tentative dans 60s"));
   }
   return true;
 }
@@ -1831,19 +1904,19 @@ bool doValidateV2(const String& candidateId, const String& screenName, size_t by
   if (!podKindFromName(screenName, &kind)) { Serial.println("[VALIDATE2] écran inconnu: " + screenName); return false; }
 
   uint8_t* scratch = (uint8_t*)malloc(POD_SCRATCH_BYTES);
-  if (!scratch) { Serial.println("[VALIDATE2] malloc scratch impossible"); return false; }
+  if (!scratch) { Serial.println(F("[VALIDATE2] malloc scratch impossible")); return false; }
   logHeapState("VALIDATE2-BEFORE");
   PodCheck chk;
   bool ok = podFetchAndCheck(String(SERVER_URL) + "/api/candidate-frame?candidateId=" + candidateId, kind, bytes, scratch, POD_SCRATCH_BYTES, &chk);
   free(scratch);
   if (!ok) {
-    Serial.printf("[VALIDATE2] lecture/calcul impossible (http=%d, %u/%u octets)\n", chk.http, (unsigned)chk.bytes, (unsigned)bytes);
+    Serial.printf_P(PSTR("[VALIDATE2] lecture/calcul impossible (http=%d, %u/%u octets)\n"), chk.http, (unsigned)chk.bytes, (unsigned)bytes);
     return false;
   }
 
   bool accept = false;
   const char* reason = podVerdict(chk, announcedHash, &accept);
-  Serial.printf("[VALIDATE2] %s %u o en %lu ms | e=%lu t=%lu r=%lu s=%lu | verdict=%s %s\n", screenName.c_str(), (unsigned)chk.bytes, (unsigned long)chk.ms,
+  Serial.printf_P(PSTR("[VALIDATE2] %s %u o en %lu ms | e=%lu t=%lu r=%lu s=%lu | verdict=%s %s\n"), screenName.c_str(), (unsigned)chk.bytes, (unsigned long)chk.ms,
                 (unsigned long)chk.m.e, (unsigned long)chk.m.t, (unsigned long)chk.m.r, (unsigned long)chk.m.s, accept ? "accept" : "reject", reason);
   Serial.println(String("[VALIDATE2] hash=") + chk.hash);
 
@@ -1859,13 +1932,13 @@ bool doValidateV2(const String& candidateId, const String& screenName, size_t by
   String vResp;
   bool vOk = httpPost("/api/validation-result", body, vResp);
   if (vOk) {
-    Serial.println("[VALIDATE2] Vote OK");
-    if (vResp.indexOf("\"blockMined\":true") >= 0) { Serial.println("[VALIDATE2] BLOC MINE"); frameReady = true; }
-    if (vResp.indexOf("\"rejectObserved\":true") >= 0) Serial.println("[VALIDATE2] refus enregistré par le serveur (non bloquant)");
+    Serial.println(F("[VALIDATE2] Vote OK"));
+    if (vResp.indexOf("\"blockMined\":true") >= 0) { Serial.println(F("[VALIDATE2] BLOC MINE")); frameReady = true; }
+    if (vResp.indexOf("\"rejectObserved\":true") >= 0) Serial.println(F("[VALIDATE2] refus enregistré par le serveur (non bloquant)"));
   } else {
     Serial.println("[VALIDATE2] Echec vote (403 signature, 422 hash/métriques différents du serveur) : " + vResp);
     // 403 Signature invalide → clé publique désynchronisée : on se ré-enregistre pour la renvoyer (comme le chemin v1), le prochain cycle votera.
-    if (vResp.indexOf("Signature") >= 0) { Serial.println("[VALIDATE2] Re-register pour resynchroniser publicKey..."); doRegister(); }
+    if (vResp.indexOf("Signature") >= 0) { Serial.println(F("[VALIDATE2] Re-register pour resynchroniser publicKey...")); doRegister(); }
   }
   logHeapState("VALIDATE2-AFTER");
   return vOk;
@@ -1900,7 +1973,7 @@ bool doValidate() {
   bool ok = httpGet("/api/validate-candidate?deviceId=" + deviceId, resp);
 
   if (!ok || resp.length() == 0) {
-    Serial.println("[VALIDATE] Echec HTTP");
+    Serial.println(F("[VALIDATE] Echec HTTP"));
     pendingCandidateId = "";
     goto validate_realloc;
   }
@@ -1911,20 +1984,20 @@ bool doValidate() {
     resp = "";
 
     if (err) {
-      Serial.print("[VALIDATE] JSON err: ");
+      Serial.print(F("[VALIDATE] JSON err: "));
       Serial.println(err.c_str());
       pendingCandidateId = "";
       goto validate_realloc;
     }
 
     if (doc["alreadyVoted"] | false) {
-      Serial.println("[VALIDATE] Deja vote");
+      Serial.println(F("[VALIDATE] Deja vote"));
       pendingCandidateId = "";
       goto validate_realloc;
     }
 
     if (doc["candidate"].isNull()) {
-      Serial.println("[VALIDATE] Pas de candidat actif");
+      Serial.println(F("[VALIDATE] Pas de candidat actif"));
       pendingCandidateId = "";
       goto validate_realloc;
     }
@@ -1933,7 +2006,7 @@ bool doValidate() {
     String candidateId = cand["candidateId"] | "";
 
     if (candidateId.length() == 0) {
-      Serial.println("[VALIDATE] candidateId absent");
+      Serial.println(F("[VALIDATE] candidateId absent"));
       pendingCandidateId = "";
       goto validate_realloc;
     }
@@ -1950,7 +2023,7 @@ bool doValidate() {
     }
 
     float score = cand["score_server"] | 0.5f;
-    Serial.printf("[VALIDATE] candidateId=%s score=%.3f\n", candidateId.c_str(), score);
+    Serial.printf_P(PSTR("[VALIDATE] candidateId=%s score=%.3f\n"), candidateId.c_str(), score);
 
     String signature = signED25519(candidateId, score);
     char scoreStr[8];
@@ -1970,19 +2043,19 @@ bool doValidate() {
     bool vOk = httpPost("/api/validation-result", body, vResp);
 
     if (vOk) {
-      Serial.println("[VALIDATE] Vote OK");
+      Serial.println(F("[VALIDATE] Vote OK"));
       if (vResp.indexOf("\"blockMined\":true") >= 0) {
-        Serial.println("[VALIDATE] BLOC MINE");
+        Serial.println(F("[VALIDATE] BLOC MINE"));
         frameReady = true;
       }
     } else {
-      Serial.println("[VALIDATE] Echec vote");
+      Serial.println(F("[VALIDATE] Echec vote"));
       // 403 Signature invalide → clé publique désynchronisée sur le serveur.
       // blackBuf/redBuf déjà libérés → heap disponible pour re-register (TLS).
       if (vResp.indexOf("Signature") >= 0) {
-        Serial.println("[VALIDATE] Re-register pour resynchroniser publicKey...");
+        Serial.println(F("[VALIDATE] Re-register pour resynchroniser publicKey..."));
         doRegister();
-        Serial.println("[VALIDATE] Re-register terminé — retry au prochain cycle");
+        Serial.println(F("[VALIDATE] Re-register terminé — retry au prochain cycle"));
       }
     }
   }
@@ -1991,7 +2064,7 @@ validate_realloc:
   blackBuf = (uint8_t*)malloc(BUF_SIZE);
   redBuf   = (uint8_t*)malloc(BUF_SIZE);
   if (!blackBuf || !redBuf) {
-    Serial.println("[VALIDATE] malloc fail — restart");
+    Serial.println(F("[VALIDATE] malloc fail — restart"));
     ESP.restart();
   }
   memset(blackBuf, 0xFF, BUF_SIZE);
@@ -2280,7 +2353,7 @@ static void resumeIdBanner() {
 // ─── SETUP / LOOP ───────────────────────────────────────────────────────────
 void setup() {
   Serial.begin(115200);
-  Serial.println("\n[BOOT] Proof-of-Draw ESP v2.0");
+  Serial.println(F("\n[BOOT] Proof-of-Draw ESP v2.0"));
 #if POD_RENDER_V1 && POD_CANARY
   canaryBoot();
 #endif
@@ -2299,7 +2372,7 @@ void setup() {
   WiFi.mode(WIFI_STA);
   WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
 
-  Serial.print("[WIFI] Connexion");
+  Serial.print(F("[WIFI] Connexion"));
   int i = 0;
 // POD_BWR_BEGIN
 #if POD_WIFI_PORTAL
@@ -2311,7 +2384,7 @@ void setup() {
       delay(50);
       if (digitalRead(0) == LOW) { if (!lowSince) lowSince = millis(); else if (millis() - lowSince >= 2000UL) wantPortal = true; } else lowSince = 0;
     }
-    i++; Serial.print(".");
+    i++; Serial.print(F("."));
   }
   Serial.println();
   if (wantPortal || WiFi.status() != WL_CONNECTED) {
@@ -2321,7 +2394,7 @@ void setup() {
 // POD_BWR_END
   while (WiFi.status() != WL_CONNECTED && i++ < 40) {
     delay(500);
-    Serial.print(".");
+    Serial.print(F("."));
   }
   Serial.println();
 // POD_BWR_BEGIN
@@ -2333,14 +2406,14 @@ void setup() {
   oledStatus("PoD eink29bwr", "Wi-Fi connecte", WiFi.localIP().toString().c_str(), "enregistrement...");
 #endif
 // POD_BWR_END
-  Serial.printf("[HEAP] après WiFi: %u bytes\n", ESP.getFreeHeap());
+  Serial.printf_P(PSTR("[HEAP] après WiFi: %u bytes\n"), ESP.getFreeHeap());
 #if POD_RENDER_V1 && POD_CANARY
   canaryStep(PCP_WIFI, F("wifi connecte"));
 #endif
 
   // Migration V1 → ED25519 réel : ancien flag 0x01 = clés fake, forcer régénération
   if (EEPROM.read(EEPROM_FLAG_OFF) == 0x01) {
-    Serial.println("[KEYS] Clés V1 détectées — migration vers ED25519 réel");
+    Serial.println(F("[KEYS] Clés V1 détectées — migration vers ED25519 réel"));
     EEPROM.write(EEPROM_FLAG_OFF,       0x00);  // invalide flag V1
     EEPROM.write(EEPROM_ONBOARDING_OFF, 0x00);  // force ré-affichage onboarding + nouvelles clés
     EEPROM.commit();
@@ -2354,7 +2427,7 @@ void setup() {
     generateKeys();   // génère, sauvegarde en EEPROM, set keysLoaded=true
   } else {
     loadKeysFromEEPROM();
-    Serial.println("[KEYS] Clés ED25519 chargées depuis EEPROM");
+    Serial.println(F("[KEYS] Clés ED25519 chargées depuis EEPROM"));
     Serial.println("[KEYS] PubKey: " + bytesToHex(publicKey, 32));
   }
 
@@ -2395,7 +2468,7 @@ void setup() {
   canaryStep(PCP_REGISTER, F("register OK"));
 #endif
 
-  Serial.println("[BOOT] Premier pull immédiat...");
+  Serial.println(F("[BOOT] Premier pull immédiat..."));
 // POD_BWR_BEGIN
 #if POD_OTA
   if (doPull()) podotaesp::confirmHealthy();      // démarrage SAIN = register ET premier pull réussis
@@ -2438,7 +2511,7 @@ void loop() {
     // Si un nouveau candidat est apparu, on reset le timer de validation
     // pour lui laisser VALIDATE_INTERVAL avant de voter
     if (pendingCandidateId.length() > 0 && pendingCandidateId != prevCandidateId) {
-      Serial.println("[LOOP] Nouveau candidat détecté, reset timer validation");
+      Serial.println(F("[LOOP] Nouveau candidat détecté, reset timer validation"));
       lastValidateMs = millis();
     }
   }
@@ -2458,7 +2531,7 @@ void loop() {
     // Si un bloc vient d'être miné, on pull immédiatement pour récupérer
     // la nouvelle frame sans attendre PULL_INTERVAL
     if (frameReady) {
-      Serial.println("[LOOP] Bloc miné — pull immédiat");
+      Serial.println(F("[LOOP] Bloc miné — pull immédiat"));
       delay(2000);  // laisse BearSSL libérer ses buffers TLS
       doPull();
       lastPullMs = millis();
