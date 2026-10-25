@@ -44,6 +44,11 @@ struct Ctx {
   Ee ee;
   // relevé de la dernière requête (journalisé HORS transaction par la boucle)
   uint16_t dbgN; int dbgRead; uint32_t dbgSent, dbgWrote; char dbgLine[32];
+  uint8_t dbgForm;            // 0 = pas un formulaire ; 1 = traité
+  uint8_t dbgCode;            // FormResult (0 = F_OK)
+  uint8_t dbgStore;           // 0 = pas tenté, 1 = écrit et relu, 2 = ÉCHEC
+  uint8_t dbgLen[4];          // longueurs reçues des champs t, s, m, p (255 = champ absent)
+  uint32_t dbgHeap;           // tas libre juste avant l'écriture en flash
 };
 static uint32_t g_sentAsked = 0, g_sentAccepted = 0;
 
@@ -127,17 +132,27 @@ static void __attribute__((noinline)) handleSave(WiFiClient& cl, Ctx* c, const c
   // 4 champs lus un par un dans des tampons du contexte (aucun tableau de plus de 100 o sur la pile dédiée)
   char* t = c->page;                       // la page n'est pas utilisée avant la réponse : on y range temporairement t | s | m | p
   char* s = t + 24; char* m = s + 40; char* p = m + 40;                  // t : 17 o, s : 33 o, m : 33 o, p : 64 o  (24 + 40 + 40 + 72 = 176 <= PAGE_CAP)
-  const bool ok = formField(body, "t", t, 24) && formField(body, "s", s, 40);
-  formField(body, "m", m, 40); formField(body, "p", p, 72);
+  const bool okT = formField(body, "t", t, 24);
+  const bool okS = formField(body, "s", s, 40);       // peut être absent (aucun réseau visible) : le nom saisi à la main suffit alors
+  const bool okM = formField(body, "m", m, 40);
+  const bool okP = formField(body, "p", p, 72);
+  const bool ok = okT;
+  c->dbgForm = 1; c->dbgStore = 0; c->dbgLen[0] = okT ? (uint8_t)strlen(t) : 255; c->dbgLen[1] = okS ? (uint8_t)strlen(s) : 255; c->dbgLen[2] = okM ? (uint8_t)strlen(m) : 255; c->dbgLen[3] = okP ? (uint8_t)strlen(p) : 255;
   podportal::FormResult r;
   char* so = c->page + 200; char* po = so + 40;                          // résultats validés : ssid 33 o, mot de passe 64 o
-  if (!ok) r = podportal::F_BAD_SSID;
+  if (!ok) r = podportal::F_BAD_TOKEN;
   else if (c->saved) { sendText(cl, c, 409, "deja enregistre"); return; }
   else if (!podportal::saveAllowed(c->sess)) r = podportal::F_TOO_MANY;
   else {
     r = podportal::checkForm(t, c->tok, s, m, p, so, po);
-    if (r == podportal::F_OK && !podwifi::store(c->ee, so, po)) r = podportal::F_SAVE_FAILED;     // écriture relue et revalidée par pod_wifi_cfg.h
+    if (r == podportal::F_OK) {
+      c->dbgHeap = (uint32_t)freeHeapBytes();
+      const bool stored = podwifi::store(c->ee, so, po);     // écriture relue et revalidée par pod_wifi_cfg.h
+      c->dbgStore = stored ? 1 : 2;
+      if (!stored) r = podportal::F_SAVE_FAILED;
+    }
   }
+  c->dbgCode = (uint8_t)r;
   if (r == podportal::F_OK) {
     c->saved = true; c->savedAt = millis(); c->savedS = (unsigned)strlen(so); c->savedP = (unsigned)strlen(po);
     memset(c->page + 24, 0, 300);                                       // identifiants effacés de la mémoire avant de rendre la page de fin
@@ -227,9 +242,11 @@ static Exit __attribute__((noinline)) run(podportal::Reason reason, const uint8_
   for (;;) {
     PodNetInfo ni; bool did = false;
     auto turn = [&]() { did = serveOnce(c); };
-    if (!podNetRun(turn, &ni)) { if (++fails >= 25) { logf("[PORTAL] transactions en echec (%s) : arret", podNetWhy(ni)); result = EXIT_FAILED; break; } delay(200); }
+    c->dbgForm = 0;
+    if (!podNetRun(turn, &ni)) { logf("[PORTAL] transaction en echec : %s (erreur %u, marge %u o)", podNetWhy(ni), (unsigned)ni.err, (unsigned)ni.margin); if (++fails >= 25) { logf("[PORTAL] transactions en echec (%s) : arret", podNetWhy(ni)); result = EXIT_FAILED; break; } delay(200); }
     else fails = 0;
     if (did) logf("[PORTAL] requete #%u \"%s\" : %d o lus, %lu o a envoyer, %lu o acceptes par le module", (unsigned)c->dbgN, c->dbgLine, c->dbgRead, (unsigned long)c->dbgSent, (unsigned long)c->dbgWrote);
+    if (did && c->dbgForm) logf("[PORTAL] formulaire : champs t/s/m/p = %u/%u/%u/%u o (255 = absent), resultat %u (0 = OK), ecriture %u (1 = OK, 2 = ECHEC), tas avant ecriture %lu o", (unsigned)c->dbgLen[0], (unsigned)c->dbgLen[1], (unsigned)c->dbgLen[2], (unsigned)c->dbgLen[3], (unsigned)c->dbgCode, (unsigned)c->dbgStore, (unsigned long)c->dbgHeap);
     if (c->saved && millis() - c->savedAt > 2500UL) { result = EXIT_SAVED; break; }
     if (!c->saved && podportal::sessionExpired(c->sess, millis())) { logf("[PORTAL] fin de session"); result = EXIT_TIMEOUT; break; }
     if (tick && tick()) { result = EXIT_TIMEOUT; break; }
