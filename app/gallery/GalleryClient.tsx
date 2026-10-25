@@ -30,6 +30,13 @@ interface RejectedDraw {
   rejectedAt: number;
   workTitle?: string | null;
   drawArtistName?: string | null;
+  candidateId?: string;
+}
+
+interface PendingCandidate {
+  candidateId: string; deviceId: string; screen: string; workTitle?: string | null; drawArtistName?: string | null;
+  submittedAt: number; expiresAt: number; poolSize: number; quorumNeeded: number;
+  votes: { deviceId: string; verdict: "accept" | "reject"; v: 1 | 2; detail: string }[];
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -111,6 +118,52 @@ function BlockCard({ block, onClick }: { block: BlockWithImage; onClick: () => v
 
 // ─── Rejected Row ─────────────────────────────────────────────────────────────
 
+/** Image d'un dessin rejeté, chargée à la demande (copie d'archive : /api/rejected-image). */
+function RejectedThumb({ candidateId }: { candidateId?: string }) {
+  const [payload, setPayload] = useState<BlockWithImage["imagePayload"] | null>(null);
+  const [state, setState] = useState<"loading" | "ok" | "none">(candidateId ? "loading" : "none");
+  useEffect(() => {
+    if (!candidateId) return;
+    let alive = true;
+    fetch(`/api/rejected-image?id=${encodeURIComponent(candidateId)}`)
+      .then(async (r) => (r.ok ? r.json() : null))
+      .then((j) => { if (!alive) return; if (j?.payload) { setPayload(j.payload); setState("ok"); } else setState("none"); })
+      .catch(() => { if (alive) setState("none"); });
+    return () => { alive = false; };
+  }, [candidateId]);
+  if (state === "loading") return <div className="gc-rejected-thumb gc-muted">…</div>;
+  if (state === "none" || !payload) return <div className="gc-rejected-thumb gc-muted" title="La copie de l'image n'est plus conservée (au-delà des 200 derniers rejets ou de 90 jours)">image indisponible</div>;
+  return <div className="gc-rejected-thumb"><BlockFrameCanvas payload={payload} /></div>;
+}
+
+function PendingCard({ item }: { item: PendingCandidate }) {
+  const left = Math.max(0, Math.round((item.expiresAt - Date.now()) / 60000));
+  return (
+    <div className="gc-rejected-row gc-pending-row">
+      <div className="gc-rejected-meta">
+        <span className="gc-rejected-ts">{formatDate(item.submittedAt)}</span>
+        <span className="gc-chip gc-chip--pending">En attente de validation</span>
+        <span className="gc-chip">{SCREEN_LABELS[item.screen] ?? item.screen}</span>
+        <span className="gc-chip" title="Appareil qui a reçu le dessin">{item.deviceId}</span>
+      </div>
+      <div className="gc-rejected-main">
+        <div className="gc-rejected-body">
+          <div className="gc-rejected-info">
+            {item.drawArtistName && <span className="gc-rejected-artist">{item.drawArtistName}</span>}
+            {item.workTitle && <span className="gc-rejected-title">« {item.workTitle} »</span>}
+          </div>
+          <div className="gc-muted">Votes reçus : <b>{item.votes.length}</b> sur <b>{item.quorumNeeded}</b> nécessaire{item.quorumNeeded > 1 ? "s" : ""} (réseau de {item.poolSize} validateur{item.poolSize > 1 ? "s" : ""}) · expire dans <b>{left} min</b></div>
+          {item.votes.length === 0
+            ? <div className="gc-rejected-reason" style={{ color: "#fbbf24" }}>Aucun appareil n&apos;a encore voté : il est peut-être hors ligne, ou n&apos;a pas encore tiré le candidat (pull toutes les 5 à 15 min).</div>
+            : item.votes.map((v) => (
+              <div key={v.deviceId} className="gc-muted">{v.deviceId} — {v.verdict === "accept" ? "✓ accepte" : "✗ refuse"} ({v.v === 2 ? "vérifié" : "écho"}) · {v.detail}</div>
+            ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function RejectedRow({ item }: { item: RejectedDraw }) {
   return (
     <div className="gc-rejected-row">
@@ -119,18 +172,24 @@ function RejectedRow({ item }: { item: RejectedDraw }) {
         <span className="gc-chip gc-chip--rejected">Rejeté</span>
         <span className="gc-chip">{SCREEN_LABELS[item.screen] ?? item.screen}</span>
       </div>
-      <div className="gc-rejected-info">
-        {item.drawArtistName && <span className="gc-rejected-artist">{item.drawArtistName}</span>}
-        {item.workTitle && <span className="gc-rejected-title">« {item.workTitle} »</span>}
-      </div>
-      <div className="gc-rejected-scores">
-        <span className="gc-muted">Score PoD : <b>{item.drawScore}</b></span>
-        <span className="gc-muted">Complexité : <b>{(item.score * 100).toFixed(2)}%</b></span>
-      </div>
-      <div className="gc-rejected-reason">
-        {item.reason === "low_quality_imported_image"
-          ? "Image importée non retravaillée"
-          : item.reason}
+      <div className="gc-rejected-main">
+        <RejectedThumb candidateId={item.candidateId} />
+        <div className="gc-rejected-body">
+          <div className="gc-rejected-info">
+            {item.drawArtistName && <span className="gc-rejected-artist">{item.drawArtistName}</span>}
+            {item.workTitle && <span className="gc-rejected-title">« {item.workTitle} »</span>}
+          </div>
+          <div className="gc-rejected-scores">
+            <span className="gc-muted">Appareil : <b>{item.deviceId}</b></span>
+            <span className="gc-muted">Score PoD : <b>{item.drawScore}</b></span>
+            <span className="gc-muted">Complexité : <b>{(item.score * 100).toFixed(2)}%</b></span>
+          </div>
+          <div className="gc-rejected-reason">
+            {item.reason === "low_quality_imported_image"
+              ? "Image importée non retravaillée"
+              : item.reason}
+          </div>
+        </div>
       </div>
     </div>
   );
@@ -153,6 +212,7 @@ export function GalleryClient() {
 
   const [rejLoading, setRejLoading]   = useState(false);
   const [rejected, setRejected]       = useState<RejectedDraw[] | null>(null);
+  const [pending, setPending]         = useState<PendingCandidate | null>(null);
 
   const [selectedBlock, setSelectedBlock] = useState<BlockWithImage | null>(null);
 
@@ -190,6 +250,7 @@ export function GalleryClient() {
       if (res.ok) {
         const json = await res.json();
         setRejected(json.rejected ?? []);
+        setPending(json.pending ?? null);
       }
     } catch {
       setRejected([]);
@@ -368,10 +429,11 @@ export function GalleryClient() {
         <div className="gc-rejected-list">
           {rejLoading ? (
             <div className="gc-loading"><span className="gc-spinner" />Chargement…</div>
-          ) : !rejected || rejected.length === 0 ? (
+          ) : !rejected || (rejected.length === 0 && !pending) ? (
             <div className="gc-empty">Aucun dessin rejeté pour le moment.</div>
           ) : (
             <>
+              {pending && <PendingCard item={pending} />}
               <div className="gc-stats">{rejected.length} dessin{rejected.length > 1 ? "s" : ""} rejeté{rejected.length > 1 ? "s" : ""} (50 derniers)</div>
               {rejected.map((item, i) => (
                 <RejectedRow key={i} item={item} />
@@ -625,6 +687,11 @@ export function GalleryClient() {
         .gc-rejected-title  { font-size: 12px; color: var(--text2, #94a3b8); font-style: italic; }
         .gc-rejected-scores { display: flex; gap: 16px; font-size: 11px; }
         .gc-rejected-reason { font-size: 11px; color: #f87171; margin-top: 2px; }
+        .gc-rejected-main { display: flex; gap: 12px; align-items: flex-start; flex-wrap: wrap; }
+        .gc-rejected-body { display: flex; flex-direction: column; gap: 4px; min-width: 200px; flex: 1; }
+        .gc-rejected-thumb { min-width: 96px; min-height: 48px; display: flex; align-items: center; justify-content: center; border-radius: 6px; background: rgba(0,0,0,0.15); }
+        .gc-pending-row { border-color: rgba(251,191,36,0.3); }
+        .gc-chip--pending { color: #fbbf24; border-color: rgba(251,191,36,0.3); }
         .gc-muted { font-size: 11px; color: var(--text3, #64748b); }
         .gc-muted b { color: var(--text2, #94a3b8); }
       `}</style>

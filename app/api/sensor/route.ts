@@ -4,6 +4,7 @@
 //   GET   ?deviceId=…&public=1    historique PUBLIC des 48 dernières heures (vue réseau), mis en cache par le CDN 2 min : 1 LRANGE par minute et par appareil au plus
 // Coûts Redis : lib/measures.ts. Aucune écriture si la mesure arrive trop tôt après la précédente (SET NX, 1 commande).
 
+import { withDeviceLog } from "@/lib/deviceLog";
 import { NextRequest, NextResponse } from "next/server";
 import { redis } from "@/lib/redis";
 import { getDevice, writeDeviceKey } from "@/lib/deviceStore";
@@ -17,7 +18,7 @@ const ID_RE = /^dev_[A-Z0-9]{8}$/;
 const PUBLIC_HOURS = 48;          // fenêtre par défaut de l'historique public
 const PUBLIC_MAX_HOURS = 744;     // 31 jours au plus (MEASURE_KEEP entrées), tant que le propriétaire n a pas décoché les mesures publiques
 
-export async function POST(req: NextRequest) {
+async function POST_(req: NextRequest) {
   const ip = getIP(req);
   try {
     // 60 requêtes / heure / IP : une carte en poste ≤ 12 (essai à 5 min) ; large pour plusieurs capteurs derrière une même box
@@ -96,3 +97,6 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: "Erreur serveur" }, { status: 500 });
   }
 }
+
+// Journal par appareil (lib/deviceLog.ts) : la réponse n'est jamais modifiée.
+export const POST = withDeviceLog("sensor", POST_);

@@ -8,7 +8,7 @@
 //   • UN bouton « ⚙ Gérer » qui ouvre un panneau à sous-menus : Réglages · Accès · Blocs · Zone sensible (un seul panneau ouvert à la fois) ;
 //   • une suppression protégée : il faut RETAPER le nom de l'appareil (lib/deviceDeleteGuard.ts).
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { OwnedDevice } from "@/lib/deviceStore";
 import { SCREEN_PROFILES } from "@/lib/screenProfiles";
 import { deleteConfirmWord, deleteConfirmed } from "@/lib/deviceDeleteGuard";
@@ -21,7 +21,7 @@ import { isSensorScreens, showsMeasures } from "@/lib/measures";
 
 // ── Utilitaires ──────────────────────────────────────────────────────────────
 
-type ManageTab = "settings" | "access" | "blocks" | "danger";
+type ManageTab = "settings" | "logs" | "access" | "blocks" | "danger";
 interface ArtistLite { artistId: string; displayName: string }
 
 const screenName = (sid: string) => sid === "sensor" ? "Capteur température" : (SCREEN_PROFILES as Record<string, { name: string }>)[sid]?.name ?? sid;
@@ -263,6 +263,7 @@ function ManagePanel({ d, devices, profile, tab, setTab, onReload, onGive, onAsk
   const convOn = (d.acceptsConvertedScreens ?? []).includes(convScreen);
   const tabs: { key: ManageTab; label: string; show: boolean }[] = [
     { key: "settings", label: "Réglages", show: true },
+    { key: "logs",     label: "Journal", show: true },
     { key: "access",   label: "Accès", show: true },
     { key: "blocks",   label: "Blocs", show: others.length > 0 },
     { key: "danger",   label: "Zone sensible", show: true },
@@ -366,6 +367,8 @@ function ManagePanel({ d, devices, profile, tab, setTab, onReload, onGive, onAsk
           </div>
         </div>
       )}
+
+      {tab === "logs" && <DeviceLogPanel deviceId={d.deviceId} />}
 
       {tab === "access" && (
         <div style={{ borderTop: "1px solid var(--border)", paddingTop: "0.7rem", display: "flex", flexDirection: "column", gap: "0.8rem" }}>
@@ -552,6 +555,64 @@ function InlineRename({ d, onSaved }: { d: OwnedDevice; onSaved: () => void }) {
         if (ok) onSaved();
       }}
     />
+  );
+}
+
+// ── Journal de l'appareil : ce que la carte a échangé avec le serveur (7 jours) ─────────────────────────────────────────────────────
+
+interface LogEntry { t: number; k: string; m: string }
+const LOG_COLORS: Record<string, string> = { register: "#7c6bff", pull: "var(--text3)", image: "#38bdf8", ack: "#34d399", candidat: "#fbbf24", vote: "#f59e0b", capteur: "#2dd4bf", obs: "var(--text3)" };
+
+function DeviceLogPanel({ deviceId }: { deviceId: string }) {
+  const [entries, setEntries] = useState<LogEntry[] | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [filter, setFilter] = useState<string>("");
+  const load = useCallback(async () => {
+    setBusy(true); setErr(null);
+    try {
+      const res = await fetch(`/api/my-devices/${deviceId}/logs`, { cache: "no-store" });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) setErr(typeof data.error === "string" ? data.error : "Lecture impossible");
+      else setEntries(Array.isArray(data.entries) ? data.entries : []);
+    } catch { setErr("Erreur réseau"); } finally { setBusy(false); }
+  }, [deviceId]);
+  useEffect(() => { void load(); }, [load]);
+  const clear = async () => {
+    if (!window.confirm("Effacer tout le journal de cet appareil ?")) return;
+    setBusy(true);
+    try { await fetch(`/api/my-devices/${deviceId}/logs`, { method: "DELETE" }); setEntries([]); } catch { setErr("Erreur réseau"); } finally { setBusy(false); }
+  };
+  const kinds = Array.from(new Set((entries ?? []).map((e) => e.k))).sort();
+  const shown = (entries ?? []).filter((e) => !filter || e.k === filter);
+  const btn = { padding: "0.3rem 0.8rem", borderRadius: 8, border: "1px solid var(--border)", background: "var(--bg)", color: "var(--text2)", fontSize: "0.76rem", cursor: "pointer" } as const;
+  return (
+    <div>
+      <p style={{ ...muted, marginTop: 0 }}>
+        Ce que cette carte a envoyé au serveur et ce qu&apos;il lui a répondu, sur les 7 derniers jours (effacé automatiquement au-delà). Un pull au repos n&apos;est noté qu&apos;une fois par heure.
+        Les messages internes de la carte (port série) n&apos;y figurent pas : seulement les échanges avec le serveur.
+      </p>
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", marginBottom: 8 }}>
+        <button type="button" style={btn} disabled={busy} onClick={() => void load()}>{busy ? "…" : "Actualiser"}</button>
+        <button type="button" style={btn} disabled={busy || !entries?.length} onClick={() => void clear()}>Effacer</button>
+        <select aria-label="Filtrer le journal" value={filter} onChange={(e) => setFilter(e.target.value)} style={{ ...btn, padding: "0.3rem 0.5rem" }}>
+          <option value="">Tout ({entries?.length ?? 0})</option>
+          {kinds.map((k) => <option key={k} value={k}>{k}</option>)}
+        </select>
+      </div>
+      {err && <div style={{ color: "#f87171", fontSize: "0.8rem", marginBottom: 6 }}>{err}</div>}
+      {entries === null ? <div style={muted}>Chargement…</div> : shown.length === 0 ? <div style={muted}>Aucune ligne pour le moment : la carte n&apos;a rien échangé de notable depuis l&apos;activation du journal.</div> : (
+        <div style={{ maxHeight: 380, overflow: "auto", border: "1px solid var(--border)", borderRadius: 8, fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace", fontSize: "0.72rem", lineHeight: 1.5 }}>
+          {shown.map((e, i) => (
+            <div key={i} style={{ display: "flex", gap: 8, padding: "0.25rem 0.5rem", borderTop: i ? "1px solid var(--border)" : "none" }}>
+              <span style={{ color: "var(--text3)", whiteSpace: "nowrap" }}>{new Date(e.t).toLocaleString("fr-FR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit" })}</span>
+              <span style={{ color: LOG_COLORS[e.k] ?? "var(--text2)", minWidth: 58 }}>{e.k}</span>
+              <span style={{ color: "var(--text)", wordBreak: "break-word" }}>{e.m}</span>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
   );
 }
 

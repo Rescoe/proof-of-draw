@@ -89,7 +89,7 @@ export interface RejectedEntry {
   candidateId: string;   // additif : retrouve la copie complète `candidate:archive:{candidateId}` tant que l'entrée est dans la liste
 }
 
-type CandidateLike = Pick<Candidate, "candidateId" | "deviceId" | "poolScreen" | "drawScore" | "score"> & Partial<Pick<Candidate, "workTitle" | "drawArtistName" | "artistName">>;
+type CandidateLike = Pick<Candidate, "candidateId" | "deviceId" | "poolScreen" | "drawScore" | "score"> & Partial<Pick<Candidate, "workTitle" | "drawArtistName" | "artistName" | "poolSize" | "submittedAt">>;
 
 export function rejectedEntry(c: CandidateLike, reason: string, now: number): RejectedEntry {
   return {
@@ -123,6 +123,17 @@ export async function recordRejected(kv: ArchiveKV, candidate: CandidateLike, re
   return (await finalize(kv, "rejected", candidate.candidateId, entry)) === 1 ? entry : null;
 }
 
+/** Motif d'un candidat perdu : toujours « expiré ou remplacé sans quorum », complété (quand la copie le dit) par la taille du réseau, le quorum attendu et la durée sans décision. */
+export function expiredReason(c: CandidateLike, now: number): string {
+  const parts: string[] = [];
+  if (typeof c.poolSize === "number" && c.poolSize >= 0) {
+    const ratio = parseFloat(process.env.QUORUM_RATIO ?? "0.51");
+    parts.push(`réseau de ${c.poolSize} validateur(s), ${Math.max(1, Math.ceil(c.poolSize * ratio))} vote(s) nécessaire(s)`);
+  }
+  if (typeof c.submittedAt === "number" && now > c.submittedAt) parts.push(`${Math.round((now - c.submittedAt) / 60000)} min sans décision`);
+  return parts.length ? `expiré ou remplacé sans quorum (${parts.join(" · ")})` : "expiré ou remplacé sans quorum";
+}
+
 /** Avant la création du candidat SUIVANT : le précédent a-t-il été perdu (expiré ou remplacé sans quorum) ? Si oui, et seulement si rien ne l'a déjà finalisé, l'enregistrer. Retourne l'entrée écrite, ou null. */
 export async function reconcileLostCandidate(kv: ArchiveKV, now: number = Date.now()): Promise<RejectedEntry | null> {
   const lastId = await kv.get(ARCHIVE_LAST_KEY);
@@ -138,6 +149,6 @@ export async function reconcileLostCandidate(kv: ArchiveKV, now: number = Date.n
   let c: CandidateLike | null = null;
   try { c = typeof raw === "string" ? JSON.parse(raw) : (raw as CandidateLike); } catch { c = null; }
   if (!c || typeof c.candidateId !== "string" || c.candidateId !== lastId) { await cleanPointer(); return null; }
-  const entry = rejectedEntry(c, "expiré ou remplacé sans quorum", now);
+  const entry = rejectedEntry(c, expiredReason(c, now), now);
   return (await finalize(kv, "expired", lastId, entry)) === 1 ? entry : null;
 }

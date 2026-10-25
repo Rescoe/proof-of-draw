@@ -19,6 +19,7 @@
 //   → les ESP recevront la frame au prochain pull
 // app/api/validation-result/route.ts
 
+import { withDeviceLog } from "@/lib/deviceLog";
 import { NextRequest, NextResponse } from "next/server";
 import { revalidatePath } from "next/cache";
 import { redis } from "@/lib/redis";
@@ -73,7 +74,7 @@ async function broadcastValidatedFrame(poolScreen: string, payload: Record<strin
 
 function json(body: unknown, status = 200) { return NextResponse.json(body, { status }); }
 
-export async function POST(req: NextRequest) {
+async function POST_(req: NextRequest) {
   try {
     const ip = getIP(req);
 
@@ -316,3 +317,6 @@ export async function POST(req: NextRequest) {
     return json({ error: "Erreur interne", blockMined: false }, 500);
   }
 }
+
+// Journal par appareil (lib/deviceLog.ts) : la réponse n'est jamais modifiée.
+export const POST = withDeviceLog("validation-result", POST_);

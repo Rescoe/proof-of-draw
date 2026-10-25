@@ -18,6 +18,7 @@
 // COÛT REDIS : 1 MGET (blacklist IP + appareil + blacklist appareil + candidat + votes) + 1/8 de rate-limit échantillonné ≈ 1,1 commande
 // (≈ 7 avant le 05/10/2026 : 2 blacklists, INCR + EXPIRE, appareil, candidat, votes).
 
+import { withDeviceLog } from "@/lib/deviceLog";
 import { NextRequest, NextResponse } from "next/server";
 import { redis } from "@/lib/redis";
 import type { Device } from "@/lib/deviceStore";
@@ -33,7 +34,7 @@ const DEVICE_ID_REGEX = /^dev_[A-Z0-9]{8}$/;
 const RL_SCRIPT = "local c=redis.call('INCR',KEYS[1]); if c==1 then redis.call('EXPIRE',KEYS[1],ARGV[1]) end; return c";
 const RL_SAMPLED_MAX = 2;
 
-export async function GET(req: NextRequest) {
+async function GET_(req: NextRequest) {
   const ip       = getIP(req);
   const deviceId = new URL(req.url).searchParams.get("deviceId");
 
@@ -126,3 +127,6 @@ export async function GET(req: NextRequest) {
     },
   });
 }
+
+// Journal par appareil (lib/deviceLog.ts) : la réponse n'est jamais modifiée.
+export const GET = withDeviceLog("validate-candidate", GET_);
