@@ -1,4 +1,5 @@
 // app/api/pull/route.ts
+import { withDeviceLog } from "@/lib/deviceLog";
 import { NextRequest, NextResponse } from "next/server";
 import { redis } from "@/lib/redis";
 import { writeDeviceKey, type Device } from "@/lib/deviceStore";
@@ -58,7 +59,7 @@ function payloadMeta(payload: FramePayload): Record<string, unknown> {
   return withoutAnimPointer(withoutScenePointer(rest));
 }
 
-export async function GET(req: NextRequest) {
+async function GET_(req: NextRequest) {
   try {
     const ip       = getIP(req);
     const url      = new URL(req.url);
@@ -369,3 +370,6 @@ export async function GET(req: NextRequest) {
     }, 500);
   }
 }
+
+// Journal par appareil (lib/deviceLog.ts) : la réponse n'est jamais modifiée.
+export const GET = withDeviceLog("pull", GET_);

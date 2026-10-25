@@ -1,4 +1,5 @@
 // app/api/pull-frame/route.ts
+import { withDeviceLog } from "@/lib/deviceLog";
 import { NextRequest, NextResponse } from "next/server";
 import { redis } from "@/lib/redis";
 import type { Device } from "@/lib/deviceStore";
@@ -22,7 +23,7 @@ function binResponse(bytes: Uint8Array, url: URL): NextResponse {
   });
 }
 
-export async function GET(req: NextRequest) {
+async function GET_(req: NextRequest) {
   try {
     const url      = new URL(req.url);
     const deviceId = url.searchParams.get("deviceId");
@@ -186,3 +187,6 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: "Erreur interne" }, { status: 500 });
   }
 }
+
+// Journal par appareil (lib/deviceLog.ts) : la réponse n'est jamais modifiée.
+export const GET = withDeviceLog("pull-frame", GET_);

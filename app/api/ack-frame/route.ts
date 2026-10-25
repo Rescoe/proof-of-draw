@@ -5,6 +5,7 @@
 // COÛT REDIS : 1 MGET (blacklists, appareil, frames, frame personnelle) + 1 DEL (frame du consensus) + 1 SET (appareil : lastFrameReceivedAt)
 // + 1 à 2 SET (affichage) ≈ 4 à 5 commandes. ≈ 11 avant le 05/10/2026 (3 lectures de blacklist, appareil ×2, une lecture par écran, saveDevice = 3 SET, frame personnelle).
 
+import { withDeviceLog } from "@/lib/deviceLog";
 import { NextRequest, NextResponse } from "next/server";
 import { revalidateTag } from "next/cache";
 import { writeDeviceKey, type Device } from "@/lib/deviceStore";
@@ -17,7 +18,7 @@ import { recordDisplayed, sanitizeRenderReport, DISPLAYS_CACHE_TAG, type Display
 
 const personalKey = (deviceId: string) => `personal:frame:${deviceId}`;
 
-export async function POST(req: NextRequest) {
+async function POST_(req: NextRequest) {
   const ip = getIP(req);
 
   try {
@@ -88,3 +89,6 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Erreur serveur" }, { status: 500 });
   }
 }
+
+// Journal par appareil (lib/deviceLog.ts) : la réponse n'est jamais modifiée.
+export const POST = withDeviceLog("ack-frame", POST_);

@@ -9,6 +9,7 @@
 //   targetBlockHash: "ghi789..."                   // hash du bloc qui contient les entrées
 // }
 
+import { withDeviceLog } from "@/lib/deviceLog";
 import { NextRequest, NextResponse } from "next/server";
 import { redis } from "@/lib/redis";
 import { getBlockByHash, getChainHead } from "@/lib/chain";
@@ -21,7 +22,7 @@ function json(body: unknown, status = 200) {
   return NextResponse.json(body, { status });
 }
 
-export async function POST(req: NextRequest) {
+async function POST_(req: NextRequest) {
   const ip = getIP(req);
 
   let body: Record<string, unknown>;
@@ -136,3 +137,6 @@ export async function POST(req: NextRequest) {
 
   return json({ ok: true, confirmed: changed });
 }
+
+// Journal par appareil (lib/deviceLog.ts) : la réponse n'est jamais modifiée.
+export const POST = withDeviceLog("obs-confirm", POST_);

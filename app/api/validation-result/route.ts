@@ -19,6 +19,7 @@
 //   → les ESP recevront la frame au prochain pull
 // app/api/validation-result/route.ts
 
+import { withDeviceLog } from "@/lib/deviceLog";
 import { NextRequest, NextResponse } from "next/server";
 import { revalidatePath } from "next/cache";
 import { redis } from "@/lib/redis";
@@ -41,6 +42,7 @@ import { applyReputation, reputationEntries } from "@/lib/reputation";
 import { blockReceiptsEnabled } from "@/lib/blockReceipts";
 import { voteAdmission } from "@/lib/voteCapability";
 import { dropArchive, recordRejected, type ArchiveKV } from "@/lib/rejectedArchive";
+import { noteVote } from "@/lib/quorumHealth";
 
 const DEVICE_ID_REGEX = /^dev_[A-Z0-9]{8}$/;
 const BLACKLIST_TTL = parseInt(process.env.BLACKLIST_TTL_SECONDS ?? "604800");
@@ -73,7 +75,7 @@ async function broadcastValidatedFrame(poolScreen: string, payload: Record<strin
 
 function json(body: unknown, status = 200) { return NextResponse.json(body, { status }); }
 
-export async function POST(req: NextRequest) {
+async function POST_(req: NextRequest) {
   try {
     const ip = getIP(req);
 
@@ -204,6 +206,7 @@ export async function POST(req: NextRequest) {
       // Reçu signé du bloc (BLOCK_RECEIPTS=true seulement) : clé publique au moment du vote et, pour un vote v2, le hash brut signé
       ...(blockReceiptsEnabled() ? { ...(device.publicKey ? { pk: device.publicKey } : {}), ...(isV2 && typeof (body as Record<string, unknown>).rawHash === "string" ? { rawHash: String((body as Record<string, unknown>).rawHash) } : {}) } : {}) };
     const cast = await castVote(vote, candidate, prefetchedVotes);
+    if (cast.added) await noteVote(candidate.candidateId, device);   // quorum vivant : mémorise le votant et réhabilite l'appareil (lib/quorumHealth.ts)
     let { quorumReached, voteCount, needed } = cast;
     const { rejectCount } = cast;
     let outcome: CommitteeOutcome | null = null;
@@ -316,3 +319,6 @@ export async function POST(req: NextRequest) {
     return json({ error: "Erreur interne", blockMined: false }, 500);
   }
 }
+
+// Journal par appareil (lib/deviceLog.ts) : la réponse n'est jamais modifiée.
+export const POST = withDeviceLog("validation-result", POST_);

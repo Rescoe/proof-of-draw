@@ -13,7 +13,7 @@
 import { useEffect, useRef, useState, useCallback } from "react";
 import { usePolling } from "@/lib/usePolling";
 
-type LogEventType = "BLOCK_MINED" | "VALIDATION_PENDING" | "VALIDATION_VOTE" | "CHAIN_EMPTY";
+type LogEventType = "BLOCK_MINED" | "VALIDATION_PENDING" | "VALIDATION_VOTE" | "CANDIDATE_REJECTED" | "CHAIN_EMPTY";
 
 type LogEvent = {
   id: string;
@@ -51,15 +51,22 @@ const TAG_COLOR: Record<string, string> = {
   FETCHFRAME: "#4ade80",
   VALIDATE:   "#fbbf24",
   HTTP:       "#a2a3bb",
+  REJECT:     "#f87171",
 };
 
+const KEEP_LINES = 3000;         // une semaine d'événements tient largement ; au-delà, on garde les plus récents
+const WINDOW_DAYS = 7;
+
+const p2 = (n: number) => String(n).padStart(2, "0");
+/** Horodatage COMPLET « JJ/MM/AAAA HH:MM:SS » (heure locale du navigateur). */
 function fmtTime(ts: number): string {
   const d = new Date(ts);
-  return [
-    String(d.getHours()).padStart(2, "0"),
-    String(d.getMinutes()).padStart(2, "0"),
-    String(d.getSeconds()).padStart(2, "0"),
-  ].join(":");
+  return `${p2(d.getDate())}/${p2(d.getMonth() + 1)}/${d.getFullYear()} ${p2(d.getHours())}:${p2(d.getMinutes())}:${p2(d.getSeconds())}`;
+}
+/** Jour local « AAAA-MM-JJ » (valeur d'un champ <input type="date">). */
+function dayKey(ts: number): string {
+  const d = new Date(ts);
+  return `${d.getFullYear()}-${p2(d.getMonth() + 1)}-${p2(d.getDate())}`;
 }
 
 // Pseudo-identifiant d'ESP synthétique — dérivé du type d'écran, jamais du
@@ -124,6 +131,9 @@ function toEspLines(ev: LogEvent): EspLine[] {
       ];
     }
 
+    case "CANDIDATE_REJECTED":
+      return [{ id: `${ev.id}-rej`, ts: ev.ts, tag: "REJECT", tagColor: TAG_COLOR.REJECT, text: `${esp} ▸ ✗ ${ev.workTitle ? `« ${ev.workTitle} » ` : ""}rejeté : ${ev.reason ?? "?"}` }];
+
     default:
       return [];
   }
@@ -139,7 +149,7 @@ function useEspLines() {
     pausedRef.current = paused;
     try {
       // Même endpoint que pod-core — pas de requête additionnelle introduite.
-      const r = await fetch("/api/network/activity-log", { cache: "no-store" });
+      const r = await fetch(`/api/network/activity-log?days=${WINDOW_DAYS}`, { cache: "no-store" });
       if (!r.ok) return;
       const data = await r.json();
       setConnected(true);
@@ -157,9 +167,8 @@ function useEspLines() {
         nextLines.push(...toEspLines(ev));
       }
       if (nextLines.length === 0) return;
-      // 20 dernières lignes — au-delà, le journal devient un mur de texte
-      // difficile à suivre (cf. retour : "trop dense")
-      setLines((prev) => [...prev, ...nextLines].slice(-20));
+      // Toute la semaine (le filtre par date et la recherche évitent le « mur de texte » d'avant : 20 lignes seulement)
+      setLines((prev) => [...prev, ...nextLines].sort((a, b) => a.ts - b.ts).slice(-KEEP_LINES));
     } catch {
       setConnected(false);
     }
@@ -177,13 +186,23 @@ export function EspActivityFeed() {
   const containerRef = useRef<HTMLDivElement>(null);
   const bodyRef      = useRef<HTMLDivElement>(null);
   const { lines, connected, fetchEvents } = useEspLines();
+  const [day, setDay]   = useState("");     // « AAAA-MM-JJ » ou vide = toute la semaine
+  const [query, setQuery] = useState("");   // texte libre (n° de bloc, écran, mot du message…)
+  const stickRef = useRef(true);            // vrai tant que le lecteur est en bas : alors seulement le journal suit les nouvelles lignes
 
   usePolling(() => fetchEvents(false), POLL_MS);
 
+  const shown = lines.filter((l) => (!day || dayKey(l.ts) === day) && (!query || (`${fmtTime(l.ts)} ${l.tag} ${l.text}`).toLowerCase().includes(query.toLowerCase())));
+
+  // Défilement : on ne ramène en bas QUE si le lecteur y était déjà (avant, chaque actualisation écrasait sa position : la barre de défilement semblait « sauter »)
   useEffect(() => {
     const body = bodyRef.current;
-    if (body) body.scrollTop = body.scrollHeight;
-  }, [lines]);
+    if (body && stickRef.current && !day && !query) body.scrollTop = body.scrollHeight;
+  }, [lines, day, query]);
+  const onScroll = () => {
+    const b = bodyRef.current;
+    if (b) stickRef.current = b.scrollHeight - b.scrollTop - b.clientHeight < 40;
+  };
 
   useEffect(() => {
     if (!active) return;
@@ -208,7 +227,7 @@ export function EspActivityFeed() {
           journal réseau · synthèse ESP (tous devices)
         </span>
         <span className="esp-feed__bar-right">
-          <span className="esp-feed__hint">simulation Serial.print agrégée · 20 dernières lignes</span>
+          <span className="esp-feed__hint">synthèse agrégée · 7 derniers jours · {shown.length}/{lines.length} lignes</span>
           <button
             className="esp-feed__toggle"
             onClick={(e) => { e.stopPropagation(); setExpanded((v) => !v); }}
@@ -220,13 +239,23 @@ export function EspActivityFeed() {
         </span>
       </div>
       {expanded && (
-        <div ref={bodyRef} className="esp-feed__body">
+        <div className="esp-feed__tools" onClick={(e) => e.stopPropagation()}>
+          <label className="esp-feed__tool">jour <input type="date" value={day} onChange={(e) => setDay(e.target.value)} aria-label="Filtrer par jour" /></label>
+          <label className="esp-feed__tool esp-feed__tool--grow">recherche <input type="search" value={query} onChange={(e) => setQuery(e.target.value)} placeholder="n° de bloc, écran, mot…" aria-label="Rechercher dans le journal" /></label>
+          {(day || query) && <button className="esp-feed__toggle" onClick={() => { setDay(""); setQuery(""); stickRef.current = true; }}>tout afficher</button>}
+        </div>
+      )}
+      {expanded && (
+        <div ref={bodyRef} className="esp-feed__body" onScroll={onScroll}>
           {lines.length === 0 && (
             <div className="esp-feed__line esp-feed__line--muted">
               en attente d&apos;échanges PULL / VALIDATE…
             </div>
           )}
-          {lines.map((l) => (
+          {lines.length > 0 && shown.length === 0 && (
+            <div className="esp-feed__line esp-feed__line--muted">aucune ligne pour ce jour / cette recherche.</div>
+          )}
+          {shown.map((l) => (
             <div key={l.id} className="esp-feed__line">
               <span className="esp-feed__ts">{fmtTime(l.ts)}</span>
               <span className="esp-feed__tag" style={{ color: l.tagColor, borderColor: l.tagColor }}>
@@ -299,10 +328,18 @@ export function EspActivityFeed() {
           transition: 120ms ease;
         }
         .esp-feed__toggle:hover { background: rgba(255,255,255,0.08); color: #ececf6; }
+        .esp-feed__tools { display: flex; gap: 0.6rem; align-items: center; flex-wrap: wrap; padding: 0.4rem 0.9rem; border-bottom: 1px solid rgba(255,255,255,0.06); font-size: 11px; color: #94a3b8; }
+        .esp-feed__tool { display: flex; align-items: center; gap: 0.35rem; }
+        .esp-feed__tool--grow { flex: 1; min-width: 140px; }
+        .esp-feed__tool input { background: #111827; border: 1px solid rgba(255,255,255,0.1); border-radius: 6px; color: #e2e8f0; font: inherit; padding: 0.2rem 0.4rem; color-scheme: dark; }
+        .esp-feed__tool--grow input { flex: 1; min-width: 0; }
         .esp-feed__body {
           flex: 1;
           min-height: 0;
-          overflow-y: auto;
+          overflow-y: scroll;
+          overscroll-behavior: contain;
+          scrollbar-width: thin;
+          scrollbar-color: rgba(148,163,184,0.5) transparent;
           padding: 0.6rem 0.9rem;
           display: flex;
           flex-direction: column;
@@ -315,7 +352,8 @@ export function EspActivityFeed() {
            La grille fixe une hauteur de ligne identique pour toutes. */
         .esp-feed__line {
           display: grid;
-          grid-template-columns: 4.4em 5.6em minmax(0, 1fr);
+          grid-template-columns: 11.2em 5.6em minmax(0, 1fr);
+          flex: 0 0 auto;   /* les lignes ne se compressent plus quand le journal est long : le conteneur défile */
           align-items: center;
           column-gap: 0.6rem;
           min-height: 22px;
@@ -359,7 +397,7 @@ export function EspActivityFeed() {
              bouton ▾/▸ — "composant extensible") plutôt que d'être masqué :
              juste l'indice de simulation est retiré pour gagner de la place. */
           .esp-feed__hint { display: none; }
-          .esp-feed__line { font-size: 11px; }
+          .esp-feed__line { font-size: 11px; grid-template-columns: 9.6em 5em minmax(0, 1fr); }
         }
       `}</style>
     </div>

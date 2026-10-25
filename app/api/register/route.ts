@@ -1,6 +1,7 @@
 // app/api/register/route.ts
 // Ajout : indexation dans pool:screen:{screenId} pour le broadcast inter-devices
 
+import { withDeviceLog } from "@/lib/deviceLog";
 import { NextRequest, NextResponse } from "next/server";
 import { registerDevice, updateDevicePublicKey } from "@/lib/deviceStore";
 import { invalidateNetworkSnapshot } from "@/lib/networkSnapshot";
@@ -18,7 +19,7 @@ import { isSensorScreens, measureKindsOf, parseDeclaredSensors, MEASURE_INDEX_KE
 // mais il reste dans le pool Set. Le draw broadcast gère les devices introuvables.
 const POOL_MEMBER_TTL_SEC = 48 * 3600; // 48h — cohérent avec TTL device:
 
-export async function POST(req: NextRequest) {
+async function POST_(req: NextRequest) {
   const ip = getIP(req);
 
   // 1. Blacklist
@@ -142,3 +143,6 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Erreur serveur" }, { status: 500 });
   }
 }
+
+// Journal par appareil (lib/deviceLog.ts) : la réponse n'est jamais modifiée.
+export const POST = withDeviceLog("register", POST_);
