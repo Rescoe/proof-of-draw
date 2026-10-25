@@ -100,10 +100,11 @@ struct Sink { WiFiClient* cl; };
 static void flushCb(void* ctx, const char* d, size_t n) { sendAll(*static_cast<Sink*>(ctx)->cl, d, n); }
 /** En-têtes SANS Content-Length : la page est envoyée en flux et la connexion fermée à la fin (HTTP/1.1 le permet). */
 static void __attribute__((noinline)) sendHeader(WiFiClient& cl, int code) {
-  char h[260];
-  snprintf(h, sizeof h, "HTTP/1.1 %d %s\r\nContent-Type: text/html; charset=utf-8\r\nCache-Control: no-store\r\nX-Frame-Options: DENY\r\nContent-Security-Policy: default-src 'none'; style-src 'unsafe-inline'; script-src 'sha256-" POD_PORTAL_JS_SHA256 "'; form-action 'self'\r\nConnection: close\r\n\r\n",
+  char h[400];                                              // en-tête complet = 283 o avec le code 200 : à 260 o il était TRONQUÉ (CSP coupée, jamais de ligne vide) et le navigateur affichait une page blanche (essai du 25/10/2026)
+  const int hn = snprintf(h, sizeof h, "HTTP/1.1 %d %s\r\nContent-Type: text/html; charset=utf-8\r\nCache-Control: no-store\r\nX-Frame-Options: DENY\r\nContent-Security-Policy: default-src 'none'; style-src 'unsafe-inline'; script-src 'sha256-" POD_PORTAL_JS_SHA256 "'; form-action 'self'\r\nConnection: close\r\n\r\n",
            code, code == 200 ? "OK" : "Error");
-  sendAll(cl, h, strlen(h));
+  if (hn <= 0 || hn >= (int)sizeof h) return;                 // jamais d en-tête tronqué : rien n est envoyé plutôt qu un en-tête sans fin
+  sendAll(cl, h, (size_t)hn);
 }
 static void __attribute__((noinline)) sendText(WiFiClient& cl, Ctx* c, int code, const char* text) {
   sendHeader(cl, code);
