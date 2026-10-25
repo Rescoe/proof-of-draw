@@ -140,6 +140,9 @@
 #ifndef POD_SENSOR_DISPLAY
 #define POD_SENSOR_DISPLAY 0
 #endif
+#if POD_SENSOR_DISPLAY
+#include "pod_civil.h"
+#endif
 // POD_FRAME_CHUNK = 1 : la frame (9 472 o) est téléchargée en 4 morceaux de POD_FRAME_CHUNK_LEN octets (/api/pull-frame?off=&len=) avec un tampon TLS de réception de POD_TLS_RX octets au lieu de 16 Ko :
 // ≈ 12 Ko de tas en plus pendant le téléchargement (sonde du 24/10/2026 : tas minimal avec les plans alloués 9,8 Ko -> 22,1 Ko). Si le serveur ne connaît pas encore les morceaux, repli AUTOMATIQUE sur le téléchargement d'un seul tenant.
 #ifndef POD_FRAME_CHUNK
@@ -251,6 +254,12 @@ static uint32_t g_envAtMs = 0;                        // millis() de la dernièr
 static int g_envT10 = 0, g_envH10 = 0;                // dernière mesure lue
 static int g_envEngT10 = 0, g_envEngH10 = 0;          // mesure gravée sur l'écran
 static uint32_t g_envEngAtMs = 0;                     // millis() de la dernière gravure (0 = jamais)
+// Heure : le serveur donne au pull l'heure UTC (`now`) et le décalage du fuseau choisi dans l'app (`tzo`, minutes) pour les appareils à capteur ; la carte date ainsi ses mesures sans règle de fuseau.
+static uint32_t g_srvEpoch = 0, g_srvAtMs = 0;        // heure UTC (secondes) reçue au dernier pull et millis() de cet instant (0 = jamais reçue)
+static int g_tzoMin = 0;                              // décalage UTC du fuseau de l'écran, en minutes
+static uint32_t g_envMeasLocal = 0;                   // heure locale du dernier relevé, en secondes (0 = horloge inconnue)
+static bool g_envPersistPending = false;              // la mesure gravée doit être inscrite en EEPROM (fait dans la boucle, jamais pendant le rendu)
+#define ENV_EE_OFF 620                                // EEPROM [620..625] (zone réservée 617..639) : 0xE5, T gravée (int16), H gravée (int16), somme
 #endif
 #if POD_WIFI_PORTAL
 static bool g_onboardRequested = false;               // « ONBOARD » reçu sur le port série pendant la fenêtre de démarrage
@@ -864,6 +873,11 @@ void burnEinkCartel_29(uint8_t* bBuf, uint8_t* rBuf,
                        const String& workTitle, const String& artistName,
                        const String& ts, int blockIndex) {
   const int BAND = 13;  // hauteur des bandes en pixels
+// POD_BWR_BEGIN
+#if POD_SENSOR_DISPLAY
+  bool envLayout = false;   // écran avec capteur et mesure récente : bande haute = date + bloc + titre ; deuxième bande = mesure ; bande basse = artiste
+#endif
+// POD_BWR_END
 
   // ── Bande haute ──────────────────────────────────────────────────────────
   clearRows29(bBuf, 0, BAND - 1);
@@ -878,11 +892,17 @@ void burnEinkCartel_29(uint8_t* bBuf, uint8_t* rBuf,
 // POD_BWR_BEGIN
 #if POD_SENSOR_DISPLAY
   if (g_envLine[0] && (uint32_t)(millis() - g_envAtMs) < 7200000UL) {   // une mesure de plus de 2 h n'est plus affichée
-    const int envW = envTextWidth(g_envLine);
-    while (topLine.length() > 0 && textWidth(topLine) > IMG_W - 4 - envW - 8) topLine.remove(topLine.length() - 1);
-    topX = 3;                                                          // date + bloc à gauche, T/H à droite, EN ROUGE
-    envDrawText(rBuf ? rBuf : bBuf, IMG_W - 3 - envW, 3, g_envLine);
+    envLayout = true;
+    if (workTitle.length() > 0) { topLine += " " + workTitle; while (topLine.length() > 0 && textWidth(topLine) > IMG_W - 6) topLine.remove(topLine.length() - 1); }   // le titre passe en haut
+    topX = 3;
+    // deuxième bande (lignes 14 à 26) : « 14.4C 78.2%  releve 25/10 10:09 », EN ROUGE
+    clearRows29(bBuf, BAND + 1, 2 * BAND); if (rBuf) clearRows29(rBuf, BAND + 1, 2 * BAND);
+    drawHLine29(bBuf, 2 * BAND + 1);
+    char ln[48]; char when[12];
+    if (podcivil::formatShort(g_envMeasLocal, when)) snprintf(ln, sizeof ln, "%s  releve %s", g_envLine, when); else snprintf(ln, sizeof ln, "%s", g_envLine);
+    envDrawText(rBuf ? rBuf : bBuf, 3, BAND + 3, ln);
     g_envEngT10 = g_envT10; g_envEngH10 = g_envH10; g_envEngAtMs = millis(); if (g_envEngAtMs == 0) g_envEngAtMs = 1;   // ce qui va être sur le panneau
+    g_envPersistPending = true;
   }
 #endif
 // POD_BWR_END
@@ -901,6 +921,11 @@ void burnEinkCartel_29(uint8_t* bBuf, uint8_t* rBuf,
     botLine = artistName;
   else if (workTitle.length() > 0)
     botLine = workTitle;
+// POD_BWR_BEGIN
+#if POD_SENSOR_DISPLAY
+  if (envLayout && artistName.length() > 0) botLine = artistName;      // le titre est déjà dans la bande haute
+#endif
+// POD_BWR_END
   if (botLine.length() == 0) botLine = "Proof-of-Draw";
 
   while (botLine.length() > 0 && textWidth(botLine) > IMG_W - 4)
@@ -1059,8 +1084,7 @@ static void envSaveFrame() {
 }
 /** Redessine la dernière frame sauvegardée avec la mesure courante, SANS réseau. Un seul rafraîchissement (pas de blanc préalable) : 15 à 45 s, 180 s minimum depuis le précédent. */
 static void envRefresh() {
-  if (!hasDisplayedFrame) return;                                      // rien n'a été affiché depuis le démarrage : le chemin normal gravera la mesure
-  EnvHdr* h = (EnvHdr*)malloc(sizeof(EnvHdr));
+  EnvHdr* h = (EnvHdr*)malloc(sizeof(EnvHdr));                         // (plus d'exigence « frame affichée depuis le démarrage » : l'e-ink garde l'image, la dernière frame est en flash)
   if (!h) return;
   bool good = ESP.flashRead(ENV_FLASH_BASE, (uint32_t*)h, ENV_HDR_SIZE) && memcmp(h->magic, "PDF1", 4) == 0 && (size_t)h->lt + h->la + h->ls + 3 <= sizeof h->txt;
   String t, a, ts; int block = -1;
@@ -1075,12 +1099,36 @@ static void envRefresh() {
   if (!refreshDisplay()) Serial.println(F("[ENV] rafraichissement impossible : nouvel essai a la prochaine lecture"));
   if (own) { free(blackBuf); free(redBuf); blackBuf = redBuf = nullptr; }
 }
+/** Heure locale de l'écran (secondes), 0 si le serveur n'a pas encore donné l'heure. */
+static uint32_t envLocalNow() {
+  if (g_srvEpoch == 0) return 0;
+  return (uint32_t)((int32_t)(g_srvEpoch + (millis() - g_srvAtMs) / 1000UL) + (int32_t)g_tzoMin * 60);
+}
+/** Mesure gravée : inscrite en EEPROM pour qu'un redémarrage ne provoque PAS un rafraîchissement inutile (une écriture = un effacement de secteur : seulement après une vraie gravure). */
+static void envEePersist() {
+  const int16_t t = (int16_t)g_envEngT10, h = (int16_t)g_envEngH10;
+  const uint8_t b[5] = { (uint8_t)(t & 0xFF), (uint8_t)((t >> 8) & 0xFF), (uint8_t)(h & 0xFF), (uint8_t)((h >> 8) & 0xFF), 0 };
+  uint8_t chk = 0xE5; for (int i = 0; i < 4; i++) chk ^= b[i];
+  if (EEPROM.read(ENV_EE_OFF) == 0xE5 && EEPROM.read(ENV_EE_OFF + 1) == b[0] && EEPROM.read(ENV_EE_OFF + 2) == b[1] && EEPROM.read(ENV_EE_OFF + 3) == b[2] && EEPROM.read(ENV_EE_OFF + 4) == b[3]) return;   // déjà inscrite
+  EEPROM.write(ENV_EE_OFF, 0xE5); for (int i = 0; i < 4; i++) EEPROM.write(ENV_EE_OFF + 1 + i, b[i]); EEPROM.write(ENV_EE_OFF + 5, chk);
+  EEPROM.commit();
+}
+/** Au démarrage : reprend la mesure gravée avant le redémarrage (sinon « jamais gravée » : une gravure à la première lecture). */
+static void envEeLoad() {
+  if (EEPROM.read(ENV_EE_OFF) != 0xE5) return;
+  uint8_t b[4]; uint8_t chk = 0xE5; for (int i = 0; i < 4; i++) { b[i] = (uint8_t)EEPROM.read(ENV_EE_OFF + 1 + i); chk ^= b[i]; }
+  if ((uint8_t)EEPROM.read(ENV_EE_OFF + 5) != chk) return;
+  g_envEngT10 = (int16_t)(b[0] | (b[1] << 8)); g_envEngH10 = (int16_t)(b[2] | (b[3] << 8));
+  g_envEngAtMs = millis(); if (g_envEngAtMs == 0) g_envEngAtMs = 1;                                  // l'âge repart à zéro (la durée écoulée avant le redémarrage est inconnue)
+  Serial.printf_P(PSTR("[ENV] mesure gravee reprise de l'EEPROM : %d.%d C, %d.%d %%\n"), g_envEngT10 / 10, abs(g_envEngT10 % 10), g_envEngH10 / 10, g_envEngH10 % 10);
+}
 /** Appelé après chaque lecture du DHT22. */
 static void envOnRead(bool ok, int t10, int h10) {
   if (!ok) return;
-  snprintf(g_envLine, sizeof g_envLine, "%s%d.%dC %d%%", t10 < 0 ? "-" : "", abs(t10) / 10, abs(t10) % 10, (h10 + 5) / 10);
+  snprintf(g_envLine, sizeof g_envLine, "%s%d.%dC %d.%d%%", t10 < 0 ? "-" : "", abs(t10) / 10, abs(t10) % 10, h10 / 10, h10 % 10);
   g_envAtMs = millis(); if (g_envAtMs == 0) g_envAtMs = 1;
   g_envT10 = t10; g_envH10 = h10;
+  g_envMeasLocal = envLocalNow();
   const bool never = (g_envEngAtMs == 0);
   const bool moved = abs(t10 - g_envEngT10) >= POD_ENV_MIN_DT10 || abs(h10 - g_envEngH10) >= POD_ENV_MIN_DH10;
   const bool old   = (uint32_t)(millis() - g_envEngAtMs) >= POD_ENV_MAX_AGE_MS;
@@ -1798,6 +1846,11 @@ bool doPull() {
       pendingArtistName = cm["drawArtistName"] | "";
       pendingDisplayTs  = cm["displayTs"]      | "";
       currentBlockIndex = cm["blockIndex"]     | currentBlockIndex;
+// POD_BWR_BEGIN
+#if POD_SENSOR_DISPLAY
+      if (doc["now"].is<uint32_t>() && doc["tzo"].is<int>()) { g_srvEpoch = doc["now"].as<uint32_t>(); g_srvAtMs = millis(); g_tzoMin = doc["tzo"].as<int>(); }
+#endif
+// POD_BWR_END
       Serial.printf_P(PSTR("[PULL] cartel: title=%s artist=%s ts=%s bloc=%d\n"),
                     pendingWorkTitle.c_str(), pendingArtistName.c_str(),
                     pendingDisplayTs.c_str(), currentBlockIndex);
@@ -2152,6 +2205,9 @@ static void portalOledScreen(const char* l1, const char* l2, const char* l3, con
 static poddht::State g_dht; static bool g_dhtInit = false;
 /** Appelé à chaque tour de loop() : lecture (≈ 6 ms) ou envoi (un POST TLS : tampons image LIBÉRÉS avant, réalloués après) quand l'échéance est atteinte ; jamais pendant un vote, une observation, avant l'appairage ou sans Wi-Fi. */
 static void sensorService() {
+#if POD_SENSOR_DISPLAY
+  if (g_envPersistPending) { g_envPersistPending = false; envEePersist(); }
+#endif
   if (!registered || !paired || WiFi.status() != WL_CONNECTED) return;
   if (pendingCandidateId.length() > 0 || pendingObsHashes.length() > 0) return;
   const uint32_t now = millis();
@@ -2364,6 +2420,9 @@ void setup() {
   resumeResetBanner();
 #if POD_WIFI_PORTAL
   { uint32_t m[2] = {0, 0}; const rst_info* ri = ESP.getResetInfoPtr(); if (ESP.rtcUserMemoryRead(16, m, sizeof m) && m[0] == 0x45494E4Bu && m[1] == ~0x45494E4Bu && ri && ri->reason == 4) { lastRefreshMs = millis(); Serial.println(F("[EINK] rafraichi juste avant ce redemarrage : 180 s d attente avant le prochain")); } const uint32_t z[2] = {0, 0}; ESP.rtcUserMemoryWrite(16, (uint32_t*)z, sizeof z); }
+#endif
+#if POD_SENSOR_DISPLAY
+  envEeLoad();
 #endif
   wifiRecordBoot();                                  // Wi-Fi lu dans l'EEPROM ; sans enregistrement valide : portail (ou configuration série), jamais de réseau tenté
 #endif
