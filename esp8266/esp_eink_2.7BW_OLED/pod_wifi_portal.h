@@ -16,7 +16,9 @@
 
 // Les gros littéraux (page HTML, messages) vivent en FLASH sur la carte (PROGMEM) : sur l'ESP8266 un littéral ordinaire occupe de la RAM statique (budget du dépôt : <= 40 000 o). Sur l'hôte : identité.
 #if defined(ARDUINO)
-  #include <pgmspace.h>
+  #if __has_include(<pgmspace.h>)
+  #include <pgmspace.h>   // ESP8266 ; sur UNO R4 les macros PSTR/strlen_P/memcpy_P/pgm_read_byte/snprintf_P viennent déjà de Arduino.h
+  #endif
   #define POD_P(s) PSTR(s)
   #define POD_STRLEN_P(p) strlen_P(p)
   #define POD_MEMCPY_P(d, p, n) memcpy_P(d, p, n)
@@ -109,10 +111,25 @@ inline FormResult checkForm(const char* token, const char* expected, const char*
 // ── rendu HTML borné ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 struct Buf {
   char* p; size_t cap; size_t n; bool over;
-  Buf(char* b, size_t c) : p(b), cap(c), n(0), over(false) { if (cap) p[0] = 0; }
-  void raw(const char* s) { const size_t l = strlen(s); if (n + l + 1 > cap) { over = true; return; } memcpy(p + n, s, l + 1); n += l; }
+  /** Mode FLUX (UNO R4 : quelques Ko de tas seulement) : quand le tampon est plein il est remis à `flush` puis vidé ; la page n'a alors plus de taille maximale. Sans `stream()` : comportement d'origine (page refusée si trop grande). */
+  typedef void (*FlushFn)(void* ctx, const char* data, size_t len);
+  FlushFn flush; void* fctx;
+  Buf(char* b, size_t c) : p(b), cap(c), n(0), over(false), flush(nullptr), fctx(nullptr) { if (cap) p[0] = 0; }
+  void stream(FlushFn f, void* ctx) { flush = f; fctx = ctx; }
+  /** Remet ce qui reste dans le tampon (mode flux) ; sans effet sinon. */
+  void finish() { if (flush && n > 0) { flush(fctx, p, n); n = 0; p[0] = 0; } }
+  void put(const char* s, size_t l, bool fromFlash) {   // mode flux seulement
+    while (l > 0) {
+      size_t room = cap - 1 - n;
+      if (room == 0) { flush(fctx, p, n); n = 0; p[0] = 0; room = cap - 1; }
+      const size_t k = l < room ? l : room;
+      if (fromFlash) POD_MEMCPY_P(p + n, s, k); else memcpy(p + n, s, k);
+      n += k; p[n] = 0; s += k; l -= k;
+    }
+  }
+  void raw(const char* s) { const size_t l = strlen(s); if (flush) { put(s, l, false); return; } if (n + l + 1 > cap) { over = true; return; } memcpy(p + n, s, l + 1); n += l; }
   /** Littéral en FLASH (POD_P). */
-  void rawP(const char* s) { const size_t l = POD_STRLEN_P(s); if (n + l + 1 > cap) { over = true; return; } POD_MEMCPY_P(p + n, s, l + 1); n += l; }
+  void rawP(const char* s) { const size_t l = POD_STRLEN_P(s); if (flush) { put(s, l, true); return; } if (n + l + 1 > cap) { over = true; return; } POD_MEMCPY_P(p + n, s, l + 1); n += l; }
   /** Texte échappé pour un contenu ou un attribut HTML (& < > " ') — un SSID est contrôlé par un tiers. */
   void esc(const char* s) { for (; *s; s++) escChar(*s); }
   /** Idem pour un texte en FLASH (POD_P). */
@@ -122,6 +139,7 @@ struct Buf {
       case '&': rawP(POD_P("&amp;")); return; case '<': rawP(POD_P("&lt;")); return; case '>': rawP(POD_P("&gt;")); return; case '"': rawP(POD_P("&quot;")); return; case '\'': rawP(POD_P("&#39;")); return;
       default: break;
     }
+    if (flush) { put(&c, 1, false); return; }
     if (n + 2 > cap) { over = true; return; } p[n++] = c; p[n] = 0;
   }
 };

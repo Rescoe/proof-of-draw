@@ -59,11 +59,11 @@ const COPIES = {
   "pod_ota_keys_test.h": ["esp8266/esp_tft1.8/pod_ota_keys_test.h", "esp8266/esp_eink_2.9BWR/pod_ota_keys_test.h", "esp8266/esp_eink_2.7BW_OLED/pod_ota_keys_test.h"],
   "pod_ota_tls.h": ["esp8266/esp_tft1.8/pod_ota_tls.h", "esp8266/esp_eink_2.9BWR/pod_ota_tls.h", "esp8266/esp_eink_2.7BW_OLED/pod_ota_tls.h"],
   "pod_ota_tls_roots.h": ["esp8266/esp_tft1.8/pod_ota_tls_roots.h", "esp8266/esp_eink_2.9BWR/pod_ota_tls_roots.h", "esp8266/esp_eink_2.7BW_OLED/pod_ota_tls_roots.h"],
-  "pod_wifi_cfg.h": ["esp8266/esp_tft1.8/pod_wifi_cfg.h", "esp8266/esp_eink_2.9BWR/pod_wifi_cfg.h", "esp8266/esp_eink_2.7BW_OLED/pod_wifi_cfg.h"],
-  "pod_wifi_portal.h": ["esp8266/esp_tft1.8/pod_wifi_portal.h", "esp8266/esp_eink_2.9BWR/pod_wifi_portal.h", "esp8266/esp_eink_2.7BW_OLED/pod_wifi_portal.h"],
+  "pod_wifi_cfg.h": ["esp8266/esp_tft1.8/pod_wifi_cfg.h", "esp8266/esp_eink_2.9BWR/pod_wifi_cfg.h", "esp8266/esp_eink_2.7BW_OLED/pod_wifi_cfg.h", "arduino_uno_r4/pod_uno_r4_eink29/pod_wifi_cfg.h"],
+  "pod_wifi_portal.h": ["esp8266/esp_tft1.8/pod_wifi_portal.h", "esp8266/esp_eink_2.9BWR/pod_wifi_portal.h", "esp8266/esp_eink_2.7BW_OLED/pod_wifi_portal.h", "arduino_uno_r4/pod_uno_r4_eink29/pod_wifi_portal.h"],
   "pod_wifi_portal_esp.h": ["esp8266/esp_tft1.8/pod_wifi_portal_esp.h", "esp8266/esp_eink_2.9BWR/pod_wifi_portal_esp.h", "esp8266/esp_eink_2.7BW_OLED/pod_wifi_portal_esp.h"],
   "pod_dht22.h": ["esp8266/esp_eink_2.7BW_OLED/pod_dht22.h", "esp8266/esp_eink_2.9BWR/pod_dht22.h", "esp8266/esp_tft1.8/pod_dht22.h"],
-  "pod_civil.h": ["esp8266/esp_eink_2.9BWR/pod_civil.h"],
+  "pod_civil.h": ["esp8266/esp_eink_2.9BWR/pod_civil.h", "arduino_uno_r4/pod_uno_r4_eink29/pod_civil.h"],
 };
 module.exports = { MASTERS, COPIES };
 
