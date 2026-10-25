@@ -451,7 +451,13 @@ static String loadBlockHashFromEEPROM() {
 
 // frameId affiché : on n'en garde que le début (32 car.), suffisant pour reconnaître une œuvre déjà à l'écran
 static String frameKey(const String& id) { return id.length() > FRAMEID_LEN ? id.substring(0, FRAMEID_LEN) : id; }
+#if POD_WIFI_PORTAL
+#define EEPROM_PORTAL_SHOWN_OFF 642   // 1 = l'e-ink montre l'écran du portail (deux QR) ; remis à 0 dès qu'un autre écran le remplace
+#endif
 static void persistFrameId(const String& id) {
+#if POD_WIFI_PORTAL
+  EEPROM.update(EEPROM_PORTAL_SHOWN_OFF, 0);       // tout autre affichage (œuvre, appairage, clés, état) remplace l'écran du portail
+#endif
   const String k = frameKey(id);
   for (int i = 0; i < FRAMEID_LEN; i++) EEPROM.update(EEPROM_FRAMEID_OFF + i, i < (int)k.length() ? (uint8_t)k[i] : (uint8_t)' ');
 }
@@ -1218,6 +1224,27 @@ static void __attribute__((noinline)) portalScreen(const char* apName, const cha
   persistFrameId("");
   lastFrameId = "";
   refreshPanel(false);
+  EEPROM.update(EEPROM_PORTAL_SHOWN_OFF, 1);       // l'écran montre maintenant le portail : il faudra le remplacer une fois connecté
+}
+
+/** Écran d'état « connecté » : remplace l'écran du portail quand la carte est en ligne et qu'aucune œuvre n'est encore à afficher (sans cela, les deux QR restent à l'écran et font croire que rien n'a changé). */
+static void __attribute__((noinline)) connectedScreen(const String& ip) {
+  clearBothPlanes();
+  const String title = "PROOF-OF-DRAW";
+  drawText(blackBuf, centerX(title), 8, title);
+  hLine(blackBuf, 20, 10, IMG_W - 11);
+  const String l1 = "WI-FI CONNECTE", l2 = String("IP: ") + ip, l3 = deviceId.length() > 4 ? String("ID: ") + deviceId.substring(4) : String("ID: ?");
+  const String l4 = paired ? String("APPAIRE: OUI") : String("APPAIRE: NON");
+  const String l5 = "EN ATTENTE D UNE OEUVRE";
+  drawText(redBuf, centerX(l1, 2), 30, l1, 2);
+  drawText(blackBuf, centerX(l2), 56, l2);
+  drawText(blackBuf, centerX(l3), 68, l3);
+  drawText(blackBuf, centerX(l4), 80, l4);
+  drawText(redBuf, centerX(l5), 100, l5);
+  persistFrameId("");
+  lastFrameId = "";
+  refreshPanel(false);
+  logf("[PORTAL] ecran d'etat affiche (connecte, en attente d'une oeuvre)");
 }
 #endif
 // POD_WIFI_END
@@ -2006,7 +2033,10 @@ static void __attribute__((noinline)) wifiStartup() {
       wifiBegin();
       for (int i = 0; i < 20 && wifiStatus() != WL_CONNECTED; i++) delay(500);
     }
-    if (wifiStatus() == WL_CONNECTED) return;
+    if (wifiStatus() == WL_CONNECTED) {
+      for (int i = 0; i < 20 && wifiIpString() == "0.0.0.0"; i++) delay(250);     // l'adresse arrive un instant après la connexion (constaté : « IP: 0.0.0.0 »)
+      return;
+    }
     logf("[WIFI] connexion impossible au reseau enregistre");
     reason = podportal::R_CONNECT_FAILED;
   }
@@ -2106,6 +2136,11 @@ void setup() {
   podCanaryLogProbe();
 #endif
   }
+// POD_WIFI_BEGIN
+#if POD_WIFI_PORTAL
+  if (EEPROM.read(EEPROM_PORTAL_SHOWN_OFF) != 0 && lastFrameId.length() == 0) connectedScreen(wifiIpString());   // 1 ou 0xFF (jamais écrit : carte flashée avant ce correctif) ET aucune œuvre mémorisée : l'écran montre le portail. Un redémarrage ordinaire (0) ou une carte qui affiche une œuvre ne rafraîchit rien
+#endif
+// POD_WIFI_END
   lastPullMs = millis(); lastValidateMs = millis();
   logf("[BOOT] prêt — pull toutes les %lu s", PULL_INTERVAL / 1000UL);
 #if POD_RENDER_V1 && POD_CANARY
