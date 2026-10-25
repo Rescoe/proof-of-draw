@@ -18,6 +18,7 @@ export interface Device {
   artistName?: string;              // rétrocompat — remplacé par ArtistProfile.displayName
   deviceName?: string;             // nom humain de l'appareil (distinct du nom d'artiste)
   timezone?: string;               // fuseau IANA choisi par le propriétaire (heure du cartel et des mesures) ; absent = Europe/Paris
+  measuresPublic?: boolean;        // mesures (capteurs) visibles dans la vue réseau et l'historique public ; absent ou true = PUBLIQUES (défaut), false = privées (le propriétaire décoche)
   artistId?:  string;              // lien vers ArtistProfile
   pairCode:   string;   // sensible — jamais exposé publiquement
   lastSeen:   number;
@@ -118,6 +119,7 @@ export interface OwnedDevice {
   artistName?: string;
   deviceName?: string;
   timezone?: string;
+  measuresPublic?: boolean;
   artistId?:  string;
   screens:    string[];
   firmware:   string;
@@ -199,6 +201,7 @@ export function toOwnedDevice(d: Device): OwnedDevice {
     artistName:         d.artistName,
     deviceName:         d.deviceName,
     timezone:           d.timezone,
+    measuresPublic:     d.measuresPublic !== false,
     artistId:           d.artistId,
     screens:            d.screens,
     firmware:           d.firmware,
@@ -806,6 +809,15 @@ export async function resetDeviceKey(deviceId: string): Promise<{ hadKey: boolea
 /**
  * Renomme un appareil (deviceName distinct de artistName).
  */
+/** Rend les mesures de l'appareil publiques (vue réseau + historique /api/sensor?public=1) ou privées. Réglage du propriétaire ; défaut : publiques. */
+export async function setMeasuresPublic(deviceId: string, enabled: boolean): Promise<Device | null> {
+  const device = await getDevice(deviceId);
+  if (!device) return null;
+  device.measuresPublic = enabled;
+  await saveDevice(device);
+  return device;
+}
+
 /** Fuseau horaire de l'appareil (validé par l'appelant : lib/deviceTime.isValidTimezone). */
 export async function setDeviceTimezone(deviceId: string, timezone: string): Promise<Device | null> {
   const device = await getDevice(deviceId);

@@ -62,7 +62,7 @@ test("CADENCE : l'essai à 5 min s'éteint tout seul le 16/10/2026 00:00 UTC", (
 
 test("VUE RÉSEAU : un capteur seul devient un appareil SANS écran avec sa dernière mesure ; en ligne selon la mesure, pas la fiche", () => {
   const now = Date.UTC(2026, 9, 12, 12, 0, 0);
-  const rec: DeviceRecord = { deviceId: "dev_I25D9Z7A", screens: ["sensor"], firmware: "r4dht22-1.1", lastSeen: now - 5 * 3600_000, lastPing: now - 5 * 3600_000, framesSent: 0, createdAt: now - 9 * 3600_000, artistName: "Roubzi" };
+  const rec: DeviceRecord = { deviceId: "dev_I25D9Z7A", screens: ["sensor"], firmware: "r4dht22-1.1", measuresPublic: true, lastSeen: now - 5 * 3600_000, lastPing: now - 5 * 3600_000, framesSent: 0, createdAt: now - 9 * 3600_000, artistName: "Roubzi" };
   const raw = `${Math.floor((now - 10 * 60_000) / 1000)};temp=211;hum=719`;
   const d = toNetworkDevice(rec, null, now, raw);
   assert.deepEqual(d.screens, []); assert.deepEqual(d.pools, []);
@@ -77,7 +77,7 @@ test("VUE RÉSEAU : un capteur seul devient un appareil SANS écran avec sa dern
   // un appareil sans capteur n'a pas de champ measures ; une carte AVEC écran qui mesure garde ses écrans et ses pools
   const plain = toNetworkDevice({ ...rec, deviceId: "dev_AAAAAAAA", screens: ["eink29bwr"] }, null, now);
   assert.equal(plain.measures, undefined); assert.deepEqual(plain.screens.map((s) => s.screen), ["eink29bwr"]);
-  const both = toNetworkDevice({ ...rec, deviceId: "dev_BBBBBBBB", screens: ["eink29bwr"], sensors: ["temp"] }, null, now, `${Math.floor(now / 1000) - 60};temp=190`);
+  const both = toNetworkDevice({ ...rec, deviceId: "dev_BBBBBBBB", screens: ["eink29bwr"], sensors: ["temp"], measuresPublic: true }, null, now, `${Math.floor(now / 1000) - 60};temp=190`);
   assert.deepEqual(both.pools, ["eink29bwr"]); assert.deepEqual(both.measures?.kinds, ["temp"]);
   const snap = assembleNetworkSnapshot([d, plain, both], 0);
   assert.equal(snap.totals.devices, 3); assert.equal(snap.totals.screens, 2, "le capteur n'ajoute aucun écran");

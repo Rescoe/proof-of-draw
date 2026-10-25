@@ -24,6 +24,7 @@ export type DeviceRecord = {
   artistId?: string;
   sceneCapability?: { sceneV1?: boolean };
   sensors?: string[];
+  measuresPublic?: boolean;
   pairCode?: string;
   lastSeen: number;
   lastPing: number;
@@ -159,7 +160,8 @@ export function toNetworkDevice(
   // « sensor » est un pseudo-écran (carte sans écran) : jamais un écran de la vue réseau
   const screens = (Array.isArray(device.screens) ? device.screens : []).filter((s) => s !== SENSOR_SCREEN);
   const kinds = measureKindsOf(device);
-  const measures = kinds.length > 0 ? toDeviceMeasures(kinds, latestMeasureRaw) : undefined;
+  // Mesures : PUBLIQUES par défaut ; si le propriétaire a décoché « Mesures publiques » (measuresPublic === false), rien n'est exposé dans la vue réseau, pas même l'heure de la dernière mesure.
+  const measures = kinds.length > 0 && device.measuresPublic !== false ? toDeviceMeasures(kinds, latestMeasureRaw) : undefined;
   const showMeasures = showsMeasures(device, !!measures?.latest);   // une déclaration de capteur sans mesure reçue (aucun capteur branché) n'affiche rien
   // Un capteur est en ligne s'il a MESURÉ récemment (sa fiche n'est réécrite que toutes les 12 h)
   const measuredAtMs = measures?.latest ? measures.latest.t * 1000 : 0;

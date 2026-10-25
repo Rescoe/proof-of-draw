@@ -305,6 +305,14 @@ function ManagePanel({ d, devices, profile, tab, setTab, onReload, onGive, onAsk
           >
             <Switch name="Œuvres d'agent IA" on={!!d.acceptsAnaArt} busy={busy === "ana"} onChange={() => toggle("ana", "accepts-ana-art", { enabled: !d.acceptsAnaArt })} />
           </SettingRow>
+          {(d.sensors?.length ?? 0) > 0 && (
+            <SettingRow
+              title="Mesures publiques"
+              desc={d.measuresPublic !== false ? "Les mesures de ce capteur (température, humidité…) sont visibles par tous dans la vue réseau, avec leur historique (jusqu'à 31 jours). Décochez pour les garder privées." : "Les mesures restent privées : visibles par vous seul, dans « Mesures » de votre profil."}
+            >
+              <Switch name="Mesures publiques" on={d.measuresPublic !== false} busy={busy === "meas"} onChange={() => toggle("meas", "measures-public", { enabled: d.measuresPublic === false })} />
+            </SettingRow>
+          )}
           <div style={{ padding: "0.7rem 0", borderTop: "1px solid var(--border)" }}>
             <div style={{ fontSize: "0.85rem", fontWeight: 600 }}>Fuseau horaire de l&apos;écran</div>
             <p style={{ ...muted, marginTop: 2, marginBottom: "0.55rem" }}>
@@ -547,6 +555,29 @@ function InlineRename({ d, onSaved }: { d: OwnedDevice; onSaved: () => void }) {
   );
 }
 
+// ── Avertissement « mesures publiques » (fermable ; la fermeture est mémorisée dans ce navigateur) ──────────
+
+const MEAS_NOTICE_KEY = "pod.measuresPublicNotice.dismissed";
+function MeasuresPublicNotice({ devices }: { devices: OwnedDevice[] }) {
+  const [hidden, setHidden] = useState(true);   // masqué jusqu'à la lecture du stockage : pas de clignotement
+  useEffect(() => { try { setHidden(localStorage.getItem(MEAS_NOTICE_KEY) === "1"); } catch { setHidden(false); } }, []);
+  const concerned = devices.filter((d) => (d.sensors?.length ?? 0) > 0 && d.measuresPublic !== false);
+  if (hidden || concerned.length === 0) return null;
+  return (
+    <div role="note" style={{ display: "flex", alignItems: "flex-start", gap: "0.7rem", padding: "0.7rem 0.9rem", marginBottom: "0.9rem", border: "1px solid var(--border)", borderLeft: "3px solid var(--accent)", borderRadius: 10, background: "var(--surface)", fontSize: "0.82rem", color: "var(--text2)", lineHeight: 1.45 }}>
+      <span aria-hidden>⚠️</span>
+      <span style={{ flex: 1 }}>
+        <strong style={{ color: "var(--text)" }}>Vos mesures de capteurs sont publiques</strong> ({concerned.map(deviceLabel).join(", ")}) : elles apparaissent dans la vue réseau. Vous pouvez les désactiver à tout moment : « Gérer » → Réglages → Mesures publiques.
+      </span>
+      <button
+        type="button" aria-label="Fermer ce message"
+        onClick={() => { setHidden(true); try { localStorage.setItem(MEAS_NOTICE_KEY, "1"); } catch { /* stockage indisponible : le message reviendra */ } }}
+        style={{ background: "transparent", border: "none", color: "var(--text3)", cursor: "pointer", fontSize: "1.1rem", lineHeight: 1, padding: "0 0.2rem" }}
+      >×</button>
+    </div>
+  );
+}
+
 // ── Liste ────────────────────────────────────────────────────────────────────
 
 export function DevicesPanel({ devices, profile, loading, onReload }: {
@@ -578,6 +609,7 @@ export function DevicesPanel({ devices, profile, loading, onReload }: {
 
   return (
     <div>
+      <MeasuresPublicNotice devices={devices} />
       {giving && (
         <GiveDeviceModal
           deviceId={giving.deviceId} label={deviceLabel(giving)}
