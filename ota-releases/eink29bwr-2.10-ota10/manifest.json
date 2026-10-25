@@ -1,0 +1,31 @@
+{
+  "schema": "pod-ota-manifest-v2",
+  "releaseId": "eink29bwr-2.10-ota10",
+  "family": "esp8266-eink29bwr",
+  "profile": {
+    "board": "esp8266",
+    "screen": "eink29bwr",
+    "flash": "4M2M"
+  },
+  "channel": "canary",
+  "firmwareVersion": "eink29bwr-2.10",
+  "otaSeq": 10,
+  "minOtaSeq": 1,
+  "revokedSeqs": [],
+  "url": "/firmware/eink29bwr-2.10-ota10/image.bin",
+  "size": 535936,
+  "sha256": "9bdf5e98b2dc8df02a81e85f4dfef2995fc7e522905f0490041f1ce52308aadc",
+  "wave": {
+    "of": 100,
+    "upTo": 100
+  },
+  "canaryDevices": [
+    "dev_MN67OG7R"
+  ],
+  "notes": "eink29bwr-2.10 : cartel capteur v3 (une bande d'info en haut: date, bloc, titre, artiste ; bande de mesure rouge de 9 lignes en bas), canari banc dev_MN67OG7R",
+  "signature": {
+    "alg": "rsa2048-pkcs1-sha256",
+    "keyId": "ota-a",
+    "sig": "Fi0EJCw6gKbh0EiOssV86WOFW8zibGs1jj1/jag9bgNcnBTsZxsVsUg96QYaSLeJxLRXT7WHWcWc/F0419p8DT6tebwvwlSRqv/lcxXo6gg8hspHjpYEtK9RhyHGC3PXqsMf2Pco26sXF1PdFOZdwgwTBOLjsixVys7lHMwKcyucgHDGp06GZudlClGIn/qCWExEzhfyIPbMBwVirnNumLR9zAIR+ceICSBVMSQ7SLuHMBbY7fQEBHZcBDI9n0r/7aMHEAN/VbWGGSQ4LQcmhL1zHqxln65yJ/repNoBz9GFXPVmRWxQX0AsoY+VtPrh+Dp53v5rL1FYIqhhXy/hZg=="
+  }
+}
