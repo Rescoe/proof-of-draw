@@ -15,7 +15,7 @@ import {
 
 const ID_RE = /^dev_[A-Z0-9]{8}$/;
 const PUBLIC_HOURS = 48;          // fenêtre par défaut de l'historique public
-const PUBLIC_MAX_HOURS = 744;     // 31 jours au plus (MEASURE_KEEP entrées), si le propriétaire a rendu ses mesures publiques
+const PUBLIC_MAX_HOURS = 744;     // 31 jours au plus (MEASURE_KEEP entrées), tant que le propriétaire n a pas décoché les mesures publiques
 
 export async function POST(req: NextRequest) {
   const ip = getIP(req);
@@ -71,10 +71,10 @@ export async function GET(req: NextRequest) {
     if (!ID_RE.test(deviceId)) return NextResponse.json({ error: "deviceId invalide" }, { status: 400 });
 
     if (sp.get("public") === "1") {
-      // Historique PUBLIC, sans identifiant d'artiste : seulement si le propriétaire a rendu les mesures de cet appareil publiques (réglage « Mesures publiques ») ; 48 h par défaut, jusqu'à 31 jours (?hours=).
+      // Historique PUBLIC, sans identifiant d'artiste : sauf si le propriétaire a décoché « Mesures publiques » pour cet appareil ; 48 h par défaut, jusqu'à 31 jours (?hours=).
       // Réponse identique (404) pour « jamais mesuré » et « mesures privées » : rien ne se déduit de la requête. Seuls les appareils DÉCLARÉS capteurs sont lisibles (index meas:devices ; 1 SISMEMBER).
       const [indexed, device] = await Promise.all([redis.sismember("meas:devices", deviceId), getDevice(deviceId)]);
-      if (!indexed || device?.measuresPublic !== true) return NextResponse.json({ error: "aucune mesure" }, { status: 404 });
+      if (!indexed || !device || device.measuresPublic === false) return NextResponse.json({ error: "aucune mesure" }, { status: 404 });
       const wanted = sp.get("hours") ? Math.min(clampHours(sp.get("hours")), PUBLIC_MAX_HOURS) : PUBLIC_HOURS;
       const raws = await redis.lrange(measKey(deviceId), 0, MEASURE_KEEP - 1);
       const all = decodeMeasures(raws as unknown[]);
