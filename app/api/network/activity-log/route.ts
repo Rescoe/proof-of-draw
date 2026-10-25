@@ -5,7 +5,7 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { redis } from "@/lib/redis";
-import { parseBlocks, getCurrentCandidate, getVotes } from "@/lib/chain";
+import { parseBlocks, getCurrentCandidate, getVotes, getCanonicalChain } from "@/lib/chain";
 import type { Block } from "@/lib/chain";
 import { recentAnimationEvents } from "@/lib/anim/store";
 import { fixtureCount, buildFixtureSnapshot, buildFixtureEvents } from "@/lib/network/fixtures";
@@ -19,6 +19,7 @@ export type LogEventType =
   | "VALIDATION_PENDING"
   | "VALIDATION_VOTE"
   | "ANIMATION"
+  | "CANDIDATE_REJECTED"
   | "CHAIN_EMPTY";
 
 export type LogEvent = {
@@ -55,17 +56,25 @@ const RECENT_MAX = 30;
 //     ne dépend plus du nombre de visiteurs ;
 //   • les clients n'interrogent plus qu'onglet visible, toutes les 30 s (lib/usePolling.ts).
 const CACHE_MS = 30_000;
-let memo: { at: number; body: { events: LogEvent[]; generatedAt: number } } | null = null;
-let inflight: Promise<{ events: LogEvent[]; generatedAt: number }> | null = null;
+type Body = { events: LogEvent[]; generatedAt: number };
+// 25/10/2026 : `?days=N` (1 à 31) renvoie TOUTE la semaine (blocs de la chaîne canonique + dessins rejetés), pas seulement les 30 derniers blocs ; sans paramètre : comportement d'avant (50 événements récents).
+// Mémoire et cache CDN par valeur de `days`. Coût Redis : la chaîne est mise en cache par hash de tête (lib/chain.ts getCanonicalChain) ; +1 LRANGE pour les rejets.
+const memo = new Map<number, { at: number; body: Body }>();
+const inflight = new Map<number, Promise<Body>>();
+const MAX_EVENTS_WINDOW = 1500;
 
 export async function GET(req: NextRequest) {
   try {
     // DÉVELOPPEMENT SEULEMENT (?fixture=n) : événements synthétiques, aucune lecture Redis. Ignoré en production.
     const fx = fixtureCount(req.nextUrl.searchParams.get("fixture"));
     if (fx !== null) return NextResponse.json({ events: buildFixtureEvents(buildFixtureSnapshot(fx)), generatedAt: Date.now() });
-    if (memo && Date.now() - memo.at < CACHE_MS) return respond(memo.body);
-    if (!inflight) inflight = build().then((b) => { memo = { at: Date.now(), body: b }; return b; }).finally(() => { inflight = null; });
-    return respond(await inflight);
+    const d = Math.floor(Number(req.nextUrl.searchParams.get("days") ?? "0"));
+    const days = Number.isFinite(d) && d >= 1 ? Math.min(31, d) : 0;
+    const hit = memo.get(days);
+    if (hit && Date.now() - hit.at < CACHE_MS) return respond(hit.body);
+    let p = inflight.get(days);
+    if (!p) { p = build(days).then((b) => { memo.set(days, { at: Date.now(), body: b }); return b; }).finally(() => { inflight.delete(days); }); inflight.set(days, p); }
+    return respond(await p);
   } catch (err) {
     console.error("[/api/network/activity-log]", err);
     return NextResponse.json({ events: [], generatedAt: Date.now() });
@@ -76,19 +85,23 @@ function respond(body: { events: LogEvent[]; generatedAt: number }) {
   return NextResponse.json(body, { headers: { "Cache-Control": "public, s-maxage=30, stale-while-revalidate=60" } });
 }
 
-async function build(): Promise<{ events: LogEvent[]; generatedAt: number }> {
+async function build(days: number): Promise<{ events: LogEvent[]; generatedAt: number }> {
   {
-    const [hashes, candidate, voteMap] = await Promise.all([
-      redis.lrange<string>("chain:recent", 0, RECENT_MAX - 1),
+    const since = days > 0 ? Date.now() - days * 86_400_000 : 0;
+    const [hashes, candidate, voteMap, chain, rejectedRaw] = await Promise.all([
+      days > 0 ? Promise.resolve<string[]>([]) : redis.lrange<string>("chain:recent", 0, RECENT_MAX - 1),
       getCurrentCandidate(),
       getVotes(),
+      days > 0 ? getCanonicalChain().catch(() => null) : Promise.resolve(null),
+      days > 0 ? redis.lrange<string>("rejected:draws", 0, 199) : Promise.resolve<string[]>([]),
     ]);
 
     const events: LogEvent[] = [];
 
-    // ── Blocs récents ──────────────────────────────────────────────────────────
-    if (hashes && hashes.length > 0) {
-      const blocks: Block[] = await parseBlocks(hashes);   // 1 seul MGET
+    // ── Blocs : les 30 derniers (comportement d'origine) ou, avec `days`, tous ceux de la fenêtre dans la chaîne canonique ──────────────
+    const windowBlocks: Block[] | null = days > 0 ? (chain?.blocks ?? []).filter((b) => b.minedAt >= since) : null;
+    if (windowBlocks || (hashes && hashes.length > 0)) {
+      const blocks: Block[] = windowBlocks ?? await parseBlocks(hashes);   // 1 seul MGET (mode d'origine)
 
       for (const b of blocks) {
         const artist = b.drawArtistName || b.artistName || "?";
@@ -147,6 +160,22 @@ async function build(): Promise<{ events: LogEvent[]; generatedAt: number }> {
       }
     }
 
+    // ── Dessins rejetés / expirés de la fenêtre (liste rejected:draws : 200 entrées, 90 jours) ─────────────────────────────────────────
+    if (days > 0) {
+      for (const item of rejectedRaw ?? []) {
+        try {
+          const r = (typeof item === "string" ? JSON.parse(item) : item) as { deviceId?: string; screen?: string; reason?: string; rejectedAt?: number; workTitle?: string | null; drawArtistName?: string | null; candidateId?: string };
+          if (typeof r.rejectedAt !== "number" || r.rejectedAt < since) continue;
+          const title = r.workTitle && r.workTitle !== "Sans titre" ? ` "${r.workTitle}"` : "";
+          events.push({
+            id: `rej-${r.candidateId ?? r.rejectedAt}`, type: "CANDIDATE_REJECTED", ts: r.rejectedAt, screen: r.screen,
+            ...(r.deviceId ? { deviceRef: publicDeviceId(r.deviceId) } : {}), artistName: r.drawArtistName ?? undefined, workTitle: r.workTitle ?? undefined,
+            reason: String(r.reason ?? "").slice(0, 200), message: `REJETÉ${title} · ${r.screen ?? "?"} · ${String(r.reason ?? "").slice(0, 160)}`,
+          });
+        } catch { /* entrée illisible : ignorée */ }
+      }
+    }
+
     // Trier par ts DESC (plus récent en premier)
     // ── Animations de la galerie « Animations » (faites à la main, banc d'essai) ───────────────────────
     try {
@@ -160,6 +189,6 @@ async function build(): Promise<{ events: LogEvent[]; generatedAt: number }> {
 
     events.sort((a, b) => b.ts - a.ts);
 
-    return { events: events.slice(0, 50), generatedAt: Date.now() };
+    return { events: events.slice(0, days > 0 ? MAX_EVENTS_WINDOW : 50), generatedAt: Date.now() };
   }
 }

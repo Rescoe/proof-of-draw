@@ -25,6 +25,8 @@ Règle (demandée par le porteur le 25/10/2026) : **toute demande faite pendant 
 
 ## Fait (dernier en tête)
 
+- [x] 25/10 — **Journal réseau** (page réseau) : toute la semaine (`/api/network/activity-log?days=7` : blocs de la chaîne canonique + dessins rejetés), horodatage complet JJ/MM/AAAA HH:MM:SS, filtre par jour et recherche libre, défilement qui ne saute plus (suivi des nouvelles lignes seulement si le lecteur est en bas). Limite connue : les votes individuels des blocs anciens ne sont pas conservés (seul le résumé « v2 vérifié ×N » l'est) ; le journal par appareil (Gérer → Journal) reste réservé au propriétaire.
+
 - [x] 25/10 — **Quorum vivant** (`lib/quorumHealth.ts`, `lib/quorumResponsive.ts`) : un appareil actif qui ne vote pas pour un candidat arrivé à expiration reçoit un « manque » (`missedVotes`) et sort du quorum (seuil `QUORUM_MAX_MISSED`, défaut 1) ; dès qu'il vote il y revient. Cause des rejets « sans quorum » depuis 2 jours : réseau de 4 (MN67, R4, TFT 1,8″ muet, un 4ᵉ) pour 3 votes nécessaires, 2 reçus. Un candidat miné ou refusé par décision ne pénalise personne. Interrupteur : `DEVICE_LOG=off` pour le journal.
 
 - [x] 25/10 — Journal par appareil, 7 jours, onglet « Journal » de « Gérer » (`lib/deviceLog.ts`, commit `affa3f6` sur `main`).
