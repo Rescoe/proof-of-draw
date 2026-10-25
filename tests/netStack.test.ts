@@ -12,7 +12,7 @@ import { NET_SKETCHES, netEditsFor, undoNetStack } from "./helpers/netStackEdits
 // Cause mesurée sur la carte (BOOT-FIX2, 09/10/2026) : WiFiSSLClient::connect() descend de 456 o SOUS __StackLimit (pile max réelle 1480 o). L'hôte prouve la logique (garde, marge, échec fermé, imbrication, effacement) ;
 // le déplacement réel de SP et la profondeur réelle restent à mesurer par le canari sans frame (docs/LOT_8B2B2_NETSTACK_FIX1_2026_10_09.md).
 const root = path.join(__dirname, "..");
-const read = (p: string) => fs.readFileSync(path.join(root, p), "utf8").replace(/\r\n/g, "\n");
+const read = (p: string) => fs.readFileSync(path.join(root, p), "utf8").replace(/\r\n/g, "\n").replace(/\n?\/\/ POD_WIFI_BEGIN[\s\S]*?\/\/ POD_WIFI_END\n?/g, "\n");   // vue « portail Wi-Fi éteint » (POD_WIFI_PORTAL = 0) : blocs POD_WIFI_BEGIN / POD_WIFI_END retirés
 const HDR = "consensus-pod/src/adapters/podNetStack.h";
 const EDH = "consensus-pod/src/adapters/podEdStack.h";
 const BACKUP = "firmware-backups/2026-10-09_avant-netstack-fix1";

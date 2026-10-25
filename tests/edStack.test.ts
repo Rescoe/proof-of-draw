@@ -16,7 +16,7 @@ import { voteMessageV2 } from "../lib/podVote";
 // Hôte uniquement pour le calcul ; la bascule réelle de pile Thumb et la profondeur sur Cortex-M4 NE PEUVENT PAS être prouvées ici (micro-canari matériel : docs/LOT_8B2B2_PILE_ED25519_R4_2026_10_08.md).
 // Sans g++ ou sans la bibliothèque Crypto 0.4.0 installée, la partie différentielle est IGNORÉE et le dit (jamais faussement verte).
 const root = path.join(__dirname, "..");
-const read = (p: string) => fs.readFileSync(path.join(root, p), "utf8").replace(/\r\n/g, "\n");
+const read = (p: string) => fs.readFileSync(path.join(root, p), "utf8").replace(/\r\n/g, "\n").replace(/\n?\/\/ POD_WIFI_BEGIN[\s\S]*?\/\/ POD_WIFI_END\n?/g, "\n");   // vue « portail Wi-Fi éteint » (POD_WIFI_PORTAL = 0) : blocs POD_WIFI_BEGIN / POD_WIFI_END retirés
 const HDR = "consensus-pod/src/adapters/podEdStack.h";
 const BACKUP = "firmware-backups/2026-10-08_avant-correctif-pile-ed25519-r4";
 const stripComments = (s: string) => s.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/.*$/gm, "");

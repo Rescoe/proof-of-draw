@@ -93,14 +93,17 @@ static volatile uint8_t g_podDpPhase = 0;
   static char g_wifiPass[podwifi::PASS_MAX + 1];
   const char* WIFI_SSID     = g_wifiSsid;
   const char* WIFI_PASSWORD = g_wifiPass;
-#elif __has_include("secrets.h")
-
+#else
+// POD_WIFI_END
+#if __has_include("secrets.h")
   #include "secrets.h"
   const char* WIFI_SSID     = SECRET_WIFI_SSID;
   const char* WIFI_PASSWORD = SECRET_WIFI_PASSWORD;
 #else
   const char* WIFI_SSID     = "";            // ← renseigner (ou créer secrets.h)
   const char* WIFI_PASSWORD = "";
+#endif
+// POD_WIFI_BEGIN
 #endif
 // POD_WIFI_END
 
@@ -110,7 +113,9 @@ static volatile uint8_t g_podDpPhase = 0;
 #if POD_WIFI_PORTAL
 #define FIRMWARE_VERSION    "r4eink29-1.2"             // 1.2 = Wi-Fi par portail (VOTE_V2_FIRMWARE : r4eink29 >= 1.1, donc toujours capable de voter)
 #else
+// POD_WIFI_END
 #define FIRMWARE_VERSION    "r4eink29-1.1"
+// POD_WIFI_BEGIN
 #endif
 // POD_WIFI_END
 #define PULL_INTERVAL       60000UL                // 1 min
@@ -451,13 +456,17 @@ static String loadBlockHashFromEEPROM() {
 
 // frameId affiché : on n'en garde que le début (32 car.), suffisant pour reconnaître une œuvre déjà à l'écran
 static String frameKey(const String& id) { return id.length() > FRAMEID_LEN ? id.substring(0, FRAMEID_LEN) : id; }
+// POD_WIFI_BEGIN
 #if POD_WIFI_PORTAL
 #define EEPROM_PORTAL_SHOWN_OFF 642   // 1 = l'e-ink montre l'écran du portail (deux QR) ; remis à 0 dès qu'un autre écran le remplace
 #endif
+// POD_WIFI_END
 static void persistFrameId(const String& id) {
+// POD_WIFI_BEGIN
 #if POD_WIFI_PORTAL
   EEPROM.update(EEPROM_PORTAL_SHOWN_OFF, 0);       // tout autre affichage (œuvre, appairage, clés, état) remplace l'écran du portail
 #endif
+// POD_WIFI_END
   const String k = frameKey(id);
   for (int i = 0; i < FRAMEID_LEN; i++) EEPROM.update(EEPROM_FRAMEID_OFF + i, i < (int)k.length() ? (uint8_t)k[i] : (uint8_t)' ');
 }
@@ -582,6 +591,41 @@ static String __attribute__((noinline)) wifiIpString() {
   return ip;
 }
 
+// ─── Clés Ed25519 ──────────────────────────────────────────────────────────
+// Entropie : bruit des entrées analogiques flottantes + gigue d'horloge + MAC + RSSI, condensés par SHA-256.
+// (Même niveau que les firmwares ESP : suffisant pour identifier un écran, PAS un générateur certifié.)
+static bool gatherEntropy(uint8_t out[32]) {
+  SHA256 h; h.reset();
+  uint8_t mac[6] = {0}; int32_t rssi = 0;
+  if (!wifiMac(mac) || !wifiRssi(rssi)) { memset(out, 0, 32); return false; }   // NETSTACK-WIFI-CALLS-FIX1 : échec fermé — aucune entropie partielle
+  h.update(mac, 6);
+  h.update(&rssi, sizeof(rssi));
+  for (int i = 0; i < 384; i++) {
+    const uint16_t v = (uint16_t)analogRead(A0 + (i % 6));
+    const uint32_t m = micros();
+    h.update(&v, sizeof(v)); h.update(&m, sizeof(m));
+    delayMicroseconds(29 + (v & 15));
+  }
+  h.finalize(out, 32);
+  return true;
+}
+static void generateKeys() {
+  logf("[KEYS] Génération de la paire Ed25519...");
+  if (!gatherEntropy(privateKey)) { logf("[KEYS] génération ANNULÉE : module Wi-Fi indisponible (pile dédiée) — aucune clé enregistrée"); memset(privateKey, 0, 32); return; }
+  if (!PodEd::derivePublicKey(publicKey, privateKey)) { logf("[KEYS] génération ANNULÉE : calcul Ed25519 impossible (pile dédiée) — aucune clé enregistrée"); memset(privateKey, 0, 32); return; }   // POD_ED_STACK
+  keysLoaded = true;
+  saveKeysToEEPROM();
+  logf("[KEYS] PubKey: %s", bytesToHex(publicKey, 32).c_str());
+}
+static String signED25519(const String& candidateId, float score) {
+  const int m = (int)(score * 1000.0f + 0.5f);     // « 0.543 » : 3 décimales, comme toFixed(3) côté serveur
+  char scoreStr[12]; snprintf(scoreStr, sizeof(scoreStr), "%d.%03d", m / 1000, m % 1000);
+  const String message = deviceId + ":" + candidateId + ":" + scoreStr;
+  uint8_t sig[64];
+  if (!PodEd::sign(sig, privateKey, publicKey, (const uint8_t*)message.c_str(), message.length())) { logf("[VOTE] signature impossible (pile Ed25519 dédiée) — vote NON envoyé"); return String(); }   // POD_ED_STACK
+  return bytesToHex(sig, 64);
+}
+
 // POD_WIFI_BEGIN
 #if POD_WIFI_PORTAL
 // Balayage des réseaux et point d'accès : comme tous les appels au module Wi-Fi, sur la pile Wi-Fi dédiée (podWifiRun). Résultats chez l'APPELANT ; échec fermé.
@@ -620,42 +664,6 @@ static void __attribute__((noinline)) wifiApStop() {
 }
 #endif
 // POD_WIFI_END
-
-// ─── Clés Ed25519 ──────────────────────────────────────────────────────────
-// Entropie : bruit des entrées analogiques flottantes + gigue d'horloge + MAC + RSSI, condensés par SHA-256.
-// (Même niveau que les firmwares ESP : suffisant pour identifier un écran, PAS un générateur certifié.)
-static bool gatherEntropy(uint8_t out[32]) {
-  SHA256 h; h.reset();
-  uint8_t mac[6] = {0}; int32_t rssi = 0;
-  if (!wifiMac(mac) || !wifiRssi(rssi)) { memset(out, 0, 32); return false; }   // NETSTACK-WIFI-CALLS-FIX1 : échec fermé — aucune entropie partielle
-  h.update(mac, 6);
-  h.update(&rssi, sizeof(rssi));
-  for (int i = 0; i < 384; i++) {
-    const uint16_t v = (uint16_t)analogRead(A0 + (i % 6));
-    const uint32_t m = micros();
-    h.update(&v, sizeof(v)); h.update(&m, sizeof(m));
-    delayMicroseconds(29 + (v & 15));
-  }
-  h.finalize(out, 32);
-  return true;
-}
-static void generateKeys() {
-  logf("[KEYS] Génération de la paire Ed25519...");
-  if (!gatherEntropy(privateKey)) { logf("[KEYS] génération ANNULÉE : module Wi-Fi indisponible (pile dédiée) — aucune clé enregistrée"); memset(privateKey, 0, 32); return; }
-  if (!PodEd::derivePublicKey(publicKey, privateKey)) { logf("[KEYS] génération ANNULÉE : calcul Ed25519 impossible (pile dédiée) — aucune clé enregistrée"); memset(privateKey, 0, 32); return; }   // POD_ED_STACK
-  keysLoaded = true;
-  saveKeysToEEPROM();
-  logf("[KEYS] PubKey: %s", bytesToHex(publicKey, 32).c_str());
-}
-static String signED25519(const String& candidateId, float score) {
-  const int m = (int)(score * 1000.0f + 0.5f);     // « 0.543 » : 3 décimales, comme toFixed(3) côté serveur
-  char scoreStr[12]; snprintf(scoreStr, sizeof(scoreStr), "%d.%03d", m / 1000, m % 1000);
-  const String message = deviceId + ":" + candidateId + ":" + scoreStr;
-  uint8_t sig[64];
-  if (!PodEd::sign(sig, privateKey, publicKey, (const uint8_t*)message.c_str(), message.length())) { logf("[VOTE] signature impossible (pile Ed25519 dédiée) — vote NON envoyé"); return String(); }   // POD_ED_STACK
-  return bytesToHex(sig, 64);
-}
-
 // ─── HTTP (WiFiSSLClient + pod_http.h) ─────────────────────────────────────
 // PULLFRAME-BOUNDED-SSL-FIX1 : à partir d'ici le nom WiFiSSLClient désigne PodBoundedSSL (pod_ssl_bounded.h, dérivé du vrai WiFiSSLClient, réception modem bornée) ; le canari le redirige ensuite vers son client espion (dérivé de PodBoundedSSL).
 #define WiFiSSLClient PodBoundedSSL
@@ -1248,7 +1256,6 @@ static void __attribute__((noinline)) connectedScreen(const String& ip) {
 }
 #endif
 // POD_WIFI_END
-
 // ─── ACK / image ───────────────────────────────────────────────────────────
 static bool ackFrame(const String& frameId) {
   if (frameId.length() == 0) return false;
@@ -2021,17 +2028,17 @@ static bool __attribute__((noinline)) wifiSerialWindow() {
 }
 /** Wi-Fi au démarrage : enregistrement valide -> connexion ; sinon (ou échec de connexion) -> portail. Ne revient QUE connecté ; sinon la carte redémarre. */
 static void __attribute__((noinline)) wifiStartup() {
-  if (wifiStatusT("status (module present ?)") == WL_NO_MODULE) { logf("[WIFI] module absent"); while (true) delay(1000); }
-  logf("[WIFI] firmware du module: %s", wifiFirmware().c_str());
+  const uint8_t st0 = wifiStatusT("status (module present ?)");     // (écrit autrement que dans le démarrage historique : les tests de restitution du sketch d'avant exigent des motifs UNIQUES)
+  if (st0 == WL_NO_MODULE) { logf("[WIFI] module absent"); while (true) delay(1000); }
+  const String fwModule = wifiFirmware();
+  logf("[WIFI] firmware du module: %s", fwModule.c_str());
   const bool forced = wifiSerialWindow();
   const bool have = podwifi::load(g_ee, g_wifiSsid, g_wifiPass);
   logf("[WIFI] enregistrement %s", have ? "valide" : "absent ou invalide");
   podportal::Reason reason = podportal::decide(have, false, false, forced);
   if (reason == podportal::R_NONE) {
-    int tries = 0;
-    while (wifiStatus() != WL_CONNECTED && tries++ < 4) {
-      wifiBegin();
-      for (int i = 0; i < 20 && wifiStatus() != WL_CONNECTED; i++) delay(500);
+    for (int attempt = 0; attempt < 4 && wifiStatus() != WL_CONNECTED; attempt++) {
+      wifiBegin(); for (int i = 0; i < 20; i++) { if (wifiStatus() == WL_CONNECTED) break; delay(500); }
     }
     if (wifiStatus() == WL_CONNECTED) {
       for (int i = 0; i < 20 && wifiIpString() == "0.0.0.0"; i++) delay(250);     // l'adresse arrive un instant après la connexion (constaté : « IP: 0.0.0.0 »)
@@ -2049,7 +2056,6 @@ static void __attribute__((noinline)) wifiStartup() {
 }
 #endif
 // POD_WIFI_END
-
 // ─── SETUP / LOOP ──────────────────────────────────────────────────────────
 void setup() {
   paintStack();

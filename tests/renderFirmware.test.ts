@@ -14,7 +14,7 @@ const root = path.join(__dirname, "..");
 const read = (p: string) => fs.readFileSync(path.join(root, p), "utf8").replace(/\r\n/g, "\n");
 // Lot 8B-2B-2-STACK-FIX1 : les sketches UNO R4 passent désormais Ed25519 par podEdStack.h (tests/helpers/edStackEdits.ts, tests/edStack.test.ts). Les garanties du lot 8B (vue POD_RENDER_V1 = 0 == firmware d'avant, ACK/routes inchangés)
 // s'évaluent donc sur le sketch dont ces modifications EXACTES sont annulées ; tests/edStack.test.ts prouve séparément que cette annulation redonne le sketch d'avant le correctif, au texte près.
-const readIno = (p: string) => { const m = /\/(pod_uno_r4[a-z0-9_]*)\.ino$/.exec(p); return m ? undoAllStacks(read(p), m[1]) : undoFix2(read(p)); };
+const readIno = (p: string) => { const m = /\/(pod_uno_r4[a-z0-9_]*)\.ino$/.exec(p); return m ? undoAllStacks(read(p).replace(/\n?\/\/ POD_WIFI_BEGIN[\s\S]*?\/\/ POD_WIFI_END\n?/g, "\n"), m[1]) : undoFix2(read(p)); };
 const BACKUP = "firmware-backups/2026-10-08_avant-rendu-v1-canaris";
 const BACKUP2 = "firmware-backups/2026-10-08_avant-propagation-8b2b1";
 

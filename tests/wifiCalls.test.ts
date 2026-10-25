@@ -1,6 +1,6 @@
 // LOT8B2B2 NETSTACK-WIFI-CALLS-FIX1 (09/10/2026) — tout appel DIRECT au module Wi-Fi des cinq firmwares UNO R4 s'exécute sur une pile dédiée (podWifiRun, 1 536 o), résultats chez l'appelant, échec fermé.
 // Cause matérielle (canari FIX3-R1) : WiFi.macAddress() appelé depuis doRegister détruisait le marqueur de pile (24 o sous __StackLimit).
-import { readSketch } from "./helpers/tftLot";
+import { readSketch, readSketchRaw } from "./helpers/tftLot";
 import test from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
@@ -26,7 +26,8 @@ function braced(code: string, open: number): string {
 
 for (const sk of SKETCHES) {
   test(`${sk} : AUCUN appel direct au module Wi-Fi hors des enveloppes sur pile dédiée ; chaque méthode une seule fois ; jamais dans une transaction PodNet`, () => {
-    const src = readSketch(root, sk), code = strip(src);
+    // Les blocs « POD_WIFI_BEGIN … POD_WIFI_END » (portail Wi-Fi, option POD_WIFI_PORTAL = 0 par défaut) ont leur propre test plus bas : ici, la vue « portail éteint » doit rester celle des six enveloppes.
+    const src = readSketch(root, sk), code = strip(src);   // readSketch retire déjà les blocs du portail (vue « portail éteint »)
     const lines = code.split("\n").filter((l) => /\bWiFi\.[A-Za-z]+\(/.test(l));
     for (const l of lines) assert.match(l, /^\s*auto wx = \[&\]\(\) \{ [^\n]*\};$/, `${sk} : appel direct au module hors d'une enveloppe : ${l.trim()}`);
     const used = lines.map((l) => /WiFi\.([A-Za-z]+)\(/.exec(l)![1]).sort();
@@ -168,4 +169,21 @@ test("CONTRÔLES NÉGATIFS : une enveloppe qui rend un résultat malgré l'éche
     const bad = r.status !== 0 || !/^PASS \d+$/.test(r.stdout.trim());
     assert.ok(bad, `mutation « ${name} » NON détectée`);
   }
+});
+
+test("pod_uno_r4_eink29 (option POD_WIFI_PORTAL) : les appels au module du portail passent TOUS par podWifiRun ; aucun dans le branchement du portail ni dans une transaction PodNet", () => {
+  const src = readSketchRaw(root, "pod_uno_r4_eink29");
+  const blocks = strip([...src.matchAll(/\/\/ POD_WIFI_BEGIN[\s\S]*?\/\/ POD_WIFI_END/g)].map((m) => m[0]).join("\n"));
+  assert.ok(blocks.length > 0, "blocs du portail présents");
+  const lines = blocks.split("\n").filter((l) => /\bWiFi\.[A-Za-z]+\(/.test(l));
+  assert.ok(lines.length >= 5, "balayage, point d'accès : appels attendus");
+  // chaque appel est dans une lambda « auto wx = [&]() { … } » exécutée par podWifiRun(wx, &ni)
+  const lambdas = (blocks.match(/auto wx = \[&\]\(\) \{/g) ?? []).length;
+  assert.equal((blocks.match(/podWifiRun\(wx, &ni\)/g) ?? []).length, lambdas, "une exécution podWifiRun par lambda");
+  assert.ok(lambdas >= 3);
+  // le branchement matériel du portail n'appelle jamais le module directement : seulement des WiFiServer / WiFiClient DANS une transaction podNetRun
+  const hw = strip(fs.readFileSync(path.join(root, "arduino_uno_r4", "pod_uno_r4_eink29", "pod_wifi_portal_r4.h"), "utf8"));
+  assert.doesNotMatch(hw, /\bWiFi\.[A-Za-z]+\(/, "aucun WiFi.<méthode>( dans pod_wifi_portal_r4.h");
+  assert.match(hw, /podNetRun\(turn, &ni\)/);
+  assert.doesNotMatch(hw, /podWifiRun/);
 });
