@@ -20,6 +20,9 @@ Décision du porteur : **pas de « fork »** ; on dit **Remix** / « créer une 
 ## Impact Redis
 Dessin ordinaire : **0** commande de plus (aucune lecture sans filiation déclarée, testé). Remix : +1 GET (bloc source) à la soumission, + 1 à la relecture du candidat dans `submit-candidate` (2 au plus, une fois par œuvre dérivée). Lecture publique : `block-meta` 1 GET puis CDN. Stockage permanent : un champ de 64 caractères dans le bloc dérivé.
 
+## Principe à conserver
+**Les appareils votent et signent le contenu ; la filiation est vérifiée par le serveur puis engagée dans le hash du bloc final.** Aucune modification de firmware ni de version de consensus dans ce lot.
+
 ## Limites connues
 - La filiation est **déclarée par l'artiste et vérifiée par le serveur** ; les appareils votants ne la signent pas (leurs votes portent sur le contenu). Elle est en revanche engagée dans le hash : on ne peut ni la retirer ni la changer sans invalider le bloc.
 - **Le noyau C++ `consensus-pod/src/consensusPoD.h` (miroir de `blockCanonicalV2`) ne connaît pas encore `derivedFromBlockHash`** : aucun firmware ne l'utilise ; à ajouter (clé après `animRoot`) avant qu'un appareil recalcule un hash de bloc dérivé. Non touché ici (consigne : pas de firmware ni de consensus hors besoin).

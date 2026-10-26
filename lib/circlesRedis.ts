@@ -30,6 +30,7 @@ export const upstashKV: CircleKV = {
   async ltrim(k, a, b) { await redis.ltrim(k, a, b); },
   async lrange(k, a, b) { return ((await redis.lrange(k, a, b)) as unknown[]).map((x) => str(x) ?? ""); },
   async expire(k, sec) { await redis.expire(k, sec); },
+  async setnx(k, v, exSec) { return (await redis.set(k, v, { nx: true, ex: exSec })) === "OK"; },
   async incr(k, windowSec) {
     const r = await redis.pipeline().incr(k).expire(k, windowSec, "NX").exec();
     return Number(r[0]);

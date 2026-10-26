@@ -18,6 +18,11 @@
 //   artist:circles:{id}     SET des cercles de l'artiste                          TTL 365 j (≤ MAX_JOINED)
 //   circle:invites:{id}     HASH circleId → JSON {circleName,fromId,fromName,at}  TTL 30 j (≤ MAX_INVITES_PER_ARTIST)
 //   rl:circle:{action}:{artistId}  compteurs de débit avec fenêtre
+// Invitations EXPIRÉES (30 j) : jamais affichées, jamais comptées dans un plafond ; chaque lecture qui les rencontre les retire DES DEUX côtés (circle:{id}:pending ET circle:invites:{invité}).
+// Le TTL d'un HASH est renouvelé par chaque nouvelle invitation : il ne purge donc pas une entrée ancienne ; c'est la date `at` de chaque entrée qui fait foi. Nettoyage borné par les plafonds (≤ MAX_PENDING + entrées périmées
+// déjà présentes), jamais de SCAN ni de KEYS.
+// Concurrence : accepter et inviter prennent un VERROU COURT par cercle (`lock:circle:{id}`, SET NX EX 10 s, jeton propre, tentative UNIQUE : occupé = 409 « réessaie », échec FERMÉ) pour que deux acceptations
+// simultanées ne dépassent pas MAX_MEMBERS. Course restante, assumée : plafonds PAR ARTISTE (MAX_OWNED / MAX_JOINED) si le MÊME artiste crée ou accepte deux cercles en même temps (dépassement de 1, sans effet sur les droits).
 // Coût Redis : AUCUNE écriture ni lecture hors action de l'utilisateur ; aucun sondage. Liste « mes cercles » ≈ 4 commandes ; ouvrir un cercle = 2 à 4 ; publier un message = 6.
 
 export const MAX_MEMBERS = 12;
@@ -44,6 +49,8 @@ export const pendingKey = (id: string) => `circle:${id}:pending`;
 export const msgsKey = (id: string) => `circle:${id}:msgs`;
 export const joinedKey = (artistId: string) => `artist:circles:${artistId}`;
 export const invitesKey = (artistId: string) => `circle:invites:${artistId}`;
+export const lockKey = (id: string) => `lock:circle:${id}`;
+export const LOCK_TTL_SEC = 10;
 export const rateKey = (action: string, artistId: string) => `rl:circle:${action}:${artistId}`;
 
 export const CIRCLE_ID_RE = /^[0-9a-f]{20}$/;
@@ -64,6 +71,8 @@ export interface CircleKV {
   ltrim(k: string, start: number, stop: number): Promise<void>;
   lrange(k: string, start: number, stop: number): Promise<string[]>;
   expire(k: string, sec: number): Promise<void>;
+  /** SET NX EX : true si la clé a été posée (verrou obtenu), false si elle existait déjà */
+  setnx(k: string, v: string, exSec: number): Promise<boolean>;
   /** INCR puis EXPIRE (NX) : retourne la valeur du compteur */
   incr(k: string, windowSec: number): Promise<number>;
 }
@@ -101,6 +110,39 @@ function parse<T>(raw: string | null): T | null { if (!raw) return null; try { r
 async function rateLimit(kv: CircleKV, action: keyof typeof RATE, artistId: string) {
   const { limit, windowSec } = RATE[action];
   if ((await kv.incr(rateKey(action, artistId), windowSec)) > limit) fail(429, "rate_limited", "Trop d'actions en peu de temps : réessaie plus tard.");
+}
+
+const expired = (at: number, clock: Clock) => !(typeof at === "number") || clock.now() - at > TTL_INVITE_SEC * 1000;
+
+/** Invitations en attente d'un cercle SANS les périmées ; celles-ci sont retirées des deux index (pending du cercle + invitation chez l'invité). Coût : 1 HGETALL + 2 HDEL par entrée périmée (borné par les plafonds). */
+async function freshPending(kv: CircleKV, circleId: string, clock: Clock): Promise<Record<string, { name: string; at: number }>> {
+  const raw = await kv.hgetall(pendingKey(circleId));
+  const out: Record<string, { name: string; at: number }> = {};
+  for (const [artistId, v] of Object.entries(raw)) {
+    const p = parse<{ name: string; at: number }>(v);
+    if (!p || expired(p.at, clock)) { await kv.hdel(pendingKey(circleId), artistId); await kv.hdel(invitesKey(artistId), circleId); continue; }
+    out[artistId] = p;
+  }
+  return out;
+}
+/** Invitations reçues par un artiste SANS les périmées (retirées des deux index). */
+async function freshInvites(kv: CircleKV, artistId: string, clock: Clock): Promise<Record<string, Omit<Invite, "circleId">>> {
+  const raw = await kv.hgetall(invitesKey(artistId));
+  const out: Record<string, Omit<Invite, "circleId">> = {};
+  for (const [circleId, v] of Object.entries(raw)) {
+    const inv = parse<Omit<Invite, "circleId">>(v);
+    if (!inv || expired(inv.at, clock)) { await kv.hdel(invitesKey(artistId), circleId); await kv.hdel(pendingKey(circleId), artistId); continue; }
+    out[circleId] = inv;
+  }
+  return out;
+}
+
+/** Verrou court par cercle : une seule tentative, échec FERMÉ (409), libéré dans tous les cas (le TTL de 10 s couvre un plantage). */
+async function withLock<T>(kv: CircleKV, circleId: string, clock: Clock, fn: () => Promise<T>): Promise<T> {
+  const token = clock.newId();
+  if (!(await kv.setnx(lockKey(circleId), token, LOCK_TTL_SEC))) return fail(409, "circle_busy", "Le cercle est en cours de modification : réessaie dans un instant.");
+  try { return await fn(); }
+  finally { if ((await kv.get(lockKey(circleId))) === token) await kv.del(lockKey(circleId)); }
 }
 
 async function loadMeta(kv: CircleKV, id: string): Promise<CircleMeta | null> { return parse<CircleMeta>(await kv.get(circleKey(id))); }
@@ -150,13 +192,8 @@ export async function listMine(kv: CircleKV, me: Me, clock: Clock): Promise<{ ci
     if (!r.meta || !(me.artistId in r.members)) { await kv.srem(joinedKey(me.artistId), r.id); continue; }   // cercle supprimé ou retrait : index nettoyé
     circles.push({ id: r.id, name: r.meta.name, ownerName: r.meta.ownerName, isOwner: r.meta.ownerId === me.artistId, memberCount: Object.keys(r.members).length });
   }
-  const rawInv = await kv.hgetall(invitesKey(me.artistId));
-  const invites: Invite[] = [];
-  for (const [circleId, v] of Object.entries(rawInv)) {
-    const inv = parse<Omit<Invite, "circleId">>(v);
-    if (!inv || clock.now() - inv.at > TTL_INVITE_SEC * 1000) { await kv.hdel(invitesKey(me.artistId), circleId); continue; }   // invitation périmée
-    invites.push({ circleId, ...inv });
-  }
+  const fresh = await freshInvites(kv, me.artistId, clock);
+  const invites: Invite[] = Object.entries(fresh).map(([circleId, inv]) => ({ circleId, ...inv }));
   circles.sort((a, b) => a.name.localeCompare(b.name, "fr"));
   invites.sort((a, b) => b.at - a.at);
   return { circles, invites };
@@ -168,13 +205,13 @@ export interface CircleView {
   /** invitations en attente : visibles du SEUL propriétaire */
   pending: { artistId: string; name: string; at: number }[] | null;
 }
-export async function getCircle(kv: CircleKV, me: Me, id: unknown): Promise<CircleView> {
+export async function getCircle(kv: CircleKV, me: Me, id: unknown, clock: Clock): Promise<CircleView> {
   const { meta, isOwner } = await requireMember(kv, me, id);
   const members = await kv.hgetall(membersKey(meta.id));
   let pending: CircleView["pending"] = null;
   if (isOwner) {
-    const raw = await kv.hgetall(pendingKey(meta.id));
-    pending = Object.entries(raw).flatMap(([artistId, v]) => { const p = parse<{ name: string; at: number }>(v); return p ? [{ artistId, name: p.name, at: p.at }] : []; }).sort((a, b) => b.at - a.at);
+    const raw = await freshPending(kv, meta.id, clock);
+    pending = Object.entries(raw).map(([artistId, p]) => ({ artistId, name: p.name, at: p.at })).sort((a, b) => b.at - a.at);
   }
   return {
     id: meta.id, name: meta.name, ownerId: meta.ownerId, isOwner,
@@ -193,17 +230,19 @@ export async function inviteArtist(kv: CircleKV, me: Me, id: unknown, targetId: 
   const t = target as { artistId: string; displayName: string };
   if (t.artistId === me.artistId) fail(400, "self_invite", "Tu fais déjà partie de ce cercle.");
   await rateLimit(kv, "invite", me.artistId);
-  const [members, pending, invites] = await Promise.all([kv.hgetall(membersKey(meta.id)), kv.hgetall(pendingKey(meta.id)), kv.hgetall(invitesKey(t.artistId))]);
-  if (t.artistId in members) fail(409, "already_member", `${t.displayName} fait déjà partie du cercle.`);
-  if (t.artistId in pending) fail(409, "already_invited", `${t.displayName} a déjà une invitation en attente.`);
-  if (Object.keys(members).length + Object.keys(pending).length >= MAX_MEMBERS) fail(409, "circle_full", `Un cercle compte ${MAX_MEMBERS} membres au plus (invitations en attente comprises).`);
-  if (Object.keys(pending).length >= MAX_PENDING) fail(409, "too_many_pending", `${MAX_PENDING} invitations en attente au plus.`);
-  if (Object.keys(invites).length >= MAX_INVITES_PER_ARTIST) fail(409, "invitee_busy", "Cet artiste a déjà beaucoup d'invitations en attente.");
-  const at = clock.now();
-  await kv.hset(invitesKey(t.artistId), meta.id, JSON.stringify({ circleName: meta.name, fromId: me.artistId, fromName: me.displayName, at }));
-  await kv.expire(invitesKey(t.artistId), TTL_INVITE_SEC);
-  await kv.hset(pendingKey(meta.id), t.artistId, JSON.stringify({ name: t.displayName, at }));
-  await kv.expire(pendingKey(meta.id), TTL_INVITE_SEC);
+  await withLock(kv, meta.id, clock, async () => {
+    const [members, pending, invites] = await Promise.all([kv.hgetall(membersKey(meta.id)), freshPending(kv, meta.id, clock), freshInvites(kv, t.artistId, clock)]);   // périmées retirées, jamais comptées
+    if (t.artistId in members) fail(409, "already_member", `${t.displayName} fait déjà partie du cercle.`);
+    if (t.artistId in pending) fail(409, "already_invited", `${t.displayName} a déjà une invitation en attente.`);
+    if (Object.keys(members).length + Object.keys(pending).length >= MAX_MEMBERS) fail(409, "circle_full", `Un cercle compte ${MAX_MEMBERS} membres au plus (invitations en attente comprises).`);
+    if (Object.keys(pending).length >= MAX_PENDING) fail(409, "too_many_pending", `${MAX_PENDING} invitations en attente au plus.`);
+    if (Object.keys(invites).length >= MAX_INVITES_PER_ARTIST) fail(409, "invitee_busy", "Cet artiste a déjà beaucoup d'invitations en attente.");
+    const at = clock.now();
+    await kv.hset(invitesKey(t.artistId), meta.id, JSON.stringify({ circleName: meta.name, fromId: me.artistId, fromName: me.displayName, at }));
+    await kv.expire(invitesKey(t.artistId), TTL_INVITE_SEC);
+    await kv.hset(pendingKey(meta.id), t.artistId, JSON.stringify({ name: t.displayName, at }));
+    await kv.expire(pendingKey(meta.id), TTL_INVITE_SEC);
+  });
 }
 
 /** Le propriétaire annule une invitation en attente. */
@@ -219,21 +258,26 @@ export async function respondInvite(kv: CircleKV, me: Me, id: unknown, accept: b
   if (!isCircleId(id)) return notFound();
   const raw = await kv.hget(invitesKey(me.artistId), id);
   const inv = parse<Omit<Invite, "circleId">>(raw);
-  if (!inv || clock.now() - inv.at > TTL_INVITE_SEC * 1000) { if (raw) await kv.hdel(invitesKey(me.artistId), id); return notFound(); }
+  if (!inv || expired(inv.at, clock)) {
+    if (raw) { await kv.hdel(invitesKey(me.artistId), id); await kv.hdel(pendingKey(id), me.artistId); }   // périmée : retirée DES DEUX côtés
+    return notFound();
+  }
   if (!accept) { await kv.hdel(invitesKey(me.artistId), id); await kv.hdel(pendingKey(id), me.artistId); return; }
-  const meta = await loadMeta(kv, id);
-  if (!meta) { await kv.hdel(invitesKey(me.artistId), id); return notFound(); }   // cercle supprimé entre-temps
-  const members = await kv.hgetall(membersKey(id));
-  if (me.artistId in members) { await kv.hdel(invitesKey(me.artistId), id); await kv.hdel(pendingKey(id), me.artistId); return; }   // déjà membre : idempotent
-  if (Object.keys(members).length >= MAX_MEMBERS) fail(409, "circle_full", "Ce cercle est complet.");
-  const joined = (await kv.smembers(joinedKey(me.artistId))).filter(isCircleId);
-  if (joined.length >= MAX_JOINED) fail(409, "too_many_circles", `Tu peux appartenir à ${MAX_JOINED} cercles au plus : quitte-en un d'abord.`);
-  await kv.hset(membersKey(id), me.artistId, me.displayName);
-  await kv.sadd(joinedKey(me.artistId), id);
-  await kv.expire(joinedKey(me.artistId), TTL_CIRCLE_SEC);
-  await kv.hdel(invitesKey(me.artistId), id);
-  await kv.hdel(pendingKey(id), me.artistId);
-  await touch(kv, id);
+  await withLock(kv, id, clock, async () => {
+    const meta = await loadMeta(kv, id);
+    if (!meta) { await kv.hdel(invitesKey(me.artistId), id); return notFound(); }   // cercle supprimé entre-temps
+    const members = await kv.hgetall(membersKey(id));
+    if (me.artistId in members) { await kv.hdel(invitesKey(me.artistId), id); await kv.hdel(pendingKey(id), me.artistId); return; }   // déjà membre : idempotent
+    if (Object.keys(members).length >= MAX_MEMBERS) fail(409, "circle_full", "Ce cercle est complet.");
+    const joined = (await kv.smembers(joinedKey(me.artistId))).filter(isCircleId);
+    if (joined.length >= MAX_JOINED) fail(409, "too_many_circles", `Tu peux appartenir à ${MAX_JOINED} cercles au plus : quitte-en un d'abord.`);
+    await kv.hset(membersKey(id), me.artistId, me.displayName);
+    await kv.sadd(joinedKey(me.artistId), id);
+    await kv.expire(joinedKey(me.artistId), TTL_CIRCLE_SEC);
+    await kv.hdel(invitesKey(me.artistId), id);
+    await kv.hdel(pendingKey(id), me.artistId);
+    await touch(kv, id);
+  });
 }
 
 // ── Départ, retrait, suppression ─────────────────────────────────────────────
