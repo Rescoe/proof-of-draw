@@ -30,7 +30,7 @@ test("STATION : les en-têtes réseau sont des copies identiques de ceux du capt
 test("STATION : s'enregistre comme capteur (jamais écran/votant) et déclare la grandeur voc", () => {
   assert.match(ino, /#define SCREEN_TYPE\s+"sensor"/);
   assert.match(ino, /sensors\\":\[\\"temp\\",\\"hum\\",\\"voc\\"/);
-  assert.match(ino, /#define FIRMWARE_VERSION\s+"r4env-1\.0"/);
+  assert.match(ino, /#define FIRMWARE_VERSION\s+"r4env-1\.\d+"/);
   assert.ok(MEASURE_KINDS.voc, "le registre serveur connaît voc");
 });
 
@@ -62,4 +62,37 @@ test("STATION : TFT et I2C hors de la pile principale (1 024 o) ; aucun appel Wi
 test("STATION : câblage documenté dans l'en-tête et cohérent avec les définitions", () => {
   assert.match(ino, /DHT_PIN\s+2\b/); assert.match(ino, /TFT_CS\s+10\b/); assert.match(ino, /TFT_DC\s+9\b/); assert.match(ino, /TFT_RST\s+8\b/);
   for (const t of ["D2", "D10", "D9", "D8", "D11", "D13", "SDA", "SCL", "5 V"]) assert.ok(ino.slice(0, 3500).includes(t), `câblage : ${t}`);
+});
+
+// ── OTA R4-B dans la station (26/10/2026) ──────────────────────────────────────────────────────────────
+const client = rd(dir, "pod_ota_r4_client.h");
+test("STATION OTA : copies identiques du noyau (podOtaR4.h) et de la pile Ed25519 (podEdStack.h)", () => {
+  assert.equal(rd(dir, "podOtaR4.h"), rd(root, "consensus-pod/src/podOtaR4.h"));
+  assert.equal(rd(dir, "podEdStack.h"), rd(root, "consensus-pod/src/adapters/podEdStack.h"));
+});
+test("STATION OTA : éteinte par défaut (POD_OTA_R4 = 0), le client n'est inclus que sous le drapeau, séquence de version par drapeau de banc seulement", () => {
+  assert.match(ino, /#ifndef POD_OTA_R4\n#define POD_OTA_R4 0\n#endif/);
+  assert.match(ino, /#if POD_OTA_R4\n#include "pod_ota_r4_client\.h"/);
+  assert.match(ino, /#define OTAR4_COMPILED_SEQ 1/);
+});
+test("STATION OTA : la programmation n'est atteignable qu'APRÈS consommation du ticket, une seule fois, jamais ota.begin / download", () => {
+  const c = client.replace(/\/\/[^\n]*/g, "");
+  assert.equal((c.match(/g_ota\.update\(/g) ?? []).length, 1, "un seul appel de programmation");
+  assert.equal(/\.begin\(OTAR4_PATH\)|\.download\(/.test(c), false, "ni ota.begin(chemin) (supprime le fichier) ni ota.download");
+  const iConsume = c.indexOf("podotar4::consume(g_sess)"), iProg = c.indexOf("programCall();");
+  assert.ok(iConsume > 0 && iProg > iConsume, "consume() avant programCall()");
+  assert.ok(c.indexOf("hostConnected()") < iConsume, "contrôle de l'hôte USB avant le ticket consommé");
+  assert.match(c, /programCall\(\) \{[\s\S]*?podWifiRun\(f, &ni\)/, "l'appel au module passe par podWifiRun");
+});
+test("STATION OTA : data flash — blocs 2 et 3 seulement, un effacement + un programme de 24 o, jamais EEPROM.update, périphérique fermé avant usage", () => {
+  const c = client.replace(/\/\/[^\n]*/g, "");
+  assert.match(c, /if \(blk != SEQ_BLOCK_A && blk != SEQ_BLOCK_B\) return false;/);
+  assert.match(c, /d\.erase\(a, FLASH_BLOCK\) != 0/); assert.match(c, /d\.program\(in, a, 24\) == 0/);
+  assert.match(c, /d\.deinit\(\); return d;/);
+  assert.equal(/EEPROM\.(update|write|put)\(/.test(c), false);
+});
+test("STATION OTA : échec fermé sans clé publique de publication ; clés/secrets/drapeaux de banc ignorés par git", () => {
+  assert.match(client, /aucune clé publique de publication compilée : OTA INACTIVE \(échec fermé\)/);
+  const gi = rd(root, ".gitignore");
+  for (const p of ["arduino_uno_r4/**/pod_ota_r4_keys.h", "arduino_uno_r4/**/pod_build_flags.h", "arduino_uno_r4/**/pod_lab_ca.h", "arduino_uno_r4/**/secrets.h"]) assert.ok(gi.includes(p), p);
 });

@@ -41,6 +41,15 @@
 #ifndef OTAR4_RETRY_MS
 #define OTAR4_RETRY_MS 1800000UL          // après un échec réseau ou de staging : 30 min
 #endif
+#ifndef OTAR4_HOST
+#define OTAR4_HOST SERVER_HOST                      // site de production : fichiers statiques servis par le CDN (aucune route, aucune commande Redis)
+#endif
+#ifndef OTAR4_PORT
+#define OTAR4_PORT 443
+#endif
+#ifndef OTAR4_BASE
+#define OTAR4_BASE "/firmware-r4/" OTAR4_KIND "/" OTAR4_CHANNEL    // ex. /firmware-r4/sensor/canary/manifest.txt et /firmware.bin
+#endif
 #if OTAR4_TLS
 typedef PodBoundedSSL OtaR4Conn;
 #else
@@ -132,6 +141,9 @@ static bool startsWithNoCase(const char* s, const char* p) { while (*p) { char a
 static void getFn(void* p) {
   GetJob* j = static_cast<GetJob*>(p); j->status = -1; j->clen = -1; j->got = 0; j->ok = false;
   OtaR4Conn c;
+#if OTAR4_TLS && defined(OTAR4_CA_PEM)
+  c.setCACert(OTAR4_CA_PEM);                  // BANC : autorité racine de laboratoire (le module vérifie la chaîne : bundle racine par défaut en production)
+#endif
   if (!c.connect(g_host, g_port)) { j->status = -2; return; }
   c.print("GET "); c.print(g_base); c.print(j->path); c.print(" HTTP/1.0\r\nHost: "); c.print(g_host); c.print("\r\nUser-Agent: pod-r4-ota\r\nConnection: close\r\n\r\n");
   if (!readLine(c, g_hdr, sizeof g_hdr)) { j->status = -3; c.stop(); return; }

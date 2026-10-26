@@ -110,3 +110,4 @@ esp8266/**/public.key
 # clés publiques de PUBLICATION OTA R4 (générées ; clés de test en laboratoire) : jamais commitées
 arduino_uno_r4/**/pod_ota_r4_keys.h
 arduino_uno_r4/**/pod_build_flags.h
+arduino_uno_r4/**/pod_lab_ca.h

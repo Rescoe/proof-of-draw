@@ -10,7 +10,6 @@ import { pathToFileURL } from "node:url";
 import { randomBytes } from "node:crypto";
 import * as R4 from "@/lib/otaManifestR4";
 import * as V2 from "@/lib/otaManifest";
-// @ts-expect-error module .mjs d'outil sans déclaration de types
 import { buildNegatives, REF_DEVICE } from "../ota-lab/r4-ota5/tools/negatives.mjs";
 
 const ROOT = path.join(import.meta.dirname, "..");
@@ -68,7 +67,7 @@ test("séparation : un manifeste R4 est refusé par le parseur OTA-1 v2 et un ma
 
 test("clé nulle (clé de test du dépôt) ou absente : tout est refusé, même un manifeste bien formé", () => {
   const ok = cases.find((c) => c.name === "ok")!;
-  for (const k of [{}, { "r4-a": "0".repeat(64) }, { "r4-a": "xyz" }, { "r4-a": kB.publicHex }]) assert.equal(R4.evaluateR4Manifest(ok.manifest, k, REF_DEVICE).ok, false);
+  for (const k of [{} as Record<string, string>, { "r4-a": "0".repeat(64) }, { "r4-a": "xyz" }, { "r4-a": kB.publicHex }]) assert.equal(R4.evaluateR4Manifest(ok.manifest, k, REF_DEVICE).ok, false);
 });
 
 test("vérificateur INDÉPENDANT (outil CLI sans import de la référence) : même verdict accepté/refusé sur tous les cas qu'il sait juger", () => {

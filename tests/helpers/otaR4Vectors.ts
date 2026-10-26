@@ -3,7 +3,6 @@
 // <attendu> = refus d'evaluate (parse/signature/family/channel/not-newer/not-active/vote-incompatible) ou « ok » ; pour « ok », <binaire> décide : size (Content-Length honnête != taille signée) / sha256 / ok.
 import { createHash } from "node:crypto";
 import { signR4Manifest, sha256Hex, evaluateR4Manifest, binaryMatchesR4, pubKeyFromHex, parseR4Manifest } from "../../lib/otaManifestR4";
-// @ts-expect-error module .mjs sans déclaration
 import { buildNegatives, REF_DEVICE } from "../../ota-lab/r4-ota5/tools/negatives.mjs";
 import { createPrivateKey, createPublicKey } from "node:crypto";
 

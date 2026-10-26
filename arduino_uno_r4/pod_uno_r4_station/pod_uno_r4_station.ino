@@ -69,6 +69,7 @@
 #endif
 #if POD_OTA_R4
   #define OTAR4_FAMILY "uno-r4-wifi-sensor"
+  #define OTAR4_KIND "sensor"
   #if __has_include("pod_ota_r4_keys.h")
     #include "pod_ota_r4_keys.h"
   #endif
@@ -516,11 +517,7 @@ void setup() {
   while (!registered) { if (doRegister()) break; delay(5000); }
 #if POD_OTA_R4
   {
-  #if OTAR4_TLS
-    otar4::setServer(SERVER_HOST, 443, "/firmware-r4/sensor/" OTAR4_CHANNEL);
-  #else
-    otar4::setServer(OTAR4_LAB_HOST, OTAR4_LAB_PORT, "");
-  #endif
+    otar4::setServer(OTAR4_HOST, OTAR4_PORT, OTAR4_BASE);
     otar4::confirmBoot();
   }
 #endif
