@@ -14,12 +14,14 @@ export const MEASURE_INDEX_KEY = "meas:devices";
 export const measKey = (deviceId: string) => `meas:${deviceId}`;
 export const measGateKey = (deviceId: string) => `meas:gate:${deviceId}`;
 
-export type MeasureKind = "temp" | "hum" | "rssi" | "lat" | "dl";
+export type MeasureKind = "temp" | "hum" | "voc" | "rssi" | "lat" | "dl";
 /** Valeurs ENTIÈRES. scale : 10 = stockée en dixièmes d'unité (215 = 21,5 °C) ; 1 = entier tel quel. primary : affichée sur les nœuds du réseau ; sinon DIAGNOSTIC (panneaux seulement). */
 export interface MeasureKindInfo { label: string; unit: string; icon: string; min: number; max: number; scale: 1 | 10; primary: boolean }
 export const MEASURE_KINDS: Record<MeasureKind, MeasureKindInfo> = {
   temp: { label: "Température", unit: "°C", icon: "🌡", min: -400, max: 800, scale: 10, primary: true },
   hum:  { label: "Humidité", unit: "%", icon: "💧", min: 0, max: 1000, scale: 10, primary: true },
+  // Qualité de l'air (26/10/2026) : sortie BRUTE du SGP40 (SRAW_VOC, « ticks » 0..65535, plus bas = plus de gaz organiques), compensée en température/humidité par la carte. Ce n'est PAS l'indice VOC 0..500 de Sensirion (algorithme à part, plus tard) : la valeur est relative à la puce et à son ancienneté.
+  voc:  { label: "Gaz (VOC brut)", unit: "ticks", icon: "🌫", min: 0, max: 65535, scale: 1, primary: false },
   // Diagnostic de la liaison Wi-Fi de la carte (dans la MÊME mesure : aucune commande Redis de plus) : puissance du signal reçu et temps de réponse du serveur
   rssi: { label: "Signal Wi-Fi", unit: "dBm", icon: "📶", min: -127, max: 0, scale: 1, primary: false },
   lat:  { label: "Latence serveur", unit: "ms", icon: "⏱", min: 0, max: 60000, scale: 1, primary: false },
@@ -29,7 +31,7 @@ export const MEASURE_KINDS: Record<MeasureKind, MeasureKindInfo> = {
 export const MEASURE_KIND_IDS = Object.keys(MEASURE_KINDS) as MeasureKind[];
 /** Groupes d'affichage : l'environnement (température, humidité) est SÉPARÉ de la qualité de la liaison (signal, latence, débit). */
 export const MEASURE_GROUPS: { id: "env" | "link"; label: string; kinds: MeasureKind[] }[] = [
-  { id: "env", label: "Température et humidité", kinds: ["temp", "hum"] },
+  { id: "env", label: "Environnement", kinds: ["temp", "hum", "voc"] },
   { id: "link", label: "Connexion de la carte", kinds: ["rssi", "lat", "dl"] },
 ];
 /** Grandeurs d'un groupe que l'appareil mesure réellement. */

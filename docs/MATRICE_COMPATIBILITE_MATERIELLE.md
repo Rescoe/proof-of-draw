@@ -60,6 +60,7 @@ Conséquence pratique : une mise à jour à distance de la carte de `dev_T46HBXG
 | `r4tft28-2.6` (branche `claude/r4-tft28-portail-vote`, non fusionnée) | TFT 2,8″ tactile + portail Wi-Fi | portail `M` (25/10/2026 : AP, enregistrement, connexion, register) ; image affichée ; vote v2 observé (bloc #118) — un seul essai, une carte | — | — | à fusionner après adaptation des tests |
 | `r4tft28-2.5` | TFT 2,8″ tactile | microSD, animations | `V2` : vote réel ; affichage/ACK observés | — | animations : fonctionnalités distinctes, à qualifier par essai matériel dédié | matériel de vote validé ; OTA applicative non portée/validée comme pour ESP8266 |
 | `r4eink29-1.1` | e-ink 2,9″ BWR | — | `V2` : vote réel et affichage observés | — | pile R4 sécurisée par les lots dédiés | matériel de vote validé ; OTA applicative non validée |
+| `r4env-1.0` (`pod_uno_r4_station`) | TFT 1,8″ local (relevé, pas d'œuvre) | DHT22 + SGP40 (gaz brut) | n'est ni écran de consensus ni votant | — | `C` (cœur 1.6.0) + pilote SGP40 testé hôte ; jamais flashé | station de monitoring R4, câblage et protocole : `STATION_MONITORING_R4_2026_10_26.md` ; pas d'OTA |
 | `r4dht22-1.3` | aucun (`sensor`) | DHT22 | n'est ni écran ni votant | — | `M` : DHT22 → `/api/sensor` 200 observé | profil capteur validé par câble ; pas d'OTA |
 | `r4eink27-1.1` | e-ink 2,7″ BW | — | `C` | — | — | port compilé, non essayé |
 | `r4multiscreen-1.1` | e-ink 2,7″ BW + OLED | — | `C` | — | — | port compilé, non essayé |
