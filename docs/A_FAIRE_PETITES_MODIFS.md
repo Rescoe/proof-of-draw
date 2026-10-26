@@ -27,6 +27,10 @@ Règle (demandée par le porteur le 25/10/2026) : **toute demande faite pendant 
 | 19 | 26/10 | ~~Cercles d'artistes sans médias binaires (jamais dans Redis) ; contrat futur de stockage objet à documenter sans choisir de service. Lot 4.~~ | fait (26/10) : `docs/LOT_UX_4_CERCLES_2026_10_26.md` ; à essayer avec deux profils réels ; médias = nouveau GO |
 | 20 | 26/10 | ~~Apprendre : intentions, recherche, filtres (3 profondeurs × 5 types), feuille de route et matrice comme destinations dédiées. Lot 5.~~ | fait (26/10) : `docs/LOT_UX_5_APPRENDRE_2026_10_26.md` |
 
+## À faire — station R4 (26/10/2026)
+
+- [ ] **Station `r4env-1.0`** (`arduino_uno_r4/pod_uno_r4_station`) : premier essai matériel (protocole dans `STATION_MONITORING_R4_2026_10_26.md`). **Pas d'OTA** (le client OTA applicatif R4 n'existe qu'en laboratoire : branche locale `claude/ota-1-manifest-contract`, lot OTA-5, audit « non à une OTA de production ») et **pas de vote** (volontaire : un validateur jamais essayé sur carte affamerait le quorum ; le vote R4 existe dans les firmwares écran). À décider après le premier essai : OTA R4, indice VOC Sensirion, œuvre d'art sur le TFT de la station.
+
 ## Fait (dernier en tête)
 
 - [x] 25/10 — **Historique public des capteurs sur le profil artiste** : onglet « Capteurs » (visible s'il existe un capteur public), sélecteur par appareil (nom du device + `dev_…`), 24 h / 7 j / 30 j, courbes groupées (environnement / connexion dont débit `dl`) ; grandeur future (gaz) = une ligne dans `MEASURE_KINDS` (bloc « Autres mesures » sinon). `/api/artists/:id` ajoute `sensors` seulement si `measuresPublic !== false`. Lecture : `GET /api/sensor?public=1&hours=` (CDN 2 min, rien tant que l'onglet est fermé). `app/artists/[artistId]/ArtistSensors.tsx`, `tests/artistSensors.test.ts`.

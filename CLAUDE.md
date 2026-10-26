@@ -364,6 +364,8 @@ route `/api/candidate-clip` (ticket HMAC `CLIP_TICKET_SECRET`), mode `ANIM_V3_MO
 
 **Cercles privés (26/10/2026, MVP sans médias)** : `docs/LOT_UX_4_CERCLES_2026_10_26.md`. `lib/circles.ts` (logique pure sur une interface `CircleKV`), `lib/circlesRedis.ts` (adaptateur Upstash + enveloppe `circleRoute`), routes `/api/circles/**`, page `/circles`. Invitation → l'invité accepte lui-même ; tous les droits sont vérifiés côté serveur ; un non-membre reçoit la même 404 qu'un cercle inexistant ; seuls ces fichiers touchent aux cercles (test d'isolation) ; textes bornés (280 car.), TTL sur tout. **Jamais de PNG/JPEG/GIF dans Redis** : le partage d'images exige un stockage objet privé à choisir (contrat dans le doc) — nouveau GO avant toute dépendance ou service.
 
+**Station de monitoring R4 (26/10/2026)** : `arduino_uno_r4/pod_uno_r4_station` (`r4env-1.0`, DHT22 + SGP40 + TFT 1,8″ local), grandeur serveur `voc` (SGP40 brut, `lib/measures.ts`) ; COMPILÉE + pilote testé hôte, JAMAIS flashée ; capteur seul (ni vote, ni OTA). `docs/STATION_MONITORING_R4_2026_10_26.md`. Le TFT 1,8″ ESP8266 est archivé (rien supprimé) : `docs/ARCHIVE_TFT18_ESP8266_2026_10_26.md` ; DHT22 de `dev_VIRBQRV1` muet, hors firmware : `docs/DIAGNOSTIC_TFT18_DHT22_BOUCLE_WDT_2026_10_26.md`.
+
 ### Demandes différées — règle de suivi
 
 `docs/A_FAIRE_PETITES_MODIFS.md` est la liste vivante des petites modifications demandées pendant un autre chantier. **Toute demande qu'on ne traite pas tout de suite y est inscrite avant de continuer** (date, formulation, état) ; on la coche avec le commit quand elle est faite, et on relit la liste à la fin de chaque chantier. Ne jamais ignorer une demande sans la consigner.
