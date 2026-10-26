@@ -106,6 +106,16 @@ code { font-family: "JetBrains Mono", monospace; }
   border-color: rgba(124,107,255,0.5);
   background: rgba(124,107,255,0.1);
 }
+/* Menu « Plus » (bureau) : <details> natif, sans script */
+.site-nav__more { position: relative; }
+.site-nav__more > summary { list-style: none; cursor: pointer; }
+.site-nav__more > summary::-webkit-details-marker { display: none; }
+.site-nav__more-menu {
+  position: absolute; right: 0; top: calc(100% + 6px); z-index: 60; min-width: 220px;
+  display: flex; flex-direction: column; gap: 2px; padding: 8px;
+  background: var(--bg2); border: 1px solid var(--border); border-radius: 12px; box-shadow: 0 8px 32px rgba(0,0,0,0.45);
+}
+.nav-drawer__sep { margin: 8px 16px 2px; font-size: 0.66rem; letter-spacing: 0.08em; text-transform: uppercase; color: var(--text3); }
 .nav-drawer__link--active {
   background: rgba(124,107,255,0.12);
   color: var(--text);
@@ -1260,3 +1270,18 @@ code { font-family: "JetBrains Mono", monospace; }
   .onboard-submit { min-height: 52px; font-size: 1rem; }
   .nv2-panel { padding: 1.25rem; }
 }
+/* ── Accueil : trois intentions ───────────────────────────────── */
+.home-lead { max-width: 46rem; margin: 0.75rem auto 0; color: var(--text2); text-align: center; line-height: 1.55; }
+.home-actions { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 1rem; margin: 1.5rem 0 2rem; }
+.home-action {
+  display: flex; flex-direction: column; gap: 0.4rem; padding: 1.2rem 1.3rem; min-height: 44px;
+  border: 1px solid var(--border); border-radius: 16px; background: var(--bg2); color: var(--text2); text-decoration: none;
+  transition: border-color 0.15s, transform 0.15s;
+}
+.home-action:hover, .home-action:focus-visible { border-color: rgba(124,107,255,0.55); transform: translateY(-2px); outline: none; }
+.home-action strong { color: var(--text); font-size: 1.05rem; }
+.home-action span:last-child { font-size: 0.88rem; line-height: 1.5; }
+.home-action__icon { font-size: 1.6rem; }
+.home-action--primary { border-color: rgba(124,107,255,0.5); background: rgba(124,107,255,0.1); }
+.home-live-title { margin: 0 0 0.75rem; font-size: 1.1rem; color: var(--text2); }
+@media (max-width: 720px) { .home-actions { grid-template-columns: 1fr; } }

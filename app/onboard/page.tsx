@@ -72,7 +72,7 @@ function OnboardForm() {
       <form onSubmit={handleSubmit} className="w-full max-w-sm space-y-6">
 
         <div>
-          <h1 className="text-2xl font-bold">Connecter mon ESP</h1>
+          <h1 className="text-2xl font-bold">Connecter mon écran</h1>
           <p className="text-gray-400 text-sm mt-1">
             Scanne le QR code affiché sur ton écran, ou entre les infos manuellement.
           </p>

@@ -2,7 +2,7 @@
 
 > Un réseau artistique expérimental dans lequel des dessins numériques deviennent des œuvres physiques, vérifiables et rejouables sur des écrans embarqués.
 
-[Application](https://proof-of-draw.vercel.app) · [Dessiner](https://proof-of-draw.vercel.app/draw) · [Galerie](https://proof-of-draw.vercel.app/gallery) · [Réseau](https://proof-of-draw.vercel.app/network) · [Documentation interactive](https://proof-of-draw.vercel.app/learn)
+[Application](https://proof-of-draw.vercel.app) · [Créer](https://proof-of-draw.vercel.app/draw) · [Galerie](https://proof-of-draw.vercel.app/gallery) · [Réseau](https://proof-of-draw.vercel.app/network) · [Documentation interactive](https://proof-of-draw.vercel.app/learn)
 
 ## English summary
 

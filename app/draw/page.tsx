@@ -1,9 +1,12 @@
-// app/draw/page.tsx
-// Cette page n'a plus de raison d'exister — le flux passe par /profile
-// On redirige proprement plutôt que de laisser une surface d'attaque inutile
+// app/draw/page.tsx — « Créer » : page de choix de l'écran. Le studio (app/draw/[device]/[screen]) n'est pas modifié.
+import type { Metadata } from "next";
+import { DrawChoice } from "./DrawChoice";
 
-import { redirect } from "next/navigation";
+export const metadata: Metadata = {
+  title: "Créer | Proof-of-Draw",
+  description: "Choisis l'écran sur lequel dessiner : un de tes écrans, ou un écran partagé par un autre artiste.",
+};
 
 export default function DrawIndexPage() {
-  redirect("/profile");
+  return <DrawChoice />;
 }

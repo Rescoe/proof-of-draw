@@ -1,6 +1,6 @@
 // app/api/public-screens/route.ts
 // Retourne la liste des devices en mode prêt public.
-// Utilisé par /draw pour afficher les ESP disponibles à d'autres artistes.
+// Utilisé par /draw (page de choix) et le profil pour afficher les ESP disponibles à d'autres artistes.
 
 import { NextRequest, NextResponse } from "next/server";
 import { getPublicDevices } from "@/lib/deviceStore";
@@ -22,6 +22,7 @@ export async function GET(req: NextRequest) {
       })),
     });
   } catch {
-    return NextResponse.json({ devices: [] });
+    // Un échec n'est JAMAIS présenté comme une liste vide : le client distingue « aucun écran partagé » d'une erreur.
+    return NextResponse.json({ error: "Liste des écrans partagés indisponible" }, { status: 503, headers: { "Cache-Control": "no-store" } });
   }
 }

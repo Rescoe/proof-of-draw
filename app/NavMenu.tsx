@@ -4,16 +4,7 @@ import { useState, useEffect, useCallback } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 
-const links = [
-  { href: "/",         label: "Accueil" },
-  { href: "/draw",     label: "Dessiner" },
-  { href: "/gallery",  label: "Explorer" },
-  { href: "/gallery-ana", label: "Agents IA" },
-  { href: "/artists",  label: "Artistes" },
-  { href: "/learn",    label: "Apprendre" },
-  { href: "/profile",  label: "Mon profil" },
-  { href: "/onboard",  label: "+ Onboard" },
-];
+import { MORE_LINKS, PRIMARY_LINKS, isActive, isMoreActive } from "@/lib/navLinks";
 
 export function NavMenu() {
   const pathname = usePathname();
@@ -21,7 +12,10 @@ export function NavMenu() {
   const close = useCallback(() => setOpen(false), []);
 
   // Close on route change
-  useEffect(() => { close(); }, [pathname, close]);
+  useEffect(() => {
+    close();
+    document.querySelectorAll(".site-nav__more").forEach((d) => d.removeAttribute("open"));   // ferme aussi le menu « Plus » du bureau
+  }, [pathname, close]);
 
   // Close on Escape
   useEffect(() => {
@@ -41,15 +35,25 @@ export function NavMenu() {
     <>
       {/* Desktop */}
       <div className="site-nav__links">
-        {links.map((link) => (
+        {PRIMARY_LINKS.map((link) => (
           <Link
             key={link.href}
             href={link.href}
-            className={`site-nav__link${pathname === link.href ? " site-nav__link--active" : ""}`}
+            className={`site-nav__link${isActive(link, pathname) ? " site-nav__link--active" : ""}`}
           >
             {link.label}
           </Link>
         ))}
+        <details className="site-nav__more">
+          <summary className={`site-nav__link${isMoreActive(pathname) ? " site-nav__link--active" : ""}`}>Plus ▾</summary>
+          <div className="site-nav__more-menu">
+            {MORE_LINKS.map((link) => (
+              <Link key={link.href} href={link.href} className={`nav-drawer__link${isActive(link, pathname) ? " nav-drawer__link--active" : ""}`}>
+                {link.label}
+              </Link>
+            ))}
+          </div>
+        </details>
       </div>
 
       {/* Mobile hamburger */}
@@ -71,11 +75,22 @@ export function NavMenu() {
         <>
           <div className="nav-overlay" onClick={close} aria-hidden="true" />
           <nav className="nav-drawer" aria-label="Navigation">
-            {links.map((link) => (
+            {PRIMARY_LINKS.map((link) => (
               <Link
                 key={link.href}
                 href={link.href}
-                className={`nav-drawer__link${pathname === link.href ? " nav-drawer__link--active" : ""}`}
+                className={`nav-drawer__link${isActive(link, pathname) ? " nav-drawer__link--active" : ""}`}
+                onClick={close}
+              >
+                {link.label}
+              </Link>
+            ))}
+            <div className="nav-drawer__sep">Plus</div>
+            {MORE_LINKS.map((link) => (
+              <Link
+                key={link.href}
+                href={link.href}
+                className={`nav-drawer__link${isActive(link, pathname) ? " nav-drawer__link--active" : ""}`}
                 onClick={close}
               >
                 {link.label}

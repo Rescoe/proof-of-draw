@@ -1,6 +1,6 @@
 "use client";
 
-// app/profile/DevicesPanel.tsx — liste compacte de « Mes ESP » (page « Mon profil »).
+// app/profile/DevicesPanel.tsx — liste compacte de « Mes écrans » (page « Mon profil »).
 //
 // Avant : chaque appareil étalait ~10 blocs (stats, sécurité, prêt public, ANA, conversion, transfert, suppression…) et un bouton par écran.
 // Maintenant : une carte compacte par appareil (nom, état, écrans, pastilles de réglages) avec
@@ -261,30 +261,38 @@ function ManagePanel({ d, devices, profile, tab, setTab, onReload, onGive, onAsk
   });
 
   const convOn = (d.acceptsConvertedScreens ?? []).includes(convScreen);
-  const tabs: { key: ManageTab; label: string; show: boolean }[] = [
+  // Deux groupes : « Gérer » (nom, partage, mesures, appairage, journal) et « Maintenance avancée » (transfert de blocs, fusion, don, suppression)
+  const tabs: { key: ManageTab; label: string; show: boolean; advanced?: boolean }[] = [
     { key: "settings", label: "Réglages", show: true },
-    { key: "logs",     label: "Journal", show: true },
     { key: "access",   label: "Accès", show: true },
-    { key: "blocks",   label: "Blocs", show: others.length > 0 },
-    { key: "danger",   label: "Zone sensible", show: true },
+    { key: "logs",     label: "Journal", show: true },
+    { key: "blocks",   label: "Blocs", show: others.length > 0, advanced: true },
+    { key: "danger",   label: "Zone sensible", show: true, advanced: true },
   ];
+  const tabButton = (t: { key: ManageTab; label: string }) => (
+    <button
+      key={t.key} role="tab" aria-selected={tab === t.key} onClick={() => setTab(t.key)}
+      style={{
+        padding: "0.3rem 0.8rem", borderRadius: 999, fontSize: "0.76rem", cursor: "pointer", fontWeight: tab === t.key ? 700 : 500,
+        border: `1px solid ${tab === t.key ? (t.key === "danger" ? "rgba(248,113,113,0.5)" : "var(--accent)") : "var(--border)"}`,
+        background: tab === t.key ? (t.key === "danger" ? "rgba(248,113,113,0.08)" : "rgba(124,107,255,0.1)") : "var(--bg)",
+        color: tab === t.key ? (t.key === "danger" ? "#f87171" : "var(--accent)") : "var(--text2)",
+      }}
+    >
+      {t.label}
+    </button>
+  );
+  const groupLabel: React.CSSProperties = { fontSize: "0.66rem", letterSpacing: "0.08em", textTransform: "uppercase", color: "var(--text3)", marginRight: 4 };
 
   return (
     <div style={{ marginTop: "0.9rem", borderTop: "1px solid var(--border)", paddingTop: "0.75rem" }}>
-      <div role="tablist" style={{ display: "flex", gap: 4, flexWrap: "wrap", marginBottom: "0.4rem" }}>
-        {tabs.filter((t) => t.show).map((t) => (
-          <button
-            key={t.key} role="tab" aria-selected={tab === t.key} onClick={() => setTab(t.key)}
-            style={{
-              padding: "0.3rem 0.8rem", borderRadius: 999, fontSize: "0.76rem", cursor: "pointer", fontWeight: tab === t.key ? 700 : 500,
-              border: `1px solid ${tab === t.key ? (t.key === "danger" ? "rgba(248,113,113,0.5)" : "var(--accent)") : "var(--border)"}`,
-              background: tab === t.key ? (t.key === "danger" ? "rgba(248,113,113,0.08)" : "rgba(124,107,255,0.1)") : "var(--bg)",
-              color: tab === t.key ? (t.key === "danger" ? "#f87171" : "var(--accent)") : "var(--text2)",
-            }}
-          >
-            {t.label}
-          </button>
-        ))}
+      <div role="tablist" style={{ display: "flex", gap: 4, flexWrap: "wrap", alignItems: "center", marginBottom: "0.4rem" }}>
+        <span style={groupLabel}>Gérer</span>
+        {tabs.filter((t) => t.show && !t.advanced).map(tabButton)}
+      </div>
+      <div role="tablist" style={{ display: "flex", gap: 4, flexWrap: "wrap", alignItems: "center", marginBottom: "0.4rem" }}>
+        <span style={groupLabel} title="Actions rares ou irréversibles">Maintenance avancée</span>
+        {tabs.filter((t) => t.show && t.advanced).map(tabButton)}
       </div>
       {err && <p role="alert" style={{ ...muted, color: "#f87171", margin: "0.3rem 0" }}>{err}</p>}
 

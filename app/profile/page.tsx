@@ -576,6 +576,9 @@ export default function ProfilePage() {
   const [publicDevices,  setPublicDevices]  = useState<PublicDevice[]>([]);
   const [loading,        setLoading]        = useState(true);
   const [loadingPub,     setLoadingPub]     = useState(false);
+  // Échec d'API ≠ liste vide : on le dit (et on propose de réessayer) au lieu d'afficher « aucun ESP »
+  const [devicesError,   setDevicesError]   = useState<string | null>(null);
+  const [publicError,    setPublicError]    = useState<string | null>(null);
   const [profError,      setProfError]      = useState<string | null>(null);
   const [deleting,       setDeleting]       = useState(false);
 
@@ -610,8 +613,13 @@ export default function ProfilePage() {
     try {
       const res  = await fetch("/api/devices?mine=1", { cache: "no-store" });
       const data = await res.json();
-      setDevices(data.devices ?? []);
-    } catch { setDevices([]); }
+      if (!res.ok || !Array.isArray(data.devices)) throw new Error(String(res.status));
+      setDevices(data.devices);
+      setDevicesError(null);
+    } catch {
+      // en cas d'échec lors d'un rafraîchissement silencieux, on garde la liste déjà affichée
+      setDevicesError("Impossible de charger tes écrans (erreur réseau ou serveur).");
+    }
     finally { setLoading(false); }
   }
 
@@ -620,8 +628,10 @@ export default function ProfilePage() {
     try {
       const res  = await fetch("/api/public-screens", { cache: "no-store" });
       const data = await res.json();
-      setPublicDevices(data.devices ?? []);
-    } catch { setPublicDevices([]); }
+      if (!res.ok || !Array.isArray(data.devices)) throw new Error(String(res.status));
+      setPublicDevices(data.devices);
+      setPublicError(null);
+    } catch { setPublicError("Impossible de charger les écrans partagés (erreur réseau ou serveur)."); }
     finally { setLoadingPub(false); }
   }
 
@@ -883,8 +893,8 @@ export default function ProfilePage() {
         marginTop: "2rem",
       }}>
         {([
-          { key: "mine",   label: "Mes ESP" },
-          { key: "shared", label: `ESP disponibles${publicDevices.length ? ` (${publicDevices.length})` : ""}` },
+          { key: "mine",   label: "Mes écrans" },
+          { key: "shared", label: `Écrans partagés${publicDevices.length ? ` (${publicDevices.length})` : ""}` },
         ] as const).map(({ key, label }) => (
           <button
             key={key}
@@ -908,6 +918,11 @@ export default function ProfilePage() {
       {tab === "shared" && (
         loadingPub ? (
           <div style={{ color: "var(--text3)", textAlign: "center", padding: "2rem" }}>Chargement…</div>
+        ) : publicError ? (
+          <div role="alert" style={{ textAlign: "center", padding: "2rem", border: "1px solid #f87171", borderRadius: 12 }}>
+            <p style={{ color: "var(--text2)", margin: "0 0 0.75rem" }}>{publicError}</p>
+            <button type="button" onClick={loadPublic} style={{ padding: "0.45rem 1rem", borderRadius: 8, border: "1px solid var(--border)", background: "var(--bg)", color: "var(--text)", cursor: "pointer" }}>Réessayer</button>
+          </div>
         ) : publicDevices.length === 0 ? (
           <div style={{
             textAlign: "center", padding: "3rem 2rem",
@@ -970,7 +985,13 @@ export default function ProfilePage() {
       )}
 
       {/* ── Tab : Mes ESP ── */}
-      {tab === "mine" && (
+      {tab === "mine" && devicesError && (
+        <div role="alert" style={{ marginBottom: "1rem", padding: "0.8rem 1rem", border: "1px solid #f87171", borderRadius: 10, display: "flex", gap: "0.75rem", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap" }}>
+          <span style={{ color: "var(--text2)", fontSize: "0.9rem" }}>{devicesError}{devices.length > 0 ? " La liste affichée peut ne pas être à jour." : ""}</span>
+          <button type="button" onClick={() => loadDevices()} style={{ padding: "0.4rem 0.9rem", borderRadius: 8, border: "1px solid var(--border)", background: "var(--bg)", color: "var(--text)", cursor: "pointer" }}>Réessayer</button>
+        </div>
+      )}
+      {tab === "mine" && !(devicesError && devices.length === 0 && !loading) && (
         <DevicesPanel
           devices={devices}
           profile={profile ? { artistId: profile.artistId, displayName: profile.displayName } : null}
