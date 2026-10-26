@@ -30,6 +30,14 @@ Le projet associe ainsi :
 
 Proof of Draw n’est pas, à ce stade, une blockchain autonome. Le serveur coordonne encore le réseau et Redis conserve son état opérationnel. La recherche porte précisément sur ce qui peut être vérifié, calculé, affiché ou archivé par les appareils eux-mêmes.
 
+## Parcours dans l'application (26/10/2026)
+
+- **Créer** (`/draw`) : choisir un de ses écrans ou un écran partagé, puis le studio de dessin. Depuis la galerie, **Remix** d'un bloc miné (copie modifiable ; le bloc d'origine reste intact, la filiation `derivedFromBlockHash` est engagée dans le hash du nouveau bloc) ou **reprise d'un dessin rejeté**.
+- **Découvrir** : galerie, artistes (profils publics avec l'historique des capteurs rendus publics : graphique, œuvre générative, interprétation locale), réseau en direct.
+- **Mes écrans** : utiliser, gérer, maintenance avancée ; **Installer un écran** et **Connecter mon écran** (appairage par code).
+- **Cercles privés** (`/circles`) : cercles restreints entre artistes, invitation puis acceptation, messages texte ; aucun média pour l'instant (stockage objet privé à choisir).
+- **Apprendre** : cinq intentions, recherche et filtres (profondeur × type) ; feuille de route et matrice de compatibilité sont des pages dédiées.
+
 ## État du projet — octobre 2026
 
 Le dépôt évolue par petits lots audités, compilés sur l’hôte, puis validés par des canaris matériels. Une fonctionnalité présente dans le code n’est donc pas automatiquement considérée comme validée sur toutes les cartes.

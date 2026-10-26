@@ -21,6 +21,7 @@ export const MORE_LINKS: NavLink[] = [
   { href: "/gallery?type=animation", label: "Animations" },
   { href: "/gallery-ana",            label: "Agents IA" },
   { href: "/artists",                label: "Artistes" },
+  { href: "/circles",                label: "Cercles privés" },
   { href: "/onboard",                label: "Connecter mon écran" },
   { href: "/learn",                  label: "Apprendre et documentation" },
 ];

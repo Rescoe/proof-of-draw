@@ -40,6 +40,8 @@ export const ROADMAP: RoadmapPhase[] = [
       { id: "profile", title: "Profils d’artistes, appairage des écrans, autorisation d’un autre équipement", status: "done" },
       { id: "network-view", title: "Page Réseau en direct (constellation, flux observés ou reconstitués)", status: "done", note: "Les flux reconstitués sont signalés par une astérisque." },
       { id: "merge", title: "Outil « Ancien ➜ Nouveau » pour migrer les blocs d’une carte reflashée", status: "done" },
+      { id: "circles", title: "Cercles privés d’artistes : invitations avec consentement, droits côté serveur, messages texte", status: "doing", note: "Livré et testé en mémoire ; à essayer avec deux profils réels. Aucun média." },
+      { id: "circles-media", title: "Partage d’images dans les cercles (PNG, JPEG, GIF)", status: "todo", note: "Demande un stockage objet privé (jamais Redis) : service et coût à choisir." },
       { id: "remix", title: "Remix : œuvre dérivée d’un bloc (filiation engagée dans le hash) et reprise d’un dessin rejeté", status: "doing", note: "Livré et testé côté serveur et studio ; pas encore essayé avec un vrai vote en production. Aucune animation pour l’instant." },
     ],
   },
