@@ -14,6 +14,7 @@
 #include <OTAUpdate.h>
 #include <EEPROM.h>
 #include <SHA256.h>
+#include <new>
 #include "podEdStack.h"
 #include "podOtaR4.h"
 
@@ -70,11 +71,18 @@ static const char* resultName(Result r) {
 
 static uint8_t g_pub[2][32];          // r4-a, r4-b (clés publiques de PUBLICATION, compilées)
 static bool g_pubSet[2] = {false, false};
-static uint8_t g_manifestRaw[MAX_MANIFEST + 1]; static uint16_t g_manifestLen = 0;
-static uint8_t g_work[WORK_BYTES];
+static uint16_t g_manifestLen = 0;
 static Manifest g_man;
-static uint8_t g_rx[256]; static char g_hdr[96];
-static uint8_t g_blk[FLASH_BLOCK];
+// Tampons de travail au TAS, le temps d'une passe (≈ 2,4 Ko) : 2,4 Ko de RAM statique permanente de moins (le produit complet n'a pas la place : l'éditeur de liens refuse un tas < 8 Ko).
+struct Bufs { uint8_t manifestRaw[MAX_MANIFEST + 1]; uint8_t work[WORK_BYTES]; uint8_t rx[256]; char hdr[96]; uint8_t blk[FLASH_BLOCK]; };
+static Bufs* g_bufs = nullptr;
+static Bufs& B() { return *g_bufs; }
+struct BufScope {
+  bool owned;
+  BufScope() : owned(false) { if (!g_bufs) { g_bufs = new (std::nothrow) Bufs; owned = g_bufs != nullptr; } }
+  ~BufScope() { if (owned) { delete g_bufs; g_bufs = nullptr; } }
+  bool ok() const { return g_bufs != nullptr; }
+};
 static SHA256 g_sha; static Session g_sess; static WiFiFileSystem g_fs;
 static bool g_mounted = false;
 static const char* g_host = ""; static uint16_t g_port = 443; static const char* g_base = "";
@@ -109,19 +117,21 @@ static bool flWrite(void*, uint8_t blk, const uint8_t* in) {
 static Flash flash() { return Flash{flRead, flWrite, nullptr}; }
 
 /** Séquence effective (max(compilée, enregistrements)). OTA refusée (ok=false) si les deux blocs sont non vierges ET invalides. */
-static SeqState seqState() { return seqLoad(flash(), (uint32_t)OTAR4_COMPILED_SEQ, g_blk); }
+static SeqState seqState() { BufScope bs; if (!bs.ok()) { SeqState e; e.ok = false; e.seq = 0; e.gen = 0; e.newest = -1; return e; } return seqLoad(flash(), (uint32_t)OTAR4_COMPILED_SEQ, B().blk); }
 
 /** Diagnostic de banc : 32 premiers octets des blocs 0 à 7 de la data flash (les blocs 2 et 3 doivent être vierges, 0xFF, ou porter un enregistrement OTS1 valide). */
 static void dumpBlocks() {
-  for (uint8_t b = 0; b < 8; b++) { if (!flRead(nullptr, b, g_blk)) { logf("[OTA] bloc %u : lecture impossible", (unsigned)b); continue; } char h[100]; for (uint8_t i = 0; i < 24; i++) snprintf(h + 2 * i, 3, "%02x", g_blk[i]); uint32_t sq = 0, gn = 0; const RecKind k = classify(g_blk, sq, gn); logf("[OTA] bloc %u : %s | %s seq=%lu", (unsigned)b, h, k == R_VIRGIN ? "vierge" : (k == R_VALID ? "valide" : "INVALIDE"), (unsigned long)sq); }
+  BufScope bs; if (!bs.ok()) { logf("[OTA] mémoire insuffisante"); return; }
+  for (uint8_t b = 0; b < 8; b++) { if (!flRead(nullptr, b, B().blk)) { logf("[OTA] bloc %u : lecture impossible", (unsigned)b); continue; } char h[100]; for (uint8_t i = 0; i < 24; i++) snprintf(h + 2 * i, 3, "%02x", B().blk[i]); uint32_t sq = 0, gn = 0; const RecKind k = classify(B().blk, sq, gn); logf("[OTA] bloc %u : %s | %s seq=%lu", (unsigned)b, h, k == R_VIRGIN ? "vierge" : (k == R_VALID ? "valide" : "INVALIDE"), (unsigned long)sq); }
 }
 
 /** À appeler quand la NOUVELLE image a démarré et fonctionne (Wi-Fi + enregistrement) : inscrit la séquence compilée si elle dépasse celle des enregistrements. Idempotent. */
 static void confirmBoot() {
-  const SeqState r = seqLoad(flash(), 0, g_blk);                              // enregistrements SEULS (compiledSeq = 0)
+  BufScope bs; if (!bs.ok()) { logf("[OTA] confirmation de séquence : mémoire insuffisante"); return; }
+  const SeqState r = seqLoad(flash(), 0, B().blk);                              // enregistrements SEULS (compiledSeq = 0)
   if (!r.ok) { logf("[OTA] séquence : deux blocs invalides -> OTA REFUSÉE (récupération par câble)"); return; }
   if ((uint32_t)OTAR4_COMPILED_SEQ <= r.seq) return;                          // déjà couverte (ou image plus ANCIENNE flashée par câble : ne jamais baisser)
-  const bool ok = seqCommit(flash(), 0, (uint32_t)OTAR4_COMPILED_SEQ, g_blk);
+  const bool ok = seqCommit(flash(), 0, (uint32_t)OTAR4_COMPILED_SEQ, B().blk);
   logf("[OTA] séquence %lu inscrite en data flash : %s", (unsigned long)OTAR4_COMPILED_SEQ, ok ? "OK" : "ÉCHEC (non fatal)");
 }
 
@@ -146,25 +156,25 @@ static void getFn(void* p) {
 #endif
   if (!c.connect(g_host, g_port)) { j->status = -2; return; }
   c.print("GET "); c.print(g_base); c.print(j->path); c.print(" HTTP/1.0\r\nHost: "); c.print(g_host); c.print("\r\nUser-Agent: pod-r4-ota\r\nConnection: close\r\n\r\n");
-  if (!readLine(c, g_hdr, sizeof g_hdr)) { j->status = -3; c.stop(); return; }
-  if (strncmp(g_hdr, "HTTP/1.", 7) != 0 || g_hdr[8] != ' ') { j->status = -3; c.stop(); return; }
-  j->status = atoi(g_hdr + 9);
+  if (!readLine(c, B().hdr, sizeof B().hdr)) { j->status = -3; c.stop(); return; }
+  if (strncmp(B().hdr, "HTTP/1.", 7) != 0 || B().hdr[8] != ' ') { j->status = -3; c.stop(); return; }
+  j->status = atoi(B().hdr + 9);
   bool chunked = false;
   for (;;) {
-    if (!readLine(c, g_hdr, sizeof g_hdr)) { j->status = -3; c.stop(); return; }
-    if (!g_hdr[0]) break;
-    if (startsWithNoCase(g_hdr, "content-length:")) { const char* v = g_hdr + 15; while (*v == ' ') v++; int64_t n = 0; bool d = false; while (*v >= '0' && *v <= '9') { n = n * 10 + (*v - '0'); d = true; v++; if (n > 0x7FFFFFF) break; } j->clen = d ? n : -1; }
-    else if (startsWithNoCase(g_hdr, "transfer-encoding:")) chunked = true;
+    if (!readLine(c, B().hdr, sizeof B().hdr)) { j->status = -3; c.stop(); return; }
+    if (!B().hdr[0]) break;
+    if (startsWithNoCase(B().hdr, "content-length:")) { const char* v = B().hdr + 15; while (*v == ' ') v++; int64_t n = 0; bool d = false; while (*v >= '0' && *v <= '9') { n = n * 10 + (*v - '0'); d = true; v++; if (n > 0x7FFFFFF) break; } j->clen = d ? n : -1; }
+    else if (startsWithNoCase(B().hdr, "transfer-encoding:")) chunked = true;
   }
   if (j->status != 200 || chunked) { c.stop(); if (chunked) j->status = -4; return; }
   if (!j->onLen(j->clen)) { c.stop(); return; }
   uint32_t t0 = millis();
   while ((int64_t)j->got < j->clen && millis() - t0 < 30000) {
     if (!c.connected() && !c.available()) break;
-    int n = c.available() ? c.read(g_rx, sizeof g_rx) : 0;
+    int n = c.available() ? c.read(B().rx, sizeof B().rx) : 0;
     if (n <= 0) { delay(5); continue; }
     t0 = millis();
-    if (!j->onData(g_rx, (size_t)n)) { c.stop(); return; }
+    if (!j->onData(B().rx, (size_t)n)) { c.stop(); return; }
     j->got += (uint32_t)n;
   }
   c.stop(); j->ok = (int64_t)j->got == j->clen;
@@ -172,7 +182,7 @@ static void getFn(void* p) {
 static bool __attribute__((noinline)) httpGet(GetJob& j, PodNetInfo& ni) { return PodNet::runSized(getFn, &j, OTAR4_NET_STACK, &ni) && ni.err == POD_NET_OK; }
 
 static bool manLen(int64_t n) { return n > 0 && n <= (int64_t)MAX_MANIFEST; }
-static bool manData(const uint8_t* d, size_t n) { if (g_manifestLen + n > MAX_MANIFEST) return false; memcpy(g_manifestRaw + g_manifestLen, d, n); g_manifestLen = (uint16_t)(g_manifestLen + n); return true; }
+static bool manData(const uint8_t* d, size_t n) { if (g_manifestLen + n > MAX_MANIFEST) return false; memcpy(B().manifestRaw + g_manifestLen, d, n); g_manifestLen = (uint16_t)(g_manifestLen + n); return true; }
 static bool binLen(int64_t n) { return podotar4::begin(g_sess, g_man, n); }
 static bool binData(const uint8_t* d, size_t n) { return podotar4::feed(g_sess, d, n); }
 
@@ -215,6 +225,7 @@ static void loadKeys() {
 
 /** Une passe complète. true dans `staged` si un ticket a été émis. N'appelle la programmation que si `allowProgram`. */
 static Result checkOnce(bool allowProgram, bool dryRun = false) {
+  BufScope bs; if (!bs.ok()) { logf("[OTA] mémoire insuffisante pour les tampons de mise à jour : passe ignorée"); return R_ERROR; }
   loadKeys();
   if (!g_pubSet[0] && !g_pubSet[1]) { logf("[OTA] aucune clé publique de publication compilée : OTA INACTIVE (échec fermé)"); return R_REFUSED; }
   if (wifiStatus() != WL_CONNECTED) return R_NET_FAIL;
@@ -230,7 +241,7 @@ static Result checkOnce(bool allowProgram, bool dryRun = false) {
   const Keys keys = {{g_pubSet[0] ? g_pub[0] : nullptr, g_pubSet[1] ? g_pub[1] : nullptr}};
   const Device dev = {OTAR4_FAMILY, sq.seq, OTAR4_CHANNEL, 0};           // now = 0 : la carte n'a pas d'horloge fiable -> toute activation différée est refusée (échec fermé)
   const Verifier ver = {edVerify, nullptr};
-  const Why w = evaluate(g_manifestRaw, g_manifestLen, keys, dev, ver, g_work, g_man);
+  const Why w = evaluate(B().manifestRaw, g_manifestLen, keys, dev, ver, B().work, g_man);
   g_lastWhy = (uint8_t)w;
   if (w == W_NOT_NEWER) { logf("[OTA] à jour (séquence installée %lu)", (unsigned long)sq.seq); return R_NO_UPDATE; }
   if (w != W_OK) { logf("[OTA] manifeste REFUSÉ : %s", whyName(w)); return R_REFUSED; }

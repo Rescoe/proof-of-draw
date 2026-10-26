@@ -29,7 +29,7 @@ Règle (demandée par le porteur le 25/10/2026) : **toute demande faite pendant 
 
 ## À faire — station R4 (26/10/2026)
 
-- [ ] **Station `r4env-1.0`** (`arduino_uno_r4/pod_uno_r4_station`) : premier essai matériel (protocole dans `STATION_MONITORING_R4_2026_10_26.md`). **Pas d'OTA** (le client OTA applicatif R4 n'existe qu'en laboratoire : branche locale `claude/ota-1-manifest-contract`, lot OTA-5, audit « non à une OTA de production ») et **pas de vote** (volontaire : un validateur jamais essayé sur carte affamerait le quorum ; le vote R4 existe dans les firmwares écran). À décider après le premier essai : OTA R4, indice VOC Sensirion, œuvre d'art sur le TFT de la station.
+- [ ] **Station `r4env-1.1` / produit `r4tft18-2.0`** (`arduino_uno_r4/pod_uno_r4_station`, `pod_uno_r4_tft18_env`) : premier essai matériel avec TFT, DHT22 et SGP40 branchés (protocoles : `STATION_MONITORING_R4_2026_10_26.md`, `PRODUIT_R4_TFT18_ENV_2026_10_26.md`) ; frame + ACK + vote à observer ; OTA R4 : TLS de l'image, coupure d'alimentation, autre carte, clés de production, publication (`OTA_R4_CLIENT_ET_PUBLICATION_2026_10_26.md`). Le produit `tft18_env` est capable de voter : le brancher sur `dev_I25D9Z7A` change sa nature côté serveur (capteur → écran).
 
 ## Fait (dernier en tête)
 
