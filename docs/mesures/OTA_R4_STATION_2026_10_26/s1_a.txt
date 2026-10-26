@@ -1,0 +1,18 @@
+﻿>>> ?
+[OTA5] ? aide | i info | w Wi-Fi | s <h??te>[:port] | p <hex64> cl?? r4-a de TEST | m manifeste | d binaire | q s??quence | x supprimer le staging
+>>> i
+[OTA5] ===== SONDE OTA-5 R4-B (laboratoire) | ota5-r4b-lab-1 | compil??e Oct 26 2026 21:50:02 | TLS=0 | NE PAS D??PLOYER | AUCUNE PROGRAMMATION =====
+[OTA5] tas libre 19828 | pire pile d??di??e : utilis?? 0 o, marge minimale 0
+>>> w
+[OTA5] Wi-Fi : connexion (secrets.h)???
+[OTA5] pile WiFi.begin : ex??cut??, utilis?? 632 o, marge 840 o, erreur 0
+[OTA5] Wi-Fi CONNECT??
+>>> s 192.168.1.12:8081
+[OTA5] serveur : 192.168.1.12:8081
+>>> p 82ffbb7f88acaaaf229066dee18aa70abaae10b4ce15c2da358a5973a91a0273
+[OTA5] cl?? r4-a de test : enregistr??e
+>>> m
+[OTA5] pile GET (TLS + +FS) : ex??cut??, utilis?? 720 o, marge 2288 o, erreur 0
+[OTA5] manifeste : ok (seq install??e 5)
+[OTA5] ACCEPT?? : firmware r4tft28-2.6 seq 6 taille 98632 canal canary cl?? r4-a
+=== FIN

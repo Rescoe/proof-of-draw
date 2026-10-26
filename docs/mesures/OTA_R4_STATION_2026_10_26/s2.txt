@@ -1,0 +1,187 @@
+﻿>>> w
+[OTA5] Wi-Fi : connexion (secrets.h)???
+[OTA5] pile WiFi.begin : ex??cut??, utilis?? 540 o, marge 932 o, erreur 0
+[OTA5] Wi-Fi CONNECT??
+>>> s 192.168.1.12:8082
+[OTA5] serveur : 192.168.1.12:8082
+>>> p 82ffbb7f88acaaaf229066dee18aa70abaae10b4ce15c2da358a5973a91a0273
+[OTA5] cl?? r4-a de test : enregistr??e
+>>> GET http://127.0.0.1:8082/__case/activation-differee
+>>> m
+[OTA5] pile GET (TLS + +FS) : ex??cut??, utilis?? 720 o, marge 2288 o, erreur 0
+[OTA5] manifeste : not-active (seq install??e 5)
+>>> GET http://127.0.0.1:8082/__case/canal-inconnu
+>>> m
+[OTA5] pile GET (TLS + +FS) : ex??cut??, utilis?? 720 o, marge 2288 o, erreur 0
+[OTA5] manifeste : parse (seq install??e 5)
+>>> GET http://127.0.0.1:8082/__case/caractere-non-ascii
+>>> m
+[OTA5] pile GET (TLS + +FS) : ex??cut??, utilis?? 720 o, marge 2288 o, erreur 0
+[OTA5] manifeste : parse (seq install??e 5)
+>>> GET http://127.0.0.1:8082/__case/champ-duplique
+>>> m
+[OTA5] pile GET (TLS + +FS) : ex??cut??, utilis?? 720 o, marge 2288 o, erreur 0
+[OTA5] manifeste : parse (seq install??e 5)
+>>> GET http://127.0.0.1:8082/__case/champ-inconnu
+>>> m
+[OTA5] pile GET (TLS + +FS) : ex??cut??, utilis?? 720 o, marge 2288 o, erreur 0
+[OTA5] manifeste : parse (seq install??e 5)
+>>> GET http://127.0.0.1:8082/__case/champ-manquant
+>>> m
+[OTA5] pile GET (TLS + +FS) : ex??cut??, utilis?? 740 o, marge 2268 o, erreur 0
+[OTA5] manifeste : parse (seq install??e 5)
+>>> GET http://127.0.0.1:8082/__case/champs-dans-le-desordre
+>>> m
+[OTA5] pile GET (TLS + +FS) : ex??cut??, utilis?? 720 o, marge 2288 o, erreur 0
+[OTA5] manifeste : parse (seq install??e 5)
+>>> GET http://127.0.0.1:8082/__case/cle-inconnue
+>>> m
+[OTA5] pile GET (TLS + +FS) : ex??cut??, utilis?? 720 o, marge 2288 o, erreur 0
+[OTA5] manifeste : signature (seq install??e 5)
+>>> GET http://127.0.0.1:8082/__case/downgrade
+>>> m
+[OTA5] pile GET (TLS + +FS) : ex??cut??, utilis?? 720 o, marge 2288 o, erreur 0
+[OTA5] manifeste : not-newer (seq install??e 5)
+>>> GET http://127.0.0.1:8082/__case/espaces
+>>> m
+[OTA5] pile GET (TLS + +FS) : ex??cut??, utilis?? 720 o, marge 2288 o, erreur 0
+[OTA5] manifeste : parse (seq install??e 5)
+>>> GET http://127.0.0.1:8082/__case/famille-inconnue
+>>> m
+[OTA5] pile GET (TLS + +FS) : ex??cut??, utilis?? 720 o, marge 2288 o, erreur 0
+[OTA5] manifeste : parse (seq install??e 5)
+>>> GET http://127.0.0.1:8082/__case/firmware-inconnu
+>>> m
+[OTA5] pile GET (TLS + +FS) : ex??cut??, utilis?? 748 o, marge 2260 o, erreur 0
+[OTA5] manifeste : vote-incompatible (seq install??e 5)
+>>> GET http://127.0.0.1:8082/__case/firmware-mal-forme
+>>> m
+[OTA5] pile GET (TLS + +FS) : ex??cut??, utilis?? 748 o, marge 2260 o, erreur 0
+[OTA5] manifeste : parse (seq install??e 5)
+>>> GET http://127.0.0.1:8082/__case/firmware-sans-vote-v2
+>>> m
+[OTA5] pile GET (TLS + +FS) : ex??cut??, utilis?? 720 o, marge 2288 o, erreur 0
+[OTA5] manifeste : vote-incompatible (seq install??e 5)
+>>> GET http://127.0.0.1:8082/__case/keyid-inconnu
+>>> m
+[OTA5] pile GET (TLS + +FS) : ex??cut??, utilis?? 720 o, marge 2288 o, erreur 0
+[OTA5] manifeste : parse (seq install??e 5)
+>>> GET http://127.0.0.1:8082/__case/ligne-apres-sig
+>>> m
+[OTA5] pile GET (TLS + +FS) : ex??cut??, utilis?? 720 o, marge 2288 o, erreur 0
+[OTA5] manifeste : parse (seq install??e 5)
+>>> GET http://127.0.0.1:8082/__case/manifeste-modifie-apres-signature
+>>> m
+[OTA5] pile GET (TLS + +FS) : ex??cut??, utilis?? 720 o, marge 2288 o, erreur 0
+[OTA5] manifeste : signature (seq install??e 5)
+>>> GET http://127.0.0.1:8082/__case/manifeste-trop-long
+>>> m
+[OTA5] pile GET (TLS + +FS) : ex??cut??, utilis?? 720 o, marge 2288 o, erreur 0
+[OTA5] manifeste : t??l??chargement refus?? (statut 200, Content-Length 936, re??u 0)
+>>> GET http://127.0.0.1:8082/__case/manifeste-vide
+>>> m
+[OTA5] pile GET (TLS + +FS) : ex??cut??, utilis?? 720 o, marge 2288 o, erreur 0
+[OTA5] manifeste : t??l??chargement refus?? (statut 200, Content-Length 0, re??u 0)
+>>> GET http://127.0.0.1:8082/__case/nom-de-champ-modifie
+>>> m
+[OTA5] pile GET (TLS + +FS) : ex??cut??, utilis?? 748 o, marge 2260 o, erreur 0
+[OTA5] manifeste : parse (seq install??e 5)
+>>> GET http://127.0.0.1:8082/__case/pas-de-fin-de-ligne
+>>> m
+[OTA5] pile GET (TLS + +FS) : ex??cut??, utilis?? 724 o, marge 2284 o, erreur 0
+[OTA5] manifeste : parse (seq install??e 5)
+>>> GET http://127.0.0.1:8082/__case/rejeu-meme-sequence
+>>> m
+[OTA5] pile GET (TLS + +FS) : ex??cut??, utilis?? 720 o, marge 2288 o, erreur 0
+[OTA5] manifeste : not-newer (seq install??e 5)
+>>> GET http://127.0.0.1:8082/__case/schema-inconnu
+>>> m
+[OTA5] pile GET (TLS + +FS) : ex??cut??, utilis?? 720 o, marge 2288 o, erreur 0
+[OTA5] manifeste : parse (seq install??e 5)
+>>> GET http://127.0.0.1:8082/__case/sequence-11-chiffres
+>>> m
+[OTA5] pile GET (TLS + +FS) : ex??cut??, utilis?? 720 o, marge 2288 o, erreur 0
+[OTA5] manifeste : parse (seq install??e 5)
+>>> GET http://127.0.0.1:8082/__case/sequence-corrompue-lettres
+>>> m
+[OTA5] pile GET (TLS + +FS) : ex??cut??, utilis?? 720 o, marge 2288 o, erreur 0
+[OTA5] manifeste : parse (seq install??e 5)
+>>> GET http://127.0.0.1:8082/__case/sequence-debordement-64-bits
+>>> m
+[OTA5] pile GET (TLS + +FS) : ex??cut??, utilis?? 720 o, marge 2288 o, erreur 0
+[OTA5] manifeste : parse (seq install??e 5)
+>>> GET http://127.0.0.1:8082/__case/sequence-hors-limite
+>>> m
+[OTA5] pile GET (TLS + +FS) : ex??cut??, utilis?? 820 o, marge 2188 o, erreur 0
+[OTA5] manifeste : parse (seq install??e 5)
+>>> GET http://127.0.0.1:8082/__case/sequence-zero
+>>> m
+[OTA5] pile GET (TLS + +FS) : ex??cut??, utilis?? 720 o, marge 2288 o, erreur 0
+[OTA5] manifeste : parse (seq install??e 5)
+>>> GET http://127.0.0.1:8082/__case/sequence-zeros-initiaux
+>>> m
+[OTA5] pile GET (TLS + +FS) : ex??cut??, utilis?? 720 o, marge 2288 o, erreur 0
+[OTA5] manifeste : parse (seq install??e 5)
+>>> GET http://127.0.0.1:8082/__case/sha256-majuscules
+>>> m
+[OTA5] pile GET (TLS + +FS) : ex??cut??, utilis?? 720 o, marge 2288 o, erreur 0
+[OTA5] manifeste : parse (seq install??e 5)
+>>> GET http://127.0.0.1:8082/__case/sha256-mal-forme
+>>> m
+[OTA5] pile GET (TLS + +FS) : ex??cut??, utilis?? 720 o, marge 2288 o, erreur 0
+[OTA5] manifeste : parse (seq install??e 5)
+>>> GET http://127.0.0.1:8082/__case/sig-courte
+>>> m
+[OTA5] pile GET (TLS + +FS) : ex??cut??, utilis?? 720 o, marge 2288 o, erreur 0
+[OTA5] manifeste : parse (seq install??e 5)
+>>> GET http://127.0.0.1:8082/__case/signature-invalide
+>>> m
+[OTA5] pile GET (TLS + +FS) : ex??cut??, utilis?? 720 o, marge 2288 o, erreur 0
+[OTA5] manifeste : signature (seq install??e 5)
+>>> GET http://127.0.0.1:8082/__case/signature-sans-separation-de-domaine
+>>> m
+[OTA5] pile GET (TLS + +FS) : ex??cut??, utilis?? 720 o, marge 2288 o, erreur 0
+[OTA5] manifeste : signature (seq install??e 5)
+>>> GET http://127.0.0.1:8082/__case/taille-modifiee-apres-signature
+>>> m
+[OTA5] pile GET (TLS + +FS) : ex??cut??, utilis?? 720 o, marge 2288 o, erreur 0
+[OTA5] manifeste : signature (seq install??e 5)
+>>> GET http://127.0.0.1:8082/__case/taille-nulle
+>>> m
+[OTA5] pile GET (TLS + +FS) : ex??cut??, utilis?? 720 o, marge 2288 o, erreur 0
+[OTA5] manifeste : parse (seq install??e 5)
+>>> GET http://127.0.0.1:8082/__case/taille-trop-grande
+>>> m
+[OTA5] pile GET (TLS + +FS) : ex??cut??, utilis?? 720 o, marge 2288 o, erreur 0
+[OTA5] manifeste : parse (seq install??e 5)
+>>> GET http://127.0.0.1:8082/__case/binaire-tronque
+>>> m
+[OTA5] pile GET (TLS + +FS) : ex??cut??, utilis?? 720 o, marge 2288 o, erreur 0
+[OTA5] manifeste : ok (seq install??e 5)
+[OTA5] ACCEPT?? : firmware r4tft28-2.6 seq 6 taille 98632 canal canary cl?? r4-a
+>>> d
+[OTA5] tas libre avant : 19828
+[OTA5] pile GET (TLS + +FS) : ex??cut??, utilis?? 720 o, marge 2288 o, erreur 0
+[OTA5] binaire : statut 200, Content-Length 98631, re??u 0, session ??tat 6 erreur 2
+[OTA5] t??l??chargement refus?? : staging supprim??
+>>> GET http://127.0.0.1:8082/__case/binaire-plus-long
+>>> m
+[OTA5] pile GET (TLS + +FS) : ex??cut??, utilis?? 720 o, marge 2288 o, erreur 0
+[OTA5] manifeste : ok (seq install??e 5)
+[OTA5] ACCEPT?? : firmware r4tft28-2.6 seq 6 taille 98632 canal canary cl?? r4-a
+>>> d
+[OTA5] tas libre avant : 19828
+[OTA5] pile GET (TLS + +FS) : ex??cut??, utilis?? 720 o, marge 2288 o, erreur 0
+[OTA5] binaire : statut 200, Content-Length 98633, re??u 0, session ??tat 6 erreur 2
+[OTA5] t??l??chargement refus?? : staging supprim??
+>>> GET http://127.0.0.1:8082/__case/binaire-sha256-faux
+>>> m
+[OTA5] pile GET (TLS + +FS) : ex??cut??, utilis?? 720 o, marge 2288 o, erreur 0
+[OTA5] manifeste : ok (seq install??e 5)
+[OTA5] ACCEPT?? : firmware r4tft28-2.6 seq 6 taille 98632 canal canary cl?? r4-a
+>>> d
+[OTA5] tas libre avant : 19828
+[OTA5] pile GET (TLS + +FS) : ex??cut??, utilis?? 788 o, marge 2220 o, erreur 0
+[OTA5] binaire : statut 200, Content-Length 98632, re??u 98632, session ??tat 2 erreur 0
+[OTA5] taille ou SHA-256 du t??l??chargement diff??rent du manifeste : staging supprim??
+=== FIN

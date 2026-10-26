@@ -1,0 +1,5 @@
+2026-10-26T20:50:41.965Z serveur R4-B sur le port 8081, dossier artifacts/release
+2026-10-26T20:50:45.560Z GET /manifest.txt -> 336 o
+2026-10-26T20:52:07.326Z GET /manifest.txt -> 336 o
+2026-10-26T20:53:15.294Z GET /manifest.txt -> 336 o
+2026-10-26T20:53:25.203Z GET /firmware.bin -> 98632 o

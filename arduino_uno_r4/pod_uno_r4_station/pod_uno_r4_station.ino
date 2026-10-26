@@ -11,6 +11,9 @@
 // MISE EN SERVICE : copier secrets.h.example en secrets.h · bibliothèques ArduinoJson, Adafruit GFX, Adafruit ST7735 · téléverser · moniteur série 115200 · appairer avec le code affiché (écran et série) : Mon profil → « + Ajouter un ESP ».
 // MESURE GAZ : le chauffage du SGP40 met ≈ 10 s à se stabiliser : la carte prend 12 mesures à 1 Hz à chaque cycle et garde la dernière. Valeur en « ticks » (plus bas = plus de gaz), relative à la puce.
 #include <Arduino.h>
+#if __has_include("pod_build_flags.h")
+  #include "pod_build_flags.h"   // drapeaux de BANC (IGNORÉ par git) : FIRMWARE_VERSION, POD_OTA_R4, OTAR4_TLS, OTAR4_LAB_HOST, OTAR4_LAB_PORT, OTAR4_COMPILED_SEQ, OTAR4_ALLOW_HOST, OTAR4_RETRY_MS
+#endif
 #include <malloc.h>
 #include <stdarg.h>
 #include <WiFiS3.h>
@@ -38,7 +41,9 @@
 
 #define SERVER_HOST         "proof-of-draw.vercel.app"
 #define SCREEN_TYPE         "sensor"               // pas un écran : voir lib/sensorData.ts
-#define FIRMWARE_VERSION    "r4env-1.0"
+#ifndef FIRMWARE_VERSION
+#define FIRMWARE_VERSION    "r4env-1.1"
+#endif
 #define DHT_PIN             2                      // D2
 #define TFT_CS              10
 #define TFT_DC              9
@@ -51,6 +56,23 @@
 #define SPEED_EVERY_N_POSTS 1                      // test de débit : tous les N envois (1 = chaque heure ; 2 = toutes les 2 h)
 #define SENSOR_RETRY_MS     300000UL               // après un échec (lecture ou réseau) : nouvel essai dans 5 min
 #define HTTP_TIMEOUT_MS     20000UL
+
+// ─── MISE À JOUR À DISTANCE (OTA R4-B, 26/10/2026) — éteinte par défaut ──────────────────────────────────
+// POD_OTA_R4 = 0 : AUCUN octet du client OTA n'est compilé (firmware identique à r4env-1.0 hors numéro de version et de séquence). À 1 : manifeste signé Ed25519 -> binaire brut -> staging du module ->
+// relecture -> ota.update(). Famille « uno-r4-wifi-sensor » (station sans vote). Séquence anti-rejeu : OTAR4_COMPILED_SEQ (à AUGMENTER à chaque build publié), enregistrée en data flash (blocs 2 et 3).
+// Clés : pod_ota_r4_keys.h (IGNORÉ par git ; ota-lab/r4-ota5/tools/make-keys-header.mjs) définit OTAR4_PUB_A_HEX ; sans lui l'OTA est INACTIVE (échec fermé). Laboratoire : -DOTAR4_TLS=0 -DOTAR4_LAB_HOST=\"192.168.1.12\" -DOTAR4_LAB_PORT=8081.
+#ifndef POD_OTA_R4
+#define POD_OTA_R4 0
+#endif
+#ifndef OTAR4_COMPILED_SEQ
+#define OTAR4_COMPILED_SEQ 1
+#endif
+#if POD_OTA_R4
+  #define OTAR4_FAMILY "uno-r4-wifi-sensor"
+  #if __has_include("pod_ota_r4_keys.h")
+    #include "pod_ota_r4_keys.h"
+  #endif
+#endif
 
 #if ARDUINOJSON_VERSION_MAJOR >= 7
   #define JSON_DOC(name, cap) JsonDocument name
@@ -329,6 +351,7 @@ static uint16_t g_lastH = NO_H, g_lastVoc = 0;
 static int32_t  g_rssi = 0;
 static unsigned long g_lastSendMs = 0, g_lastReadAtMs = 0;
 static bool g_sendOk = false, g_sgpSeen = false;
+static const char* g_otaMsg = nullptr;                      // état OTA affiché (nullptr : rien)
 
 /** Lit le SGP40 (compensé par la dernière mesure DHT22) : 12 mesures à 1 Hz, retient la dernière. 0 = capteur absent / illisible. Le bus I2C est exercé SUR LA PILE DE TRAVAIL (la pile principale ne fait que 1 024 o). */
 static uint16_t __attribute__((noinline)) readSgp40() {
@@ -438,7 +461,8 @@ static void __attribute__((noinline)) drawStationWork() {
   else if (!paired) { snprintf(b, sizeof b, "CODE %s", pairCode.c_str()); tftLine(138, 1, C_AMBER, b); }
   else if (g_lastSendMs == 0) tftLine(138, 1, C_GREY, "1er envoi dans < 1 h");
   else { const unsigned m = (unsigned)((millis() - g_lastSendMs) / 60000UL); snprintf(b, sizeof b, "envoi %s il y a %u min", g_sendOk ? "OK" : "ECHEC", m); tftLine(138, 1, g_sendOk ? C_GREEN : C_RED, b); }
-  if (g_n > 0) { snprintf(b, sizeof b, "%u en attente", (unsigned)g_n); tftLine(149, 1, C_GREY, b); } else tftLine(149, 1, C_GREY, "");
+  if (g_otaMsg) { snprintf(b, sizeof b, "OTA: %s", g_otaMsg); tftLine(149, 1, C_AMBER, b); }
+  else if (g_n > 0) { snprintf(b, sizeof b, "%u en attente", (unsigned)g_n); tftLine(149, 1, C_GREY, b); } else tftLine(149, 1, C_GREY, "");
 }
 static void __attribute__((noinline)) drawStation() {
   if (!g_tftOk) return;
@@ -451,6 +475,21 @@ static void __attribute__((noinline)) initTft() {
   auto wk = [&]() { tft.initR(INITR_BLACKTAB); tft.setRotation(0); tft.fillScreen(C_BG); g_tftOk = true; };
   if (!podWorkRun(wk, &ni)) logf("[TFT] initialisation impossible (%s) : la station fonctionne sans écran", podNetWhy(ni));
 }
+
+#if POD_OTA_R4
+#include "pod_ota_r4_client.h"
+static unsigned long g_otaNextMs = OTAR4_CHECK_FIRST_MS;
+/** Une passe OTA (réseau + staging + éventuelle programmation). Bloque la boucle le temps du téléchargement (≈ 40 s pour 100 Ko). */
+static void __attribute__((noinline)) otaTick(bool force) {
+  if (!force && millis() < g_otaNextMs) return;
+  g_otaMsg = "verification"; drawStation();
+  const otar4::Result res = otar4::checkOnce(true);
+  g_otaMsg = (res == otar4::R_NO_UPDATE) ? nullptr : otar4::resultName(res);
+  drawStation();
+  g_otaNextMs = millis() + ((res == otar4::R_NET_FAIL || res == otar4::R_STAGE_FAIL || res == otar4::R_DEFERRED_HOST || res == otar4::R_ERROR) ? OTAR4_RETRY_MS : OTAR4_CHECK_EVERY_MS);
+  logf("[OTA] résultat : %s ; prochaine vérification dans %lu s", otar4::resultName(res), (unsigned long)((g_otaNextMs - millis()) / 1000UL));
+}
+#endif
 
 // ─── SETUP / LOOP ──────────────────────────────────────────────────────────
 static unsigned long lastRegisterMs = 0, lastReadMs = 0, lastPostMs = 0, nextReadDelayMs = 0, nextPostDelayMs = 0;
@@ -475,6 +514,16 @@ void setup() {
   logf("[WIFI] IP: %s", wifiIpString().c_str());
   drawStation();
   while (!registered) { if (doRegister()) break; delay(5000); }
+#if POD_OTA_R4
+  {
+  #if OTAR4_TLS
+    otar4::setServer(SERVER_HOST, 443, "/firmware-r4/sensor/" OTAR4_CHANNEL);
+  #else
+    otar4::setServer(OTAR4_LAB_HOST, OTAR4_LAB_PORT, "");
+  #endif
+    otar4::confirmBoot();
+  }
+#endif
   lastRegisterMs = millis();
   logf("[BOOT] prêt — lecture toutes les %lu min, envoi toutes les %lu min", READ_INTERVAL_MS / 60000UL, POST_INTERVAL_MS / 60000UL);
 }
@@ -492,9 +541,15 @@ void loop() {
     drawStation();
   }
 
+#if POD_OTA_R4
+  if (Serial.available()) { const int ch = Serial.peek(); if (ch == 'o') { while (Serial.available()) Serial.read(); otaTick(true); } else if (ch == 'f') { while (Serial.available()) Serial.read(); otar4::dumpBlocks(); } }   // laboratoire : o = vérifier maintenant, f = data flash
+#endif
   if (wifiStatus() != WL_CONNECTED) { wifiBegin(); delay(5000); return; }
   if (!registered) { if (!doRegister()) { delay(5000); return; } lastRegisterMs = millis(); }
 
+#if POD_OTA_R4
+  otaTick(false);                                  // la mise à jour ne dépend NI de l'appairage NI des capteurs
+#endif
   if (!paired) {                                   // en attente d'appairage : on redemande toutes les minutes (5 inscriptions/min/IP au plus côté serveur)
     if (millis() - lastRegisterMs >= 60000UL) {
       doRegister();

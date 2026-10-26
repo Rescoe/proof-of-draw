@@ -78,3 +78,35 @@ arduino_uno_r4/**/pod_preview_host.h
 
 # copies prêtes à téléverser (contiennent secrets.h : JAMAIS commitées)
 /A_TELEVERSER/
+
+# ota-lab (OTA-2, 15/10/2026) : builds, binaires signés, journaux, clés et identifiants Wi-Fi : JAMAIS commités
+/ota-lab/**/artifacts/*
+!/ota-lab/**/artifacts/.gitkeep
+/ota-lab/**/logs/*
+!/ota-lab/**/logs/.gitkeep
+/ota-lab/**/secrets.h
+/ota-lab/**/ota_config.h
+/ota-lab/**/*.key
+/ota-lab/**/*.pem
+/ota-lab/**/build/
+/ota-lab/**/*.bin
+/ota-lab/**/*.signed
+
+# clés publiques de PUBLICATION OTA (générées hors ligne ; les clés de test, sans moitié privée, sont dans pod_ota_keys_test.h)
+esp8266/**/pod_ota_keys.h
+esp8266/**/public.key
+
+/ota-lab/**/pod_ota_keys.h
+
+# canari OTA-3 automatique : résultats d'un run (journaux série/serveur avec adresses privées) — JAMAIS commités
+/ota-lab/r4-ota3/runs/
+/ota-lab/r4-ota3/artifacts/canary/
+
+# OTA-5 (R4-B) : graines de clés de TEST et jeux de cas négatifs — JAMAIS commités
+/ota-lab/**/*.seed
+/ota-lab/r4-ota5/artifacts/*
+!/ota-lab/r4-ota5/artifacts/.gitkeep
+
+# clés publiques de PUBLICATION OTA R4 (générées ; clés de test en laboratoire) : jamais commitées
+arduino_uno_r4/**/pod_ota_r4_keys.h
+arduino_uno_r4/**/pod_build_flags.h
