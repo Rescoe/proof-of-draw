@@ -473,7 +473,7 @@ export default function ArtistDetailPage() {
       )}
 
       {/* ── Tab Capteurs (historique public) ── */}
-      {tab === "sensors" && <ArtistSensors devices={sensorDevices} />}
+      {tab === "sensors" && <ArtistSensors devices={sensorDevices} ownerName={profile.displayName} />}
 
       {/* ── Tab ESP ── */}
       {tab === "devices" && (

@@ -3,6 +3,7 @@
 // Coût Redis : 1 GET /api/sensor?public=1 par (appareil, durée) — réponse mise en cache par le CDN (2 min), rien tant que l'onglet n'est pas ouvert.
 import { useEffect, useState } from "react";
 import { MeasuresChart } from "../../MeasuresChart";
+import { MeasuresExplorer } from "../../MeasuresExplorer";
 import { MEASURE_GROUPS, type Measure, type MeasureKind } from "@/lib/measures";
 
 export interface SensorDevice { deviceId: string; deviceName?: string; sensors?: MeasureKind[] }
@@ -14,14 +15,16 @@ const pill = (on: boolean): React.CSSProperties => ({
   color: on ? "var(--accent)" : "var(--text2)",
 });
 
-export default function ArtistSensors({ devices }: { devices: SensorDevice[] }) {
+export default function ArtistSensors({ devices, ownerName }: { devices: SensorDevice[]; ownerName?: string }) {
   const list = devices.filter((d) => (d.sensors?.length ?? 0) > 0);
   const [sel, setSel] = useState(list[0]?.deviceId ?? "");
   const [hours, setHours] = useState<number>(24);
   const [data, setData] = useState<Measure[] | null>(null);
   const [err, setErr] = useState("");
+  // Température et humidité sont lues par l'explorateur (MeasuresExplorer, une lecture mise en cache) ; cette lecture-ci ne sert qu'aux autres grandeurs (connexion de la carte…)
+  const needsOthers = (list.find((d) => d.deviceId === sel)?.sensors ?? []).some((k) => k !== "temp" && k !== "hum");
   useEffect(() => {
-    if (!sel) return;
+    if (!sel || !needsOthers) return;
     let live = true;
     setData(null); setErr("");
     fetch(`/api/sensor?deviceId=${encodeURIComponent(sel)}&public=1&hours=${hours}`)
@@ -29,7 +32,7 @@ export default function ArtistSensors({ devices }: { devices: SensorDevice[] }) 
       .then((j) => { if (live) setData(Array.isArray(j.measures) ? j.measures : []); })
       .catch((e) => { if (live) setErr(String(e.message ?? e)); });
     return () => { live = false; };
-  }, [sel, hours]);
+  }, [sel, hours, needsOthers]);
   if (list.length === 0) return <p style={{ color: "var(--text3)", textAlign: "center", padding: "2rem" }}>Aucun capteur public.</p>;
   const dev = list.find((d) => d.deviceId === sel) ?? list[0];
   const kinds = dev.sensors ?? [];
@@ -51,18 +54,28 @@ export default function ArtistSensors({ devices }: { devices: SensorDevice[] }) 
         </div>
       )}
       <div style={{ fontSize: "0.8rem", color: "var(--text3)" }}>{dev.deviceName || dev.deviceId} · <code>{dev.deviceId}</code></div>
-      <div role="group" aria-label="Durée" style={{ display: "flex", gap: 6 }}>
-        {RANGES.map((r) => <button key={r.h} type="button" aria-pressed={hours === r.h} onClick={() => setHours(r.h)} style={pill(hours === r.h)}>{r.label}</button>)}
-      </div>
-      {err && <p style={{ color: "var(--text3)" }}>{err}</p>}
-      {!err && data === null && <p style={{ color: "var(--text3)" }}>Chargement…</p>}
-      {!err && data !== null && data.length === 0 && <p style={{ color: "var(--text3)" }}>Aucune mesure sur cette période.</p>}
-      {!err && data !== null && data.length > 0 && groups.map(({ id, label, ks }) => (
-        <section key={`${dev.deviceId}-${hours}-${id}`} style={{ border: "1px solid var(--border)", borderRadius: 12, padding: "0.8rem" }}>
-          <h3 style={{ margin: "0 0 0.4rem", fontSize: "0.9rem" }}>{label}</h3>
-          <MeasuresChart measures={data} kinds={ks} />
+      {kinds.some((k) => k === "temp" || k === "hum") && (
+        <section key={`${dev.deviceId}-explorer`} style={{ border: "1px solid var(--border)", borderRadius: 12, padding: "0.8rem" }}>
+          <h3 style={{ margin: "0 0 0.5rem", fontSize: "0.9rem" }}>Température et humidité</h3>
+          <MeasuresExplorer deviceId={dev.deviceId} sensorLabel={dev.deviceName || dev.deviceId} ownerName={ownerName} kinds={kinds} />
         </section>
-      ))}
+      )}
+      {needsOthers && (
+        <>
+          <div role="group" aria-label="Durée" style={{ display: "flex", gap: 6 }}>
+            {RANGES.map((r) => <button key={r.h} type="button" aria-pressed={hours === r.h} onClick={() => setHours(r.h)} style={pill(hours === r.h)}>{r.label}</button>)}
+          </div>
+          {err && <p style={{ color: "var(--text3)" }}>{err}</p>}
+          {!err && data === null && <p style={{ color: "var(--text3)" }}>Chargement…</p>}
+          {!err && data !== null && data.length === 0 && <p style={{ color: "var(--text3)" }}>Aucune mesure sur cette période.</p>}
+          {!err && data !== null && data.length > 0 && groups.filter((g) => g.id !== "env").map(({ id, label, ks }) => (
+            <section key={`${dev.deviceId}-${hours}-${id}`} style={{ border: "1px solid var(--border)", borderRadius: 12, padding: "0.8rem" }}>
+              <h3 style={{ margin: "0 0 0.4rem", fontSize: "0.9rem" }}>{label}</h3>
+              <MeasuresChart measures={data} kinds={ks} />
+            </section>
+          ))}
+        </>
+      )}
     </div>
   );
 }

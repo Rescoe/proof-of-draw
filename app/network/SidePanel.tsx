@@ -6,6 +6,7 @@ import { eink29bwrToCanvas, eink27bwToCanvas, oled096ToCanvas } from "@/lib/scre
 import { DeviceShownNow, type DisplaysMap } from "./LiveDisplays";
 import { MEASURE_GROUPS, MEASURE_KINDS, formatMeasure, kindsOfGroup, type Measure } from "@/lib/measures";
 import { MeasuresChart } from "../MeasuresChart";
+import { MeasuresExplorer } from "../MeasuresExplorer";
 
 // ─── Types locaux (évite d'importer des modules serveur) ─────────────────────
 
@@ -706,6 +707,8 @@ function DeviceMeasuresSection({ device }: { device: NetworkDevice }) {
   const m = device.measures!;
   const [history, setHistory] = useState<Measure[] | null>(null);
   const [state, setState] = useState<"idle" | "loading" | "error">("idle");
+  const [explore, setExplore] = useState(false);   // l'explorateur (graphique · œuvre · interprétation) ne lit rien tant qu'il n'est pas ouvert
+  const hasLink = kindsOfGroup(m.kinds, "link").length > 0;
   const load = () => {
     setState("loading");
     fetch(`/api/sensor?deviceId=${encodeURIComponent(device.deviceId)}&public=1`)
@@ -730,14 +733,22 @@ function DeviceMeasuresSection({ device }: { device: NetworkDevice }) {
                 {g.id === "env" && <div className="nv2-metric"><span>Mesuré</span><strong>{formatRelativeTime(last.t * 1000)}</strong></div>}
               </div>
             )}
-            {history && history.length > 0 && <MeasuresChart measures={history} kinds={gk} />}
+            {g.id === "env" && (
+              <>
+                <button type="button" className="nv2-tab" aria-expanded={explore} onClick={() => setExplore((v) => !v)}>
+                  {explore ? "Masquer les mesures" : "Explorer : graphique · œuvre · interprétation"}
+                </button>
+                {explore && <div style={{ marginTop: 8 }}><MeasuresExplorer deviceId={device.deviceId} sensorLabel={device.publicId.slice(0, 12)} ownerName={device.artistName} kinds={m.kinds} /></div>}
+              </>
+            )}
+            {g.id !== "env" && history && history.length > 0 && <MeasuresChart measures={history} kinds={gk} />}
           </div>
         );
       })}
-      {last && !history && (
+      {last && hasLink && !history && (
         <div className="nv2-panel__section">
           <button type="button" className="nv2-tab" onClick={load} disabled={state === "loading"}>
-            {state === "loading" ? "Chargement…" : "Voir les dernières 48 h"}
+            {state === "loading" ? "Chargement…" : "Voir la connexion sur 48 h"}
           </button>
           {state === "error" && <p className="nv2-muted nv2-small">Historique indisponible.</p>}
         </div>

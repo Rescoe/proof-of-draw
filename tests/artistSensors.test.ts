@@ -18,5 +18,5 @@ test("le composant lit uniquement l'historique public, 24 h / 7 j / 30 j, groupÃ
 });
 test("la page n'ouvre l'onglet Capteurs que s'il existe un capteur public", () => {
   assert.ok(page.includes("sensorDevices.length > 0"));
-  assert.ok(page.includes("<ArtistSensors devices={sensorDevices} />"));
+  assert.ok(page.includes("<ArtistSensors devices={sensorDevices} ownerName={profile.displayName} />"));
 });

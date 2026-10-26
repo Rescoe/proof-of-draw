@@ -1,6 +1,7 @@
 "use client";
 
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
+import { MeasuresExplorer } from "../MeasuresExplorer";
 import { HARDWARE_LABEL } from "@/lib/network/hardware";
 import type { NetworkDevice } from "@/lib/networkSnapshot";
 import type { DisplaysMap } from "./LiveDisplays";
@@ -21,6 +22,9 @@ type Props = {
  */
 export function ArtistPanel({ artist, displays, isolated, onToggleIsolation, onSelectDevice, onClose }: Props) {
   const summary = useMemo(() => summarizeArtist(artist, displays), [artist, displays]);
+  // Capteurs publics de l'artiste (le snapshot n'expose `measures` que si le propriétaire les a laissées publiques). L'explorateur ne se monte (et ne lit rien) qu'au clic.
+  const sensors = artist.devices.filter((d) => d.measures && d.measures.kinds.some((k) => k === "temp" || k === "hum"));
+  const [openSensor, setOpenSensor] = useState<string | null>(null);
   const hardware = (Object.entries(artist.hardwareCounts) as [keyof typeof HARDWARE_LABEL, number][]).filter(([, count]) => count > 0);
 
   return (
@@ -45,6 +49,29 @@ export function ArtistPanel({ artist, displays, isolated, onToggleIsolation, onS
       <button type="button" className={`ap__isolate${isolated ? " is-on" : ""}`} onClick={onToggleIsolation} aria-pressed={isolated}>
         {isolated ? "✕ Quitter l’isolation" : "◎ Isoler cet artiste sur la carte"}
       </button>
+
+      {sensors.length > 0 && (
+        <>
+          <div className="ap__label">Capteurs <small>(mesures publiques)</small></div>
+          <ul className="ap__devices">
+            {sensors.map((d) => (
+              <li key={d.deviceId}>
+                <button type="button" aria-expanded={openSensor === d.deviceId} onClick={() => setOpenSensor((cur) => (cur === d.deviceId ? null : d.deviceId))}>
+                  <span className="ap__dev">
+                    <b>🌡 {d.publicId.slice(0, 12)}</b>
+                    <small>{d.measures!.latest ? `dernière mesure ${relativeTime(d.measures!.latest.t * 1000)}` : "aucune mesure reçue"} · {openSensor === d.deviceId ? "masquer" : "graphique · œuvre · interprétation"}</small>
+                  </span>
+                </button>
+                {openSensor === d.deviceId && (
+                  <div className="ap__explorer">
+                    <MeasuresExplorer deviceId={d.deviceId} sensorLabel={d.publicId.slice(0, 12)} ownerName={artist.label} kinds={d.measures!.kinds} />
+                  </div>
+                )}
+              </li>
+            ))}
+          </ul>
+        </>
+      )}
 
       <div className="ap__label">Appareils</div>
       <ul className="ap__devices">
@@ -101,5 +128,6 @@ const ARTIST_PANEL_STYLES = `
   .ap__dev{display:flex;flex-direction:column;gap:3px;min-width:0}.ap__dev b{font:700 12px/1.2 ui-monospace,monospace;color:#f1f5f9}.ap__dev small,.ap__works small{display:block;color:#718198;font-size:10px;line-height:1.3}
   .ap__screens{display:flex;flex-wrap:wrap;gap:5px;margin-top:3px}.ap__screens span{padding:2px 6px;border:1px solid;border-radius:6px;font:700 9px/1.3 ui-monospace,monospace;opacity:.72}.ap__screens span.is-shown{opacity:1;background:rgba(255,255,255,.05)}
   .ap__works li{display:flex;gap:9px;align-items:flex-start;padding:8px 10px;border-radius:9px;background:rgba(15,23,42,.45);font-size:12px}.ap__works b{font-weight:600;color:#f1f5f9}.ap__work-dot{flex:none;width:8px;height:8px;margin-top:5px;border-radius:2px}
+  .ap__explorer{margin-top:6px;padding:10px;border:1px solid rgba(148,163,184,.14);border-radius:11px;background:rgba(15,23,42,.55)}
   .ap__empty{margin:0;color:#718198;font-size:12px}
 `;
