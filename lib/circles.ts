@@ -73,6 +73,8 @@ export interface CircleKV {
   expire(k: string, sec: number): Promise<void>;
   /** SET NX EX : true si la clé a été posée (verrou obtenu), false si elle existait déjà */
   setnx(k: string, v: string, exSec: number): Promise<boolean>;
+  /** Compare-and-delete ATOMIQUE (une seule opération Redis) : supprime la clé SEULEMENT si sa valeur est `v`. Retourne true si supprimée. */
+  delIfEquals(k: string, v: string): Promise<boolean>;
   /** INCR puis EXPIRE (NX) : retourne la valeur du compteur */
   incr(k: string, windowSec: number): Promise<number>;
 }
@@ -142,7 +144,7 @@ async function withLock<T>(kv: CircleKV, circleId: string, clock: Clock, fn: () 
   const token = clock.newId();
   if (!(await kv.setnx(lockKey(circleId), token, LOCK_TTL_SEC))) return fail(409, "circle_busy", "Le cercle est en cours de modification : réessaie dans un instant.");
   try { return await fn(); }
-  finally { if ((await kv.get(lockKey(circleId))) === token) await kv.del(lockKey(circleId)); }
+  finally { await kv.delIfEquals(lockKey(circleId), token); }   // compare-and-delete ATOMIQUE : jamais le verrou d'un autre, même si le nôtre a expiré entre-temps
 }
 
 async function loadMeta(kv: CircleKV, id: string): Promise<CircleMeta | null> { return parse<CircleMeta>(await kv.get(circleKey(id))); }

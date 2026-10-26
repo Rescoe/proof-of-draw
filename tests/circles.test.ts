@@ -28,6 +28,7 @@ function memoryKV() {
     async ltrim(k, a, b) { const l = lists.get(k); if (l) lists.set(k, l.slice(a, b + 1)); },
     async lrange(k, a, b) { return (lists.get(k) ?? []).slice(a, b + 1); },
     async expire(k, sec) { ttl.set(k, sec); },
+    async delIfEquals(k, v) { if (str.get(k) !== v) return false; str.delete(k); ttl.delete(k); return true; },   // atomique : une seule étape, aucun point d'entrelacement
     async setnx(k, v, ex) { if (str.has(k)) return false; str.set(k, v); ttl.set(k, ex); return true; },
     async incr(k, windowSec) { const n = (counters.get(k) ?? 0) + 1; counters.set(k, n); if (!ttl.has(k)) ttl.set(k, windowSec); return n; },
   };
@@ -378,4 +379,30 @@ test("VERROU : échec fermé (déjà tenu → 409, rien n'est modifié), TTL cou
   assert.equal(lockTtl, 10, "TTL de 10 s");
   assert.equal(await cc(inviteArtist(kv, ME("zoe"), circle.id, id4("ana"), lookup, clock)), "already_invited");
   assert.equal(str.has("lock:circle:" + circle.id), false, "libéré après une erreur métier");
+});
+
+test("VERROU : libération TARDIVE — A expire, B acquiert, A libère : B reste verrouillé (compare-and-delete atomique, jamais GET puis DEL)", async () => {
+  const { kv, str, circle } = await setup();
+  const key = "lock:circle:" + circle.id;
+  assert.equal(await kv.setnx(key, "jeton-A", 10), true);        // A prend le verrou
+  str.delete(key);                                               // ... il expire (TTL de 10 s écoulé)
+  assert.equal(await kv.setnx(key, "jeton-B", 10), true);        // B l'acquiert
+  assert.equal(await kv.delIfEquals(key, "jeton-A"), false);     // libération tardive de A
+  assert.equal(str.get(key), "jeton-B", "B reste verrouillé");
+  assert.equal(await kv.setnx(key, "jeton-C", 10), false, "personne d'autre ne passe");
+  assert.equal(await kv.delIfEquals(key, "jeton-B"), true);      // B libère le sien
+  assert.equal(str.has(key), false);
+  // de bout en bout : withLock de A (via inviteArtist) dont le verrou est repris par B pendant l'opération ne supprime pas celui de B
+  const slow: CircleKV = { ...kv, hset: async (k, f, v) => { str.set(key, "jeton-B"); return kv.hset(k, f, v); } };   // pendant l'écriture, le verrou de A est remplacé par celui de B
+  await inviteArtist(slow, ME("zoe"), circle.id, id4("ana"), lookup, clock);
+  assert.equal(str.get(key), "jeton-B", "la libération de A n'a pas touché le verrou de B");
+});
+
+test("VERROU : plus aucun GET puis DEL séparés ; l'adaptateur Upstash libère par un script Lua unique (compare-and-delete)", async () => {
+  const fs = await import("node:fs");
+  const lib = fs.readFileSync("lib/circles.ts", "utf8"), red = fs.readFileSync("lib/circlesRedis.ts", "utf8");
+  assert.doesNotMatch(lib, /kv\.get\(lockKey/);
+  assert.match(lib, /kv\.delIfEquals\(lockKey\(circleId\), token\)/);
+  assert.match(red, /RELEASE_LOCK_SCRIPT = "if redis\.call\('GET', KEYS\[1\]\) == ARGV\[1\] then return redis\.call\('DEL', KEYS\[1\]\) else return 0 end"/);
+  assert.match(red, /redis\.eval\(RELEASE_LOCK_SCRIPT, \[k\], \[v\]\)/);
 });

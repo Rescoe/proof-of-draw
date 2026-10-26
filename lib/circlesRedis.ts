@@ -10,6 +10,9 @@ import { CircleError, type ArtistLookup, type CircleKV, type Clock, type Me } fr
 // Upstash désérialise automatiquement les valeurs JSON : on remet toujours une CHAÎNE.
 const str = (v: unknown): string | null => (v === null || v === undefined ? null : typeof v === "string" ? v : typeof v === "object" ? JSON.stringify(v) : String(v));
 
+/** Libération de verrou : DEL seulement si la valeur est NOTRE jeton, dans la même opération Redis (pas de GET puis DEL séparés). */
+export const RELEASE_LOCK_SCRIPT = "if redis.call('GET', KEYS[1]) == ARGV[1] then return redis.call('DEL', KEYS[1]) else return 0 end";
+
 export const upstashKV: CircleKV = {
   async get(k) { return str(await redis.get(k)); },
   async set(k, v, exSec) { if (exSec) await redis.set(k, v, { ex: exSec }); else await redis.set(k, v); },
@@ -30,6 +33,7 @@ export const upstashKV: CircleKV = {
   async ltrim(k, a, b) { await redis.ltrim(k, a, b); },
   async lrange(k, a, b) { return ((await redis.lrange(k, a, b)) as unknown[]).map((x) => str(x) ?? ""); },
   async expire(k, sec) { await redis.expire(k, sec); },
+  async delIfEquals(k, v) { return Number(await redis.eval(RELEASE_LOCK_SCRIPT, [k], [v])) === 1; },
   async setnx(k, v, exSec) { return (await redis.set(k, v, { nx: true, ex: exSec })) === "OK"; },
   async incr(k, windowSec) {
     const r = await redis.pipeline().incr(k).expire(k, windowSec, "NX").exec();
