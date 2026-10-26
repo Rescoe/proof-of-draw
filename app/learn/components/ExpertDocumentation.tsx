@@ -90,7 +90,7 @@ export function ExpertDocumentation() {
         </p>
         <FlowDiagram />
 
-        <Disclosure title="Séparation entre le pull léger et le téléchargement binaire">
+        <Disclosure id="n-pull-leger" title="Séparation entre le pull léger et le téléchargement binaire">
           <p>
             Pour préserver la mémoire disponible sur l’ESP8266, <Code>GET /api/pull</Code> ne renvoie que des métadonnées.
             Le payload de l’image est récupéré uniquement lorsqu’un nouveau <Code>frameId</Code> est détecté.

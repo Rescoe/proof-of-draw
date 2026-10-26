@@ -66,13 +66,14 @@ test("synthèse technique : la table des firmwares ne dit « Testé en réel » 
   assert.match(syn, /\["ESP8266", "e-ink 2,7″ seul", "Oui \(code livré\)", "À essayer"\]/);
 });
 
-test("page Apprendre : la matrice est rendue depuis le fichier (aucune copie), reliée à la navigation et tracée par le déploiement", () => {
+test("page Apprendre : la matrice est rendue depuis le fichier (aucune copie), atteignable en un lien et tracée par le déploiement", () => {
   const page = read("app/learn/page.tsx");
-  assert.ok(page.indexOf("<CompatibilityMatrix />") > page.indexOf("<Roadmap />"), "la matrice doit être rendue JUSTE APRÈS la feuille de route, toujours visible");
-  assert.doesNotMatch(page, /path === "compat"/, "plus de parcours séparé : la matrice est sur la page d'accueil d'Apprendre");
-  assert.match(read("app/learn/components/LearnNavigation.tsx"), /"#compatibilite"/);
-  assert.match(read("app/learn/components/LearnHome.tsx"), /href="#compatibilite"/);
+  // Décision du 26/10/2026 (réorganisation d'Apprendre) : la matrice n'est plus collée après chaque parcours, c'est une destination dédiée (?path=compat) ; l'ancre #compatibilite et les anciens liens continuent de mener à elle.
+  assert.match(page, /path === "compat" \? <CompatibilityMatrix \/>/, "la matrice est le contenu du parcours « compat »");
+  assert.match(read("app/learn/components/LearnNavigation.tsx"), /"\/learn\?path=compat#compatibilite"/);
+  assert.match(read("app/learn/components/LearnHome.tsx"), /href="\/learn\?path=compat#compatibilite"/);
   assert.match(read("app/learn/components/CompatibilityMatrix.tsx"), /loadHardwareMatrix\(\)/);
+  assert.match(read("app/learn/components/LegacyHashRedirect.tsx"), /pathForHash/);
   assert.match(read("next.config.ts"), /"\/learn": \[[^\]]*MATRICE_COMPATIBILITE_MATERIELLE\.md/);
 });
 

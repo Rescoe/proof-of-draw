@@ -1,6 +1,7 @@
 import { SectionHeading } from "./ContentPrimitives";
 import { Block } from "./MarkdownDoc";
 import { loadHardwareMatrix } from "../../../lib/hardwareMatrix";
+import { headingIds } from "../../../lib/learnCatalog";
 import styles from "../learn.module.css";
 
 // Compatibilité matérielle (24/10/2026) : la page est le RENDU DIRECT de docs/MATRICE_COMPATIBILITE_MATERIELLE.md, lu à la construction — aucune copie à tenir à jour.
@@ -8,6 +9,7 @@ import styles from "../learn.module.css";
 
 export function CompatibilityMatrix() {
   const blocks = loadHardwareMatrix();
+  const ids = headingIds(blocks, "c-");
   return (
     <section className={styles.majorSection} id="compatibilite">
       <div id="matrice" className={styles.anchorOffset} />
@@ -17,7 +19,7 @@ export function CompatibilityMatrix() {
           <code className={styles.inlineCode}> docs/MATRICE_COMPATIBILITE_MATERIELLE.md</code> du dépôt : elle ne peut pas dire autre chose que la documentation.
         </p>
       </SectionHeading>
-      {blocks.map((b, i) => <Block key={i} block={b} />)}
+      {blocks.map((b, i) => <Block key={i} block={b} id={ids[i]} />)}
     </section>
   );
 }

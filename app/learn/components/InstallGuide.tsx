@@ -149,7 +149,7 @@ export function InstallGuide({ initialProfileId = "eink29bwr" }: { initialProfil
           })}
         </div>
 
-        <Disclosure title="Je ne sais pas quel écran j’ai">
+        <Disclosure id="i-quel-ecran" title="Je ne sais pas quel écran j’ai">
           <p>Comparez l’inscription imprimée sur le module, sa taille et ses couleurs avec ces références :</p>
           <div className={styles.identificationGrid}>
             {INSTALL_SCREEN_OPTIONS.map((screen) => (
@@ -209,13 +209,13 @@ export function InstallGuide({ initialProfileId = "eink29bwr" }: { initialProfil
           </div>
         ))}
         {selected.optionalWiring ? (
-          <Disclosure title="Optionnel — câbler le lecteur de carte SD du TFT">
+          <Disclosure id="i-cablage-sd" title="Optionnel — câbler le lecteur de carte SD du TFT">
             <p>Le firmware TFT démarre sans carte SD. Ce câblage n’est utile que si vous souhaitez utiliser le lecteur intégré.</p>
             <WiringDiagram spec={selected.optionalWiring} />
           </Disclosure>
         ) : null}
         {selected.boardId === "esp8266" ? (
-          <Disclosure title="Détail technique — correspondance D0–D8 et GPIO">
+          <Disclosure id="i-gpio" title="Détail technique — correspondance D0–D8 et GPIO">
             <CodeBlock>{`D0 = GPIO16    D1 = GPIO5     D2 = GPIO4
 D3 = GPIO0     D4 = GPIO2     D5 = GPIO14
 D6 = GPIO12    D7 = GPIO13    D8 = GPIO15`}</CodeBlock>
@@ -225,7 +225,7 @@ D6 = GPIO12    D7 = GPIO13    D8 = GPIO15`}</CodeBlock>
             </p>
           </Disclosure>
         ) : (
-          <Disclosure title="Détail technique — SPI matériel de l’UNO R4">
+          <Disclosure id="i-spi-r4" title="Détail technique — SPI matériel de l’UNO R4">
             <p><Code>D11</Code> est la sortie COPI (MOSI), <Code>D12</Code> l’entrée CIPO (MISO) et <Code>D13</Code> l’horloge SCK. Ne remplacez pas ces broches par celles du NodeMCU.</p>
           </Disclosure>
         )}
@@ -272,7 +272,7 @@ D6 = GPIO12    D7 = GPIO13    D8 = GPIO15`}</CodeBlock>
           </div>
         </div>
         {selected.boardId === "esp8266" ? (
-          <Disclosure title="Mon ordinateur ne détecte aucun port USB">
+          <Disclosure id="i-port-usb" title="Mon ordinateur ne détecte aucun port USB">
             <p>
               Le NodeMCU utilise généralement une puce CH340 ou CP2102. Regardez l’inscription du petit circuit près de la prise USB,
               puis installez le <a href="https://sparks.gogo.co.nz/ch340.html" target="_blank" rel="noreferrer">pilote CH340</a> ou le
@@ -280,11 +280,11 @@ D6 = GPIO12    D7 = GPIO13    D8 = GPIO15`}</CodeBlock>
             </p>
           </Disclosure>
         ) : (
-          <Disclosure title="La R4 ne se connecte pas au Wi-Fi">
+          <Disclosure id="i-r4-wifi" title="La R4 ne se connecte pas au Wi-Fi">
             <p>Dans Arduino IDE, ouvrez <MenuPath steps={["Outils", "Updater le firmware WiFi"]} /> afin de mettre à jour le coprocesseur réseau, puis redémarrez la carte.</p>
           </Disclosure>
         )}
-        <Disclosure title="Optionnel — vérifier Arduino avec l’exemple Blink">
+        <Disclosure id="i-blink" title="Optionnel — vérifier Arduino avec l’exemple Blink">
           <p>
             Ouvrez <MenuPath steps={["Fichier", "Exemples", "01.Basics", "Blink"]} /> puis cliquez sur
             « Téléverser ». La LED intégrée de la carte doit ensuite clignoter.
@@ -394,7 +394,7 @@ const char* WIFI_PASSWORD = "Mot de passe de votre Wi-Fi";
                 Attendez le message de fin du téléversement. La carte redémarre ensuite automatiquement ; ouvrez le Moniteur série à <Code>115200 bauds</Code> si vous souhaitez suivre les étapes.
               </p>
               {selected.animationFirmware && selected.boardId === "esp8266" ? (
-                <Disclosure title="Facultatif — animations : réglage « Flash Size » (garde l’animation après un redémarrage)">
+                <Disclosure id="i-flash-size" title="Facultatif — animations : réglage « Flash Size » (garde l’animation après un redémarrage)">
                   <p>
                     Ce firmware (<Code>{selected.animationFirmware}</Code>) joue les <strong>animations</strong> du réseau en boucle. Le clip (moins de 10 Ko) est rangé dans la mémoire flash de la carte :
                     l’animation reprend toute seule après une coupure de courant. Pour cela, avant de téléverser, ouvrez
@@ -412,7 +412,7 @@ const char* WIFI_PASSWORD = "Mot de passe de votre Wi-Fi";
                 </Disclosure>
               ) : null}
               {selected.id === "r4Tft28" ? (
-                <Disclosure title="Facultatif — ajouter une carte microSD pour le cartel et les animations">
+                <Disclosure id="i-microsd" title="Facultatif — ajouter une carte microSD pour le cartel et les animations">
                   <p>Le TFT fonctionne sans microSD, mais la carte permet de restaurer l’œuvre après un redémarrage, de masquer le cartel et de conserver localement les animations. Utilisez une microSD formatée en FAT ou FAT32.</p>
                 </Disclosure>
               ) : null}
@@ -449,7 +449,7 @@ const char* WIFI_PASSWORD = "Mot de passe de votre Wi-Fi";
           Pendant cette phase, l’écran peut se rafraîchir plusieurs fois. Les informations de clé sont montrées avant l’écran
           d’appairage. Gardez-les privées et attendez l’apparition du QR code ou du code d’appairage à 8 caractères (par exemple <Code>ABCD2345</Code>).
         </p>
-        <Disclosure title="Voir ce qui se passe dans le Moniteur série">
+        <Disclosure id="i-moniteur-serie" title="Voir ce qui se passe dans le Moniteur série">
           <p>
             Ouvrez <MenuPath steps={["Outils", "Moniteur série"]} /> et sélectionnez <Code>115200 bauds</Code>.
             Vous pourrez suivre la connexion Wi-Fi, l’enregistrement de l’appareil et la création du code d’appairage.
@@ -476,7 +476,7 @@ const char* WIFI_PASSWORD = "Mot de passe de votre Wi-Fi";
           <Link className={styles.secondaryButton} href="/draw">Faire mon premier dessin</Link>
         </div>
 
-        <Disclosure title="L’écran ne fonctionne pas ? Ouvrir la checklist de dépannage">
+        <Disclosure id="i-checklist" title="L’écran ne fonctionne pas ? Ouvrir la checklist de dépannage">
           <p className={styles.debugIntro}>
             Cette liste est facultative. Utilisez-la seulement si rien ne s’affiche après avoir attendu le premier démarrage complet.
           </p>

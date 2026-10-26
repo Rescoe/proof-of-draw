@@ -43,7 +43,7 @@ Le profil d'un écran est lié à son code d'appairage. Si le navigateur qui l'a
 
 - La carte reçoit une annonce au prochain contact avec le serveur (de 5 à 15 minutes). Elle télécharge et redémarre seule ; **ne pas la débrancher** pendant ce temps.
 - Si **rien ne change**, c'est que la carte a refusé ou échoué (mémoire, horloge, vote en cours). L'ancienne version continue de fonctionner. Un redémarrage manuel de la carte relance une tentative.
-- Les profils avec marge mémoire très faible peuvent échouer : voir la page [Compatibilité matérielle](/learn#compatibilite).
+- Les profils avec marge mémoire très faible peuvent échouer : voir la page [Compatibilité matérielle](/learn?path=compat#compatibilite).
 - Récupération par câble USB : toujours possible.
 
 ## Branchements qui piègent
@@ -51,7 +51,7 @@ Le profil d'un écran est lié à son code d'appairage. Si le navigateur qui l'a
 - **DHT22 sur D3 (GPIO0)** : le débrancher pour téléverser par câble USB ; le rebrancher ensuite. Il ne gêne pas le démarrage normal.
 - **Alimentation 3,3 V uniquement** pour les écrans et capteurs ; jamais 5 V.
 - **COM inaccessible dans l'IDE Arduino / téléversement refusé** : fermer tout moniteur série (l'IDE ou un autre programme) ; si le port reste « occupé », débrancher et rebrancher le câble, puis redémarrer l'ordinateur en dernier recours.
-- **OLED + e-ink 2,9″ BWR** : l'OLED du BWR empêche le téléchargement des œuvres (mémoire) et n'est pas proposé : voir la [matrice de compatibilité](/learn#compatibilite).
+- **OLED + e-ink 2,9″ BWR** : l'OLED du BWR empêche le téléchargement des œuvres (mémoire) et n'est pas proposé : voir la [matrice de compatibilité](/learn?path=compat#compatibilite).
 
 ## Si rien ne marche
 

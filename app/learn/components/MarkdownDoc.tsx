@@ -10,9 +10,10 @@ function Inline({ text }: { text: string }): ReactNode {
   return <>{parseInline(text).map((p, i) => p.kind === "link" ? <Link key={i} href={p.href!}>{p.text}</Link> : p.kind === "strong" ? <strong key={i}>{p.text}</strong> : p.kind === "code" ? <code key={i} className={styles.inlineCode}>{p.text}</code> : <span key={i}>{p.text}</span>)}</>;
 }
 
-export function Block({ block }: { block: MatrixBlock }) {
+/** `id` : ancre du titre (niveaux 2 et 3), calculée par `headingIds` (lib/learnCatalog.ts) pour que la recherche d'Apprendre puisse y renvoyer. */
+export function Block({ block, id }: { block: MatrixBlock; id?: string | null }) {
   switch (block.kind) {
-    case "h": return block.level === 1 ? null : block.level === 2 ? <h3 className={styles.matrixH}>{block.text}</h3> : <h4 className={styles.matrixH}>{block.text}</h4>;
+    case "h": return block.level === 1 ? null : block.level === 2 ? <h3 className={styles.matrixH} id={id ?? undefined}>{block.text}</h3> : <h4 className={styles.matrixH} id={id ?? undefined}>{block.text}</h4>;
     case "p": return <p><Inline text={block.text} /></p>;
     case "quote": return <Callout tone="info" title="À savoir">{block.lines.map((l, i) => <p key={i}><Inline text={l} /></p>)}</Callout>;
     case "ul": return <ul>{block.items.map((t, i) => <li key={i}><Inline text={t} /></li>)}</ul>;

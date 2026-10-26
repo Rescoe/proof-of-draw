@@ -1,41 +1,15 @@
 import Link from "next/link";
-import { Cable, Layers, Network, PencilLine } from "lucide-react";
+import { Cable, ClipboardCheck, LifeBuoy, Network, PencilLine } from "lucide-react";
 import { Eyebrow } from "./ContentPrimitives";
 import styles from "../learn.module.css";
 
-const paths = [
-  {
-    href: "/learn?path=install#installer",
-    icon: Cable,
-    number: "01",
-    title: "Installer un écran",
-    description: "Choisissez votre matériel puis suivez uniquement le câblage, les bibliothèques et le firmware qui lui correspondent.",
-    action: "Commencer l’installation",
-  },
-  {
-    href: "/learn?path=no-esp#sans-esp",
-    icon: PencilLine,
-    number: "02",
-    title: "Participer sans ESP",
-    description: "Dessinez sur un écran partagé, consultez les œuvres et découvrez les artistes sans posséder de matériel.",
-    action: "Voir les possibilités",
-  },
-  {
-    href: "/learn?path=network#reseau",
-    icon: Network,
-    number: "03",
-    title: "Comprendre le réseau",
-    description: "Explorez l’architecture pull, les rôles, le consensus, la chaîne de blocs et les choix techniques.",
-    action: "Lire la documentation",
-  },
-  {
-    href: "/learn?path=synthesis#synthese",
-    icon: Layers,
-    number: "04",
-    title: "Synthèse et feuille de route",
-    description: "Toute la technologie sur une page : ce que les cartes calculent, ce que la chaîne garantit, et le travail restant.",
-    action: "Voir la synthèse",
-  },
+// Cinq intentions : chacune mène à UNE destination dédiée ; la recherche (juste dessous) couvre tout le reste.
+const intents = [
+  { href: "/learn?path=install#installer", icon: Cable, title: "Je veux installer un écran", description: "Choisir le matériel, câbler, téléverser le firmware, associer l’écran.", action: "Commencer l’installation" },
+  { href: "/learn?path=no-esp#no-esp", icon: PencilLine, title: "Je veux dessiner sans matériel", description: "Dessiner sur un écran partagé, voir les œuvres et les artistes.", action: "Voir comment participer" },
+  { href: "/learn?path=help#depannage", icon: LifeBuoy, title: "Je cherche une solution à un problème", description: "Wi-Fi, première connexion, mises à jour, écran qui ne répond pas.", action: "Ouvrir le dépannage" },
+  { href: "/learn?path=network#reseau", icon: Network, title: "Je veux comprendre le réseau", description: "Pull, rôles, consensus, chaîne de blocs, choix techniques.", action: "Lire la documentation" },
+  { href: "/learn?path=compat#compatibilite", icon: ClipboardCheck, title: "Je consulte la compatibilité et l’état du projet", description: "Ce qui est prouvé sur carte, la feuille de route, la synthèse technique.", action: "Voir la compatibilité" },
 ];
 
 export function LearnHome() {
@@ -47,31 +21,28 @@ export function LearnHome() {
           Apprendre <span>Proof-of-Draw</span>
         </h1>
         <p>
-          Trouvez directement le parcours qui correspond à votre objectif : installer un écran,
-          participer sans matériel ou comprendre le fonctionnement du réseau.
+          Dis ce que tu veux faire : chaque porte mène directement au bon contenu. Pour tout le reste, la recherche et les filtres
+          (niveau et type) retrouvent un sujet en quelques secondes.
         </p>
         <div className={styles.heroActions}>
-          <Link className={styles.primaryButton} href="/learn?path=install#installer">Installer mon écran</Link>
+          <Link className={styles.primaryButton} href="/learn#recherche">Rechercher un sujet</Link>
           <Link className={styles.secondaryButton} href="/draw">Dessiner maintenant</Link>
-          <Link className={styles.secondaryButton} href="/learn?path=help#depannage">Dépannage / notice</Link>
+          <Link className={styles.secondaryButton} href="/learn?path=roadmap#feuille-de-route">Feuille de route</Link>
+          <Link className={styles.secondaryButton} href="/learn?path=compat#compatibilite">Matrice de compatibilité</Link>
+          <Link className={styles.secondaryButton} href="/learn?path=synthesis#synthese">Synthèse technique</Link>
           <Link className={styles.secondaryButton} href="/learn?path=power#consommation">Consommation électrique</Link>
-          <Link className={styles.secondaryButton} href="#feuille-de-route">Feuille de route</Link>
-          <Link className={styles.secondaryButton} href="#compatibilite">Matrice de compatibilité</Link>
         </div>
       </div>
 
-      <div className={styles.pathGrid} aria-label="Choisir un parcours">
-        {paths.map((path) => {
-          const Icon = path.icon;
+      <div className={styles.intentGrid} aria-label="Que veux-tu faire ?">
+        {intents.map((intent) => {
+          const Icon = intent.icon;
           return (
-            <Link href={path.href} className={styles.pathCard} key={path.href}>
-              <div className={styles.pathCardTop}>
-                <span className={styles.pathIcon}><Icon size={21} aria-hidden /></span>
-                <span className={styles.pathNumber}>{path.number}</span>
-              </div>
-              <h2>{path.title}</h2>
-              <p>{path.description}</p>
-              <span className={styles.pathAction}>{path.action} <span aria-hidden>→</span></span>
+            <Link href={intent.href} className={styles.intentCard} key={intent.href}>
+              <span className={styles.pathIcon}><Icon size={21} aria-hidden /></span>
+              <strong>{intent.title}</strong>
+              <span>{intent.description}</span>
+              <em>{intent.action} →</em>
             </Link>
           );
         })}

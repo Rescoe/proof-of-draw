@@ -102,7 +102,7 @@ coût / an     = kWh / an × tarif (€/kWh)`}</CodeBlock>
         5 min quand le réseau est actif (<Code>PULL_HOT_SEC</Code>), 15 min au repos, 60 s dans le pire cas. Aucun firmware n’utilise le deep-sleep : les cartes restent allumées en continu.
       </p>
 
-      <Disclosure title="Courant retenu pour chaque composant">
+      <Disclosure id="p-courants" title="Courant retenu pour chaque composant">
         <ul className={styles.powerList}>
           {Object.values(COMPONENTS).map((c) => (
             <li key={c.id}>
@@ -112,7 +112,7 @@ coût / an     = kWh / an × tarif (€/kWh)`}</CodeBlock>
         </ul>
       </Disclosure>
 
-      <Disclosure title="Comment réduire la consommation">
+      <Disclosure id="p-reduire" title="Comment réduire la consommation">
         <ul className={styles.powerList}>
           <li><strong>TFT 2,8″ : éteindre ou atténuer le rétroéclairage</strong> après quelques minutes d’inactivité (un toucher le rallume) pourrait retirer jusqu’à la moitié du total. Idée non implémentée, à valider sur le matériel.</li>
           <li><strong>ESP8266 : mode veille du modem Wi-Fi</strong> entre deux pulls. Gain possible mais à tester : le firmware doit rester joignable pour les validations.</li>

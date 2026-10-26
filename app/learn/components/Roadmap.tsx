@@ -45,7 +45,7 @@ export function Roadmap() {
         {ROADMAP.map((phase) => {
           const p = phaseProgress(phase);
           return (
-            <details className={styles.roadPhase} key={phase.id} open={p.done < p.total}>
+            <details className={styles.roadPhase} key={phase.id} id={`road-${phase.id}`} open={p.done < p.total}>
               <summary>
                 <span className={styles.roadPhaseTitle}>{phase.title}</span>
                 <span className={styles.roadPhaseCount}>{p.done}/{p.total}</span>
