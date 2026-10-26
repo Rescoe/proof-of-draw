@@ -523,6 +523,23 @@ export class DrawSession {
     this.revision++;
   }
 
+  // ── Remix / reprise : point de départ = une image existante ────────────────
+  /**
+   * Charge une image (octets RGBA aux dimensions du canvas) comme POINT DE DÉPART de la feuille : aucune action n'est journalisée (le score et le replay ne contiennent que ce que
+   * l'artiste fait ENSUITE) ; « annuler » ne peut pas aller en deçà de cette image. N'est permis que sur une feuille vierge (aucune action, aucun geste en cours).
+   * Retourne false (et ne change rien) si la feuille a déjà servi ou si les dimensions ne correspondent pas.
+   */
+  seedFromRGBA(rgba: ArrayLike<number>): boolean {
+    if (this.log.length > 0 || this.entries.length > 0 || this.cursor !== 0 || this.op) return false;
+    if (rgba.length !== this.cfg.width * this.cfg.height * 4) return false;
+    const base = Bitmap.fromRGBA(rgba, this.cfg.width, this.cfg.height);
+    for (let i = 0; i < base.data.length; i++) base.data[i] = snapColor(base.data[i], this.cfg.mode);   // jamais de couleur hors palette de l'écran
+    this.frames[0] = base;
+    this.revision++;
+    this.notify();
+    return true;
+  }
+
   // ── Persistance du brouillon ───────────────────────────────────────────────
   snapshot(): SessionSnapshot {
     this.cancelOp();

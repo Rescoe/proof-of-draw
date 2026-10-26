@@ -8,6 +8,8 @@ import Link from "next/link";
 import type { BlockWithImage } from "@/lib/chain";
 import { BlockFrameCanvas } from "../BlockFrameCanvas";
 import { BlockDetail } from "../BlockDetail";
+import { DrawLauncher } from "../DrawLauncher";
+import { isValidScreenId } from "@/lib/screenProfiles";
 import { OBS_CHIP, OBS_CHIP_TITLE } from "@/lib/observationWording";
 import { ANIM_CHIP_TITLE } from "@/lib/animationWording";
 
@@ -185,10 +187,17 @@ function RejectedRow({ item }: { item: RejectedDraw }) {
             <span className="gc-muted">Complexité : <b>{(item.score * 100).toFixed(2)}%</b></span>
           </div>
           <div className="gc-rejected-reason">
+            <b>Motif du rejet : </b>
             {item.reason === "low_quality_imported_image"
               ? "Image importée non retravaillée"
-              : item.reason}
+              : item.reason || "non précisé"}
           </div>
+          {item.candidateId && isValidScreenId(item.screen) && (
+            <div style={{ marginTop: 8 }}>
+              <DrawLauncher screen={item.screen} param="resume" value={item.candidateId} label="↻ Reprendre ce dessin"
+                hint="Tu obtiens une copie modifiable comme nouveau brouillon ; ce rejet reste archivé, intact, et ton nouveau dessin suivra son propre parcours de validation." />
+            </div>
+          )}
         </div>
       </div>
     </div>
@@ -209,6 +218,9 @@ export function GalleryClient() {
 
   const [loading, setLoading] = useState(false);
   const [data, setData]       = useState<BlocksResponse | null>(null);
+  // Échec d'API ≠ liste vide : on le dit et on propose de réessayer
+  const [blocksError, setBlocksError] = useState<string | null>(null);
+  const [rejError, setRejError]       = useState<string | null>(null);
 
   const [rejLoading, setRejLoading]   = useState(false);
   const [rejected, setRejected]       = useState<RejectedDraw[] | null>(null);
@@ -231,12 +243,12 @@ export function GalleryClient() {
         limit: String(LIMIT),
       });
       const res = await fetch(`/api/blocks?${params}`);
-      if (res.ok) {
-        const json = await res.json();
-        setData(json);
-      }
+      if (!res.ok) throw new Error(String(res.status));
+      const json = await res.json();
+      setData(json);
+      setBlocksError(null);
     } catch {
-      // silently ignore
+      setBlocksError("Impossible de charger les blocs (erreur réseau ou serveur).");
     } finally {
       setLoading(false);
     }
@@ -247,13 +259,13 @@ export function GalleryClient() {
     setRejLoading(true);
     try {
       const res = await fetch("/api/rejected-draws");
-      if (res.ok) {
-        const json = await res.json();
-        setRejected(json.rejected ?? []);
-        setPending(json.pending ?? null);
-      }
+      if (!res.ok) throw new Error(String(res.status));
+      const json = await res.json();
+      setRejected(json.rejected ?? []);
+      setPending(json.pending ?? null);
+      setRejError(null);
     } catch {
-      setRejected([]);
+      setRejError("Impossible de charger les dessins rejetés (erreur réseau ou serveur).");   // la liste n'est PAS remplacée par « aucun rejet »
     } finally {
       setRejLoading(false);
     }
@@ -266,6 +278,8 @@ export function GalleryClient() {
   useEffect(() => {
     const t = new URLSearchParams(window.location.search).get("type");
     if (t === "animation" || t === "draw") setKind(t);
+    const q = new URLSearchParams(window.location.search).get("q");   // lien « bloc d'origine » d'un Remix : /gallery?q=12
+    if (q && q.length <= 80) setQuery(q);
   }, []);
 
   // Debounced query
@@ -279,8 +293,8 @@ export function GalleryClient() {
   }, [query, screen, kind, fetchBlocks]);
 
   useEffect(() => {
-    if (tab === "rejected" && rejected === null) fetchRejected();
-  }, [tab, rejected, fetchRejected]);
+    if (tab === "rejected" && rejected === null && !rejError) fetchRejected();
+  }, [tab, rejected, rejError, fetchRejected]);
 
   const handlePageChange = (p: number) => {
     setPage(p);
@@ -385,6 +399,8 @@ export function GalleryClient() {
               <span className="gc-spinner" />
               Chargement…
             </div>
+          ) : blocksError && !data ? (
+            <div className="gc-empty" role="alert">{blocksError}{" "}<button className="gc-page-btn" onClick={() => fetchBlocks(query, screen, page, kind)}>Réessayer</button></div>
           ) : data && data.blocks.length === 0 ? (
             <div className="gc-empty">Aucun bloc trouvé{query ? ` pour « ${query} »` : ""}.</div>
           ) : (
@@ -429,6 +445,8 @@ export function GalleryClient() {
         <div className="gc-rejected-list">
           {rejLoading ? (
             <div className="gc-loading"><span className="gc-spinner" />Chargement…</div>
+          ) : rejError && rejected === null ? (
+            <div className="gc-empty" role="alert">{rejError}{" "}<button className="gc-page-btn" onClick={() => { setRejError(null); }}>Réessayer</button></div>
           ) : !rejected || (rejected.length === 0 && !pending) ? (
             <div className="gc-empty">Aucun dessin rejeté pour le moment.</div>
           ) : (

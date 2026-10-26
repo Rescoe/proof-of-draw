@@ -24,6 +24,7 @@ import {
   DraftData, SessionClock, StudioPrefs, deleteDraft, loadDraft, loadPrefs, saveDraft, savePrefs,
 } from "./storage";
 import { Stage, StageApi } from "./Stage";
+import type { StudioSeed } from "./seed";
 import { Dock, TopBar, ToolOptions, ToolStrip, SelectionUi, ToolboxPopover, ToolboxSegmented } from "./Toolbars";
 import {
   BrushAtelier, BrushSection, ColorSection, HelpSection, MenuSection, ModelSection, ScoreSection,
@@ -45,6 +46,8 @@ export interface DrawStudioProps {
   onExit: () => void;
   /** Bandeau d'information non bloquant (ex. connexion instable) — jamais de redirection. */
   notice?: { kind: "warn" | "err"; text: string; action?: { label: string; run: () => void } } | null;
+  /** Remix / reprise : image de départ (copie ; l'original n'est jamais modifié). Le brouillon a sa propre clé. */
+  seed?: StudioSeed;
 }
 
 const sheetTitle: Record<Exclude<PanelId, null>, string> = {
@@ -75,7 +78,7 @@ export default function DrawStudio(props: DrawStudioProps) {
   const profile = SCREEN_PROFILES[screenId];
   const mode = modeForProfile(profile);
   const W = profile.width, H = profile.height;
-  const draftKey = `${deviceId}:${screenId}`;
+  const draftKey = `${deviceId}:${screenId}${props.seed ? `:${props.seed.key}` : ""}`;   // un Remix a SON brouillon : il n'écrase jamais celui de la feuille ordinaire
   const cartelZones = useMemo(() => cartelZonesFor(screenId), [screenId]);   // null : OLED, TFT 2,8″ (pas de cartel gravé dans l'image)
 
   // ── Préférences, réglages, session ────────────────────────────────────────
@@ -87,11 +90,17 @@ export default function DrawStudio(props: DrawStudioProps) {
   const [tool, setToolState] = useState<ToolId>("brush");
   const prevTool = useRef<ToolId>("brush");
 
-  const [session, setSession] = useState(() => new DrawSession({ width: W, height: H, mode }));
+  const [session, setSession] = useState(() => {
+    const s = new DrawSession({ width: W, height: H, mode });
+    if (props.seed) s.seedFromRGBA(props.seed.rgba);   // copie de l'image source : aucune action journalisée, annuler ne va pas en deçà
+    return s;
+  });
+  // Origine de la feuille (Remix) : effacée dès qu'on repart d'une feuille blanche
+  const [origin, setOrigin] = useState<{ label: string; derivedFromBlockHash?: string } | null>(() => (props.seed ? { label: props.seed.label, derivedFromBlockHash: props.seed.derivedFromBlockHash } : null));
   const [clock] = useState(() => new SessionClock(0));
   const [, force] = useReducer((n: number) => n + 1, 0);
 
-  const [title, setTitle] = useState("");
+  const [title, setTitle] = useState(props.seed?.titleSuggestion ?? "");
   const [guestName, setGuestName] = useState(props.artistPrefill ?? "");
   const guestTouched = useRef(false);
   useEffect(() => { if (!guestTouched.current && props.artistPrefill) setGuestName(props.artistPrefill); }, [props.artistPrefill]);
@@ -118,6 +127,8 @@ export default function DrawStudio(props: DrawStudioProps) {
   const [sideHidden, setSideHidden] = useState(false);
   const [boxPop, setBoxPop] = useState(false);
   const { toasts, push, dismiss } = useToasts();
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- annonce unique à l'ouverture d'un Remix / d'une reprise
+  useEffect(() => { if (props.seed) push(`${props.seed.label} — copie modifiable, l'original reste intact`, { kind: "ok", ms: 7000 }); }, []);
 
   const rootRef = useRef<HTMLDivElement>(null);
   const stageApi = useRef<StageApi>(null);
@@ -347,6 +358,7 @@ export default function DrawStudio(props: DrawStudioProps) {
     seenAch.current = null;
     setSession(new DrawSession({ width: W, height: H, mode }));
     setTitle("");
+    setOrigin(null);
     setTextDraft(null); setPolyCount(0); setModelEdit(false);
     setConfirm(null); setPanel(null);
   }, [session, draftKey, W, H, mode]);
@@ -613,6 +625,7 @@ export default function DrawStudio(props: DrawStudioProps) {
           <span className="st-hud__chip">{W}×{H} · ×{viewInfo.scale.toFixed(viewInfo.scale < 10 ? 1 : 0)}</span>
           {hoverPt && lay.side && <span className="st-hud__chip">x {hoverPt.x} · y {hoverPt.y}</span>}
           {modelEdit && <span className="st-hud__chip" style={{ color: "var(--st-accent-hi)" }}>Placement du modèle</span>}
+          {origin && <span className="st-hud__chip" title="Copie modifiable : l'original reste intact">↺ {origin.label}</span>}
           {viewInfo.rot !== 0 && (
             <button type="button" className="st-hud__chip st-hud__chip--warn" onClick={() => stageApi.current?.resetRotation()} aria-label={`Vue pivotée de ${viewInfo.rot * 90} degrés — remettre à l'endroit`}>
               <RotateCcw size={12} /> Vue pivotée {viewInfo.rot * 90}° · remettre à l&apos;endroit
@@ -744,7 +757,7 @@ export default function DrawStudio(props: DrawStudioProps) {
           session={session} screenId={screenId} deviceLabel={props.deviceLabel} isGuest={props.isGuest}
           title={title} onTitle={setTitle} guestName={guestName} onGuestName={v => { guestTouched.current = true; setGuestName(v); }}
           cooldown={cooldown} hints={hints}
-          onSend={props.onSend}
+          onSend={props.onSend} origin={origin}
           onSent={r => { props.onCooldownStart(r.nextDrawIn); void deleteDraft(draftKey); lastSent.current = session.snapshot(); sentRef.current = true; }}
           onCooldown={secs => props.onCooldownStart(secs)}
           onClose={() => {

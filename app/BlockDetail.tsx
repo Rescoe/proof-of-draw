@@ -9,10 +9,11 @@ import type { BlockWithImage } from "@/lib/chain";
 import { BlockFrameCanvas } from "./BlockFrameCanvas";
 import { AnimBlockPlayer } from "./AnimBlockPlayer";
 import { SendToScreen } from "./SendToScreen";
+import { DrawLauncher } from "./DrawLauncher";
 import type { ActionEvent, ReplayEvent } from "@/lib/types/actions";
 import { floodFill, drawLine, drawRect, drawEllipse } from "@/lib/canvasPrimitives";
 import { Replayer, isReplayV2, modeForProfile, scoreTimeline, textureLabel } from "@/lib/drawEngine";
-import { SCREEN_PROFILES } from "@/lib/screenProfiles";
+import { SCREEN_PROFILES, isValidScreenId } from "@/lib/screenProfiles";
 import { validationLabel } from "@/lib/validationWording";
 import { describeSummary } from "@/lib/validationSummary";
 import { OBS_BADGE, OBS_FIELD_LABEL, OBS_FIELD_VALUE, OBS_NOTE, OBS_ROW_CONFIRMED, OBS_ROW_PENDING, OBS_SECTION_TITLE } from "@/lib/observationWording";
@@ -120,6 +121,44 @@ function humanDevice(label?: DeviceLabel | null): string | undefined {
   return human || undefined;
 }
 
+// ─── Remix : filiation d'un bloc (numéro et titre de l'original, lus à la demande : 1 GET mis en cache par le CDN) ───────────────────────────
+interface OriginMeta { blockIndex: number; workTitle: string | null; artist: string | null }
+const originCache = new Map<string, OriginMeta | "missing">();
+function useOrigin(hash?: string): OriginMeta | "missing" | "loading" | null {
+  const [, tick] = useState(0);
+  useEffect(() => {
+    if (!hash || originCache.has(hash)) return;
+    let alive = true;
+    fetch(`/api/block-meta?hash=${hash}`)
+      .then(async (r) => { if (r.status === 404) return "missing" as const; if (!r.ok) throw new Error(); const j = await r.json(); return { blockIndex: j.blockIndex, workTitle: j.workTitle ?? null, artist: j.artist ?? null } as OriginMeta; })
+      .then((m) => { originCache.set(hash, m); })
+      .catch(() => { /* réseau : on garde le hash seul, sans mémoriser l'échec */ })
+      .finally(() => { if (alive) tick((n) => n + 1); });
+    return () => { alive = false; };
+  }, [hash]);
+  if (!hash) return null;
+  return originCache.get(hash) ?? "loading";
+}
+
+function RemixOrigin({ hash }: { hash: string }) {
+  const origin = useOrigin(hash);
+  return (
+    <div className="bd-section" style={{ borderLeft: "3px solid var(--accent)", paddingLeft: 12 }}>
+      <div className="bd-section-title">↺ Remix{origin && typeof origin === "object" ? ` du bloc #${origin.blockIndex}` : ""}</div>
+      {origin && typeof origin === "object" ? (
+        <p style={{ margin: "4px 0", fontSize: "0.85rem" }}>
+          Œuvre dérivée de <a href={`/gallery?q=${origin.blockIndex}`} style={{ color: "var(--accent)" }}>« {origin.workTitle ?? "Sans titre"} » (bloc #{origin.blockIndex})</a>{origin.artist ? <> de {origin.artist}</> : null}.
+          Le bloc d&apos;origine n&apos;a pas été modifié ; cette filiation fait partie du hash de ce bloc.
+        </p>
+      ) : origin === "missing" ? (
+        <p style={{ margin: "4px 0", fontSize: "0.85rem" }}>Œuvre dérivée d&apos;un bloc introuvable dans la chaîne (hash <code>{hash.slice(0, 16)}…</code>).</p>
+      ) : (
+        <p style={{ margin: "4px 0", fontSize: "0.85rem" }}>Œuvre dérivée du bloc <code>{hash.slice(0, 16)}…</code>.</p>
+      )}
+    </div>
+  );
+}
+
 function TabDetails({ block }: { block: BlockWithImage }) {
   const deviceIds = [block.minerDeviceId, block.ownerDeviceId].filter((x): x is string => !!x);
   const deviceLabels = useDeviceLabels([...new Set(deviceIds)]);
@@ -142,6 +181,11 @@ function TabDetails({ block }: { block: BlockWithImage }) {
         </div>
       )}
       {block.imagePayload && <SendToScreen source="human" blockHash={block.blockHash} animation={block.kind === "animation"} />}
+      {block.derivedFromBlockHash && <RemixOrigin hash={block.derivedFromBlockHash} />}
+      {block.imagePayload && block.kind !== "animation" && block.source !== "ana-agent" && isValidScreenId(block.poolScreen) && (
+        <DrawLauncher screen={block.poolScreen} param="remix" value={block.blockHash} label="🔀 Créer une œuvre dérivée (Remix)"
+          hint={`Tu obtiens une copie modifiable de ce bloc : ajoute, efface, transforme. Le bloc #${block.blockIndex} reste inchangé ; ta version sera une nouvelle œuvre, validée par le réseau, qui indiquera son origine.`} />
+      )}
 
       <div className="bd-meta-grid">
         <MetaRow label="Bloc"       value={`#${block.blockIndex}`} accent />
@@ -187,6 +231,7 @@ function TabDetails({ block }: { block: BlockWithImage }) {
       <div className="bd-hashes">
         <HashRow label="Block hash"   value={block.blockHash} />
         <HashRow label="Parent hash"  value={block.parentHash} />
+        {block.derivedFromBlockHash && <HashRow label="Dérivé de (Remix)" value={block.derivedFromBlockHash} />}
         <HashRow label="Image hash"   value={block.imageHash} />
         {block.actionsHash && <HashRow label="Actions hash" value={block.actionsHash} />}
         {block.podHashEnriched && <HashRow label="PoD enriched" value={block.podHashEnriched} />}

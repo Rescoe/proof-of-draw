@@ -99,7 +99,7 @@ export const STATIC_CATALOG: CatalogEntry[] = [
   e("synthesis", "synth-calcul", "Ce que les cartes calculent réellement", "Quelles vérifications les cartes font elles-mêmes (hash, métriques entières) et lesquelles restent au serveur.", "concept", "comprendre",
     ["vote v2", "métriques", "hash", "calcul local", "entropie", "esp8266", "r4", "vérification"]),
   e("synthesis", "synth-chaine", "La chaîne de blocs et ses preuves", "Contenu d’un bloc, parentHash, vérification publique et conservation.", "concept", "comprendre",
-    ["bloc", "hash", "parenthash", "chaîne", "preuve", "vérifier", "blockhash"]),
+    ["bloc", "hash", "parenthash", "chaîne", "preuve", "vérifier", "blockhash", "remix", "œuvre dérivée", "filiation"]),
   e("synthesis", "synth-niveaux", "Niveaux d’assurance : où en est-on ?", "Ce qui est prouvé, testé sur carte ou seulement annoncé : un vocabulaire honnête.", "etat", "comprendre",
     ["assurance", "niveau de preuve", "N0", "N1", "N2", "N3", "confiance", "honnêteté", "validé", "testé"]),
   e("synthesis", "synth-secu", "Identité, signatures et sécurité", "Clés Ed25519, signatures de vote, modèle de menace et limites actuelles.", "concept", "comprendre",

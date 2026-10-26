@@ -39,6 +39,8 @@ export interface SendFlowProps {
   onSent: (r: Extract<StudioSendResult, { status: "ok" }>) => void;
   onCooldown: (seconds: number) => void;
   onClose: () => void;
+  /** Remix : le bloc d'origine (hash) et son libellé, affichés à l'aperçu et transmis avec le dessin */
+  origin?: { label: string; derivedFromBlockHash?: string } | null;
 }
 
 /** Aperçu tel qu'affiché : décode le buffer réellement envoyé et l'habille comme l'écran physique. */
@@ -129,6 +131,7 @@ export function SendFlow(props: SendFlowProps) {
       actions,
       replayEvents: replay,
       drawScore: session.score,
+      ...(props.origin?.derivedFromBlockHash ? { derivedFromBlockHash: props.origin.derivedFromBlockHash } : {}),
     };
     let r: StudioSendResult;
     try { r = await props.onSend(input); }
@@ -266,6 +269,7 @@ export function SendFlow(props: SendFlowProps) {
         <>
           <div className="st-h" style={{ marginTop: 0 }}>2 · Aperçu sur l&apos;écran</div>
           <ScreenPreview payload={payload} screenId={screenId} />
+          {props.origin && <p className="st-note" role="note">↺ {props.origin.label} — l&apos;œuvre d&apos;origine reste inchangée ; la tienne sera une nouvelle œuvre, validée par le réseau, qui indiquera son origine.</p>}
           <p className="st-note" style={{ marginBottom: 12 }}>
             Voici le fichier tel qu&apos;il sera envoyé, décodé comme le fera {profile.name}. {modeForProfile(profile) === "bw" ? "Les nuances sont des motifs de points : pas de gris sur cet écran." : modeForProfile(profile) === "bwr" ? "Trois couleurs seulement : noir, blanc et rouge." : "Les couleurs sont réduites en 16 bits."}
           </p>

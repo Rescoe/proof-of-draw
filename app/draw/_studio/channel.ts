@@ -73,7 +73,8 @@ export function useDrawChannel(deviceId: string, screenId: ScreenId) {
       screen: screenId, deviceId, workTitle: input.workTitle, drawArtistName: input.drawArtistName,
       actions: input.actions, replayEvents: input.replayEvents, drawScore: input.drawScore,
     };
-    const body = "black" in p ? { ...base, black: p.black, red: p.red } : { ...base, buffer: p.buffer };
+    const derived = input.derivedFromBlockHash ? { derivedFromBlockHash: input.derivedFromBlockHash } : {};
+    const body = "black" in p ? { ...base, ...derived, black: p.black, red: p.red } : { ...base, ...derived, buffer: p.buffer };
 
     const ctl = new AbortController();
     const timer = window.setTimeout(() => ctl.abort(), SEND_TIMEOUT_MS);

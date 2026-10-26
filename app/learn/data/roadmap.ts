@@ -40,6 +40,7 @@ export const ROADMAP: RoadmapPhase[] = [
       { id: "profile", title: "Profils d’artistes, appairage des écrans, autorisation d’un autre équipement", status: "done" },
       { id: "network-view", title: "Page Réseau en direct (constellation, flux observés ou reconstitués)", status: "done", note: "Les flux reconstitués sont signalés par une astérisque." },
       { id: "merge", title: "Outil « Ancien ➜ Nouveau » pour migrer les blocs d’une carte reflashée", status: "done" },
+      { id: "remix", title: "Remix : œuvre dérivée d’un bloc (filiation engagée dans le hash) et reprise d’un dessin rejeté", status: "doing", note: "Livré et testé côté serveur et studio ; pas encore essayé avec un vrai vote en production. Aucune animation pour l’instant." },
     ],
   },
   {

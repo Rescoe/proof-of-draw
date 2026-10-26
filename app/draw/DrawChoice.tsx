@@ -2,21 +2,8 @@
 // Page « Créer » : choisir où dessiner. Trois états explicites par liste (chargement / erreur réseau / vide) ; hors ligne = pastille, jamais confondu avec « vide ».
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
-import {
-  classifyList, mineTargets, sharedTargets, NETWORK_ERROR_MESSAGE,
-  type DrawTarget, type LoadState, type OwnedLike, type PublicLike,
-} from "@/lib/drawTargets";
-
-async function fetchList<T>(url: string, field: string): Promise<LoadState<T[]>> {
-  try {
-    const res = await fetch(url, { cache: "no-store" });
-    let body: unknown = null;
-    try { body = await res.json(); } catch { /* corps illisible : classifyList le traite en erreur */ }
-    return classifyList<T>(res.ok, res.status, body, field);
-  } catch {
-    return { kind: "error", message: NETWORK_ERROR_MESSAGE };
-  }
-}
+import { mineTargets, sharedTargets, type DrawTarget, type LoadState, type OwnedLike, type PublicLike } from "@/lib/drawTargets";
+import { fetchList } from "./fetchList";
 
 const card: React.CSSProperties = { border: "1px solid var(--border)", borderRadius: 14, background: "var(--bg2)", padding: "1.1rem 1.25rem" };
 const muted: React.CSSProperties = { color: "var(--text3)", fontSize: "0.85rem", margin: 0 };

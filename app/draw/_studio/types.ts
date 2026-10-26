@@ -95,6 +95,8 @@ export interface StudioSendInput {
   actions: ActionEvent[];
   replayEvents: ReplayEvent[];
   drawScore: number;
+  /** Remix : hash du bloc dont l'œuvre est dérivée (vérifié par le serveur ; ne figure que si la feuille vient d'un Remix) */
+  derivedFromBlockHash?: string;
 }
 
 /** Résultat d'un envoi, déjà interprété : l'interface n'a pas à connaître les codes HTTP. */

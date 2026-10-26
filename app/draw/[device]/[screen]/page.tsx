@@ -9,12 +9,13 @@
 import { useCallback, useEffect, useState } from "react";
 import dynamic from "next/dynamic";
 import Link from "next/link";
-import { useParams, useRouter } from "next/navigation";
+import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { SCREEN_PROFILES, ScreenId, isValidScreenId } from "@/lib/screenProfiles";
 import type { OwnedDevice } from "@/lib/deviceStore";
 import { useDrawChannel } from "../../_studio/channel";
 import { wakeNetwork } from "@/lib/wakeNetwork";
 import type { DrawStudioProps } from "../../_studio/DrawStudio";
+import { useSeed } from "../../_studio/seed";
 
 function Splash({ text }: { text: string }) {
   return (
@@ -70,6 +71,8 @@ function DrawPageInner({ deviceId, screenId, onExit }: { deviceId: string; scree
   const [info, setInfo] = useState<Info>({ state: "loading" });
   const [prefill, setPrefill] = useState<string | undefined>(undefined);
   const [attempt, setAttempt] = useState(0);
+  const search = useSearchParams();
+  const { seed, retry: retrySeed, skip: skipSeed } = useSeed(search.toString(), screenId);   // ?remix={bloc} ou ?resume={candidat} : image de départ (copie), jamais de navigation sur erreur
 
   useEffect(() => { wakeNetwork(); }, []);   // « j'ouvre l'atelier » : les écrans au repos passent de 15 à 5 min de pull (au plus 1 appel / 10 min / onglet)
 
@@ -125,8 +128,25 @@ function DrawPageInner({ deviceId, screenId, onExit }: { deviceId: string; scree
         : null;
 
   if (!profile) return <Splash text="Écran inconnu" />;
+  if (seed.state === "loading") return <Splash text="Chargement de l'œuvre d'origine…" />;
+  if (seed.state === "error") {
+    return (
+      <div style={{ position: "fixed", inset: 0, zIndex: 100, background: "#0a0a10", color: "#e5e7f5", display: "grid", placeItems: "center", padding: 24, fontFamily: "'DM Sans', system-ui, sans-serif" }}>
+        <div role="alert" style={{ maxWidth: 440, display: "flex", flexDirection: "column", gap: 14 }}>
+          <h1 style={{ margin: 0, fontSize: 20 }}>Impossible d’ouvrir l’œuvre d’origine</h1>
+          <p style={{ margin: 0, color: "#a9aac2", lineHeight: 1.5 }}>{seed.message}</p>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+            <button type="button" onClick={retrySeed} style={{ padding: "0.6rem 1rem", borderRadius: 8, border: "1px solid #3a3a55", background: "#16162a", color: "#fff", cursor: "pointer" }}>Réessayer</button>
+            <button type="button" onClick={skipSeed} style={{ padding: "0.6rem 1rem", borderRadius: 8, border: "none", background: "#7c6bff", color: "#fff", cursor: "pointer" }}>Dessiner sur une feuille blanche</button>
+          </div>
+          <Link href="/gallery" style={{ color: "#a79cff" }}>← Retour à la galerie</Link>
+        </div>
+      </div>
+    );
+  }
   return (
     <DrawStudio
+      key={seed.state === "ready" ? seed.seed.key : "blank"}
       screenId={screenId}
       deviceId={deviceId}
       deviceLabel={label}
@@ -137,6 +157,7 @@ function DrawPageInner({ deviceId, screenId, onExit }: { deviceId: string; scree
       onCooldownStart={channel.start}
       onExit={onExit}
       notice={notice}
+      seed={seed.state === "ready" ? seed.seed : undefined}
     />
   );
 }

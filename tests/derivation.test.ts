@@ -76,7 +76,8 @@ function keypair(seedByte: number) {
   return { priv, pub: spki.subarray(spki.length - 32).toString("hex") };
 }
 const oled = (() => { const b = Buffer.alloc(METRIC_GRID.oled096.rawBytes); for (let i = 0; i < b.length; i += 3) b[i] = 0xa5 ^ (i & 0xff); return b; })();
-const v2spec = buildCandidateV2("oled096", { screen: "oled096", buffer: oled.toString("base64") })!;
+const oledPayload = { screen: "oled096", buffer: oled.toString("base64") };
+const v2spec = buildCandidateV2("oled096", oledPayload)!;
 function vote(deviceId: string, seed: number): ValidationVote {
   const kp = keypair(seed);
   const msg = voteMessageV2({ deviceId, candidateId: CID, rawHash: v2spec.rawHash, e: v2spec.e, t: v2spec.t, r: v2spec.r, verdict: "accept" });
