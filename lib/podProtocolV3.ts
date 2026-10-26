@@ -238,6 +238,8 @@ export interface BlockCanonicalV2 {
   contentHash: string;
   deviceId: string; poolScreen: string;
   validatorProfileIds: string[]; scorePpm: number; minedAt: number; animRoot?: string;
+  /** Remix : hash du bloc dont cette œuvre est dérivée. ABSENT pour tout bloc historique (clé non émise : hash inchangé) ; présent, il est ENGAGÉ dans le hash. */
+  derivedFromBlockHash?: string;
   votesRoot: string;
   /** « quorum » = règle HISTORIQUE (⌈0,51 × électorat⌉, committeeK = taille de l'électorat) : transitoire, avant le comité (lot 4) */
   committeeMode: Committee["mode"] | "quorum"; committeeK: number;
@@ -259,6 +261,7 @@ export function blockCanonicalV2(b: BlockCanonicalV2): string {
     parentHash: b.parentHash, imageHash: b.imageHash, actionsHash: b.actionsHash, contentHash: b.contentHash, deviceId: b.deviceId, poolScreen: b.poolScreen,
     validatorProfileIds: [...b.validatorProfileIds].sort(), scorePpm: b.scorePpm, minedAt: b.minedAt,
     ...(b.animRoot ? { animRoot: b.animRoot } : {}),
+    ...(b.derivedFromBlockHash ? { derivedFromBlockHash: b.derivedFromBlockHash } : {}),
     votesRoot: b.votesRoot, committeeMode: b.committeeMode, committeeK: b.committeeK, committeeRoot: b.committeeRoot, minerRoot: b.minerRoot,
   });
 }

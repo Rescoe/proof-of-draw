@@ -17,6 +17,8 @@ import { blockHashV2, minerDeviceFor, committeeRank, committeeRoot, committeeSee
 export interface ProofBlock {
   blockHash: string; parentHash: string; imageHash: string; actionsHash: string; deviceId: string; poolScreen: string;
   validatorIds: string[]; score: number; minedAt: number; animRoot?: string;
+  /** Remix : bloc dont cette œuvre est dérivée ; absent pour tout bloc historique. Engagé dans le hash (v1 comme v2) : le retirer ou le modifier fait échouer le contrôle du hash. */
+  derivedFromBlockHash?: string;
   /** appareil qui a reçu le bloc (hors hash) : pour un tirage déterministe, il doit être celui que les reçus désignent */
   minerDeviceId?: string;
   /** jeu de règles engagé dans le hash : absent ≡ 1 (image fixe) ; 2 = animation v3 (lib/podVerifyAnim.ts) */
@@ -33,6 +35,7 @@ export function toProofBlock(b: import("@/lib/chain").Block): ProofBlock {
   return {
     blockHash: b.blockHash, parentHash: b.parentHash, imageHash: b.imageHash, actionsHash: b.actionsHash, deviceId: b.deviceId, poolScreen: b.poolScreen,
     validatorIds: [...b.validatorIds].sort(), score: b.score, minedAt: b.minedAt,
+    ...(b.derivedFromBlockHash ? { derivedFromBlockHash: b.derivedFromBlockHash } : {}),
     // bloc v1 / image fixe : racine d'animation v1 historique (hash inchangé). Animation v3 (rulesVersion 2) : `animRoot` du hash canonique = contentHash (racine v3) ; `anim.root` (v1) reste dans imageHash (A3).
     ...(b.rulesVersion === 2 ? (b.contentHash ? { animRoot: b.contentHash } : {}) : b.anim?.root ? { animRoot: b.anim.root } : {}),
     ...(b.blockVersion === 2 ? { blockVersion: 2 as const, contentHash: b.contentHash, scorePpm: b.scorePpm, votesRoot: b.votesRoot, committeeMode: b.committeeMode, committeeK: b.committeeK, committeeRoot: b.committeeRoot, minerRoot: b.minerRoot, receiptsCount: b.receiptsCount, ...(b.rulesVersion !== undefined ? { rulesVersion: b.rulesVersion } : {}), ...(b.miner ? { miner: b.miner, minerDeviceId: b.minerDeviceId } : {}) } : {}),
@@ -44,6 +47,8 @@ export interface VerifyInput {
   receipts: ReceiptsDoc | null;
   /** bloc précédent (au moins son blockHash) pour contrôler le chaînage */
   parent?: { blockHash: string } | null;
+  /** Remix : le bloc source désigné (résumé servi par /api/block-proof) ; null = introuvable ; absent = non fourni */
+  derivedFrom?: { blockHash: string; minedAt?: number } | null;
   /** contenu BRUT du bloc (même ordre canonique que /api/candidate-frame) pour recalculer hash et métriques */
   content?: { screen: string; raw: Uint8Array } | null;
   /** clip PBC1 EXACT d'un bloc animation v3 (rulesVersion 2) pour recalculer images, racine et métriques */
@@ -78,6 +83,7 @@ export function blockHashV1(b: ProofBlock): string {
   return sha256Hex(JSON.stringify({
     parentHash: b.parentHash, imageHash: b.imageHash, actionsHash: b.actionsHash, deviceId: b.deviceId, poolScreen: b.poolScreen,
     validatorIds: [...b.validatorIds].sort(), score: b.score, minedAt: b.minedAt, animRoot: b.animRoot,
+    derivedFromBlockHash: b.derivedFromBlockHash,   // clé omise par JSON.stringify quand elle est absente : hash historique inchangé
   }));
 }
 
@@ -138,6 +144,20 @@ function verifyCommittee(checks: Check[], block: ProofBlock, doc: ReceiptsDoc, m
   } else add(checks, "miner", "Mineur : tirage déterministe rejoué", "na", "bloc sans tirage déterministe");
 }
 
+/** Filiation d'un Remix : forme du hash source, différent du bloc lui-même, et — si le bloc source est fourni — existence, hash identique et antériorité. Le HASH du bloc couvre la filiation (contrôle « hash »). */
+export function addDerivationChecks(checks: Check[], block: ProofBlock, source: VerifyInput["derivedFrom"]) {
+  const d = block.derivedFromBlockHash as string;
+  const form = HEX64.test(d) && d !== block.blockHash;
+  add(checks, "derivation", "Filiation (Remix) : hash du bloc d'origine valide", form ? "ok" : "fail", form ? `d'après le bloc ${d.slice(0, 12)}…` : "hash d'origine invalide, ou égal au hash du bloc lui-même");
+  if (source === undefined) add(checks, "derivation-source", "Filiation (Remix) : bloc d'origine retrouvé et antérieur", "na", "bloc d'origine non fourni");
+  else if (source === null) add(checks, "derivation-source", "Filiation (Remix) : bloc d'origine retrouvé et antérieur", "fail", "bloc d'origine introuvable");
+  else {
+    const same = source.blockHash === d;
+    const older = source.minedAt === undefined || source.minedAt < block.minedAt;
+    add(checks, "derivation-source", "Filiation (Remix) : bloc d'origine retrouvé et antérieur", same && older ? "ok" : "fail", same ? (older ? undefined : "le bloc d'origine n'est pas antérieur") : "le bloc fourni n'est pas celui que le hash désigne");
+  }
+}
+
 export function verifyBlock(input: VerifyInput): VerifyReport {
   // jeu de règles engagé dans le hash : 2 = animation v3 (vérificateur dédié) ; toute valeur inconnue est un ÉCHEC (jamais interprétée comme 1)
   if (input.block.rulesVersion === 2) return verifyAnimBlock(input);
@@ -161,6 +181,7 @@ export function verifyBlock(input: VerifyInput): VerifyReport {
     const canonical: BlockCanonicalV2 = {
       parentHash: block.parentHash, imageHash: block.imageHash, actionsHash: block.actionsHash, contentHash: block.contentHash, deviceId: block.deviceId, poolScreen: block.poolScreen,
       validatorProfileIds: validatorKeysOf(receipts), scorePpm: block.scorePpm, minedAt: block.minedAt, ...(block.animRoot ? { animRoot: block.animRoot } : {}),
+      ...(block.derivedFromBlockHash ? { derivedFromBlockHash: block.derivedFromBlockHash } : {}),
       votesRoot: receiptsRoot(receipts), committeeMode: block.committeeMode ?? "quorum", committeeK: block.committeeK, committeeRoot: block.committeeRoot, minerRoot: block.minerRoot,
     };
     hashOk = blockHashV2(canonical) === block.blockHash;
@@ -170,6 +191,9 @@ export function verifyBlock(input: VerifyInput): VerifyReport {
   // ── 2. chaînage ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
   if (input.parent) add(checks, "chain", "Chaînage : parentHash = hash du bloc précédent", input.parent.blockHash === block.parentHash ? "ok" : "fail");
   else add(checks, "chain", "Chaînage : parentHash = hash du bloc précédent", "na", "bloc précédent non fourni");
+
+  // ── 2 bis. filiation (Remix) : seulement pour un bloc qui en déclare une (aucun contrôle ajouté aux blocs historiques) ──────────────────────────────
+  if (block.derivedFromBlockHash !== undefined) addDerivationChecks(checks, block, input.derivedFrom);
 
   // ── 3. reçus ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
   let receiptsOk = false, anyV2Valid = false;

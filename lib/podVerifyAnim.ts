@@ -33,6 +33,9 @@ export function verifyAnimBlock(input: VerifyInput): VerifyReport {
   const stats = { receipts: receipts?.receipts.length ?? 0, v2Accepts: 0, v1Echoes: 0, rejects: 0, invalidSignatures: 0 };
   const complete = !!receipts && block.contentHash !== undefined && block.scorePpm !== undefined && block.votesRoot !== undefined && block.committeeK !== undefined && block.committeeRoot !== undefined && block.minerRoot !== undefined;
 
+  // Remix : une animation ne peut pas être une œuvre dérivée (lib/derivation.ts) ; un bloc d'animation qui en déclare une est REFUSÉ plutôt qu'ignoré en silence.
+  if (block.derivedFromBlockHash !== undefined) add(checks, "derivation", "Filiation (Remix) non prise en charge pour une animation", "fail", "un bloc d'animation ne peut pas déclarer de filiation");
+
   // ── 1. hash (jeu de règles 2 engagé ; animRoot = contentHash) ───────────────────────────────────────────────────────────────────────────
   let hashOk = false;
   if (!HEX64.test(block.blockHash)) add(checks, "hash", "Hash du bloc recalculé (animation v3)", "fail", "blockHash invalide");

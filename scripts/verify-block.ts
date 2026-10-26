@@ -22,7 +22,7 @@ async function load(): Promise<VerifyInput> {
   const file = arg("file");
   if (file) {
     const j = JSON.parse(fs.readFileSync(file, "utf8"));
-    return { block: j.block, receipts: j.receipts ?? null, parent: j.parent ?? null, content: j.content ? { screen: j.content.screen, raw: new Uint8Array(Buffer.from(j.content.rawHex, "hex")) } : null };
+    return { block: j.block, receipts: j.receipts ?? null, parent: j.parent ?? null, ...(j.derivedFrom !== undefined ? { derivedFrom: j.derivedFrom } : {}), content: j.content ? { screen: j.content.screen, raw: new Uint8Array(Buffer.from(j.content.rawHex, "hex")) } : null };
   }
   const base = arg("base")?.replace(/\/$/, ""), hash = arg("hash");
   if (!base || !hash) { console.error("usage : --base <url> --hash <blockHash>  |  --file <proof.json>"); process.exit(2); }
@@ -30,12 +30,17 @@ async function load(): Promise<VerifyInput> {
   let parent: VerifyInput["parent"] = null;
   if (/^0+$/.test(proof.block.parentHash)) parent = { blockHash: proof.block.parentHash };   // bloc genèse : parent fictif de zéros
   else { try { parent = ((await getJson(`${base}/api/block-proof?hash=${proof.block.parentHash}`)) as { block: { blockHash: string } }).block; } catch { parent = null; } }
+  // Remix : le bloc d'origine est relu par SON PROPRE hash (aucun champ de provenance côté serveur : le hash du nouveau bloc l'engage)
+  let derivedFrom: VerifyInput["derivedFrom"];
+  if (proof.block.derivedFromBlockHash) {
+    try { const b = ((await getJson(`${base}/api/block-proof?hash=${proof.block.derivedFromBlockHash}`)) as { block: { blockHash: string; minedAt: number } }).block; derivedFrom = { blockHash: b.blockHash, minedAt: b.minedAt }; } catch { derivedFrom = null; }
+  }
   let content: VerifyInput["content"] = null;
   try {
     const img = ((await getJson(`${base}/api/block-image?hash=${hash}`)) as { imagePayload?: { screen: string; buffer?: string; black?: string; red?: string } }).imagePayload;
     if (img && isPodScreen(img.screen)) content = { screen: img.screen, raw: rawContent(img.screen, img) };
   } catch { content = null; }
-  return { block: proof.block, receipts: proof.receipts, parent, content };
+  return { block: proof.block, receipts: proof.receipts, parent, ...(derivedFrom !== undefined ? { derivedFrom } : {}), content };
 }
 
 (async () => {

@@ -92,6 +92,10 @@ export interface Block {
   kind?: "animation";
   anim?: import("@/lib/anim/block").AnimBlockMeta;
 
+  // ── Remix (26/10/2026) : œuvre dérivée d'un bloc miné. OPTIONNEL et STRICT (64 hex) ; ENGAGÉ dans le hash du bloc quand il est présent (clé absente sinon : les blocs historiques
+  // gardent exactement leur hash). Le bloc source n'est jamais modifié ; ce bloc reste dans la chaîne canonique (parentHash = tête courante). Règles : lib/derivation.ts.
+  derivedFromBlockHash?: string;
+
   // ── Éligibilité des votants (Lot 2, ELIGIBILITY_MODE=enforce) — additif, hors du hash du bloc ───────────────────────────────────────────────
   // « independent » : au moins 3 profils indépendants de l'auteur ont pu voter, l'auteur est EXCLU. « bootstrap » : réseau trop petit, les profils de l'auteur étaient admis :
   // VALIDATION PARTIELLE, à ne jamais présenter comme « validé par le réseau ». `distinctProfiles` = profils distincts ayant voté (une carte de plus ne donne pas une voix de plus).
@@ -151,6 +155,9 @@ export interface Candidate {
   // ── Animation : le clip, les empreintes et les scores PAR IMAGE ; `score` = leur moyenne, `imageHash` = leur racine ─────────
   kind?: "animation";
   anim?: import("@/lib/anim/block").AnimCandidatePart;
+
+  // ── Remix : hash du bloc source, vérifié par le serveur à la soumission (lib/derivation.ts) puis engagé dans le hash du bloc ─────────
+  derivedFromBlockHash?: string;
 
   // ── Validation réelle (P2) : hash du contenu brut + métriques entières que les appareils RECALCULENT (lib/podVote.ts) ─────────
   v2?: import("@/lib/podVote").CandidateV2;
@@ -581,6 +588,8 @@ export async function finalizeBlock(
     minedAt,
     // Animation uniquement (clé absente pour un dessin : le hash d'un dessin ne change pas). Redondant avec imageHash, mais explicite.
     animRoot:    candidate.anim?.root,
+    // Remix uniquement (clé absente sinon : le hash d'un bloc non dérivé ne change pas).
+    derivedFromBlockHash: candidate.derivedFromBlockHash,
   });
 
   let blockHash = await sha256Hex(canonical);
@@ -675,6 +684,7 @@ export async function finalizeBlock(
     ...(candidate.eligibility?.mode === "enforce"
       ? { validation: { eligibility: "enforce" as const, plan: candidate.eligibility.plan, independentProfiles: candidate.eligibility.independentProfiles, distinctProfiles: new Set(votes.map(voterKey)).size } }
       : {}),
+    ...(candidate.derivedFromBlockHash ? { derivedFromBlockHash: candidate.derivedFromBlockHash } : {}),
     ...(candidate.anim
       ? { kind: "animation" as const, anim: { frames: candidate.anim.frames, loops: candidate.anim.loops, playMs: candidate.anim.playMs, bytes: candidate.anim.bytes, root: candidate.anim.root } }
       : {}),

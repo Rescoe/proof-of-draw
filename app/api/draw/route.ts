@@ -16,6 +16,8 @@ import { BENCH_SCREENS } from "@/lib/bench/screens";
 import { CLIP } from "@/lib/bench/clip";
 import { buildAnimSubmission, type AnimScreen } from "@/lib/anim/block";
 import { animCapable, ANIM_POINTER_FIRMWARE } from "@/lib/anim/pointer";
+import { hashDrawing } from "@/lib/crypto";
+import { gateDerivation } from "@/lib/derivationGate";
 
 const DRAW_WINDOW_SEC = parseInt(process.env.DRAW_WINDOW_SEC ?? "900");
 const ABUSE_STRIKES   = parseInt(process.env.DRAW_LIMIT_PER_ROUND ?? "3");
@@ -80,6 +82,7 @@ export async function POST(req: NextRequest) {
   const workTitle      = typeof body.workTitle      === "string" ? body.workTitle.trim().slice(0, 80)  : undefined;
   const drawArtistName = typeof body.drawArtistName === "string" ? body.drawArtistName.trim().slice(0, 40) : undefined;
   const importWarning  = typeof body.importWarning  === "string" ? body.importWarning  : undefined;
+  const derivedFromRaw = body.derivedFromBlockHash;   // Remix : validé plus bas (lib/derivationGate.ts), jamais cru sur parole
 
   // Timestamp Paris
   const _now = new Date();
@@ -167,6 +170,14 @@ export async function POST(req: NextRequest) {
     }
   }
 
+  // ── Remix : filiation vérifiée AVANT le verrou (une erreur ne consomme pas le délai entre deux dessins) ──────────────────────────────
+  let derivedFromBlockHash: string | undefined;
+  if (derivedFromRaw !== undefined && derivedFromRaw !== null && derivedFromRaw !== "") {
+    const gate = await gateDerivation(derivedFromRaw, { poolScreen: screen, imageHash: await hashDrawing(screen, black, red, buffer), kind: animIn ? "animation" : undefined });
+    if (!gate.ok) return NextResponse.json({ ok: false, error: gate.error, reason: gate.reason }, { status: gate.status });
+    derivedFromBlockHash = gate.derivedFromBlockHash;
+  }
+
   // ── Limite de débit (draw:lock par device) ──────────────────────────────────
   const acquired = await redis.set(lockKey(deviceId), "1", { nx: true, ex: DRAW_WINDOW_SEC });
   if (!acquired) {
@@ -228,7 +239,7 @@ export async function POST(req: NextRequest) {
   if (existingCandidate) {
     const queueEntry = {
       deviceId, screen, black, red, buffer: animClip ? undefined : buffer, animClip,
-      actions, replayEvents, drawScore, workTitle, drawArtistName, importWarning,
+      actions, replayEvents, drawScore, workTitle, drawArtistName, importWarning, derivedFromBlockHash,
       submittedAt: Date.now(),
       frameMeta,
     };
@@ -256,7 +267,7 @@ export async function POST(req: NextRequest) {
   try {
     const candidateBody = {
       deviceId, screen, black, red, buffer: animClip ? undefined : buffer, animClip,
-      actions, replayEvents, drawScore, workTitle, drawArtistName, importWarning,
+      actions, replayEvents, drawScore, workTitle, drawArtistName, importWarning, derivedFromBlockHash,
     };
     const submitUrl    = new URL("/api/submit-candidate", getBaseUrl(req)).toString();
     const candidateRes = await fetch(submitUrl, {

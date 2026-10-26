@@ -79,7 +79,7 @@ export const validatorKeysOf = (doc: ReceiptsDoc): string[] => [...new Set(doc.r
 export const contentHashOf = (c: Pick<Candidate, "v2" | "anim" | "imageHash">): string => c.v2?.rawHash ?? c.anim?.root ?? c.imageHash;
 
 export interface BlockV2Inputs {
-  candidate: Pick<Candidate, "candidateId" | "poolSize" | "v2" | "anim" | "imageHash" | "actionsHash" | "deviceId" | "poolScreen" | "committee">;
+  candidate: Pick<Candidate, "candidateId" | "poolSize" | "v2" | "anim" | "imageHash" | "actionsHash" | "deviceId" | "poolScreen" | "committee"> & { derivedFromBlockHash?: string };
   allVotes: readonly ValidationVote[];
   parentHash: string;
   finalScore: number;
@@ -108,6 +108,7 @@ export function sealBlockV2(p: ReturnType<typeof prepareBlockV2>, miner: MinerCo
     parentHash: i.parentHash, imageHash: i.candidate.imageHash, actionsHash: i.candidate.actionsHash, contentHash: p.contentHash,
     deviceId: i.candidate.deviceId, poolScreen: i.candidate.poolScreen, validatorProfileIds: validatorKeysOf(p.doc),
     scorePpm: Math.round(i.finalScore * PPM), minedAt: i.minedAt, ...(i.candidate.anim?.root ? { animRoot: i.candidate.anim.root } : {}),
+    ...(i.candidate.derivedFromBlockHash ? { derivedFromBlockHash: i.candidate.derivedFromBlockHash } : {}),
     votesRoot: p.votesRoot, committeeMode: p.committeeMode, committeeK: p.committeeK, committeeRoot: p.committeeRootHex, minerRoot: minerRoot(miner),
   };
   return {

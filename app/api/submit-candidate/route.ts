@@ -30,6 +30,7 @@ import { buildCandidateV2 } from "@/lib/podVote";
 import { PPM } from "@/lib/podMetrics";
 import type { ActionEvent, ReplayEvent } from "@/lib/types/actions";
 import { BENCH_SCREENS } from "@/lib/bench/screens";
+import { gateDerivation } from "@/lib/derivationGate";
 import { buildAnimSubmissionFromClip, type AnimScreen, type AnimSubmission } from "@/lib/anim/block";
 
 const INTERNAL_SECRET  = process.env.INTERNAL_API_SECRET ?? "";
@@ -188,6 +189,10 @@ export async function POST(req: NextRequest) {
     hashActions(actions),
   ]);
 
+  // Remix : garde finale (la file d'attente passe aussi ici). Échec = rejet explicite, comme une automatisation suspecte : /api/draw libère alors le verrou.
+  const gate = await gateDerivation(body.derivedFromBlockHash, { poolScreen: screen, imageHash, kind: animSub ? "animation" : undefined });
+  if (!gate.ok) return NextResponse.json({ rejected: true, reason: gate.reason, message: gate.error }, { status: 400 });
+
   // Axe 4 : calcul du hash enrichi si des events de replay sont fournis
   const enrichment = replayEvents.length > 0
     ? computeEnrichment(replayEvents, actions)
@@ -255,6 +260,7 @@ export async function POST(req: NextRequest) {
     actionsHash,
     drawScore: animSub ? animSub.drawScore : drawScore,
     ...(animSub ? { kind: "animation" as const, anim: animSub.part } : {}),
+    ...(gate.derivedFromBlockHash ? { derivedFromBlockHash: gate.derivedFromBlockHash } : {}),
     actionSequence: actions,
     replayEvents:   replayEvents.length > 0 ? replayEvents : undefined,
     podHashEnriched: podEnrichedHash,
