@@ -86,8 +86,10 @@ test("VUE RÉSEAU : un capteur seul devient un appareil SANS écran avec sa dern
 
 test("QUORUM : un capteur n'entre ni dans devices:all ni dans les pools ; l'onboarding ne l'envoie pas sur une page de dessin", () => {
   const ds = read("lib/deviceStore.ts");
-  assert.equal((ds.match(/if \(!isSensorScreens\(screens\)\) await redis\.sadd\("devices:all"/g) ?? []).length, 2);
-  assert.doesNotMatch(ds.replace(/if \(!isSensorScreens\(screens\)\) await redis\.sadd\("devices:all"[^\n]*/g, ""), /redis\.sadd\("devices:all"/);
+  // 28/10/2026 : un capteur SIMPLE n'entre jamais ; un validateur sans écran déclaré ET autorisé (isValidatorNode, liste vide aujourd'hui) entre dans l'index électoral seulement
+  const guard = /if \(!isSensorScreens\(screens\) \|\| isValidatorNode\(\{ screens, firmware, caps \}\)\) await redis\.sadd\("devices:all"[^\n]*/g;
+  assert.equal((ds.match(guard) ?? []).length, 2);
+  assert.doesNotMatch(ds.replace(guard, ""), /redis\.sadd\("devices:all"/);
   const reg = read("app/api/register/route.ts");
   assert.match(reg, /const sensor = isSensorScreens\(screens\);\n    if \(sensor\) \{ removedScreens\.length = 0; addedScreens\.length = 0; unchangedScreens\.length = 0; \}/);
   assert.match(reg, /if \(isNew && !sensor\) invalidateNetworkSnapshot\(\);/);
