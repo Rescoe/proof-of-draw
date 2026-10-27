@@ -1,0 +1,17 @@
+﻿[HTTP POST] /api/register -> 200
+[REGISTER] deviceId=dev_I25D9Z7A paired=oui
+[REGISTER] appair??
+[BOOT] premier pull imm??diat
+>>> GET http://127.0.0.1:8081/manifest.txt
+[HTTP GET] /api/pull?deviceId=dev_I25D9Z7A -> 200
+[PULL] cartel: Mouche / Roubzi (bloc 120)
+[PULL] nouveau bloc #120
+[PULL] aucune frame
+[BOOT] pr??t ??? pull toutes les 60 s
+[DHT22] lecture impossible (c??blage D2 ? alimentation ? ordre des broches ?)
+[SGP40] lecture impossible (c??ble Grove sur SDA/SCL ? adresse 0x59 ?)
+>>> 5
+[OTA-TEST] tas : ar??ne 5820 o, libre dans l'ar??ne 4148 o, sommet 0x20006bac, limite 0x20007b00
+[OTA-TEST] /b245.bin : statut 200, Content-Length 245000, re??u 245000 en 141549 ms | pile r??seau 804/2048 o, marge 1180 o, erreur 0
+[OTA-TEST] relecture du staging : OK, SHA-256 identique : OUI
+=== FIN

@@ -1,0 +1,30 @@
+﻿[WIFI] firmware du module: 0.5.2
+[WIFI] IP: 0.0.0.0
+[KEYS] cl??s charg??es: 8e8bdfa528ee48144c84da7dd96b69bd6b76fd920e707555818e1f3fb7c94752
+[SELFTEST] Ed25519 signature 177 ms, v??rification 283 ms -> OK
+[MEM] apr??s Ed25519: tas libre 9580 o, zone 0xA5 sous la pile 1024 o (INDICATIF : NON fiable des la 1re pile temporaire)
+[ED25519] pile d??di??e (utilis??/marge, o) : sign 1316/924, verify 1532/708 ; erreurs sign=0 verify=0 (0 = aucune) ; allou?? 2304 o (garde 64 o, marge minimale exig??e 128 o)
+[HTTP POST] /api/register -> 200
+[REGISTER] deviceId=dev_I25D9Z7A paired=oui
+[REGISTER] appair??
+[BOOT] premier pull imm??diat
+>>> GET http://127.0.0.1:8081/manifest.txt
+[HTTP GET] /api/pull?deviceId=dev_I25D9Z7A -> 200
+[PULL] cartel: Mouche / Roubzi (bloc 120)
+[PULL] nouveau bloc #120
+[PULL] aucune frame
+[BOOT] pr??t ??? pull toutes les 60 s
+[DHT22] lecture impossible (c??blage D2 ? alimentation ? ordre des broches ?)
+[SGP40] lecture impossible (c??ble Grove sur SDA/SCL ? adresse 0x59 ?)
+>>> t
+[OTA-TEST] tas : ar??ne 5820 o, libre dans l'ar??ne 4148 o, sommet 0x20006bac, limite 0x20007b00
+[OTA-TEST] /logo.png : statut 200, Content-Length 9985, re??u 9985 en 3954 ms | pile r??seau 796/2048 o, marge 1188 o, erreur 0
+[OTA-TEST] relecture du staging : OK, SHA-256 identique : OUI
+>>> 1
+[OTA-TEST] tas : ar??ne 7876 o, libre dans l'ar??ne 6204 o, sommet 0x200073b4, limite 0x20007b00
+[OTA-TEST] /b130.bin : statut 200, Content-Length 130000, re??u 130000 en 65046 ms | pile r??seau 804/2048 o, marge 1180 o, erreur 0
+>>> 3
+[OTA-TEST] relecture du staging : OK, SHA-256 identique : OUI
+[OTA-TEST] tas : ar??ne 7876 o, libre dans l'ar??ne 6204 o, sommet 0x200073b4, limite 0x20007b00
+[OTA-TEST] /b160.bin : statut 200, Content-Length 160000, re??u 160000 en 82167 ms | pile r??seau 804/2048 o, marge 1180 o, erreur 0
+=== FIN

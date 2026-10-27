@@ -1,0 +1,29 @@
+﻿[WIFI] firmware du module: 0.5.2
+[WIFI] IP: 0.0.0.0
+[HTTP POST] /api/register -> 200
+[REGISTER] deviceId=dev_I25D9Z7A paired=oui
+[BOOT] pr??t ??? lecture toutes les 30 min, envoi toutes les 60 min
+>>> GET http://127.0.0.1:8081/manifest.txt
+[DHT22] lecture impossible (c??blage D2 ? alimentation ? ordre des broches ?)
+[SGP40] lecture impossible (c??ble Grove sur SDA/SCL ? adresse 0x59 ?)
+>>> 1
+[OTA-TEST] tas : ar??ne 5408 o, libre dans l'ar??ne 3908 o, sommet 0x200045c0, limite 0x20007b00
+[OTA-TEST] /b130.bin : statut 200, Content-Length 130000, re??u 130000 en 56288 ms | pile r??seau 812/2048 o, marge 1172 o, erreur 0
+[OTA-TEST] relecture du staging : OK, SHA-256 identique : OUI
+>>> 2
+[OTA-TEST] tas : ar??ne 8804 o, libre dans l'ar??ne 7304 o, sommet 0x20005304, limite 0x20007b00
+[OTA-TEST] /b150.bin : statut 200, Content-Length 150000, re??u 150000 en 65558 ms | pile r??seau 796/2048 o, marge 1188 o, erreur 0
+[OTA-TEST] relecture du staging : OK, SHA-256 identique : OUI
+>>> 3
+[OTA-TEST] tas : ar??ne 8804 o, libre dans l'ar??ne 7304 o, sommet 0x20005304, limite 0x20007b00
+[OTA-TEST] /b160.bin : statut 200, Content-Length 160000, re??u 160000 en 70379 ms | pile r??seau 796/2048 o, marge 1188 o, erreur 0
+>>> 4
+[OTA-TEST] relecture du staging : OK, SHA-256 identique : OUI
+[DHT22] lecture impossible (c??blage D2 ? alimentation ? ordre des broches ?)
+[SGP40] lecture impossible (c??ble Grove sur SDA/SCL ? adresse 0x59 ?)
+[OTA-TEST] tas : ar??ne 8804 o, libre dans l'ar??ne 7304 o, sommet 0x20005304, limite 0x20007b00
+[OTA-TEST] /b200.bin : statut 200, Content-Length 200000, re??u 200000 en 92352 ms | pile r??seau 812/2048 o, marge 1172 o, erreur 0
+>>> 5
+[OTA-TEST] relecture du staging : OK, SHA-256 identique : OUI
+[OTA-TEST] tas : ar??ne 8804 o, libre dans l'ar??ne 7304 o, sommet 0x20005304, limite 0x20007b00
+=== FIN

@@ -1,0 +1,28 @@
+﻿[WIFI] firmware du module: 0.5.2
+[WIFI] IP: 0.0.0.0
+[KEYS] cl??s charg??es: 8e8bdfa528ee48144c84da7dd96b69bd6b76fd920e707555818e1f3fb7c94752
+[SELFTEST] Ed25519 signature 179 ms, v??rification 284 ms -> OK
+[MEM] apr??s Ed25519: tas libre 9588 o, zone 0xA5 sous la pile 1024 o (INDICATIF : NON fiable des la 1re pile temporaire)
+[ED25519] pile d??di??e (utilis??/marge, o) : sign 1316/924, verify 1532/708 ; erreurs sign=0 verify=0 (0 = aucune) ; allou?? 2304 o (garde 64 o, marge minimale exig??e 128 o)
+[HTTP POST] /api/register -> 200
+[REGISTER] deviceId=dev_I25D9Z7A paired=oui
+[REGISTER] appair??
+[OTA] s??quence 12 inscrite en data flash : OK
+[BOOT] premier pull imm??diat
+[HTTP GET] /api/pull?deviceId=dev_I25D9Z7A -> 200
+[PULL] cartel: Mouche / Roubzi (bloc 120)
+[PULL] nouveau bloc #120
+[PULL] aucune frame
+[BOOT] pr??t ??? pull toutes les 60 s
+[DHT22] lecture impossible (c??blage D2 ? alimentation ? ordre des broches ?)
+[SGP40] lecture impossible (c??ble Grove sur SDA/SCL ? adresse 0x59 ?)
+[OTA] mise ?? jour disponible : r4tft18-2.1 seq 13 (148896 o, canal canary, cl?? r4-a) ; install??e 12
+[OTA] binaire : statut 200, Content-Length 148896, re??u 148896 en 75623 ms (pile 804/2048 o, marge 1180)
+[OTA] TICKET PR??T : image r4tft18-2.1 seq 13 relue et conforme
+[OTA] ota.update(/update.bin) : le module reprogramme le RA4M1 (??? 50 s) ; la carte red??marrera sur r4tft18-2.1
+
+=== PORT FERME (195 s)
+=== REOUVERTURE
+[OTA] ?? jour (s??quence install??e 13)
+[OTA] r??sultat : aucune mise ?? jour ; prochaine v??rification dans 21600 s
+=== FIN
