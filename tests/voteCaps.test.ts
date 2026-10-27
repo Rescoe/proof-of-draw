@@ -13,7 +13,8 @@ const node = (over: Record<string, unknown> = {}) => ({ screens: ["sensor"], fir
 const withFamily = (fn: () => void) => { VALIDATOR_NODE_FIRMWARE["r4sensorval"] = [1, 0]; try { fn(); } finally { delete VALIDATOR_NODE_FIRMWARE["r4sensorval"]; } };
 
 test("parseVoteCaps : liste fermée, bornée, sans doublon, sans texte libre ; toute autre forme = aucune capacité", () => {
-  assert.deepEqual([...VOTE_CAPS], ["vote-static-v2", "vote-anim-v3"]);
+  assert.deepEqual([...VOTE_CAPS], ["vote-static-v2", "vote-anim-v3", "anim-oled"]);
+  assert.deepEqual(parseVoteCaps(["vote-static-v2", "anim-oled"]), ["vote-static-v2", "anim-oled"]);
   assert.deepEqual(parseVoteCaps(["vote-static-v2"]), ["vote-static-v2"]);
   assert.deepEqual(parseVoteCaps(["vote-static-v2", "vote-anim-v3", "vote-static-v2"]), ["vote-static-v2", "vote-anim-v3"]);
   for (const bad of [undefined, null, "vote-static-v2", [], {}, 3, ["vote-static-v2", "autre"], ["VOTE-STATIC-V2"], [1], [null], ["vote-static-v2", "vote-anim-v3", "a", "b", "c"], ["<script>"], ["x".repeat(500)]]) assert.equal(parseVoteCaps(bad), undefined, JSON.stringify(bad));

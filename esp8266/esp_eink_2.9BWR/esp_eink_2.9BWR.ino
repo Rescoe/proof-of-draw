@@ -143,6 +143,24 @@
 #if POD_SENSOR_DISPLAY
 #include "pod_civil.h"
 #endif
+// POD_OLED_ANIM = 1 (exige POD_OLED_STATUS) : l'OLED affiche un écran capteur propre (température, humidité, âge de la mesure, Wi-Fi) ET joue EN BOUCLE les animations du réseau (clip PBC1 rangé en flash brute (deux emplacements), lu EN FLUX :
+// un tampon de 256 o). La carte déclare « anim-oled » à /api/register ; le serveur ne lui livre le pointeur du clip qu'avec firmware >= eink29bwr-2.13. L'e-ink garde l'affiche BWR et son cartel. Réseau, vote, capteur et OTA passent AVANT.
+#ifndef POD_OLED_ANIM
+#define POD_OLED_ANIM 0
+#endif
+#if POD_OLED_ANIM && !POD_OLED_STATUS
+#error "POD_OLED_ANIM exige POD_OLED_STATUS = 1"
+#endif
+#if POD_OLED_ANIM
+#include "pod_oled_flash.h"
+#include "pod_oled_stream.h"
+static bool podoaActive();
+static void podoaOnPull(const char* hash, uint32_t bytes);
+static void podoaAfterFrame(bool fetchOk);
+static void podoaOnRead(bool ok, int t10, int h10);
+static void podoaBegin();
+static void podoaService();
+#endif
 // POD_FRAME_CHUNK = 1 : la frame (9 472 o) est téléchargée en 4 morceaux de POD_FRAME_CHUNK_LEN octets (/api/pull-frame?off=&len=) avec un tampon TLS de réception de POD_TLS_RX octets au lieu de 16 Ko :
 // ≈ 12 Ko de tas en plus pendant le téléchargement (sonde du 24/10/2026 : tas minimal avec les plans alloués 9,8 Ko -> 22,1 Ko). Si le serveur ne connaît pas encore les morceaux, repli AUTOMATIQUE sur le téléchargement d'un seul tenant.
 #ifndef POD_FRAME_CHUNK
@@ -1290,6 +1308,11 @@ bool doRegister() {
 #endif
 // POD_BWR_END
 // POD_BWR_BEGIN
+#if POD_OLED_ANIM
+                "\"caps\":[\"anim-oled\"],"                                                    // OLED auxiliaire qui joue les animations : le serveur ne livre le pointeur du clip qu'à une carte qui le déclare
+#endif
+// POD_BWR_END
+// POD_BWR_BEGIN
 #if POD_OTA
                 "\"firmware\":\"" FIRMWARE_VERSION "\",\"publicKey\":\"" + pubHex + "\","
 #else
@@ -1834,6 +1857,11 @@ bool doPull() {
       JsonObject frameObj = doc["frame"];
       if (!frameObj.isNull()) newFrameId = frameObj["frameId"] | "";
     }
+// POD_BWR_BEGIN
+#if POD_OLED_ANIM
+    { JsonObject an = doc["anim"]; podoaOnPull(an.isNull() ? "" : (const char*)(an["hash"] | ""), an.isNull() ? 0 : (uint32_t)(an["bytes"] | 0)); }   // pointeur du clip (absent = image fixe)
+#endif
+// POD_BWR_END
 
     // ── Métadonnées cartel ────────────────────────────────────────────────
     JsonObject cm = doc["cartelMeta"];
@@ -1924,6 +1952,11 @@ bool doPull() {
                 newFrameId.c_str(), newFrameSource.c_str());
 
   bool fetchOk = doFetchFrame(newFrameId, newFrameSource);
+// POD_BWR_BEGIN
+#if POD_OLED_ANIM
+  podoaAfterFrame(fetchOk);                          // image fixe affichée sans pointeur : l'animation précédente s'arrête
+#endif
+// POD_BWR_END
 
   // CRITIQUE : même si le fetch/display échoue, on retourne true
   // pour que lastPullMs soit mis à jour dans le loop et éviter la
@@ -2164,6 +2197,9 @@ static bool ensureOLEDReady() {
 }
 /** État sur 4 lignes de 21 caractères (jamais d'identifiant Wi-Fi). */
 static void oledStatus(const char* a, const char* b, const char* c, const char* d) {
+#if POD_OLED_ANIM
+  if (podoaActive()) return;                       // l'animation a l'OLED
+#endif
   if (!ensureOLEDReady()) return;
   oled.clearDisplay(); oled.setTextColor(SSD1306_WHITE); oled.setTextSize(1);
   const char* ln[4] = { a, b, c, d };
@@ -2225,8 +2261,12 @@ static void sensorService() {
     if (ok) Serial.printf_P(PSTR("[DHT22] %d.%d C, %d.%d %% (en attente d'envoi : %u)\n"), t / 10, abs(t % 10), h / 10, h % 10, (unsigned)g_dht.n);
     else Serial.printf_P(PSTR("[DHT22] lecture impossible (capteur absent, mal cable ou somme fausse) — nouvel essai dans 5 min (echecs : %lu)\n"), (unsigned long)g_dht.readFails);
 #if POD_OLED_STATUS
+#if POD_OLED_ANIM
+    podoaOnRead(ok, t, h);                           // écran capteur de l'OLED (température, humidité, âge, Wi-Fi)
+#else
     { char l2[22], l3[22]; if (ok) snprintf(l2, sizeof l2, "T %d.%d C  H %d.%d %%", t / 10, abs(t % 10), h / 10, h % 10); else snprintf(l2, sizeof l2, "capteur: aucune lecture");
       snprintf(l3, sizeof l3, "lectures %lu echecs %lu", (unsigned long)g_dht.reads, (unsigned long)g_dht.readFails); oledStatus("PoD eink29bwr + DHT22", l2, l3, deviceId.c_str()); }
+#endif
 #endif
   } else if (a == poddht::A_SEND) {
     char body[260]; const size_t n = poddht::buildBody(g_dht, now, deviceId.c_str(), pairCode.c_str(), (int)WiFi.RSSI(), body, sizeof body);
@@ -2243,6 +2283,228 @@ static void sensorService() {
     else if (resp.indexOf("\"stored\":false") >= 0) { const uint32_t ns = poddht::parseNextSec(resp.c_str()); Serial.printf_P(PSTR("[DHT22] serveur : trop tot (attente %lu s) — lectures conservees\n"), (unsigned long)ns); poddht::onSend(g_dht, millis(), poddht::S_TOO_SOON, ns); }
     else { Serial.println(F("[DHT22] mesures envoyees et stockees")); poddht::onSend(g_dht, millis(), poddht::S_OK, 0); }
   }
+}
+#endif
+#if POD_OLED_ANIM
+// ─── OLED AUXILIAIRE : écran capteur + animations du réseau (POD_OLED_ANIM = 1, 29/10/2026 ; NON essayé sur une carte avant le canari de banc) ───────────────────────────────────────────────────────────
+// Sans animation : l'OLED montre la température, l'humidité, l'âge de la mesure et l'état du réseau (rafraîchi chaque minute). Avec une animation annoncée par /api/pull (pointeur `anim`, livré seulement à
+// une carte qui déclare « anim-oled » avec ce firmware) : le clip PBC1 est téléchargé PAR MORCEAUX dans l'emplacement INACTIF de la flash brute (pod_oled_flash.h : deux emplacements de 12 Ko à 0x3E0000, disjoints de la
+// frame sauvegardée de la surimpression), validé EN FLUX (CRC PBC1) puis activé par son en-tête : l'ancien clip reste tant que le nouveau n'est pas entièrement valide. Il est joué EN BOUCLE, en tranches coopératives
+// (pod_oled_stream.h : RAM de lecture = un tampon de 256 o, le tampon de l'OLED sert d'image). L'e-ink n'est pas concerné : il garde l'affiche BWR de la livraison et son cartel. Réseau, vote, capteur et OTA passent TOUJOURS
+// avant l'animation ; une erreur de clip ramène l'écran capteur (jamais d'écran bloqué).
+namespace podoa {
+static const uint32_t MAX_CLIP = 9216;          // plafond du serveur (lib/bench/clip.ts)
+static const uint32_t TLS_RX = 4096;            // tampon de réception TLS (comme les morceaux de frame)
+static const uint32_t MIN_TLS_HEAP = 20000, MIN_TLS_BLOCK = 12000;   // avant le téléchargement : TLS à tampon réduit + un morceau + l'écrivain de flash
+static const uint32_t MIN_PLAY_HEAP = 6000;     // pour une tranche de lecture : un tampon de 256 o
+static const uint32_t SLICE_MS = 2500;          // une tranche ne dépasse jamais cette durée (puis loop() reprend la main)
+static const uint8_t  MAX_TRIES = 4;            // essais de téléchargement par clip annoncé
+struct Flash {                                   // flash brute de l'ESP8266 (adresses absolues, comme la frame sauvegardée de la surimpression)
+  bool erase(uint32_t sector) { return ESP.flashEraseSector(sector); }
+  bool write(uint32_t addr, const uint8_t* p, size_t n) { return ESP.flashWrite(addr, (uint32_t*)p, n); }
+  bool read(uint32_t addr, uint8_t* p, size_t n) { return ESP.flashRead(addr, (uint32_t*)p, n); }
+};
+struct St {
+  bool on = false;
+  int slot = -1; uint32_t seq = 0;
+  char hash[65] = {0}; uint32_t bytes = 0;
+  char pendHash[65] = {0}; uint32_t pendBytes = 0;
+  uint8_t tries = 0; uint32_t nextTryMs = 0;
+  podbench::StreamInfo info; podoled::Player pl;
+  bool playing = false;                          // l'OLED est occupé par l'animation (l'écran d'état ne le repeint pas)
+  int16_t t10 = 0, h10 = 0; uint32_t readAtMs = 0; bool haveRead = false; bool readFailed = false;   // dernière lecture du DHT22 (pour l'écran capteur)
+  uint32_t drawnMs = 0; bool needSensor = true;
+};
+static St g;
+}  // namespace podoa
+
+static bool podoaActive() { return podoa::g.playing; }
+static void podoaOnPull(const char* hash, uint32_t bytes) {
+  const bool ok = hash && strlen(hash) == 64 && podoled::isHex64(hash) && bytes >= (uint32_t)(podbench::HEADER_BYTES + 5 + podbench::FRAME_BYTES) && bytes <= podoa::MAX_CLIP;
+  if (!ok) { podoa::g.pendHash[0] = 0; podoa::g.pendBytes = 0; return; }
+  if (strcmp(podoa::g.pendHash, hash) != 0) { podoa::g.tries = 0; podoa::g.nextTryMs = 0; }
+  strlcpy(podoa::g.pendHash, hash, sizeof podoa::g.pendHash); podoa::g.pendBytes = bytes;
+}
+/** Une frame NOUVELLE vient d'être affichée sans pointeur : l'animation précédente n'a plus lieu d'être (son en-tête est effacé, l'écran capteur revient). */
+static void podoaForget() {
+  podoa::St& s = podoa::g;
+  if (!s.on && !s.playing) return;
+  Serial.println(F("[OANIM] arret : nouvelle image fixe"));
+  if (s.slot >= 0) { podoa::Flash fl; podoled::dropSlot(fl, s.slot); }
+  s.on = false; s.playing = false; s.slot = -1; s.hash[0] = 0; s.bytes = 0; s.needSensor = true;
+}
+static void podoaAfterFrame(bool fetchOk) { if (fetchOk && podoa::g.pendHash[0] == 0) podoaForget(); }
+
+/** Validation EN FLUX du clip d'un emplacement (1 Ko de travail + 1 Ko de tampon, TLS fermé). */
+static bool podoaValidate(int slot, uint32_t n, podbench::StreamInfo& info) {
+  podoa::Flash fl;
+  uint8_t* cur = (uint8_t*)malloc(podbench::FRAME_BYTES); uint8_t* vb = (uint8_t*)malloc(PODBENCH_STREAM_BUF);
+  bool ok = false;
+  if (cur && vb) {
+    podoled::FlashSrc<podoa::Flash> src(&fl, slot, n);
+    const podbench::Err e = podbench::validateStream(src, n, info, cur, vb);
+    ok = (e == podbench::OK);
+    if (!ok) Serial.printf_P(PSTR("[OANIM] clip refuse (%s)\n"), podbench::errNameStream(e));
+  } else Serial.println(F("[OANIM] memoire insuffisante pour valider le clip"));
+  free(cur); free(vb);
+  return ok;
+}
+
+/** Au démarrage (avant le Wi-Fi : le tas est plein) : retrouve l'emplacement actif, VALIDE son clip entièrement, l'active ; sinon l'efface. */
+static void podoaBegin() {
+  podoa::Flash fl; podoled::SlotHdr h;
+  const int slot = podoled::activeSlot(fl, &h);
+  if (slot < 0) { Serial.println(F("[OANIM] aucun clip en flash")); return; }
+  if (!podoaValidate(slot, h.bytes, podoa::g.info)) { Serial.println(F("[OANIM] clip de la flash incoherent : efface")); podoled::dropSlot(fl, slot); return; }
+  podoa::St& s = podoa::g;
+  s.slot = slot; s.seq = h.seq; s.bytes = h.bytes; memcpy(s.hash, h.hash, 64); s.hash[64] = 0; s.on = true; s.pl.reset(s.info);
+  Serial.printf_P(PSTR("[OANIM] clip trouve en flash (emplacement %d, bloc %.12s..., %u o, %u images) : lecture en boucle\n"), slot, s.hash, (unsigned)s.bytes, (unsigned)s.info.frames);
+}
+
+/** Télécharge le clip annoncé dans l'emplacement INACTIF (morceaux de 128 o, TLS à tampon réduit, fermé au retour), le valide EN FLUX, puis écrit l'en-tête. Appelé planes image LIBÉRÉES. */
+static bool podoaAcquire() {
+  podoa::St& s = podoa::g;
+  const uint32_t n = s.pendBytes;
+  Serial.printf_P(PSTR("[OANIM] acquisition : %u o, tas %u, plus gros bloc %u (besoin >= %u / %u)\n"), (unsigned)n, (unsigned)ESP.getFreeHeap(), (unsigned)ESP.getMaxFreeBlockSize(), (unsigned)podoa::MIN_TLS_HEAP, (unsigned)podoa::MIN_TLS_BLOCK);
+  if (ESP.getFreeHeap() < podoa::MIN_TLS_HEAP || ESP.getMaxFreeBlockSize() < podoa::MIN_TLS_BLOCK) { Serial.println(F("[OANIM] memoire insuffisante pour un TLS maintenant : report")); return false; }
+  podoa::Flash fl;
+  const int target = (s.slot == 0) ? 1 : 0;                              // l'emplacement actif n'est JAMAIS touché
+  podoled::SlotWriter<podoa::Flash>* w = (podoled::SlotWriter<podoa::Flash>*)malloc(sizeof(podoled::SlotWriter<podoa::Flash>));
+  if (!w) { Serial.println(F("[OANIM] malloc de l'ecrivain impossible")); return false; }
+  new (w) podoled::SlotWriter<podoa::Flash>(&fl, target);
+  bool got = false;
+  const unsigned long t0 = millis();
+  if (!w->begin()) Serial.println(F("[OANIM] effacement de l'emplacement impossible"));
+  else {                                                                 // effacement AVANT d'ouvrir la connexion (≈ 150 ms bloquants)
+    WiFiClientSecure client; client.setInsecure(); client.setBufferSizes(podoa::TLS_RX, 512);
+    HTTPClient http;
+    if (http.begin(client, String(SERVER_URL) + "/api/block-clip?hash=" + String(s.pendHash))) {
+      http.setTimeout(15000); http.useHTTP10(true);
+      const int code = http.GET();
+      if (code == 200) {
+        const int declared = http.getSize();
+        if (declared < 0 || (uint32_t)declared == n) {
+          WiFiClient* st = http.getStreamPtr();
+          uint8_t chunk[128]; uint32_t total = 0; bool werr = false;
+          while (total < n && millis() - t0 < 25000UL) {
+            if (st->available()) {
+              const size_t want = (n - total) < sizeof chunk ? (n - total) : sizeof chunk;
+              const size_t r = st->readBytes(chunk, want);
+              if (r > 0) { if (!w->put(chunk, r)) { werr = true; break; } total += (uint32_t)r; }
+            } else delay(5);
+          }
+          got = (total == n) && !werr;
+          if (werr) Serial.println(F("[OANIM] ecriture en flash impossible"));
+        } else Serial.printf_P(PSTR("[OANIM] taille annoncee %d != %u\n"), declared, (unsigned)n);
+      } else Serial.printf_P(PSTR("[OANIM] clip : HTTP %d\n"), code);
+      http.end();
+    } else Serial.println(F("[OANIM] http.begin impossible"));
+  }                                                                      // TLS fermé ici, AVANT la validation
+  bool ok = got && w->finishData();
+  if (!ok) { s.tries++; Serial.println(F("[OANIM] telechargement incomplet : ancien clip conserve")); free(w); return false; }
+  podbench::StreamInfo info;
+  if (!podoaValidate(target, n, info)) { s.tries = podoa::MAX_TRIES; free(w); return false; }          // clip invalide : jamais réessayé (même hash = même clip)
+  const uint32_t seq = s.seq + 1;
+  ok = w->commit(s.pendHash, seq);
+  free(w);
+  if (!ok) { s.tries++; Serial.println(F("[OANIM] ecriture de l'en-tete impossible")); return false; }
+  const int old = s.slot;
+  s.slot = target; s.seq = seq; strlcpy(s.hash, s.pendHash, sizeof s.hash); s.bytes = n; s.info = info; s.on = true; s.playing = false; s.pl.reset(info); s.tries = 0;
+  if (old >= 0) podoled::dropSlot(fl, old);                              // l'ancien clip n'est plus nécessaire : son en-tête est effacé (le nouveau est actif et validé)
+  Serial.printf_P(PSTR("[OANIM] clip recu en %lu ms (emplacement %d, %u images) : lecture en boucle\n"), millis() - t0, target, (unsigned)info.frames);
+  return true;
+}
+
+/** Écran capteur de l'OLED : température (grand), humidité, âge de la mesure, Wi-Fi. Rien n'est inventé : sans mesure, il le dit. */
+static void podoaSensorScreen() {
+  if (!ensureOLEDReady()) return;
+  podoa::St& s = podoa::g;
+  oled.clearDisplay(); oled.cp437(true); oled.setTextColor(SSD1306_WHITE);
+  char b[24];
+  if (s.haveRead) {
+    oled.setTextSize(3); oled.setCursor(0, 0); snprintf(b, sizeof b, "%d.%d", (int)(s.t10 / 10), (int)abs(s.t10 % 10)); oled.print(b);
+    oled.setTextSize(2); oled.setCursor(92, 4); oled.write((uint8_t)248); oled.print("C");
+    oled.setTextSize(2); oled.setCursor(0, 28); snprintf(b, sizeof b, "%d.%d%%", (int)(s.h10 / 10), (int)abs(s.h10 % 10)); oled.print(b);
+    oled.setTextSize(1); oled.setCursor(80, 32); oled.print(F("humidite"));
+    const uint32_t ageMin = (millis() - s.readAtMs) / 60000UL;
+    oled.setCursor(0, 49);
+    if (ageMin < 1) oled.print(F("mesure a l'instant"));
+    else if (ageMin < 90) { snprintf(b, sizeof b, "mesure il y a %lu min", (unsigned long)ageMin); oled.print(b); }
+    else { snprintf(b, sizeof b, "mesure il y a %lu h", (unsigned long)(ageMin / 60UL)); oled.print(b); }
+  } else {
+    oled.setTextSize(1); oled.setCursor(0, 8); oled.print(s.readFailed ? F("capteur : aucune lecture") : F("en attente de la"));
+    oled.setCursor(0, 20); oled.print(s.readFailed ? F("(cable DHT22 ?)") : F("premiere mesure..."));
+  }
+  oled.setTextSize(1); oled.setCursor(0, 57);
+  if (WiFi.status() == WL_CONNECTED) { snprintf(b, sizeof b, "wifi %d dBm  bloc #%d", (int)WiFi.RSSI(), currentBlockIndex); oled.print(b); } else oled.print(F("wifi : deconnecte"));
+  oled.display();
+  s.drawnMs = millis(); s.needSensor = false;
+}
+static void podoaOnRead(bool ok, int t10, int h10) {
+  podoa::St& s = podoa::g;
+  if (ok) { s.t10 = (int16_t)t10; s.h10 = (int16_t)h10; s.readAtMs = millis(); s.haveRead = true; s.readFailed = false; } else if (!s.haveRead) s.readFailed = true;
+  s.needSensor = true;
+  if (!s.playing) podoaSensorScreen();
+}
+
+/** Une tâche réseau (pull, vote, observation, capteur, OTA) arrive dans moins de 2 s, ou la carte n'est pas prête : l'animation s'efface devant elle. */
+static bool podoaNetDueSoon() {
+  const uint32_t now = millis();
+  if (!registered || WiFi.status() != WL_CONNECTED) return true;
+  if ((long)(lastPullMs + nextPullIntervalMs - now) < 2000L) return true;
+  if (pendingCandidateId.length() > 0 && (long)(lastValidateMs + VALIDATE_INTERVAL - now) < 2000L) return true;
+  if (pendingObsHashes.length() > 0) return true;
+#if POD_SENSOR_DHT22
+  if (paired && g_dhtInit && ((int32_t)(g_dht.nextReadMs - now) < 2000 || (g_dht.n > 0 && (int32_t)(g_dht.nextSendMs - now) < 2000))) return true;
+#endif
+#if POD_OTA
+  if (podotaesp::g_offerSet) return true;
+#endif
+  return false;
+}
+
+/** Appelé à CHAQUE tour de loop() : télécharge un clip annoncé (réseau libre) ; sinon joue une tranche ; sans animation, rafraîchit l'écran capteur chaque minute. */
+static void podoaService() {
+  podoa::St& s = podoa::g;
+  const uint32_t now = millis();
+  // 1. un clip annoncé et inconnu : acquisition (planes image libérées avant le TLS, réallouées après — règle du projet)
+  if (s.pendHash[0] && strcmp(s.pendHash, s.hash) != 0 && s.tries < podoa::MAX_TRIES && (int32_t)(now - s.nextTryMs) >= 0 &&
+      registered && paired && WiFi.status() == WL_CONNECTED && pendingCandidateId.length() == 0 && pendingObsHashes.length() == 0 && !podoaNetDueSoon()) {
+    free(blackBuf); blackBuf = nullptr; free(redBuf); redBuf = nullptr;
+    const bool ok = podoaAcquire();
+    blackBuf = (uint8_t*)malloc(BUF_SIZE); redBuf = (uint8_t*)malloc(BUF_SIZE);
+    if (!blackBuf || !redBuf) { Serial.println(F("[OANIM] malloc des tampons image impossible — redemarrage")); ESP.restart(); }
+    memset(blackBuf, 0xFF, BUF_SIZE); memset(redBuf, 0xFF, BUF_SIZE);
+    if (!ok) s.nextTryMs = millis() + 60000UL;
+    return;
+  }
+  if (podoaNetDueSoon()) return;
+  // 2. lecture
+  if (s.on) {
+    if (!ensureOLEDReady() || ESP.getFreeHeap() < podoa::MIN_PLAY_HEAP) return;
+    uint8_t* buf = (uint8_t*)malloc(PODOLED_BUF);
+    if (!buf) return;
+    podoa::Flash fl;
+    podoled::FlashSrc<podoa::Flash> src(&fl, s.slot, s.bytes);
+    Wire.setClock(400000);
+    const uint32_t t0 = millis();
+    podoled::Tick t = podoled::T_WAIT;
+    s.playing = true;
+    while (millis() - t0 < podoa::SLICE_MS) {
+      t = s.pl.tick(src, oled.getBuffer(), buf, []() { oled.display(); }, millis());
+      if (t == podoled::T_IO || t == podoled::T_DONE) break;
+      if (t == podoled::T_WAIT) { delay(2); if (podoaNetDueSoon()) break; }
+    }
+    Wire.setClock(100000);
+    free(buf);
+    if (t == podoled::T_IO) {                                            // lecture impossible : on oublie ce clip, l'écran capteur revient
+      Serial.println(F("[OANIM] lecture impossible : animation abandonnee"));
+      podoled::dropSlot(fl, s.slot); s.on = false; s.playing = false; s.slot = -1; s.hash[0] = 0; s.needSensor = true;
+    }
+    return;
+  }
+  // 3. pas d'animation : l'écran capteur (âge de la mesure) se rafraîchit chaque minute
+  if (s.needSensor || (now - s.drawnMs) >= 60000UL) podoaSensorScreen();
 }
 #endif
 /** Dessine un QR de côté P pixels (modules de largeur entière variable, bornes floor(i·P/n) : P exact, quelle que soit la version) dont le coin haut-gauche LOGIQUE est (x0, y0) ; renvoie P (0 si impossible). */
@@ -2430,6 +2692,11 @@ void setup() {
   wifiRecordBoot();                                  // Wi-Fi lu dans l'EEPROM ; sans enregistrement valide : portail (ou configuration série), jamais de réseau tenté
 #endif
 // POD_BWR_END
+// POD_BWR_BEGIN
+#if POD_OLED_ANIM
+  podoaBegin();                                      // clip rangé en flash : validé EN FLUX avant le Wi-Fi (le tas est plein)
+#endif
+// POD_BWR_END
 
   WiFi.mode(WIFI_STA);
   WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
@@ -2612,6 +2879,11 @@ void loop() {
       memset(blackBuf, 0xFF, BUF_SIZE); memset(redBuf, 0xFF, BUF_SIZE);
     }
   }
+#endif
+// POD_BWR_END
+// POD_BWR_BEGIN
+#if POD_OLED_ANIM
+  podoaService();                                    // téléchargement d'un clip annoncé, ou une tranche de lecture ; jamais avant une tâche réseau
 #endif
 // POD_BWR_END
   delay(100);

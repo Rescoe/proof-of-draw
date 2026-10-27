@@ -26,6 +26,18 @@ export const ANIM_POINTER_FIRMWARE: Record<string, { prefix: string; min: [numbe
   oled096: { prefix: "multiscreen", min: [2, 2] },
 };
 
+/**
+ * OLED AUXILIAIRE d'un e-ink BWR 2,9″ (29/10/2026) : la carte garde UN seul écran déclaré (`eink29bwr`) — pas de seconde file d'écran, pas de seconde frame, pas de second ACK. Une animation lui livre
+ * l'affiche BWR habituelle ET le pointeur du clip, que l'OLED joue en boucle. Trois conditions CUMULATIVES : écran eink29bwr, capacité DÉCLARÉE « anim-oled » (firmware compilé avec l'OLED), firmware
+ * eink29bwr-2.13 ou plus (le premier qui sache lire le clip). Une carte BWR sans OLED, ou plus ancienne, ne reçoit jamais le pointeur : sa réponse /api/pull est inchangée.
+ */
+export const ANIM_OLED_AUX_FIRMWARE = { prefix: "eink29bwr", min: [2, 13] as [number, number] };
+export function animOledAuxCapable(device: { screens?: readonly string[] | null; firmware?: string | null; caps?: readonly string[] | null } | null | undefined): boolean {
+  if (!device || !device.firmware || !device.screens?.includes("eink29bwr") || !device.caps?.includes("anim-oled")) return false;
+  const m = new RegExp(`^${ANIM_OLED_AUX_FIRMWARE.prefix}-(\\d+)\\.(\\d+)`).exec(device.firmware);
+  return !!m && (Number(m[1]) > ANIM_OLED_AUX_FIRMWARE.min[0] || (Number(m[1]) === ANIM_OLED_AUX_FIRMWARE.min[0] && Number(m[2]) >= ANIM_OLED_AUX_FIRMWARE.min[1]));
+}
+
 /** Cet appareil sait-il jouer une animation sur CET écran ? */
 export function animCapable(device: { screens?: readonly string[]; firmware?: string | null } | null | undefined, screen: string): boolean {
   return !!device && !!device.screens?.includes(screen) && supportsAnimPointer([screen], device.firmware);
@@ -69,10 +81,11 @@ export function withoutAnimPointer(meta: Record<string, unknown>): Record<string
 
 /** Bloc `anim` de la réponse /api/pull : seulement pour un écran capable ET une frame qui porte un pointeur. */
 export function animPullMeta(
-  device: { screens?: string[]; firmware?: string },
+  device: { screens?: string[]; firmware?: string; caps?: readonly string[] },
   screen: string | null | undefined,
   payload: Record<string, unknown> | null | undefined,
 ): AnimPointer | undefined {
+  if (screen === "eink29bwr") return animOledAuxCapable(device) ? readAnimPointer(payload) ?? undefined : undefined;   // OLED auxiliaire (voir plus haut)
   if (!screen || !device.screens?.includes(screen) || !supportsAnimPointer([screen], device.firmware)) return undefined;
   return readAnimPointer(payload) ?? undefined;
 }

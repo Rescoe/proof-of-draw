@@ -8,6 +8,7 @@ const root = path.join(__dirname, "..");
 
 const MASTERS = {
   "pod_bench.h": "arduino_uno_r4/pod_uno_r4/pod_bench.h",          // lecteur de clips (aucune dépendance Arduino)
+  "pod_bench_stream.h": "arduino_uno_r4/pod_uno_r4/pod_bench_stream.h",   // validation en flux (aucune dépendance Arduino) : aussi utilisée par l'OLED auxiliaire du BWR (29/10/2026)
   "pod_bench_esp.h": "esp8266/_shared/pod_bench_esp.h",            // réseau + mesures ESP8266
   "pod_anim_esp.h": "esp8266/_shared/pod_anim_esp.h",              // animation résidente (clip en flash, lecture en boucle) ESP8266
   "pod_metrics.h": "esp8266/_shared/pod_metrics.h",                // validation réelle : métriques entières en flux (pur C++)
@@ -40,7 +41,8 @@ const MASTERS = {
 const RENDER_ESP = ["esp8266/esp_eink_2.9BWR", "esp8266/esp_tft1.8", "esp8266/esp_eink_2.7BW", "esp8266/esp_eink_2.7BW_OLED"], RENDER_R4 = ["arduino_uno_r4/pod_uno_r4_eink29", "arduino_uno_r4/pod_uno_r4_tft18", "arduino_uno_r4/pod_uno_r4_eink27", "arduino_uno_r4/pod_uno_r4_eink27_oled"];
 const ED_STACK_R4 = [...RENDER_R4, "arduino_uno_r4/pod_uno_r4"];
 const COPIES = {
-  "pod_bench.h": ["esp8266/esp_tft1.8/pod_bench.h", "esp8266/esp_eink_2.7BW_OLED/pod_bench.h", "arduino_uno_r4/pod_uno_r4_tft18_env/pod_bench.h"],
+  "pod_bench.h": ["esp8266/esp_tft1.8/pod_bench.h", "esp8266/esp_eink_2.7BW_OLED/pod_bench.h", "arduino_uno_r4/pod_uno_r4_tft18_env/pod_bench.h", "esp8266/esp_eink_2.9BWR/pod_bench.h"],
+  "pod_bench_stream.h": ["arduino_uno_r4/pod_uno_r4_tft18_env/pod_bench_stream.h", "esp8266/esp_eink_2.9BWR/pod_bench_stream.h"],
   "pod_bench_esp.h": ["esp8266/esp_tft1.8/pod_bench_esp.h", "esp8266/esp_eink_2.7BW_OLED/pod_bench_esp.h"],
   "pod_anim_esp.h": ["esp8266/esp_tft1.8/pod_anim_esp.h", "esp8266/esp_eink_2.7BW_OLED/pod_anim_esp.h"],
   // Validation réelle : e-ink 2,9" BWR, TFT 1,8", multiscreen et e-ink 2,7" seul (ESP8266)

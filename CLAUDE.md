@@ -386,6 +386,8 @@ route `/api/candidate-clip` (ticket HMAC `CLIP_TICKET_SECRET`), mode `ANIM_V3_MO
 
 `docs/MATRICE_COMPATIBILITE_MATERIELLE.md` est la source canonique des profils matériels, de leurs versions, de leurs modules et de leur niveau de preuve. À chaque nouveau build, flash, essai matériel ou release OTA, mets à jour la ligne concernée dans le même lot. Distingue impérativement `C` (compilé), `M` (carte), `V2` (vote/affichage réel) et `OTA` (mise à jour Internet prouvée) ; ne présente jamais une combinaison capteur/écran comme validée par déduction. Une option ne rejoint la page Installer publique qu'après le niveau de preuve défini par la matrice.
 
+**BWR + OLED d'animations (29/10/2026, `esp8266/esp_eink_2.9BWR`, option `POD_OLED_ANIM` = 0 par défaut, COMPILÉ + HÔTE seulement, jamais flashé, aucune release)** : `docs/LOT_BWR_OLED_ANIMATIONS_2026_10_29.md`. La carte garde UN seul écran déclaré (`eink29bwr`) ; une animation lui livre l'affiche BWR + le pointeur `anim` (si elle déclare `caps:["anim-oled"]` avec `eink29bwr >= 2.13`) ; le clip est rangé en **flash brute** (deux emplacements de 12 Ko à 0x3E0000, disjoints de la frame sauvegardée de la surimpression à 0x3F0000 — **jamais de système de fichiers sur ce firmware : il formaterait cette frame**), validé et joué **en flux** sur l'OLED (`pod_oled_stream.h`, `pod_oled_flash.h` : RAM de lecture = 256 o, le tampon de l'OLED sert d'image), après le réseau, le vote, le capteur et l'OTA. Option à 0 = binaire identique à 2.12. **Aucune release `ota-releases/…` ne se fusionne dans `main` sans le GO : la fusion envoie.** Canari avec un VRAI OLED obligatoire avant toute publication.
+
 ## Non-goals
 
 Ne pas faire :

@@ -17,6 +17,7 @@ import { createHash } from "node:crypto";
 import { CLIP, clipPixel, clipPlayMs, clipStats, decodeClip, encodeClip, validateClipInput, type ClipInput } from "@/lib/bench/clip";
 import { computeComplexity } from "@/lib/crypto";
 import type { BenchScreen } from "@/lib/bench/screens";
+import { rgbaToScreenPayload } from "@/lib/canvasToScreen";
 
 export type AnimScreen = BenchScreen;
 
@@ -100,6 +101,25 @@ export function posterFor(frame: Uint8Array, screen: AnimScreen, fg: number, bg:
     }
   }
   return b64(out);
+}
+
+/**
+ * Affiche d'une image pour un e-ink BWR 2,9″ à OLED auxiliaire (29/10/2026) : canvas 296×128, fond blanc, clip agrandi ×2 (256×128) centré (x = 20), pixels allumés en NOIR ; conversion par la voie
+ * validée (rgbaToScreenPayload). Le cartel gravé par le firmware occupe le haut de l'image : purement visuel, l'affiche reste complète dans le bloc.
+ */
+export function posterBwr(frame: Uint8Array): { screen: "eink29bwr"; black: string; red: string } {
+  const W = 296, H = 128, X0 = 20;
+  const rgba = new Uint8Array(W * H * 4).fill(255);
+  for (let y = 0; y < CLIP.H; y++) for (let x = 0; x < CLIP.W; x++) {
+    if (!clipPixel(frame, x, y)) continue;
+    for (let dy = 0; dy < 2; dy++) for (let dx = 0; dx < 2; dx++) {
+      const o = ((y * 2 + dy) * W + X0 + x * 2 + dx) * 4;
+      rgba[o] = 0; rgba[o + 1] = 0; rgba[o + 2] = 0;
+    }
+  }
+  const p = rgbaToScreenPayload(rgba, "eink29bwr");
+  if (p.screen !== "eink29bwr") throw new Error("poster BWR : conversion inattendue");
+  return { screen: "eink29bwr", black: p.black, red: p.red };
 }
 
 /** Dérive TOUT d'un clip : c'est la fonction que le serveur rejoue à la soumission, et qu'un tiers peut rejouer pour vérifier un bloc. */

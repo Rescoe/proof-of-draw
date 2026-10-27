@@ -27,7 +27,8 @@ export const VOTE_V2_FIRMWARE: Record<string, [number, number]> = {
 // ── Capacités de vote DÉCLARÉES (28/10/2026, lot 5 du plan docs/PLAN_RESEAU_VALIDATEURS_ET_STATION_R4_2026_10_28.md) ───────────────────────────────────────────────
 // Affichage (`screens`), mesure (`sensors`), vote (`caps`) et mise à jour à distance sont QUATRE capacités indépendantes. `caps` est une liste FERMÉE et bornée envoyée à /api/register ;
 // une déclaration seule ne compte JAMAIS dans le quorum : le serveur exige aussi que la famille et la version du firmware soient autorisées, et le vote reste vérifié cryptographiquement.
-export const VOTE_CAPS = ["vote-static-v2", "vote-anim-v3"] as const;
+// 29/10/2026 : « anim-oled » = un OLED AUXILIAIRE d'un e-ink BWR qui joue le clip des animations du réseau (lib/anim/pointer.ts, animOledAux*). Ce n'est PAS une capacité de vote : elle ne compte jamais dans le quorum.
+export const VOTE_CAPS = ["vote-static-v2", "vote-anim-v3", "anim-oled"] as const;
 export type VoteCap = (typeof VOTE_CAPS)[number];
 
 /** Lecture stricte de `caps` : tableau de 1 à 4 chaînes DISTINCTES de la liste fermée ; toute autre forme => undefined (aucune capacité déclarée). Jamais de texte libre persisté. */

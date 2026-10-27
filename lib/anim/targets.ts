@@ -5,9 +5,9 @@
 // conversion — à une seule condition : le firmware déclaré de l'appareil la joue réellement (animCapable). Jamais d'e-ink, jamais de firmware ancien ou inconnu.
 
 import { BENCH_SCREENS } from "@/lib/bench/screens";
-import { animCapable } from "@/lib/anim/pointer";
+import { animCapable, animOledAuxCapable } from "@/lib/anim/pointer";
 
-export interface TargetDevice { screens?: string[]; firmware?: string | null }
+export interface TargetDevice { screens?: string[]; firmware?: string | null; caps?: string[] }
 export interface AnimTarget { deviceId: string; screen: string }
 
 /** Les écrans qui peuvent jouer un clip. */
@@ -32,6 +32,25 @@ export function animTargets(
       seen.add(key);
       if (animCapable(device(deviceId), screen)) out.push({ deviceId, screen });
     }
+  }
+  return out;
+}
+
+/**
+ * Cartes e-ink BWR 2,9″ à OLED AUXILIAIRE (29/10/2026) : membres de `pool:screen:eink29bwr` qui déclarent « anim-oled » avec un firmware qui sait lire le clip. Elles reçoivent l'affiche BWR + le pointeur
+ * (leur frame `eink29bwr`, un seul ACK) ; l'OLED joue le clip. Aucun e-ink sans OLED déclaré n'en fait partie.
+ */
+export function animOledAuxTargets(
+  ids: readonly string[],
+  banned: (deviceId: string) => boolean,
+  device: (deviceId: string) => TargetDevice | null,
+): AnimTarget[] {
+  const out: AnimTarget[] = [];
+  const seen = new Set<string>();
+  for (const deviceId of ids) {
+    if (seen.has(deviceId) || banned(deviceId)) continue;
+    seen.add(deviceId);
+    if (animOledAuxCapable(device(deviceId))) out.push({ deviceId, screen: "eink29bwr" });
   }
   return out;
 }
