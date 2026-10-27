@@ -21,6 +21,8 @@ struct PodCheck {
   size_t        bytes;     // octets lus
   char          hash[65];  // SHA-256 hex du contenu lu
   PodMetricsOut m;         // e, t, r, s en ppm
+  bool          tft;        // le candidat est un écran couleur RGB565 (tft18, tft28)
+  bool          uniformTft; // vrai seulement si CHAQUE pixel RGB565 est identique (même règle que l'ESP : pod_vote_esp.h)
   uint32_t      ms;        // durée de lecture + calcul — à reporter au Serial pour les mesures
 };
 
@@ -40,7 +42,7 @@ inline bool podKindFromName(const char* name, PodScreenKind* k) {
 template <class Reader>
 inline bool podCheckStream(Reader& rd, PodScreenKind kind, size_t expectBytes, uint8_t* scratch, size_t scratchLen, uint8_t* chunk, size_t chunkLen, PodCheck* out) {
   const uint32_t t0 = millis();
-  out->bytes = 0; out->ok = false;
+  out->bytes = 0; out->ok = false; out->tft = false; out->uniformTft = false;
   if (expectBytes == 0 || expectBytes > POD_MAX_CONTENT || chunkLen == 0) return false;
 
   static PodFeeder feeder;       // statiques : ni pile ni tas
@@ -70,6 +72,8 @@ inline bool podCheckStream(Reader& rd, PodScreenKind kind, size_t expectBytes, u
   for (int i = 0; i < 32; i++) { out->hash[2 * i] = HEXCH[digest[i] >> 4]; out->hash[2 * i + 1] = HEXCH[digest[i] & 15]; }
   out->hash[64] = 0;
   if (!feeder.finish(&out->m)) return false;
+  out->uniformTft = feeder.isUniformTft();      // 28/10/2026 : un fond noir (ou coloré) avec des traits colorés n'est PAS « vide »
+  out->tft = kind == POD_TFT18 || kind == POD_TFT28;
   out->ms = millis() - t0;
   out->ok = true;
   return true;
@@ -79,7 +83,7 @@ inline bool podCheckStream(Reader& rd, PodScreenKind kind, size_t expectBytes, u
 inline const char* podVerdict(const PodCheck& c, const String& announcedHash, bool* accept) {
   *accept = false;
   if (announcedHash != String(c.hash)) return "hash";
-  if (c.m.e == 0 && c.m.t == 0) return "blank";                     // image uniforme (vide ou pleine)
+  if (c.tft ? c.uniformTft : (c.m.e == 0 && c.m.t == 0)) return "blank";   // image uniforme ; écran couleur : tous les pixels identiques (la projection « encre = ≠ blanc » ne voit pas les traits colorés sur fond non blanc)
   if (c.m.e > 980000UL && c.m.t > 900000UL) return "noise";         // bruit pur
   *accept = true;
   return "";
