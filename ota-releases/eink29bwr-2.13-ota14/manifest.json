@@ -1,0 +1,31 @@
+{
+  "schema": "pod-ota-manifest-v2",
+  "releaseId": "eink29bwr-2.13-ota14",
+  "family": "esp8266-eink29bwr",
+  "profile": {
+    "board": "esp8266",
+    "screen": "eink29bwr",
+    "flash": "4M2M"
+  },
+  "channel": "canary",
+  "firmwareVersion": "eink29bwr-2.13",
+  "otaSeq": 14,
+  "minOtaSeq": 1,
+  "revokedSeqs": [],
+  "url": "/firmware/eink29bwr-2.13-ota14/image.bin",
+  "size": 557008,
+  "sha256": "fa81f83933fd11b75f473b1ee85a55775d69c614d7e14893e8fd72db60cc03bb",
+  "wave": {
+    "of": 100,
+    "upTo": 100
+  },
+  "canaryDevices": [
+    "dev_T46HBXG1"
+  ],
+  "notes": "eink29bwr-2.13 : OLED auxiliaire (ecran capteur propre + animations du reseau en flux, clip en flash brute), canari dev_T46HBXG1",
+  "signature": {
+    "alg": "rsa2048-pkcs1-sha256",
+    "keyId": "ota-a",
+    "sig": "tAdp5wTKMVSPDkkUPfemze3w8f6BZ9ECQICbECf8uzr2nN5gzYaBGMBKdHA/1RPsj9uYDF6rVv/U0kKYbdGsPUSMzpuXmhNJpaBYpZ+sjUjpCzvBCege71Ya5PtxF1XTXu6qhaNokmitI+bOIjpZumzh70OyRdJuI+SoaezOa2ywDdFFPCcp/zW+M0/gB6LjXLrOC6lxvIJ/bzU/UIykZG+Fkr7MmgeIJMk1NMfVBeBNSOwGXzYGmdPmtGhjmsLMxGAC1RdGf7HcQXmr8X11VxYjlS1soCVU+NW3xT5xcHsbUIP+FAjFve/CQHdCs5e/pqeFbe2bMxGGDF9ZM84pJQ=="
+  }
+}
