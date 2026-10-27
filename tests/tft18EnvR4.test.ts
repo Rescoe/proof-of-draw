@@ -43,7 +43,7 @@ test("ENV R4 : TOUT le JSON est décodé sur la pile de travail (4 deserializeJs
 
 test("ENV R4 : l'affichage TFT n'est atteint que depuis la pile de travail (enveloppes), le flux de l'image ou setup()", () => {
   const lines = code.split("\n");
-  const allowed = new Set(["tftStatusImpl", "drawCartelImpl", "displayKeyMaterialOnceImpl", "displayOnboardingQRImpl", "streamFrame", "podStreamFrame", "setup", "envDrawDataImpl", "envBar", "restoreFrameImpl", "runAnim", "histDrawSeries", "histDrawImpl"]);
+  const allowed = new Set(["tftStatusImpl", "drawCartelImpl", "displayKeyMaterialOnceImpl", "displayOnboardingQRImpl", "streamFrame", "podStreamFrame", "setup", "envDrawDataImpl", "envBar", "restoreFrameImpl", "runAnim", "histDrawSeries", "histDetailImpl", "histSynthImpl"]);
   lines.forEach((l, i) => { if (/\btft\.\w+\(/.test(l) && !/^Adafruit_ST7735 tft/.test(l)) { const f = functionAt(lines, i); assert.ok(allowed.has(f), `tft.* dans ${f || "?"} : ${l.trim()}`); } });
   for (const w of ["tftStatus", "drawCartel", "displayKeyMaterialOnce", "displayOnboardingQR"]) {
     const i = code.indexOf(`) ${w}(`);                                   // enveloppe « static void __attribute__((noinline)) w(...) { PodNetInfo ni; auto wk = [&]() { wImpl(... »
@@ -63,9 +63,9 @@ test("ENV R4 : la voie du vote lit le candidat dans une transaction FERMÉE avan
 });
 
 test("ENV R4 : l'enregistrement déclare les capteurs seulement avec POD_SENSORS, jamais ne se déclare « sensor » ; les grandeurs existent côté serveur", async () => {
-  assert.match(ino, /#if POD_SENSORS\n#define SENSORS_JSON ",\\"sensors\\":\[\\"temp\\",\\"hum\\",\\"voc\\",\\"rssi\\",\\"lat\\",\\"dl\\"\]"\n#else\n#define SENSORS_JSON ""/);
+  assert.match(ino, /#if POD_SENSORS\n#define SENSORS_JSON ",\\"sensors\\":\[\\"temp\\",\\"hum\\",\\"voc\\",\\"vocidx\\",\\"rssi\\",\\"lat\\",\\"dl\\"\]"\n#else\n#define SENSORS_JSON ""/);
   const { MEASURE_KINDS } = await import("../lib/measures");
-  for (const k of ["temp", "hum", "voc", "rssi", "lat", "dl"]) assert.ok((MEASURE_KINDS as Record<string, unknown>)[k], k);
+  for (const k of ["temp", "hum", "voc", "vocidx", "rssi", "lat", "dl"]) assert.ok((MEASURE_KINDS as Record<string, unknown>)[k], k);
 });
 
 test("ENV R4 : OTA dans la famille uno-r4-wifi-tft18, chemin /firmware-r4/tft18/<canal>/ (fichiers statiques), clés/secrets/drapeaux de banc ignorés par git", () => {
@@ -102,4 +102,14 @@ test("ENV R4 : SD partagée avec le TFT — l'image est écrite sur la carte AVA
   assert.match(code, /podWorkRun\(play, &ni\)/);
   assert.match(code, /podWorkRun\(chk, &ni\)/);
   assert.equal(/\bSD\.(open|begin|exists|remove)\(/.test(code.slice(code.indexOf("static void envTick"))), false, "aucun appel SD direct depuis envTick");
+});
+
+test("ENV R4 : l'indice COV de Sensirion est une grandeur du serveur (1..500, entier) acceptée dans un lot de mesures", async () => {
+  const { MEASURE_KINDS, parseMeasureBatch } = await import("../lib/measures");
+  assert.deepEqual([MEASURE_KINDS.vocidx.min, MEASURE_KINDS.vocidx.max, MEASURE_KINDS.vocidx.scale], [1, 500, 1]);
+  const ok = parseMeasureBatch({ r: [{ a: 1800, temp: 211, hum: 719, voc: 33100, vocidx: 87 }, { a: 0, vocidx: 120 }] });
+  assert.equal(ok.ok, true);
+  assert.equal(parseMeasureBatch({ r: [{ a: 0, vocidx: 501 }] }).ok, false);
+  assert.match(ino, /Sensirion Gas Index Algorithm/);
+  assert.match(ino, /g_vocAlg\.process\(/);
 });
