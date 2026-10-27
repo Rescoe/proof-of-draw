@@ -1,5 +1,10 @@
 # Produit R4 complet : TFT 1,8″ + vote v2 + capteurs + OTA (`r4tft18-2.0`, 26/10/2026)
 
+> **Statut révisé au 28/10/2026** (la chronologie ci-dessous reste historique) : firmware courant `r4tft18-2.3` sur `dev_I25D9Z7A` (TFT 1,8″, DHT22 D2, SGP40 I²C, microSD D4).
+> **Observé sur la carte (`M`)** : démarrage, Ed25519, register 200, pull 200, DHT22, SGP40 (brut), SD, une OTA A→B de laboratoire du produit complet (clés de test, HTTP local). **Vote** : un refus signé `blank` (28/10), aucune acceptation ; cause identifiée (règle « blank » R4 plus large que celle de l'ESP), correctif local non flashé.
+> **Intégré mais jamais observé** : affichage d'une œuvre du réseau, ACK, lecture d'une animation depuis la SD, indice COV Sensirion face à une référence, pages de courbes sur l'écran (tracé sans erreur de pile seulement).
+> **Plan canonique** : `PLAN_RESEAU_VALIDATEURS_ET_STATION_R4_2026_10_28.md`. L'ancien montage ESP8266 + TFT 1,8″ est archivé matériellement mais son profil serveur `tft18` reste pris en charge.
+
 Firmware `arduino_uno_r4/pod_uno_r4_tft18_env/pod_uno_r4_tft18_env.ino`. **COMPILÉ seulement** (cœur Arduino renesas 1.6.0) : jamais essayé avec le TFT ni les capteurs branchés. Seul essai matériel : démarrage SANS écran ni capteur sur la carte `dev_I25D9Z7A` (26/10, 22:45 UTC) — clés chargées, auto-test Ed25519 OK (marges 924 / 708 o), `register` 200, `pull` 200 (JSON décodé sur la pile de travail), `[DHT22]` et `[SGP40]` « lecture impossible » (rien de branché). **Aucune frame reçue, aucun vote, aucun ACK, aucun OTA de ce produit n'ont été observés.**
 
 ## 1. Provenance (script `scripts/gen-tft18-env.js`, à titre de traçabilité)

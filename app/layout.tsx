@@ -5,7 +5,7 @@ import "./globals.css";
 
 export const metadata: Metadata = {
   title: "Proof-of-Draw",
-  description: "Réseau de dessins distribués entre ESP8266, écrans e-ink et OLED.",
+  description: "Réseau de dessins distribués entre cartes ESP8266 et Arduino UNO R4 WiFi, écrans e-ink, OLED et TFT, et capteurs.",
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

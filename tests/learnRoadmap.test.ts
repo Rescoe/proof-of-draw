@@ -34,7 +34,13 @@ test("feuille de route : jamais « fait » sans preuve pour ce qui touche au mat
   for (const id of ["fw-27solo"]) assert.notEqual(items.find((i) => i.id === id)?.status, "done", `${id} n'a pas été essayé sur la carte`);
   // 14/10/2026 : le vote du TFT 2,8″ a été observé sur la carte (blocs #100 et #103) : "fait" n'est permis QUE parce que la note cite cette preuve.
   const tft = items.find((i) => i.id === "fw-tft28"); assert.equal(tft?.status, "done"); assert.match(tft?.note ?? "", /14\/10\/2026.*#103/);
-  for (const id of ["anim-v2", "ota", "pi-nodes", "podscan"]) assert.equal(items.find((i) => i.id === id)?.status, "todo", `${id} n'existe pas encore`);
+  for (const id of ["anim-v2", "pi-nodes", "podscan"]) assert.equal(items.find((i) => i.id === id)?.status, "todo", `${id} n'existe pas encore`);
+  // 28/10/2026 : l'OTA ESP8266 est prouvée sur certaines familles (matrice) mais pas distribuée sur R4 : « en cours », jamais « fait », et la note doit dire les deux
+  const ota = items.find((i) => i.id === "ota"); assert.equal(ota?.status, "doing"); assert.match(ota?.note ?? "", /ESP8266/); assert.match(ota?.note ?? "", /aucune OTA R4 distribuée/);
+  // le vote « tous les formats » n'est pas fait : le serveur invite déjà tout le monde, mais les corrections ne sont pas flashées et les capteurs seuls sont exclus
+  const all = items.find((i) => i.id === "vote-all-formats"); assert.equal(all?.status, "doing"); assert.match(all?.note ?? "", /capteurs seuls restent exclus/);
+  // la station R4 est « en cours » : rien n'y est observé en affichage d'œuvre ni en vote d'acceptation
+  const st = items.find((i) => i.id === "station-r4"); assert.equal(st?.status, "doing"); assert.match(st?.note ?? "", /jamais observ/);
   // livrés derrière un interrupteur éteint et jamais essayés sur le réseau réel : « en cours », jamais « fait »
   for (const id of ["receipts", "verifier", "eligibility", "committee", "reputation"]) assert.equal(items.find((i) => i.id === id)?.status, "doing", `${id} : code livré, non activé`);
 });

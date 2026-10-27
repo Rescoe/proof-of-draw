@@ -11,7 +11,7 @@ const pipeline = [
   ["Relire", "Chaque carte télécharge le contenu brut du candidat (octets exacts de l’écran, servis par un CDN) et le lit en flux : le firmware évite de recopier l’image dans un second buffer complet."],
   ["Recalculer", "Pendant la lecture, la carte calcule le SHA-256 et trois métriques entières. Elle décide d’un verdict objectif puis signe son vote en Ed25519."],
   ["Voter", "Le serveur vérifie la signature et refuse tout « accepte » dont le hash ou une métrique diffère d’un seul ppm. Le vote est écrit de façon atomique."],
-  ["Miner", "Au quorum (51 % des appareils appairés actifs), le serveur crée le bloc, relié par hash au précédent, et tire au sort le mineur parmi les validateurs."],
+  ["Miner", "Au quorum (51 % des appareils appairés, actifs et déclarés capables de valider), le serveur crée le bloc, relié par hash au précédent, et tire au sort le mineur parmi les validateurs."],
   ["Afficher", "L’œuvre est diffusée aux écrans compatibles. Chaque carte récupère la frame au prochain contact, l’affiche (avec le cartel) puis accuse réception."],
 ];
 
@@ -35,7 +35,7 @@ const levels = [
 const glossary = [
   ["Candidat", "Dessin soumis, en attente de validation. Un seul à la fois."],
   ["Bloc", "Enregistrement permanent d’une œuvre validée : hash de l’image, des gestes, du bloc précédent, validateurs, score, date."],
-  ["Quorum", "Nombre minimal de votes d’approbation : ⌈ 0,51 × appareils appairés actifs ⌉, au moins 1."],
+  ["Quorum", "Nombre minimal de votes d’approbation : ⌈ 0,51 × appareils appairés, actifs et déclarés capables de valider ⌉, au moins 1."],
   ["ppm", "Partie par million : les métriques sont des entiers entre 0 et 1 000 000, pour obtenir exactement le même résultat sur toutes les cartes."],
   ["Mineur", "Validateur tiré au sort (poids inverse du nombre de blocs déjà minés) qui reçoit la propriété du bloc. Tirage fait par le serveur."],
   ["Canari", "Essai volontairement limité d’une nouveauté avant de l’étendre."],

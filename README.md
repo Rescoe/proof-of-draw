@@ -46,13 +46,19 @@ Le dépôt évolue par petits lots audités, compilés sur l’hôte, puis valid
 
 | Installation | Réception et affichage | ACK | Stabilité observée | Vote réel |
 |---|---:|---:|---:|---:|
-| UNO R4 WiFi + e-ink 2,9″ BWR | oui | oui | canari mémoire et TLS validé | non validé |
-| ESP8266 + e-ink 2,9″ BWR | oui | oui | rendu v1 validé, marge TLS mesurée | non validé |
-| ESP8266 + e-ink 2,7″ BW + OLED | oui | oui | coexistence e-ink/OLED et pulls répétés validés sur branche de recherche | non validé |
-| UNO R4 WiFi + TFT 2,8″ tactile + SD | image fixe et animation validées sur branche de recherche | oui | cache SD et lecture d’animation observés | non validé |
+| UNO R4 WiFi + e-ink 2,9″ BWR | oui | oui | canari mémoire et TLS validé | vote v2 accepté sur la carte (25/10/2026) |
+| ESP8266 + e-ink 2,9″ BWR | oui | oui | rendu v1 validé, marge TLS mesurée | vote v2 observé (par exemple bloc #114) |
+| ESP8266 + e-ink 2,7″ BW + OLED | oui | oui | coexistence e-ink/OLED et pulls répétés validés | vote v2 observé (bloc #103) |
+| UNO R4 WiFi + TFT 2,8″ tactile + SD | image fixe et animation observées | oui | cache SD et lecture d’animation observés | vote v2 observé (blocs #100, #103, #118) |
 | UNO R4 WiFi + DHT22 | mesure et envoi validés | n/a | lecture toutes les 30 min, envoi horaire | n/a |
+| UNO R4 WiFi + TFT 1,8″ + DHT22 + SGP40 + microSD (station `r4tft18-2.3`, expérimentale) | intégrée et compilée, **non observée** (aucune œuvre reçue) | non observé | DHT22, SGP40 (brut), SD, register et pull observés ; indice COV Sensirion et historique intégrés | un refus signé « blank » observé, **aucune acceptation encore** |
 
-Les autres firmwares présents dans le dépôt ont des niveaux de maturité différents : certains sont compilés seulement, d’autres attendent une carte de test. Le vote matériel multi-appareils et l’OTA ne doivent pas être considérés comme déployés.
+Les autres firmwares présents dans le dépôt ont des niveaux de maturité différents : certains sont compilés seulement, d’autres attendent une carte de test.
+
+- **Vote v2** : observé sur plusieurs familles (colonne ci-dessus). Ce qui reste en chantier est la **fiabilité multi-formats et le quorum** : le 27/10/2026 un seul appareil était compté dans l’électorat (les autres inactifs ou exclus après des candidats d’animation impossibles à voter), voir le [plan du 28/10](docs/PLAN_RESEAU_VALIDATEURS_ET_STATION_R4_2026_10_28.md).
+- **Règle visée** : toute carte disposant de la capacité de validation doit pouvoir voter sur tout dessin, quel que soit son écran. Aujourd’hui les profils **capteurs seuls** sont exclus du quorum ; les validateurs sans écran passeront par une capacité explicite, **non encore implémentée**.
+- **OTA Internet** : prouvée sur certaines familles ESP8266 (par exemple `tft18-2.7` → `2.8`, `eink29bwr-2.4` → `2.5`, `multiscreen-2.6` → `2.7`). Pour l’UNO R4, le produit complet `r4tft18` a été mis à jour **une fois en laboratoire** (clés de test, serveur HTTP local) ; **aucune OTA R4 distribuée sur Internet** n’est prouvée.
+- La matrice canonique des profils et de leur niveau de preuve est [`docs/MATRICE_COMPATIBILITE_MATERIELLE.md`](docs/MATRICE_COMPATIBILITE_MATERIELLE.md).
 
 ### Ce qui fonctionne dans l’application
 
@@ -101,7 +107,7 @@ Le trafic est initié par les appareils vers le serveur : le serveur n’essaie 
 5. Lorsque la politique de quorum est satisfaite, un bloc est finalisé.
 6. Chaque écran récupère son payload binaire, le rend, puis envoie un ACK uniquement après succès.
 
-Le code du protocole de vote existe et dispose de harnais hôte, mais le vote réel contrôlé sur le matériel fait encore partie du chantier de validation.
+Le vote v2 (recalcul du contenu, signature Ed25519) a été observé sur plusieurs familles de cartes. La généralisation « toutes les cartes votent tous les formats », le quorum vivant et le vote des animations (aujourd’hui un écho v1 transitoire, `ANIM_V1_VOTE`) restent en chantier : voir [le plan du 28/10/2026](docs/PLAN_RESEAU_VALIDATEURS_ET_STATION_R4_2026_10_28.md).
 
 ## Architecture technique
 
@@ -152,7 +158,7 @@ public/               ressources statiques de l’application
 | e-ink 2,9″ BWR | noir, blanc, rouge | 296 × 128 | chemins d’affichage validés sur ESP8266 et UNO R4 |
 | e-ink 2,7″ BW | monochrome | 264 × 176 | validé avec OLED sur ESP8266 ; R4 en attente de matériel |
 | OLED 0,96″ | monochrome | 128 × 64 | écran auxiliaire et animation testés avec l’e-ink 2,7″ |
-| TFT 1,8″ | couleur | 160 × 128 | firmware présent, validation matérielle à reprendre |
+| TFT 1,8″ | couleur | 160 × 128 | ESP8266 : vote, frame et ACK observés (bloc #111), montage archivé mais toujours pris en charge ; UNO R4 (station `r4tft18-2.3`) : intégré, partiellement observé |
 | TFT 2,8″ tactile + SD | RGB565 | 240 × 320 | image, cache SD et animation validés sur branche de recherche |
 | DHT22 sur UNO R4 | température / humidité | — | acquisition matérielle validée |
 
@@ -260,6 +266,9 @@ Quelques points d’entrée :
 - [Capteur DHT22 sur UNO R4](docs/CAPTEUR_TEMPERATURE_R4_DHT22.md)
 - [Verdict du client SSL borné sur R4 e-ink 2,9″](docs/CANARY_R4_EINK29_BOUNDED_SSL_FIX1_VERDICT_2026_10_11.md)
 - [Journal de validation réelle](docs/CHANTIER_VALIDATION_REELLE.md)
+- [Matrice de compatibilité matérielle (niveaux de preuve)](docs/MATRICE_COMPATIBILITE_MATERIELLE.md)
+- [Plan du réseau de validateurs et de la station R4 (28/10/2026)](docs/PLAN_RESEAU_VALIDATEURS_ET_STATION_R4_2026_10_28.md)
+- [Produit R4 TFT 1,8″ : station complète](docs/PRODUIT_R4_TFT18_ENV_2026_10_26.md)
 
 Les documents datés conservent l’historique de la recherche. Ils peuvent décrire une étape dépassée ; les verdicts les plus récents et le code de `main` priment.
 

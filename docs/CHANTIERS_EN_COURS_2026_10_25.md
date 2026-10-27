@@ -1,5 +1,7 @@
 # Chantiers en cours et matériel disponible — 25/10/2026
 
+> **État historique du 25/10, remplacé pour les chantiers actuels par le plan du 28/10 : `PLAN_RESEAU_VALIDATEURS_ET_STATION_R4_2026_10_28.md`.** Ne pas lire ce document comme l'état courant.
+
 Document de reprise : ce qui est fait, ce qui est prouvé, ce qui attend, et dans quel ordre. La source des niveaux de preuve reste `docs/MATRICE_COMPATIBILITE_MATERIELLE.md`.
 
 ## 1. Matériel et appareils
