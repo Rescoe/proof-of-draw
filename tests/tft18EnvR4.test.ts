@@ -113,3 +113,20 @@ test("ENV R4 : l'indice COV de Sensirion est une grandeur du serveur (1..500, en
   assert.match(ino, /Sensirion Gas Index Algorithm/);
   assert.match(ino, /g_vocAlg\.process\(/);
 });
+
+test("ENV R4 : OMBRE du vote d'animation v3 — drapeau 0 par défaut, calcul et journal SEULEMENT (ni réseau, ni signature, ni vote), objet au tas sur la pile de travail, copie identique de l'automate", () => {
+  assert.match(ino, /#ifndef POD_ANIM_V3_SHADOW\n#define POD_ANIM_V3_SHADOW 0/);
+  assert.match(ino, /#if POD_ANIM_V3_SHADOW && !POD_SD_CS_PIN\n#error/);
+  const start = ino.indexOf("static void animV3ShadowImpl(size_t announced) {");
+  assert.ok(start > 0, "fonction d'ombre");
+  const body = ino.slice(start, ino.indexOf("\n}\n", start));
+  for (const bad of [/httpCall\(/, /podNetRun\(/, /validation-result/, /signED25519|PodEd::/, /Conn\b/, /WiFiSSLClient/, /pendingCandidateId/]) assert.doesNotMatch(body, bad, String(bad));
+  assert.match(body, /new \(std::nothrow\) PodAnimStream<AnimSha>\(\)/);
+  assert.match(body, /delete st;/);
+  const wrap = ino.slice(ino.indexOf("static void __attribute__((noinline)) animV3Shadow("), ino.indexOf("static bool fetchAnimToSd("));
+  assert.match(wrap, /podWorkRun\(wk, &ni\)/);
+  // appelée seulement APRÈS la validation du clip sur la carte, sous le drapeau
+  const call = ino.indexOf("animV3Shadow(announced);");
+  assert.ok(call > ino.indexOf("static bool fetchAnimToSd(") && ino.slice(call - 60, call).includes("#if POD_ANIM_V3_SHADOW"));
+  assert.equal(rd(D, "podAnimV3.h"), rd(root, "consensus-pod/src/podAnimV3.h"), "copie identique de l'original");
+});

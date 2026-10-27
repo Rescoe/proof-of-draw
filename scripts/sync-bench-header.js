@@ -17,6 +17,7 @@ const MASTERS = {
   "consensusPoD.h": "consensus-pod/src/consensusPoD.h",
   "podRender.h": "consensus-pod/src/podRender.h",
   "podRenderStream.h": "consensus-pod/src/podRenderStream.h",
+  "podAnimV3.h": "consensus-pod/src/podAnimV3.h",                   // automate de validation d'animation pod-anim-v3 : OMBRE sur la station R4 seulement (POD_ANIM_V3_SHADOW = 0 par défaut)
   "crypto_esp8266.h": "consensus-pod/src/adapters/crypto_esp8266.h",
   "crypto_uno_r4.h": "consensus-pod/src/adapters/crypto_uno_r4.h",
   // Ed25519 sur pile dédiée (lot 8B-2B-2-STACK-FIX1) : les CINQ firmwares UNO R4 qui signent (le TFT 2,8″ inclus)
@@ -48,6 +49,7 @@ const COPIES = {
   "pod_vote_esp.h": ["esp8266/esp_eink_2.9BWR/pod_vote_esp.h", "esp8266/esp_tft1.8/pod_vote_esp.h", "esp8266/esp_eink_2.7BW_OLED/pod_vote_esp.h", "esp8266/esp_eink_2.7BW/pod_vote_esp.h"],
   // Rendu v1 (INACTIF par défaut) : les HUIT firmwares à cartel gravé (lots 8B-2A + 8B-2B-1) ; les firmwares sans cartel (R4 TFT 2,8″, R4 OLED, multiscreen OLED) ne sont pas concernés
   "consensusPoD.h": [...RENDER_ESP, ...RENDER_R4].map((d) => d + "/consensusPoD.h"),
+  "podAnimV3.h": ["arduino_uno_r4/pod_uno_r4_tft18_env/podAnimV3.h"],
   "podRender.h": [...RENDER_ESP, ...RENDER_R4].map((d) => d + "/podRender.h"),
   "podRenderStream.h": [...RENDER_ESP, ...RENDER_R4].map((d) => d + "/podRenderStream.h"),
   "crypto_esp8266.h": RENDER_ESP.map((d) => d + "/crypto_esp8266.h"),

@@ -72,6 +72,7 @@ test("mémoire : l'automate de flux tient dans ~2 Ko (image 1 024 o + métriques
   assert.match(read("consensus-pod/src/podAnimV3.h"), /uint8_t frame_\[POD_ANIM_FRAME_BYTES\]/);
   for (const dir of ["esp8266", "arduino_uno_r4"]) {
     const walk = (d: string): string[] => fs.readdirSync(path.join(root, d), { withFileTypes: true }).flatMap((e) => e.isDirectory() ? walk(path.join(d, e.name)) : /\.(ino|h|cpp)$/.test(e.name) ? [path.join(d, e.name)] : []);
-    for (const f of walk(dir)) assert.doesNotMatch(fs.readFileSync(path.join(root, f), "utf8"), /podAnimV3/, f);
+    const SHADOW = new Set(["arduino_uno_r4/pod_uno_r4_tft18_env/podAnimV3.h", "arduino_uno_r4/pod_uno_r4_tft18_env/pod_uno_r4_tft18_env.ino"]);   // 28/10/2026 : OMBRE de la station (drapeau 0 par défaut, aucun vote)
+    for (const f of walk(dir)) if (!SHADOW.has(f.replace(/\\/g, "/"))) assert.doesNotMatch(fs.readFileSync(path.join(root, f), "utf8"), /podAnimV3/, f);
   }
 });

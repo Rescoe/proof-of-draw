@@ -253,9 +253,11 @@ test("pureté : lib/animV3.ts n'importe ni Redis, ni réseau, ni route ; PÉRIM�
   // seule la route de DÉPÔT du candidat journalise la référence en shadow, et seule la route candidate-clip sert le clip.
   assert.deepEqual(offenders.sort(), [
     "app/api/candidate-clip/route.ts", "app/api/submit-candidate/route.ts", "consensus-pod/host/anim_harness.cpp", "consensus-pod/src/podAnimV3.h",
+    // 28/10/2026 (lot 6, OMBRE) : la station R4 peut CALCULER le résultat d'un clip reçu et le journaliser — drapeau POD_ANIM_V3_SHADOW = 0 par défaut, AUCUN vote, AUCUNE route, copie identique de l'original (benchHeaderCopies)
+    "arduino_uno_r4/pod_uno_r4_tft18_env/pod_uno_r4_tft18_env.ino", "arduino_uno_r4/pod_uno_r4_tft18_env/podAnimV3.h",
     // lot 6C : auto-tests de VALIDATION (exemples de la bibliothèque, jamais des firmwares de production) et leurs données générées
     "consensus-pod/examples/AnimSelfTestEsp8266/AnimSelfTestEsp8266.ino", "consensus-pod/examples/AnimSelfTestUnoR4/AnimSelfTestUnoR4.ino", "consensus-pod/src/podAnimSelfTest.h", "consensus-pod/src/podAnimV3_selftest.h",
-    "lib/animClipResponse.ts", "lib/animReps.ts", "lib/animShadow.ts", "lib/animV3.ts", "lib/animV3Mode.ts", "lib/clipTicket.ts", "lib/podVerify.ts", "lib/podVerifyAnim.ts",
+    "lib/animClipResponse.ts", "lib/animReps.ts", "lib/electorate.ts" /* 28/10/2026 : seulement un COMPTEUR de validateurs capables (animV3), pas le calcul */, "lib/animShadow.ts", "lib/animV3.ts", "lib/animV3Mode.ts", "lib/clipTicket.ts", "lib/podVerify.ts", "lib/podVerifyAnim.ts",
   ].sort());
   for (const f of ["app/api/pull/route.ts", "app/api/validate-candidate/route.ts", "app/api/validation-result/route.ts", "app/api/register/route.ts", "app/api/ack-frame/route.ts"]) assert.doesNotMatch(read(f), /clipTicket|clipPointer|candidate-clip|animV3/, `${f} ne distribue aucun ticket`);
   assert.equal(ANIM_V3.rulesVersion, 2);

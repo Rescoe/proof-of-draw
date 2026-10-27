@@ -131,6 +131,16 @@
 #define ANIM_WORK_BYTES (ANIM_FRAME + PODBENCH_STREAM_BUF)
 static_assert(podbench::W * podbench::H / 8 == ANIM_FRAME, "pod_bench.h : constantes désynchronisées");
 #endif
+#ifndef POD_ANIM_V3_SHADOW
+#define POD_ANIM_V3_SHADOW 0                          // 1 : OMBRE du vote d'animation v3 (lot 6) — après la réception d'un clip, la carte CALCULE (clipHash, images, racine, E/T/R/S, règle) et le JOURNALISE ; AUCUN vote, AUCUN envoi. Exige la carte SD.
+#endif
+#if POD_ANIM_V3_SHADOW && !POD_SD_CS_PIN
+#error "POD_ANIM_V3_SHADOW exige POD_SD_CS_PIN (le clip est relu depuis la carte)"
+#endif
+#if POD_ANIM_V3_SHADOW
+#include "crypto_uno_r4.h"   // PodSha256Rw (bibliothèque Crypto)
+#include "podAnimV3.h"       // automate de validation d'animation en flux (copie identique de consensus-pod/src/podAnimV3.h)
+#endif
 #if POD_ENV_DISPLAY
 #include <VOCGasIndexAlgorithm.h>   // bibliothèque « Sensirion Gas Index Algorithm » 3.2.3 (BSD-3, Sensirion AG) : indice COV 1..500 à partir du brut du SGP40
 #endif
@@ -993,6 +1003,40 @@ static bool __attribute__((noinline)) animValidateAndMark(const String& hash, si
   else logf("[ANIM] clip refusé (%s)", podbench::errNameStream((podbench::Err)err));
   return false;
 }
+#if POD_ANIM_V3_SHADOW
+// ─── OMBRE du vote d'animation v3 (lot 6, 28/10/2026) : mesure et journal, JAMAIS de vote ─────────────────────────────────────────────────────────────────────
+// Relit le clip sur la carte par fragments de 128 o dans l'automate pod-anim-v3 (objet de ~2 Ko pris au tas APRÈS la fermeture du TLS, sur la pile de travail dédiée) et journalise ce qu'un vote v3 signerait.
+// Sert à MESURER sur la carte (durée, pile, tas) et à comparer au calcul du serveur (journal « [anim-v3] » en mode ANIM_V3_MODE=shadow). Échec d'allocation = journal, rien d'autre.
+typedef PodSha256Rw AnimSha;
+static void animV3ShadowImpl(size_t announced) {
+  PodAnimStream<AnimSha>* const st = new (std::nothrow) PodAnimStream<AnimSha>();
+  if (!st) { logf("[ANIM-V3] ombre : memoire insuffisante (%u o) — rien calcule", (unsigned)sizeof(PodAnimStream<AnimSha>)); return; }
+  File f = SD.open(SD_ANIM, FILE_READ);
+  if (!f) { delete st; logf("[ANIM-V3] ombre : clip illisible"); return; }
+  const unsigned long t0 = millis();
+  st->begin();
+  uint8_t buf[128]; size_t left = f.size(), got = 0; bool ioOk = true;
+  while (left > 0) {
+    const size_t n = left < sizeof(buf) ? left : sizeof(buf);
+    if (f.read(buf, n) != (int)n) { ioOk = false; break; }
+    st->update(buf, n); left -= n; got += n;
+  }
+  f.close();
+  PodAnimResult res;
+  const bool fmt = st->finish(&res);
+  delete st;
+  if (!ioOk) { logf("[ANIM-V3] ombre : lecture de la carte interrompue apres %u o", (unsigned)got); return; }
+  logf("[ANIM-V3] ombre (AUCUN vote) : regle=%s format=%s images=%lu E=%lu T=%lu R=%lu S=%lu octets=%lu/%lu en %lu ms", pod_anim_rule_name(res.rule), fmt ? "ok" : "refuse", (unsigned long)res.frames, (unsigned long)res.E, (unsigned long)res.T, (unsigned long)res.R, (unsigned long)res.S, (unsigned long)res.bytes, (unsigned long)announced, millis() - t0);
+  logf("[ANIM-V3] clipHash=%s", res.clipHash);
+  logf("[ANIM-V3] animRoot=%s", res.animRoot);
+}
+static void __attribute__((noinline)) animV3Shadow(size_t announced) {
+  PodNetInfo ni; auto wk = [&]() { animV3ShadowImpl(announced); };
+  if (!podWorkRun(wk, &ni)) tftWorkFailed("ombre anim v3", ni);
+  else logf("[ANIM-V3] pile de travail : utilise %u o, marge %u o ; tas libre %lu o", (unsigned)ni.used, (unsigned)ni.margin, (unsigned long)freeHeapBytes());
+}
+#endif
+
 static bool fetchAnimToSd(const String& hash, size_t announced) {
   if (!sdOk) { logf("[ANIM] pas de carte SD : animation non lue (l'affiche reste à l'écran)"); return false; }
   if (announced < (size_t)(podbench::HEADER_BYTES + 5 + ANIM_FRAME) || announced > ANIM_MAX_CLIP) { logf("[ANIM] taille refusée (%u)", (unsigned)announced); return false; }
@@ -1010,6 +1054,9 @@ static bool fetchAnimToSd(const String& hash, size_t announced) {
   }
   if (!ok) { animRemoveFiles(); return false; }
   animOn = true; animHash = hash;
+#if POD_ANIM_V3_SHADOW
+  animV3Shadow(announced);                           // calcul et journal seulement : jamais de vote
+#endif
   logf("[ANIM] clip reçu en %lu ms, %u images, rangé sur la carte (%u o) : lecture en boucle", millis() - t0, (unsigned)frames, (unsigned)announced);
   return true;
 }
