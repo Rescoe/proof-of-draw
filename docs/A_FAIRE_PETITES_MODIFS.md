@@ -62,7 +62,7 @@ Règle (demandée par le porteur le 25/10/2026) : **toute demande faite pendant 
 
 - [ ] 28/10 — **R4 e-ink 2,9″, e-ink 2,7″, e-ink 2,7″ + OLED, TFT 1,8″ de base, TFT 2,8″** : `doFetchFrame` efface encore `pendingCandidateId` (lots à part : ces sketchs ont des tests d'identité de canari et des sauvegardes datées).
 - [ ] 28/10 — **ESP** : `doValidate` efface le candidat AVANT d'appeler le vote (BWR, multiscreen, e-ink 2,7″, TFT 1,8″) : pas de nouvel essai local sur panne transitoire (la ré-annonce du serveur rattrape).
-- [ ] 28/10 — **Serveur** : refuser à la soumission un candidat TFT dont TOUS les pixels sont identiques (réellement vide), au lieu de le laisser entrer dans le pool puis être rejeté par tous les validateurs.
+- [x] 28/10 — **Serveur** : un candidat réellement uniforme (tous les pixels identiques sur un écran couleur ; e = t = 0 ailleurs) est refusé dès la soumission (`400 uniform_image`, commit local `3f8f40c`, non poussé).
 - [ ] 28/10 — **Vote d'animation v3** : appeler le noyau de calcul depuis un sketch (station R4 d'abord), signer `pod-vote-v3-anim`, mesurer pile et tas ; mode `shadow` puis couverture (compteur `animV3` du résumé d'électorat) puis `enforce`.
 - [ ] 28/10 — **Validateurs sans écran** : écrire le firmware (famille à ajouter à `VALIDATOR_NODE_FIRMWARE`) et sa ligne de matrice.
 - [ ] 28/10 — **Synchronisation SD ↔ serveur** des mesures (rattrapage après coupure, restauration sur carte neuve) : chiffrer le coût Redis avant tout code.
