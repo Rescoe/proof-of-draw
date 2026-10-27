@@ -8,13 +8,17 @@ import { unstable_cache } from "next/cache";
 import { redis } from "@/lib/redis";
 import { getNetworkSnapshot } from "@/lib/networkSnapshot";
 import { fixtureCount, buildFixtureSnapshot, buildFixtureDisplays } from "@/lib/network/fixtures";
-import { readShownMap, DISPLAYS_CACHE_TAG, type DisplayKV } from "@/lib/displayState";
+import { readShownMap, withAuxOledFromHead, DISPLAYS_CACHE_TAG, type DisplayKV } from "@/lib/displayState";
+import { parseChainHeadRaw } from "@/lib/chain";
 
 const getDisplays = unstable_cache(
   async () => {
     const snapshot = await getNetworkSnapshot();
     const pairs = snapshot.devices.flatMap((d) => d.screens.map((s) => ({ deviceId: d.deviceId, screen: s.screen })));
     const displays = await readShownMap(redis as unknown as DisplayKV, pairs);   // 1 seul MGET
+    // OLED auxiliaire des BWR : présenté comme jouant la dernière animation (pointeur annoncé par /api/pull ; +1 GET, dans le cache serveur de 15 min / invalidé par ACK)
+    const head = parseChainHeadRaw(await redis.get("chain:head"));
+    withAuxOledFromHead(displays, snapshot.devices, head);
     return { generatedAt: Date.now(), displays };
   },
   ["network-displays"],

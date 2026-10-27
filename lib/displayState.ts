@@ -201,6 +201,27 @@ export function buildAuxOledRecord(rec: ShownRecord, frame: LooseFrame): ShownRe
   return { ...rest, screen: OLED_AUX_SCREEN_ID, blockHash: a.hash, isAnimation: true, hasImage: false, mode: undefined };
 }
 
+/**
+ * Livraison par POINTEUR SEUL (29/10/2026) : une carte BWR à OLED ne reçoit plus de frame pour une animation, donc plus d'ACK à enregistrer. Quand le dernier bloc de la chaîne est une animation, l'OLED auxiliaire
+ * des cartes en ligne est présenté comme la jouant. ⚠ ANNONCÉ, pas confirmé : le pull a porté le pointeur, l'OLED ne rapporte rien (le firmware 2.13 n'envoie aucun accusé de lecture).
+ */
+export function withAuxOledFromHead(
+  map: Record<string, Record<string, PublicShown>>,
+  devices: ReadonlyArray<{ deviceId: string; isOnline: boolean; screens: ReadonlyArray<{ screen: string }> }>,
+  head: { blockHash?: string; blockIndex?: number; kind?: string; minedAt?: number; workTitle?: string; artistName?: string; frameId?: string } | null,
+): Record<string, Record<string, PublicShown>> {
+  if (!head || head.kind !== "animation" || !/^[0-9a-f]{64}$/.test(String(head.blockHash))) return map;
+  for (const d of devices) {
+    if (!d.isOnline || !d.screens.some((s) => s.screen === OLED_AUX_SCREEN_ID)) continue;
+    (map[d.deviceId] ??= {})[OLED_AUX_SCREEN_ID] = {
+      frameId: typeof head.frameId === "string" && FRAME_ID_RE.test(head.frameId) ? head.frameId : String(head.blockHash).slice(0, 32), screen: OLED_AUX_SCREEN_ID,
+      shownAt: Number(head.minedAt) || Date.now(), kind: "human", workTitle: head.workTitle?.slice(0, 120), artistName: head.artistName?.slice(0, 80),
+      blockHash: head.blockHash, blockIndex: Number.isSafeInteger(head.blockIndex) ? head.blockIndex : undefined, isAnimation: true, hasImage: false,
+    };
+  }
+  return map;
+}
+
 export async function readShownImage(kv: DisplayKV, frameId: string, screen: string): Promise<ImagePayload | null> {
   if (!FRAME_ID_RE.test(frameId)) return null;
   const raw = await kv.get(shownImageKey(frameId, screen));

@@ -72,12 +72,22 @@ test("affiche BWR : clip ×2 centré (x = 20) en noir sur blanc, par la conversi
   for (let row = 0; row < 296; row++) for (let c = 0; c < 16; c++) assert.equal(fb[row * 16 + c], row >= 20 && row < 276 ? 0x00 : 0xff, `ligne ${row} octet ${c}`);
 });
 
-test("câblage : la diffusion lit aussi la pool eink29bwr et pose l'affiche BWR + le pointeur dans SA frame ; le client n'envoie rien d'autre", () => {
+const HEAD = { blockHash: HASH, kind: "animation", anim: { bytes: 1500, frames: 6 } };
+test("/api/pull, livraison par POINTEUR SEUL : sans frame en attente, le dernier bloc d'animation est annoncé à la carte capable — et à elle seule ; une frame fixe en attente supprime le pointeur", () => {
+  assert.deepEqual(animPullMeta(dev(), null, undefined, HEAD), { hash: HASH, bytes: 1500, frames: 6 });
+  assert.equal(animPullMeta(dev(), null, undefined, { blockHash: HASH, kind: undefined }), undefined, "dernier bloc = dessin : rien");
+  assert.equal(animPullMeta(dev(), null, undefined, null), undefined);
+  assert.equal(animPullMeta(dev({ caps: ["vote-static-v2"] }), null, undefined, HEAD), undefined, "BWR sans OLED déclaré : jamais");
+  assert.equal(animPullMeta(dev({ firmware: "eink29bwr-2.12" }), null, undefined, HEAD), undefined);
+  assert.equal(animPullMeta({ screens: ["eink27bw"], firmware: "multiscreen-2.8" }, null, undefined, HEAD), undefined, "autre e-ink : jamais");
+  assert.equal(animPullMeta(dev(), "eink29bwr", { black: "x", red: "y" }, HEAD), undefined, "une nouvelle image fixe est en attente : pas d'animation");
+  assert.deepEqual(animPullMeta(dev(), "eink29bwr", payload, HEAD), { hash: HASH, bytes: 1500, frames: 6 }, "ancienne frame porteuse du pointeur : honorée");
+});
+
+test("câblage : la diffusion N'ÉCRIT PLUS rien pour un e-ink (il garde son image) ; le pull passe la tête de chaîne à animPullMeta", () => {
   const b = fs.readFileSync(path.join(__dirname, "..", "lib/anim/broadcast.ts"), "utf8");
-  assert.match(b, /\[\.\.\.ANIM_SCREENS, "eink29bwr"\]/);
-  assert.match(b, /animOledAuxTargets\(bwrIds/);
-  assert.match(b, /t\.screen === "eink29bwr" && bwr \? \{ \.\.\.bwr, _block, anim: pointer \}/);
-  assert.match(b, /posterBwr\(frame\)/);
+  assert.doesNotMatch(b, /posterBwr|animOledAuxTargets|bwrIds/, "aucune frame e-ink pour une animation");
+  assert.match(fs.readFileSync(path.join(__dirname, "..", "app/api/pull/route.ts"), "utf8"), /as Record<string, unknown> \| undefined, chainHead\);/);
   const r = fs.readFileSync(path.join(__dirname, "..", "app/api/register/route.ts"), "utf8");
   assert.match(r, /parseVoteCaps\(body\.caps\)/);
 });

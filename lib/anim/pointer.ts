@@ -84,8 +84,16 @@ export function animPullMeta(
   device: { screens?: string[]; firmware?: string; caps?: readonly string[] },
   screen: string | null | undefined,
   payload: Record<string, unknown> | null | undefined,
+  head?: { blockHash: string; kind?: string; anim?: { bytes: number; frames: number } | null } | null,
 ): AnimPointer | undefined {
-  if (screen === "eink29bwr") return animOledAuxCapable(device) ? readAnimPointer(payload) ?? undefined : undefined;   // OLED auxiliaire (voir plus haut)
+  // OLED auxiliaire d'un e-ink BWR (voir plus haut). LIVRAISON PAR POINTEUR SEUL (29/10/2026) : le serveur n'envoie plus d'affiche à l'e-ink ; quand la carte n'a AUCUNE frame en attente et que le dernier bloc de la
+  // chaîne est une animation, le pull annonce le pointeur de ce bloc (0 commande Redis : la tête de chaîne est déjà lue). Une frame en attente SANS pointeur (nouvelle image fixe) = pas d'animation. Une ancienne frame
+  // qui porte encore un pointeur (livraison d'avant ce changement) reste honorée.
+  if (screen === "eink29bwr" || (screen == null && animOledAuxCapable(device))) {
+    if (!animOledAuxCapable(device)) return undefined;
+    if (screen === "eink29bwr") return readAnimPointer(payload) ?? undefined;
+    return head ? animPointerOfBlock(head) ?? undefined : undefined;
+  }
   if (!screen || !device.screens?.includes(screen) || !supportsAnimPointer([screen], device.firmware)) return undefined;
   return readAnimPointer(payload) ?? undefined;
 }

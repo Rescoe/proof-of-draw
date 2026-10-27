@@ -106,3 +106,15 @@ test("câblage : la boucle d'animation est rejouée dans les vignettes de la con
   assert.match(read("app/network/AnimLoop.tsx"), /\/api\/block-clip\?hash=/);
   assert.match(read("app/api/ack-frame/route.ts"), /animOledAuxCapable\(device\)/);
 });
+
+import { withAuxOledFromHead } from "../lib/displayState";
+test("constellation : l'OLED auxiliaire des cartes EN LIGNE montre la dernière animation (annoncée) ; rien si le dernier bloc est un dessin ou si la carte est hors ligne", () => {
+  const dev = (id: string, online: boolean, aux = true) => ({ deviceId: id, isOnline: online, screens: [{ screen: "eink29bwr" }, ...(aux ? [{ screen: OLED_AUX_SCREEN_ID }] : [])] });
+  const head = { blockHash: H, blockIndex: 124, kind: "animation", minedAt: 1000, workTitle: "Zombimouche_v2" };
+  const m = withAuxOledFromHead({}, [dev("a", true), dev("b", false), dev("c", true, false)], head);
+  assert.equal(m.a[OLED_AUX_SCREEN_ID].isAnimation, true); assert.equal(m.a[OLED_AUX_SCREEN_ID].blockHash, H); assert.equal(m.a[OLED_AUX_SCREEN_ID].blockIndex, 124);
+  assert.equal(m.b, undefined); assert.equal(m.c, undefined);
+  assert.deepEqual(withAuxOledFromHead({}, [dev("a", true)], { ...head, kind: undefined }), {});
+  assert.deepEqual(withAuxOledFromHead({}, [dev("a", true)], null), {});
+  assert.deepEqual(withAuxOledFromHead({}, [dev("a", true)], { ...head, blockHash: "zz" }), {});
+});
