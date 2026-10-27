@@ -96,6 +96,18 @@
 #ifndef POD_SENSORS
 #define POD_SENSORS 0                                // 1 : DHT22 (D2) + SGP40 (I2C) lus toutes les 30 min, envoyés toutes les heures à /api/sensor (comme la station)
 #endif
+#ifndef POD_ENV_DISPLAY
+#define POD_ENV_DISPLAY 0                            // 1 : écran de STATION (28/10/2026) — page « mesures » et page « animation » en alternance toutes les ENV_PAGE_MS ; une nouvelle œuvre s'affiche ENV_PAGE_MS puis l'alternance reprend. Exige POD_SENSORS.
+#endif
+#if POD_ENV_DISPLAY && !POD_SENSORS
+#error "POD_ENV_DISPLAY exige POD_SENSORS=1"
+#endif
+#ifndef ENV_PAGE_MS
+#define ENV_PAGE_MS 60000UL                          // durée de chaque page (essai : 1 minute)
+#endif
+#ifndef POD_SD_CS_PIN
+#define POD_SD_CS_PIN 0                              // 0 = rien ; sinon broche CS du lecteur SD du module, tenue HAUTE pour qu'il reste muet sur le bus SPI partagé (la SD n'est pas utilisée par ce firmware)
+#endif
 #ifndef POD_OTA_R4
 #define POD_OTA_R4 0                                 // 1 : client OTA R4-B (manifeste signé Ed25519), famille uno-r4-wifi-tft18
 #endif
@@ -153,6 +165,16 @@ Adafruit_ST7735 tft(TFT_CS, TFT_DC, TFT_RST);
 static uint8_t g_rowBytes[ROW_BYTES];
 static uint16_t g_rowPixels[IMG_W];
 bool onboardingDrawn = false;                      // écran d'appairage déjà dessiné depuis ce démarrage
+#if POD_ENV_DISPLAY
+static uint8_t g_envPage = 0;                      // 0 = mesures, 1 = animation, 255 = une œuvre est à l'écran (ne pas la recouvrir avant ENV_PAGE_MS)
+static bool g_envFull = true;                      // la page doit être redessinée en entier
+static unsigned long g_envPageAtMs = 0;
+#define ENV_DIRTY() (g_envFull = true)             // tout autre affichage (état, QR…) a recouvert la page
+#define ENV_ART_SHOWN() do { g_envPage = 255; g_envPageAtMs = millis(); } while (0)
+#else
+#define ENV_DIRTY() ((void)0)
+#define ENV_ART_SHOWN() ((void)0)
+#endif
 
 String deviceId, pairCode;
 bool   registered = false, paired = false;
@@ -567,7 +589,7 @@ static void __attribute__((noinline)) tftWorkFailed(const char* what, const PodN
   if (ni.err == POD_NET_GUARD) logfSafeStop();                    // garde écrasée : le voisin au tas est corrompu — arrêt sûr silencieux AVANT tout journal
   logf("[TFT] %s : pile de travail dédiée : %s (erreur %u, marge %u o) — affichage ignoré", what, podNetWhy(ni), (unsigned)ni.err, (unsigned)ni.margin);
 }
-static void __attribute__((noinline)) tftStatus(const String& line1, const String& line2 = "", uint16_t bg = C_NAVY) { PodNetInfo ni; auto wk = [&]() { tftStatusImpl(line1, line2, bg); }; if (!podWorkRun(wk, &ni)) tftWorkFailed("tftStatus", ni); }
+static void __attribute__((noinline)) tftStatus(const String& line1, const String& line2 = "", uint16_t bg = C_NAVY) { ENV_DIRTY(); PodNetInfo ni; auto wk = [&]() { tftStatusImpl(line1, line2, bg); }; if (!podWorkRun(wk, &ni)) tftWorkFailed("tftStatus", ni); }
 #if !POD_RENDER_V1
 static void __attribute__((noinline)) drawCartel() { PodNetInfo ni; auto wk = [&]() { drawCartelImpl(); }; if (!podWorkRun(wk, &ni)) tftWorkFailed("drawCartel", ni); }
 #endif
@@ -614,6 +636,7 @@ static bool doFetchFrame(const String& frameId, const String& frameSource) {
   drawCartel();
 #endif
   lastFrameId = frameId;                              // RAM seulement : après reboot le TFT doit être repeint
+  ENV_ART_SHOWN();                                    // station : l'œuvre reste ENV_PAGE_MS à l'écran avant que les pages mesures / animation reprennent
   lastFrameWasConsensus = frameSource == "consensus";
   pendingCandidateId = "";
   logf("[FRAME] OK en %lu ms (frameId=%s source=%s)", millis() - t0, frameId.c_str(), frameSource.c_str());
@@ -1231,6 +1254,155 @@ static void __attribute__((noinline)) sensorsTick() {
     g_sendOk = ok; if (ok) g_lastSendMs = millis();
   }
 }
+
+#if POD_ENV_DISPLAY
+// ─── Écran de station (28/10/2026) : page « mesures » ↔ page « animation » toutes les ENV_PAGE_MS ───────────────────────────────────────────
+// Lectures VIVANTES, pour l'écran seulement : DHT22 toutes les 5 s, SGP40 chaque seconde (le chauffage reste allumé), RSSI toutes les 15 s. Elles n'alimentent PAS le tampon d'envoi (lecture / 30 min, envoi / h, inchangés).
+// TOUT dessin passe par podWorkRun (pile de travail dédiée) ; aucun tableau, aucune String : des tampons de 12 octets et des entiers. Les œuvres reçues restent ENV_PAGE_MS à l'écran (aucune copie n'est gardée : la SD viendra).
+#include <math.h>
+static unsigned long g_envDhtAt = 0, g_envDhtOkAt = 0, g_envSgpAt = 0, g_envRssiAt = 0, g_envDrawAt = 0, g_envFrameAt = 0;
+static int32_t g_envRssi = 0;
+static uint8_t g_envFrame = 0;
+static int16_t g_envRing[3];                       // rayons précédents des anneaux (animation) — −1 = rien à effacer
+static int16_t g_envDot[6][2];                     // positions précédentes des points en orbite
+static int16_t g_envCore = -1;
+
+static uint16_t envColor(uint8_t r, uint8_t g, uint8_t b) { return ((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3); }
+/** Température -> couleur : bleu (≤ 10 °C) … vert … rouge (≥ 30 °C). */
+static uint16_t envTempColor() {
+  int t10 = (g_lastT == NO_T) ? 220 : (int)g_lastT;
+  if (t10 < 100) t10 = 100; if (t10 > 300) t10 = 300;
+  const int x = (t10 - 100) * 255 / 200;           // 0..255
+  if (x < 128) return envColor(0, (uint8_t)(x * 2), (uint8_t)(255 - x * 2));
+  return envColor((uint8_t)((x - 128) * 2), (uint8_t)(255 - (x - 128) * 2), 0);
+}
+/** "-12.3" aligné à droite sur w caractères (v10 = dixièmes). */
+static void envFmt10(char* o, int w, int v10) {
+  char b[10]; uint8_t k = 0; const bool neg = v10 < 0; unsigned a = neg ? (unsigned)(-v10) : (unsigned)v10;
+  b[k++] = (char)('0' + a % 10); b[k++] = '.'; a /= 10;
+  do { b[k++] = (char)('0' + a % 10); a /= 10; } while (a && k < 8);
+  if (neg) b[k++] = '-';
+  int n = 0; for (int i = 0; i < w - k; i++) o[n++] = ' ';
+  for (int i = k - 1; i >= 0; i--) o[n++] = b[i];
+  o[n] = 0;
+}
+static void envFmtU(char* o, int w, unsigned v) {
+  char b[10]; uint8_t k = 0;
+  do { b[k++] = (char)('0' + v % 10); v /= 10; } while (v && k < 8);
+  int n = 0; for (int i = 0; i < w - k; i++) o[n++] = ' ';
+  for (int i = k - 1; i >= 0; i--) o[n++] = b[i];
+  o[n] = 0;
+}
+static void envBar(int y, int pct, uint16_t col) {
+  if (pct < 0) pct = 0; if (pct > 100) pct = 100;
+  const int w = 120, f = w * pct / 100;
+  tft.drawRect(3, y, w + 2, 7, C_GREY);
+  tft.fillRect(4, y + 1, f, 5, col);
+  tft.fillRect(4 + f, y + 1, w - f, 5, C_BLACK);
+}
+static void envDrawDataImpl(bool full) {
+  const unsigned long now = millis();
+  tft.setTextWrap(false);
+  char b[12];
+  if (full) {
+    tft.fillScreen(C_BLACK);
+    tft.fillRect(0, 0, IMG_W, 14, C_DARK);
+    tft.setTextSize(1); tft.setTextColor(C_GOLD, C_DARK); tft.setCursor(3, 3); tft.print("PoD STATION");
+    tft.setTextColor(C_GREY, C_BLACK);
+    tft.setCursor(3, 18); tft.print("TEMPERATURE");
+    tft.setCursor(3, 62); tft.print("HUMIDITE");
+    tft.setCursor(3, 104); tft.print("AIR (brut, haut = sain)");
+  }
+  const bool fresh = g_envDhtOkAt != 0 && now - g_envDhtOkAt < 30000UL;
+  // temperature
+  tft.setTextSize(3); tft.setTextColor(fresh ? envTempColor() : C_GREY, C_BLACK); tft.setCursor(3, 29);
+  if (fresh && g_lastT != NO_T) { envFmt10(b, 5, g_lastT); tft.print(b); } else tft.print("  -- ");
+  tft.setTextSize(2); tft.setTextColor(C_WHITE, C_BLACK); tft.setCursor(98, 33); tft.print("C");
+  // humidite
+  tft.setTextSize(2); tft.setTextColor(fresh ? 0x07FF : C_GREY, C_BLACK); tft.setCursor(3, 72);
+  if (fresh && g_lastH != NO_H) { envFmt10(b, 5, g_lastH); tft.print(b); tft.print("%"); } else tft.print("  -- ");
+  envBar(91, (fresh && g_lastH != NO_H) ? (int)(g_lastH / 10) : 0, 0x07FF);
+  // air
+  tft.setTextSize(2); tft.setTextColor(g_sgpSeen ? C_WHITE : C_GREY, C_BLACK); tft.setCursor(3, 114);
+  if (g_sgpSeen) { envFmtU(b, 5, g_lastVoc); tft.print(b); } else tft.print("  -- ");
+  int air = 0; if (g_sgpSeen) { air = ((int)g_lastVoc - 20000) / 120; }                // 20 000 -> 0 %, 32 000 -> 100 % (indicatif, non calibré)
+  envBar(133, air, air > 55 ? 0x07E0 : (air > 25 ? C_GOLD : C_RED));
+  // pied
+  tft.fillRect(0, 146, IMG_W, 14, C_DARK);
+  tft.setTextSize(1); tft.setTextColor(C_WHITE, C_DARK); tft.setCursor(3, 150);
+  if (g_envRssi < 0) { tft.print("Wi-Fi "); envFmtU(b, 0, (unsigned)(-g_envRssi)); tft.print("-"); tft.print(b); } else tft.print("Wi-Fi ?");
+  tft.setTextColor(g_sendOk ? 0x07E0 : C_GREY, C_DARK); tft.setCursor(70, 150);
+  if (g_sendOk) { tft.print("envoi "); envFmtU(b, 0, (unsigned)((now - g_lastSendMs) / 60000UL)); tft.print(b); tft.print("m"); } else tft.print("envoi en attente");
+}
+/** Une image de l'animation : 3 anneaux qui respirent (couleur = température), un coeur (couleur = humidité), 6 points en orbite (vitesse = air). Efface seulement ce qu'elle a dessiné. */
+static void envDrawAnimImpl(bool full, unsigned long now) {
+  const int cx = 64, cy = 78;
+  if (full) {
+    tft.fillScreen(C_BLACK);
+    tft.fillRect(0, 0, IMG_W, 14, C_DARK);
+    tft.setTextSize(1); tft.setTextColor(C_GOLD, C_DARK); tft.setCursor(3, 3); tft.print("PoD STATION");
+    for (uint8_t i = 0; i < 3; i++) g_envRing[i] = -1;
+    for (uint8_t i = 0; i < 6; i++) g_envDot[i][0] = -1;
+    g_envCore = -1;
+  }
+  const float t = (float)now / 1000.0f;
+  const uint16_t col = envTempColor();
+  for (uint8_t i = 0; i < 3; i++) if (g_envRing[i] >= 0) tft.drawCircle(cx, cy, g_envRing[i], C_BLACK);
+  for (uint8_t i = 0; i < 6; i++) if (g_envDot[i][0] >= 0) tft.fillCircle(g_envDot[i][0], g_envDot[i][1], 3, C_BLACK);
+  for (uint8_t i = 0; i < 3; i++) {
+    const int r = 14 + i * 13 + (int)(5.0f * sinf(t * 1.6f - (float)i * 0.9f));
+    tft.drawCircle(cx, cy, r, col); g_envRing[i] = (int16_t)r;
+  }
+  const int core = 6 + (int)(3.0f * sinf(t * 3.2f));
+  if (g_envCore != core) { tft.fillCircle(cx, cy, 11, C_BLACK); tft.fillCircle(cx, cy, core, g_lastH == NO_H ? C_GREY : envColor(0, 160, 255)); g_envCore = core; }
+  const float speed = (g_sgpSeen && g_lastVoc < 24000) ? 1.8f : 0.7f;                       // air chargé : les points s'agitent
+  for (uint8_t i = 0; i < 6; i++) {
+    const float a = t * speed + (float)i * 1.0471976f;
+    const int x = cx + (int)(54.0f * cosf(a)), y = cy + (int)(54.0f * sinf(a));
+    tft.fillCircle(x, y, 3, i & 1 ? C_GOLD : C_WHITE); g_envDot[i][0] = (int16_t)x; g_envDot[i][1] = (int16_t)y;
+  }
+  if (g_envFrame == 0 || full) {                                                              // texte rafraîchi ~1 fois par seconde
+    char b[12];
+    tft.fillRect(0, 146, IMG_W, 14, C_DARK);
+    tft.setTextSize(1); tft.setTextColor(C_WHITE, C_DARK); tft.setCursor(3, 150);
+    if (g_lastT != NO_T) { envFmt10(b, 0, g_lastT); tft.print(b); tft.print("C "); }
+    if (g_lastH != NO_H) { envFmt10(b, 0, g_lastH); tft.print(b); tft.print("% "); }
+    if (g_sgpSeen) { envFmtU(b, 0, g_lastVoc); tft.print(b); }
+  }
+}
+static void __attribute__((noinline)) envDrawData(bool full) { PodNetInfo ni; auto wk = [&]() { envDrawDataImpl(full); }; if (!podWorkRun(wk, &ni)) tftWorkFailed("page mesures", ni); }
+static void __attribute__((noinline)) envDrawAnim(bool full, unsigned long now) { PodNetInfo ni; auto wk = [&]() { envDrawAnimImpl(full, now); }; if (!podWorkRun(wk, &ni)) tftWorkFailed("page animation", ni); }
+/** Lectures vives (DHT22 / SGP40 / RSSI) : jamais dans une transaction réseau, jamais sur le tampon d'envoi. */
+static void __attribute__((noinline)) envSample(unsigned long now) {
+  if (g_envDhtAt == 0 || now - g_envDhtAt >= 5000UL) {
+    int16_t tt = 0; uint16_t hh = 0; g_envDhtAt = now; if (g_envDhtAt == 0) g_envDhtAt = 1;
+    if (dht22Read(DHT_PIN, tt, hh)) { g_lastT = tt; g_lastH = hh; g_envDhtOkAt = now ? now : 1; }
+  }
+  if (now - g_envSgpAt >= 1000UL) {
+    g_envSgpAt = now; uint16_t raw = 0; bool ok = false; PodNetInfo ni;
+    const int h10 = (g_lastH == NO_H) ? 500 : (int)g_lastH, t10 = (g_lastT == NO_T) ? 250 : (int)g_lastT;
+    auto wk = [&]() { ok = sgp40Measure(h10, t10, raw); };
+    if (podWorkRun(wk, &ni) && ok && raw) { g_lastVoc = raw; g_sgpSeen = true; }
+  }
+  if (now - g_envRssiAt >= 15000UL) { int32_t r = 0; g_envRssiAt = now; if (wifiRssi(r) && r < 0 && r >= -127) g_envRssi = r; }
+}
+static void __attribute__((noinline)) envTick() {
+  const unsigned long now = millis();
+  envSample(now);
+  if (g_envPage == 255) {                           // une œuvre est à l'écran : on la laisse ENV_PAGE_MS
+    if (now - g_envPageAtMs < ENV_PAGE_MS) return;
+    g_envPage = 0; g_envFull = true; g_envPageAtMs = now;
+  } else if (now - g_envPageAtMs >= ENV_PAGE_MS) {
+    g_envPage ^= 1; g_envFull = true; g_envPageAtMs = now;
+    logf("[ENV] page %s", g_envPage ? "animation" : "mesures");
+  }
+  if (g_envPage == 0) {
+    if (g_envFull || now - g_envDrawAt >= 1000UL) { envDrawData(g_envFull); g_envFull = false; g_envDrawAt = now; }
+  } else if (g_envFull || now - g_envFrameAt >= 50UL) {
+    envDrawAnim(g_envFull, now); g_envFull = false; g_envFrameAt = now; g_envFrame = (uint8_t)((g_envFrame + 1) % 16);
+  }
+}
+#endif
 #endif
 #if POD_OTA_R4
 #include "pod_ota_r4_client.h"
@@ -1257,6 +1429,9 @@ void setup() {
   reportMem("boot");
 
   pinMode(TFT_CS, OUTPUT); digitalWrite(TFT_CS, HIGH);
+#if POD_SD_CS_PIN
+  pinMode(POD_SD_CS_PIN, OUTPUT); digitalWrite(POD_SD_CS_PIN, HIGH);   // lecteur SD du module : muet tant qu'il n'est pas utilisé
+#endif
   tft.initR(INITR_BLACKTAB);
   tft.setRotation(0);
   tftStatus("Connexion Wi-Fi...");
@@ -1326,6 +1501,9 @@ void loop() {
     return;
   }
 
+#if POD_ENV_DISPLAY
+  envTick();
+#endif
   if (now - lastPullMs >= nextPullIntervalMs) {
     const String prevCand = pendingCandidateId;
     doPull();
@@ -1340,5 +1518,9 @@ void loop() {
     lastValidateMs = millis();
     if (mined) { delay(2000); doPull(); lastPullMs = millis(); }
   }
+#if POD_ENV_DISPLAY
+  delay(20);                                         // animation : ≈ 15 images / s
+#else
   delay(100);
+#endif
 }
