@@ -13,6 +13,7 @@ import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "r
 import { ArrowLeft, Redo2, Send, SlidersHorizontal, Undo2 } from "lucide-react";
 import { paintDot, paintSegment, toShapeBrush, type BrushSpec } from "@/lib/anim/brushes";
 import { chooseLayout } from "@/lib/anim/fit";
+import { clipB64ToStudioSeed, clipToStudioSeed, parseClipSeedRequest, type StudioClipSeed } from "@/lib/anim/seedClip";
 import { CLIP, clipPlayMs, clipStats, type ClipInput } from "@/lib/bench/clip";
 import { blank, ellipse, flipH, flipV, floodFill, invert, line, motion, rect, shifted, type Frame } from "@/lib/bench/draw";
 import { encodeGif } from "@/lib/bench/gif";
@@ -217,6 +218,38 @@ export default function AnimStudio() {
     return () => { alive = false; };
   }, []);
   const device = devices?.find((d) => d.deviceId === deviceId);
+
+  // ── Point de départ : ?resume={candidat rejeté} ou ?remix={bloc d'animation} — l'animation ENTIÈRE (toutes les images, délais, couleurs) devient une copie modifiable ─────────
+  // Le clip source n'est jamais modifié ; « Annuler » ramène la feuille d'avant. Échec = message, jamais de perte du brouillon en cours ni de navigation.
+  useEffect(() => {
+    const req = parseClipSeedRequest(window.location.search);
+    if (!req) return;
+    let alive = true;
+    const load = async (): Promise<{ seed: StudioClipSeed; title: string; label: string }> => {
+      if (req.kind === "resume") {
+        const res = await fetch(`/api/rejected-image?id=${encodeURIComponent(req.candidateId)}&clip=1`, { cache: "no-store" });
+        if (res.status === 404) throw new Error("La copie de cette animation rejetée n'est plus conservée.");
+        const j = await res.json().catch(() => null) as { animation?: boolean; anim?: { clip?: string }; title?: string | null } | null;
+        if (!res.ok || !j) throw new Error("Impossible de charger l'animation rejetée (erreur réseau ou serveur).");
+        if (!j.animation || typeof j.anim?.clip !== "string") throw new Error("Ce rejet n'est pas une animation : ouvre-le depuis le studio de dessin.");
+        return { seed: clipB64ToStudioSeed(j.anim.clip), title: j.title ?? "", label: "l'animation rejetée" };
+      }
+      const [meta, clip] = await Promise.all([fetch(`/api/block-meta?hash=${req.blockHash}`, { cache: "no-store" }), fetch(`/api/block-clip?hash=${req.blockHash}`)]);
+      if (meta.status === 404 || clip.status === 404) throw new Error("Cette animation est introuvable.");
+      if (!clip.ok) throw new Error("Impossible de charger l'animation d'origine (erreur réseau ou serveur).");
+      const m = await meta.json().catch(() => null) as { workTitle?: string; blockIndex?: number } | null;
+      return { seed: clipToStudioSeed(new Uint8Array(await clip.arrayBuffer())), title: m?.workTitle ? `Remix — ${m.workTitle}`.slice(0, 80) : "Remix", label: `l'animation du bloc${typeof m?.blockIndex === "number" ? ` #${m.blockIndex}` : ""}` };
+    };
+    load().then(({ seed, title: t, label }) => {
+      if (!alive) return;
+      setPlaying(false);
+      dispatch({ type: "commit", fn: () => ({ frames: seed.frames, delays: seed.delays, cur: 0, handmade: false }) });
+      setFg(seed.fg); setBg(seed.bg); setTitle(t);
+      push(`Copie de ${label} chargée (${seed.frames.length} images) — modifiez-la ; Annuler pour revenir`, { kind: "ok" });
+    }).catch((e) => { if (alive) push(e instanceof Error ? e.message : "Chargement impossible.", { kind: "err" }); });
+    return () => { alive = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- chargement unique au montage
+  }, []);
   const wantedScreen = typeof window !== "undefined" ? new URLSearchParams(window.location.search).get("screen") : null;
   const targetScreen = (wantedScreen && device?.screens.includes(wantedScreen) ? benchScreenOf([wantedScreen]) : null) ?? benchScreenOf(device?.screens) ?? "tft28";
   const screenInfo = BENCH_SCREEN_INFO[targetScreen];

@@ -122,7 +122,7 @@ export function buildShownRecord(
  */
 export async function recordDisplayed(
   kv: DisplayKV, deviceId: string, screen: string, frame: LooseFrame,
-  source: "consensus" | "personal", mode?: "frame" | "scene", now = Date.now(), render?: RenderReport | null,
+  source: "consensus" | "personal", mode?: "frame" | "scene", now = Date.now(), render?: RenderReport | null, auxOled = false,
 ): Promise<ShownRecord | null> {
   try {
     const rec = buildShownRecord(frame, screen, source, now, mode, render);
@@ -130,6 +130,7 @@ export async function recordDisplayed(
     const writes: Promise<unknown>[] = [kv.set(shownKey(deviceId, screen), JSON.stringify(rec), { ex: SHOWN_TTL_SEC })];
     const img = rec.hasImage ? imagePayloadOf(frame, screen) : null;
     if (img) writes.push(kv.set(shownImageKey(rec.frameId, screen), JSON.stringify(img), { nx: true, ex: SHOWN_TTL_SEC }));
+    if (screen === "eink29bwr" && auxOled) { const aux = buildAuxOledRecord(rec, frame); if (aux) writes.push(kv.set(shownKey(deviceId, OLED_AUX_SCREEN_ID), JSON.stringify(aux), { ex: SHOWN_TTL_SEC })); }   // +1 commande, seulement pour un BWR à OLED qui reçoit une animation
     await Promise.all(writes);
     return rec;
   } catch (e) {
@@ -179,11 +180,25 @@ export async function readShownMap(
   const out: Record<string, Record<string, PublicShown>> = {};
   for (const [deviceId, screens] of Object.entries(full)) {
     for (const [screen, rec] of Object.entries(screens)) {
-      if (rec.kind === "personal" || !rec.hasImage) continue;
+      if (rec.kind === "personal" || !(rec.hasImage || (rec.isAnimation && rec.blockHash))) continue;   // une animation sans image propre (OLED auxiliaire) se lit depuis le clip du bloc
       (out[deviceId] ??= {})[screen] = toPublicShown(rec);
     }
   }
   return out;
+}
+
+/**
+ * OLED AUXILIAIRE d'un e-ink BWR (29/10/2026) : la carte n'a qu'UN écran déclaré et UN ACK (celui de l'e-ink), mais quand la frame acquittée porte le pointeur d'une animation, son OLED la joue en boucle.
+ * Enregistrement du pseudo-écran « oled096aux » déduit de cet ACK : AUCUNE image (la boucle se lit depuis le clip du bloc), `isAnimation` et `blockHash` seulement. ⚠ Pas confirmé par l'OLED lui-même
+ * (le firmware ne l'envoie pas) : c'est « la carte a acquitté la frame qui portait l'animation ». Null si la frame ne porte pas de pointeur valide.
+ */
+export const OLED_AUX_SCREEN_ID = "oled096aux";
+export function buildAuxOledRecord(rec: ShownRecord, frame: LooseFrame): ShownRecord | null {
+  const a = frame.payload?.anim as { hash?: unknown } | undefined;
+  if (rec.kind === "personal" || !a || typeof a !== "object" || typeof a.hash !== "string" || !/^[0-9a-f]{64}$/.test(a.hash)) return null;
+  const { render: _render, ...rest } = rec;
+  void _render;
+  return { ...rest, screen: OLED_AUX_SCREEN_ID, blockHash: a.hash, isAnimation: true, hasImage: false, mode: undefined };
 }
 
 export async function readShownImage(kv: DisplayKV, frameId: string, screen: string): Promise<ImagePayload | null> {

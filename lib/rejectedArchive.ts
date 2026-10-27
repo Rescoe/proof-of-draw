@@ -88,14 +88,16 @@ export interface RejectedEntry {
   workTitle?: string | null;
   drawArtistName?: string | null;
   candidateId: string;   // additif : retrouve la copie complète `candidate:archive:{candidateId}` tant que l'entrée est dans la liste
+  kind?: "animation";    // additif (29/10/2026) : le rejet est une ANIMATION (reprise dans l'atelier d'animation, pas dans le studio de dessin) ; absent = dessin
 }
 
-type CandidateLike = Pick<Candidate, "candidateId" | "deviceId" | "poolScreen" | "drawScore" | "score"> & Partial<Pick<Candidate, "workTitle" | "drawArtistName" | "artistName" | "poolSize" | "submittedAt">>;
+type CandidateLike = Pick<Candidate, "candidateId" | "deviceId" | "poolScreen" | "drawScore" | "score"> & Partial<Pick<Candidate, "workTitle" | "drawArtistName" | "artistName" | "poolSize" | "submittedAt" | "kind">>;
 
 export function rejectedEntry(c: CandidateLike, reason: string, now: number): RejectedEntry {
   return {
     deviceId: c.deviceId, screen: c.poolScreen, drawScore: c.drawScore, score: c.score, reason, rejectedAt: now,
     workTitle: c.workTitle ?? null, drawArtistName: c.drawArtistName ?? c.artistName ?? null, candidateId: c.candidateId,
+    ...(c.kind === "animation" ? { kind: "animation" as const } : {}),
   };
 }
 

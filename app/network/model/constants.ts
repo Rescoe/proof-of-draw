@@ -17,6 +17,7 @@ export const SCREEN_COLOR: Readonly<Record<string, string>> = {
   eink29bwr: "#f87171",
   eink27bw: "#94a3b8",
   oled096: "#60a5fa",
+  oled096aux: "#60a5fa",   // OLED auxiliaire d'un e-ink BWR
   tft18: "#fbbf24",
   tft28: "#2dd4bf",
 };

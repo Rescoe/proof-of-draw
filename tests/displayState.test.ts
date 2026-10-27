@@ -198,7 +198,7 @@ test("route d'ACK : lit le rapport par sanitizeRenderReport (jamais bloquant), l
   const read = (p: string) => fs.readFileSync(path.join(root, p), "utf8").replace(/\r\n/g, "\n");
   const ack = read("app/api/ack-frame/route.ts");
   assert.match(ack, /const render = sanitizeRenderReport\(body, mode\);/);
-  assert.match(ack, /recordDisplayed\(redis as unknown as DisplayKV, deviceId, t\.screen, t\.frame, "consensus", mode, undefined, render\)/);
+  assert.match(ack, /recordDisplayed\(redis as unknown as DisplayKV, deviceId, t\.screen, t\.frame, "consensus", mode, undefined, render, animOledAuxCapable\(device\)\)/);   // + OLED auxiliaire (29/10/2026) : +1 SET seulement pour un BWR à OLED qui reçoit une animation
   assert.deepEqual([...ack.matchAll(/\bredis\.([a-z]+)[<(]/g)].map((m) => m[1]), ["mget", "del", "del"], "commandes directes de la route : un MGET, un DEL de la frame et — 14/10/2026 — un DEL de la frame personnelle devenue obsolète, SEULEMENT si elle existe (+ l'écriture de l'appareil et l'enregistrement d'affichage existants)");
   assert.match(read("app/profile/OwnDisplaysDebug.tsx"), /jamais voté ni vérifié par le serveur/);
   assert.doesNotMatch(read("lib/podVerify.ts") + read("lib/chain.ts"), /renderHash|artworkHash/, "le rapport de rendu n'entre ni dans le vote ni dans le bloc");

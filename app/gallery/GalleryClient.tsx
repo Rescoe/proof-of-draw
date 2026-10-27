@@ -33,6 +33,7 @@ interface RejectedDraw {
   workTitle?: string | null;
   drawArtistName?: string | null;
   candidateId?: string;
+  kind?: "animation";
 }
 
 interface PendingCandidate {
@@ -192,7 +193,13 @@ function RejectedRow({ item }: { item: RejectedDraw }) {
               ? "Image importée non retravaillée"
               : item.reason || "non précisé"}
           </div>
-          {item.candidateId && isValidScreenId(item.screen) && (
+          {item.candidateId && item.kind === "animation" && (
+            <div style={{ marginTop: 8 }}>
+              <Link className="gc-page-btn" href={`/animer?resume=${encodeURIComponent(item.candidateId)}&device=${encodeURIComponent(item.deviceId)}&screen=${encodeURIComponent(item.screen)}`}>↻ Reprendre cette animation</Link>
+              <p className="gc-muted" style={{ margin: "6px 0 0" }}>Tu retrouves l&apos;animation entière (toutes les images) dans l&apos;atelier ; ce rejet reste archivé, intact.</p>
+            </div>
+          )}
+          {item.candidateId && item.kind !== "animation" && isValidScreenId(item.screen) && (
             <div style={{ marginTop: 8 }}>
               <DrawLauncher screen={item.screen} param="resume" value={item.candidateId} label="↻ Reprendre ce dessin"
                 hint="Tu obtiens une copie modifiable comme nouveau brouillon ; ce rejet reste archivé, intact, et ton nouveau dessin suivra son propre parcours de validation." />

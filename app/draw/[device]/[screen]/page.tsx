@@ -135,6 +135,7 @@ function DrawPageInner({ deviceId, screenId, onExit }: { deviceId: string; scree
         <div role="alert" style={{ maxWidth: 440, display: "flex", flexDirection: "column", gap: 14 }}>
           <h1 style={{ margin: 0, fontSize: 20 }}>Impossible d’ouvrir l’œuvre d’origine</h1>
           <p style={{ margin: 0, color: "#a9aac2", lineHeight: 1.5 }}>{seed.message}</p>
+          {seed.href && <Link href={seed.href} style={{ padding: "0.6rem 1rem", borderRadius: 8, background: "#7c6bff", color: "#fff", textDecoration: "none", textAlign: "center" }}>{seed.hrefLabel ?? "Ouvrir"}</Link>}
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
             <button type="button" onClick={retrySeed} style={{ padding: "0.6rem 1rem", borderRadius: 8, border: "1px solid #3a3a55", background: "#16162a", color: "#fff", cursor: "pointer" }}>Réessayer</button>
             <button type="button" onClick={skipSeed} style={{ padding: "0.6rem 1rem", borderRadius: 8, border: "none", background: "#7c6bff", color: "#fff", cursor: "pointer" }}>Dessiner sur une feuille blanche</button>

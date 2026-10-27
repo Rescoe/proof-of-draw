@@ -17,10 +17,16 @@ export async function GET(req: NextRequest) {
     const [final, raw] = await redis.mget<unknown[]>(finalKey(id), archiveKey(id));
     if (final !== "rejected" && final !== "expired") return notFound();
     if (!raw) return notFound();
-    const c = (typeof raw === "string" ? JSON.parse(raw) : raw) as { payload?: Record<string, unknown>; poolScreen?: string } | null;
+    const c = (typeof raw === "string" ? JSON.parse(raw) : raw) as { payload?: Record<string, unknown>; poolScreen?: string; kind?: string; workTitle?: string | null; anim?: { clip?: unknown; frames?: unknown; bytes?: unknown } } | null;
     const payload = c?.payload;
     if (!payload || typeof payload !== "object") return notFound();
-    return NextResponse.json({ payload }, { headers: { "Cache-Control": "public, s-maxage=3600, stale-while-revalidate=86400" } });
+    // Animation rejetée (29/10/2026) : `animation: true` toujours ; le clip PBC1 (≤ 9 Ko) seulement sur demande `clip=1` (pour rouvrir l'animation ENTIÈRE dans l'atelier, pas seulement son affiche).
+    const isAnim = c?.kind === "animation" && typeof c.anim?.clip === "string";
+    const wantClip = isAnim && req.nextUrl.searchParams.get("clip") === "1";
+    return NextResponse.json(
+      { payload, ...(isAnim ? { animation: true } : {}), ...(wantClip ? { anim: { clip: c!.anim!.clip, frames: c!.anim!.frames, bytes: c!.anim!.bytes }, title: c!.workTitle ?? null } : {}) },
+      { headers: { "Cache-Control": "public, s-maxage=3600, stale-while-revalidate=86400" } },
+    );
   } catch (err) {
     console.error("[/api/rejected-image]", err);
     return NextResponse.json({ error: "Erreur serveur" }, { status: 500 });

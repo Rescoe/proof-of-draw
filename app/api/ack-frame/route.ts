@@ -14,6 +14,7 @@ import { getIP, forbidden } from "@/lib/rateLimit";
 import { redis } from "@/lib/redis";
 import { SCREEN_IDS } from "@/lib/screenProfiles";
 import { personalFrameSupersededBy } from "@/lib/personalFrame";
+import { animOledAuxCapable } from "@/lib/anim/pointer";
 import { recordDisplayed, sanitizeRenderReport, DISPLAYS_CACHE_TAG, type DisplayKV } from "@/lib/displayState";
 
 const personalKey = (deviceId: string) => `personal:frame:${deviceId}`;
@@ -70,7 +71,7 @@ async function POST_(req: NextRequest) {
     const render = sanitizeRenderReport(body, mode);
     let shown = null;
     if (t) {
-      shown = await recordDisplayed(redis as unknown as DisplayKV, deviceId, t.screen, t.frame, "consensus", mode, undefined, render);
+      shown = await recordDisplayed(redis as unknown as DisplayKV, deviceId, t.screen, t.frame, "consensus", mode, undefined, render, animOledAuxCapable(device));
     } else {
       // Frame personnelle (dessin privé du propriétaire) : non supprimée par l'ACK, mais bien affichée.
       try {

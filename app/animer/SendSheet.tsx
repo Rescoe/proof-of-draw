@@ -37,7 +37,7 @@ export function SendSheet(props: {
         </div>
       )}
       <div className="st-field">
-        <label htmlFor="an-device">Écran cible</label>
+        <label htmlFor="an-device">Écran d'origine (signe l'œuvre)</label>
         {props.devices === null ? <span className="st-note">Chargement…</span> : props.devices.length === 0 ? (
           <span className="st-note" style={{ color: "var(--st-warn)" }}>Aucun écran qui joue des animations dans votre profil (TFT 2,8″, TFT 1,8″ ou OLED). Vous pouvez quand même dessiner et exporter en GIF.</span>
         ) : (
@@ -45,7 +45,7 @@ export function SendSheet(props: {
             <select id="an-device" className="st-input" value={props.deviceId} onChange={(e) => props.onDevice(e.target.value)}>
               {props.devices.map((d) => <option key={d.deviceId} value={d.deviceId}>{d.deviceName || d.artistName || d.deviceId}</option>)}
             </select>
-            <span className="st-note">{props.screenLabel} — animation {props.screenGeometry}. Une fois validée, elle est diffusée à tous les écrans capables.</span>
+            <span className="st-note">{props.screenLabel} — animation {props.screenGeometry}. Ce choix n'est que l'écran d'origine : une fois validée, l'animation est diffusée automatiquement à TOUS les écrans dynamiques capables du réseau (TFT 2,8″, TFT 1,8″, OLED, et l'OLED des e-ink BWR équipés), chacun la jouant à sa taille.</span>
           </>
         )}
       </div>

@@ -96,8 +96,8 @@ export function OwnDisplaysDebug({ devices }: { devices: OwnedDevice[] }) {
                     </div>
                   ) : (
                     <>
-                      {r.kind !== "personal" && r.hasImage && (
-                        <div style={{ marginBottom: 8 }}><ShownThumb frameId={r.frameId} screen={screen} box={{ w: 200, h: 120 }} /></div>
+                      {r.kind !== "personal" && (r.hasImage || (r.isAnimation && r.blockHash)) && (
+                        <div style={{ marginBottom: 8 }}><ShownThumb frameId={r.frameId} screen={screen} box={{ w: 200, h: 120 }} animHash={r.isAnimation ? r.blockHash : undefined} /></div>
                       )}
                       {r.kind === "personal" && (
                         <div style={{ fontSize: "0.74rem", color: "var(--text3)", marginBottom: 6 }}>

@@ -14,7 +14,7 @@ export function ScreenNode({ node, label, shown, selected, hitRadius, detailed, 
       {latest && <rect className="ng-screen__halo" x={-46} y={-34} width={92} height={68} rx={9} style={{ stroke: color }} />}
       {thumbnail && shown?.frameId ? (
         <foreignObject className="ng-screen__thumb" x={-38} y={-27} width={76} height={54}>
-          <div className="ng-thumb" style={{ borderColor: color }}><ShownThumb frameId={shown.frameId} screen={node.screen!} box={{ w: 76, h: 54 }} /></div>
+          <div className="ng-thumb" style={{ borderColor: color }}><ShownThumb frameId={shown.frameId} screen={node.screen!} box={{ w: 76, h: 54 }} animHash={shown.isAnimation ? shown.blockHash : undefined} /></div>
         </foreignObject>
       ) : <rect className="ng-screen__body" x={-node.radius} y={-node.radius * 0.72} width={node.radius * 2} height={node.radius * 1.44} rx={4} style={{ stroke: color }} />}
       {detailed && <text className="ng-screen__label" textAnchor="middle" y={thumbnail ? 42 : node.radius + 15} style={{ fill: color }}>{label}</text>}

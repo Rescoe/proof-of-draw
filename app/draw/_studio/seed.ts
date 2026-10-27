@@ -29,7 +29,12 @@ export interface StudioSeed {
   originHref?: string;
 }
 
-export type SeedState = { state: "none" } | { state: "loading" } | { state: "error"; message: string } | { state: "ready"; seed: StudioSeed };
+export type SeedState = { state: "none" } | { state: "loading" } | { state: "error"; message: string; href?: string; hrefLabel?: string } | { state: "ready"; seed: StudioSeed };
+
+/** Erreur qui propose un AUTRE endroit où ouvrir l'œuvre (ex. une animation rejetée → l'atelier d'animation) : jamais de navigation automatique. */
+export class SeedElsewhereError extends Error {
+  constructor(message: string, readonly href: string, readonly hrefLabel: string) { super(message); }
+}
 
 async function getJson(url: string): Promise<{ ok: boolean; status: number; body: Record<string, unknown> | null }> {
   const res = await fetch(url, { cache: "no-store" });
@@ -43,7 +48,7 @@ export async function loadSeed(req: SeedRequest, screenId: ScreenId): Promise<St
     const [meta, img] = await Promise.all([getJson(`/api/block-meta?hash=${req.blockHash}`), getJson(`/api/block-image?hash=${req.blockHash}`)]);
     if (meta.status === 404 || img.status === 404) throw new Error("Le bloc d'origine est introuvable.");
     if (!meta.ok || !img.ok || !meta.body || !img.body) throw new Error("Impossible de charger le bloc d'origine (erreur réseau ou serveur).");
-    if (meta.body.kind === "animation") throw new Error("Ce bloc est une animation : seules les images fixes peuvent être remixées pour l'instant.");
+    if (meta.body.kind === "animation") throw new SeedElsewhereError("Ce bloc est une animation : l'ouvrir ici ne donnerait que son affiche. L'atelier d'animation la rouvre en entier, toutes les images.", `/animer?remix=${req.blockHash}`, "Ouvrir l'animation entière dans l'atelier");
     if (meta.body.poolScreen !== screenId) throw new Error("Cet écran n'est pas du même type que le bloc d'origine : choisis un écran du même type.");
     const payload = toScreenPayload(img.body.imagePayload, screenId);
     if (!payload) throw new Error("L'image du bloc d'origine est illisible.");
@@ -58,6 +63,7 @@ export async function loadSeed(req: SeedRequest, screenId: ScreenId): Promise<St
   const r = await getJson(`/api/rejected-image?id=${encodeURIComponent(req.candidateId)}`);
   if (r.status === 404) throw new Error("La copie de ce dessin rejeté n'est plus conservée.");
   if (!r.ok || !r.body) throw new Error("Impossible de charger le dessin rejeté (erreur réseau ou serveur).");
+  if (r.body.animation === true) throw new SeedElsewhereError("Ce rejet est une animation : l'ouvrir ici ne donnerait que son affiche (une seule image). L'atelier d'animation la rouvre en entier, toutes les images.", `/animer?resume=${encodeURIComponent(req.candidateId)}`, "Ouvrir l'animation entière dans l'atelier");
   const payload = toScreenPayload(r.body.payload, screenId);
   if (!payload) throw new Error("Ce dessin rejeté ne correspond pas au type de cet écran, ou son image est illisible.");
   return { key: `resume:${req.candidateId.slice(0, 16)}`, rgba: payloadToStudioRGBA(payload), label: "Reprise d'un dessin rejeté (l'archive reste intacte)", titleSuggestion: "" };
@@ -77,7 +83,7 @@ export function useSeed(search: string, screenId: ScreenId): { seed: SeedState; 
     setSeed({ state: "loading" });
     loadSeed(req as SeedRequest, screenId)
       .then((s) => { if (!cancelled) setSeed({ state: "ready", seed: s }); })
-      .catch((e) => { if (!cancelled) setSeed({ state: "error", message: e instanceof Error ? e.message : "Chargement impossible." }); });
+      .catch((e) => { if (!cancelled) setSeed({ state: "error", message: e instanceof Error ? e.message : "Chargement impossible.", ...(e instanceof SeedElsewhereError ? { href: e.href, hrefLabel: e.hrefLabel } : {}) }); });
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps -- `req` est dérivé de reqKey
   }, [reqKey, screenId, attempt, skipped]);

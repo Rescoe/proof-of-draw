@@ -5,6 +5,7 @@
 // Axe 5.
 
 import { useState, useEffect, useRef, useCallback } from "react";
+import Link from "next/link";
 import type { BlockWithImage } from "@/lib/chain";
 import { BlockFrameCanvas } from "./BlockFrameCanvas";
 import { AnimBlockPlayer } from "./AnimBlockPlayer";
@@ -182,6 +183,9 @@ function TabDetails({ block }: { block: BlockWithImage }) {
       )}
       {block.imagePayload && <SendToScreen source="human" blockHash={block.blockHash} animation={block.kind === "animation"} />}
       {block.derivedFromBlockHash && <RemixOrigin hash={block.derivedFromBlockHash} />}
+      {block.kind === "animation" && block.source !== "ana-agent" && (
+        <Link href={`/animer?remix=${block.blockHash}`} style={{ display: "inline-block", padding: "0.45rem 0.9rem", minHeight: 40, borderRadius: 8, border: "1px solid var(--border)", background: "var(--bg2)", color: "var(--text)", fontWeight: 600, fontSize: "0.85rem", textDecoration: "none" }}>🔀 Copier cette animation dans l'atelier</Link>
+      )}
       {block.imagePayload && block.kind !== "animation" && block.source !== "ana-agent" && isValidScreenId(block.poolScreen) && (
         <DrawLauncher screen={block.poolScreen} param="remix" value={block.blockHash} label="🔀 Créer une œuvre dérivée (Remix)"
           hint={`Tu obtiens une copie modifiable de ce bloc : ajoute, efface, transforme. Le bloc #${block.blockIndex} reste inchangé ; ta version sera une nouvelle œuvre, validée par le réseau, qui indiquera son origine.`} />

@@ -7,7 +7,7 @@ import { unstable_cache, revalidateTag } from "next/cache";
 import { redis } from "@/lib/redis";
 import { SCREEN_IDS, SCREEN_PROFILES, ScreenId } from "@/lib/screenProfiles";
 import { readShownRecords, type DisplayKV } from "@/lib/displayState";
-import { animCapable } from "@/lib/anim/pointer";
+import { animCapable, animOledAuxCapable } from "@/lib/anim/pointer";
 import { publicDeviceId } from "@/lib/network/publicId";
 import { hardwareOfFirmware, type Hardware } from "@/lib/network/hardware";
 import { MEASURE_INDEX_KEY, MEASURE_ONLINE_MS, SENSOR_SCREEN, measKey, measureKindsOf, showsMeasures, toDeviceMeasures, type DeviceMeasures } from "@/lib/measures";
@@ -24,6 +24,7 @@ export type DeviceRecord = {
   artistId?: string;
   sceneCapability?: { sceneV1?: boolean };
   sensors?: string[];
+  caps?: string[];
   measuresPublic?: boolean;
   pairCode?: string;
   lastSeen: number;
@@ -176,10 +177,14 @@ export function toNetworkDevice(
     hardware:   hardwareOfFirmware(device.firmware),
     capabilities: { animation: animationScreens.length > 0, animationScreens, scene: device.sceneCapability?.sceneV1 === true },
     pools:      [...screens],
-    screens:    screens.map((screen) => {
-      const meta = getScreenMeta(screen);
-      return { screen, label: meta.label, description: meta.description };
-    }),
+    screens:    [
+      ...screens.map((screen) => {
+        const meta = getScreenMeta(screen);
+        return { screen, label: meta.label, description: meta.description };
+      }),
+      // OLED auxiliaire d'un e-ink BWR (29/10/2026) : second écran RÉEL de la carte, affiché comme tel. Pseudo-identifiant hors de SCREEN_IDS : il n'entre dans aucune pool (`pools` est inchangé), ne reçoit aucun flux de bloc d'écran et n'a pas d'ACK propre (la carte n'en a qu'un, celui de l'e-ink).
+      ...(animOledAuxCapable({ screens, firmware: device.firmware, caps: device.caps }) ? [OLED_AUX_SCREEN] : []),
+    ],
     ...(measures && showMeasures ? { measures } : {}),
     lastSeen:   Math.max(device.lastSeen ?? 0, measuredAtMs),
     lastPing:   Math.max(device.lastPing ?? 0, measuredAtMs),
@@ -189,6 +194,10 @@ export function toNetworkDevice(
     recentFrame,
   };
 }
+
+/** Pseudo-écran public de l'OLED auxiliaire (voir toNetworkDevice). */
+export const OLED_AUX_ID = "oled096aux";
+const OLED_AUX_SCREEN: DeviceScreenInfo = { screen: OLED_AUX_ID, label: "OLED 0,96″ (auxiliaire)", description: "Petit OLED de la carte e-ink : affiche l’écran capteur et joue les animations du réseau" };
 
 // Métadonnées d’écran dérivées de screenProfiles — pas de liste hardcodée ici
 function getScreenMeta(screen: string): { label: string; description: string } {
