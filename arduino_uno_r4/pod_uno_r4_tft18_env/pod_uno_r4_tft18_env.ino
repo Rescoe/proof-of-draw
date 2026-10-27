@@ -59,6 +59,8 @@
 #include "sgp40.h"
 #include <Wire.h>
 #include <new>
+#include "pod_bench.h"          // lecteur de clips PBC1 (copie identique de arduino_uno_r4/pod_uno_r4/pod_bench.h : scripts/sync-bench-header.js) — AVANT les macros ROW_BYTES / FRAME_BYTES du sketch
+#include "pod_bench_stream.h"   // validation et lecture EN FLUX d'un clip stocké sur la carte SD (même fichier que le TFT 2,8″)
 
 // POD_RENDER_V1_BEGIN
 // ─── Rendu v1 EN FLUX (lot 8B-2A) — INACTIF PAR DÉFAUT ────────────────────────────────────────────────────────────────────────────────────────────
@@ -91,7 +93,7 @@
 #define SERVER_HOST         "proof-of-draw.vercel.app"
 #define SCREEN_TYPE         "tft18"
 #ifndef FIRMWARE_VERSION
-#define FIRMWARE_VERSION    "r4tft18-2.0"
+#define FIRMWARE_VERSION    "r4tft18-2.3"
 #endif
 #ifndef POD_SENSORS
 #define POD_SENSORS 0                                // 1 : DHT22 (D2) + SGP40 (I2C) lus toutes les 30 min, envoyés toutes les heures à /api/sensor (comme la station)
@@ -106,7 +108,22 @@
 #define ENV_PAGE_MS 60000UL                          // durée de chaque page (essai : 1 minute)
 #endif
 #ifndef POD_SD_CS_PIN
-#define POD_SD_CS_PIN 0                              // 0 = rien ; sinon broche CS du lecteur SD du module, tenue HAUTE pour qu'il reste muet sur le bus SPI partagé (la SD n'est pas utilisée par ce firmware)
+#define POD_SD_CS_PIN 0                              // 0 = pas de SD ; sinon broche CS du lecteur SD du module (bus SPI partagé avec le TFT : SCK D13, MOSI D11, MISO D12). La SD garde la dernière œuvre (image ou clip d'animation) pour la réafficher sans réseau.
+#endif
+#if POD_SD_CS_PIN
+#include <SD.h>
+#if !POD_ENV_DISPLAY
+#error "POD_SD_CS_PIN exige POD_ENV_DISPLAY (la lecture de l'œuvre gardée vit dans l'écran de station)"
+#endif
+#define SD_DIR   "/pod18"
+#define SD_FRAME "/pod18/frame.bin"                  // 40 960 o RGB565 little-endian, tels que reçus du serveur
+#define SD_FMETA "/pod18/frame.met"                  // frameId, bloc, titre, artiste
+#define SD_ANIM  "/pod18/anim.pbc"                   // clip PBC1 de l'animation courante
+#define SD_AMETA "/pod18/anim.met"                   // hash du bloc + frameId de l'affiche
+#define ANIM_MAX_CLIP   9216u                        // octets (plafond du serveur)
+#define ANIM_FRAME      1024                         // = podbench::FRAME_BYTES (la macro FRAME_BYTES du sketch masquerait la constante de pod_bench.h)
+#define ANIM_WORK_BYTES (ANIM_FRAME + PODBENCH_STREAM_BUF)
+static_assert(podbench::W * podbench::H / 8 == ANIM_FRAME, "pod_bench.h : constantes désynchronisées");
 #endif
 #ifndef POD_OTA_R4
 #define POD_OTA_R4 0                                 // 1 : client OTA R4-B (manifeste signé Ed25519), famille uno-r4-wifi-tft18
@@ -165,12 +182,21 @@ Adafruit_ST7735 tft(TFT_CS, TFT_DC, TFT_RST);
 static uint8_t g_rowBytes[ROW_BYTES];
 static uint16_t g_rowPixels[IMG_W];
 bool onboardingDrawn = false;                      // écran d'appairage déjà dessiné depuis ce démarrage
+#if POD_SD_CS_PIN
+static bool sdOk = false;                          // carte lisible
+static bool sdFrameValid = false;                  // frame.bin complet : la dernière image peut être redessinée
+static bool animOn = false;                        // un clip valide de l'œuvre courante est sur la carte
+static String animHash = "";
+#endif
+static String pendingAnimHash = "";                // pointeur d'animation reçu par le dernier pull (vide = image fixe)
+static size_t pendingAnimBytes = 0;
 #if POD_ENV_DISPLAY
-static uint8_t g_envPage = 0;                      // 0 = mesures, 1 = animation, 255 = une œuvre est à l'écran (ne pas la recouvrir avant ENV_PAGE_MS)
+static uint8_t g_envPage = 0;                      // 0 = relevés, 1 = œuvre du réseau (image ou animation)
 static bool g_envFull = true;                      // la page doit être redessinée en entier
+static bool g_envArtDrawn = false;                 // l'œuvre est déjà à l'écran (page œuvre)
 static unsigned long g_envPageAtMs = 0;
-#define ENV_DIRTY() (g_envFull = true)             // tout autre affichage (état, QR…) a recouvert la page
-#define ENV_ART_SHOWN() do { g_envPage = 255; g_envPageAtMs = millis(); } while (0)
+#define ENV_DIRTY() do { g_envFull = true; g_envArtDrawn = false; } while (0)   // tout autre affichage (état, QR…) a recouvert la page
+#define ENV_ART_SHOWN() do { g_envPage = 1; g_envPageAtMs = millis(); g_envFull = false; g_envArtDrawn = true; } while (0)   // une œuvre vient d'être affichée par le réseau : page œuvre pour ENV_PAGE_MS
 #else
 #define ENV_DIRTY() ((void)0)
 #define ENV_ART_SHOWN() ((void)0)
@@ -498,6 +524,29 @@ static void drawCartelImpl() {
 }
 
 static bool streamFrame(podhttp::Reader<WiFiSSLClient>& rd) {
+#if POD_SD_CS_PIN
+  // Bus SPI partagé : chaque ligne est écrite sur la carte AVANT d'être envoyée au TFT (une transaction TFT par ligne, jamais d'accès SD pendant l'une d'elles).
+  bool ok = true, saving = false;
+  File f;
+  sdFrameValid = false;
+  if (sdOk) {
+    if (SD.exists(SD_FRAME)) SD.remove(SD_FRAME);
+    if (SD.exists(SD_FMETA)) SD.remove(SD_FMETA);
+    f = SD.open(SD_FRAME, FILE_WRITE);
+    saving = (bool)f;
+    if (!saving) logf("[SD] impossible d'ouvrir %s en écriture", SD_FRAME);
+  }
+  for (int y = 0; y < IMG_H; y++) {
+    if (rd.readBody(g_rowBytes, ROW_BYTES) != ROW_BYTES) { ok = false; break; }
+    if (saving && f.write(g_rowBytes, ROW_BYTES) != (size_t)ROW_BYTES) { saving = false; logf("[SD] écriture interrompue ligne %d (carte pleine / protégée ?)", y); }
+    for (int x = 0; x < IMG_W; x++) g_rowPixels[x] = (uint16_t)g_rowBytes[x * 2] | ((uint16_t)g_rowBytes[x * 2 + 1] << 8);
+    tft.startWrite(); tft.setAddrWindow(0, y, IMG_W, 1); tft.writePixels(g_rowPixels, IMG_W, true); tft.endWrite();
+  }
+  if (f) f.close();
+  sdFrameValid = ok && saving;
+  if (sdOk && !sdFrameValid && SD.exists(SD_FRAME)) SD.remove(SD_FRAME);
+  return ok;
+#else
   tft.startWrite();
   tft.setAddrWindow(0, 0, IMG_W, IMG_H);
   bool ok = true;
@@ -510,6 +559,7 @@ static bool streamFrame(podhttp::Reader<WiFiSSLClient>& rd) {
   }
   tft.endWrite();
   return ok;
+#endif
 }
 
 #endif
@@ -605,6 +655,9 @@ static bool ackFrame(const String& frameId) {
   return ok;
 }
 
+#if POD_SD_CS_PIN
+static void sdSaveMeta(const String& frameId);
+#endif
 static bool doFetchFrame(const String& frameId, const String& frameSource) {
   const unsigned long t0 = millis();
   bool shown = false, noFrame = false;
@@ -636,7 +689,10 @@ static bool doFetchFrame(const String& frameId, const String& frameSource) {
   drawCartel();
 #endif
   lastFrameId = frameId;                              // RAM seulement : après reboot le TFT doit être repeint
-  ENV_ART_SHOWN();                                    // station : l'œuvre reste ENV_PAGE_MS à l'écran avant que les pages mesures / animation reprennent
+  ENV_ART_SHOWN();                                    // station : l'œuvre reste ENV_PAGE_MS à l'écran avant que les pages relevés / œuvre alternent
+#if POD_SD_CS_PIN
+  sdSaveMeta(frameId);                                // cartel + identifiant de l'image gardée (réaffichage au démarrage)
+#endif
   lastFrameWasConsensus = frameSource == "consensus";
   pendingCandidateId = "";
   logf("[FRAME] OK en %lu ms (frameId=%s source=%s)", millis() - t0, frameId.c_str(), frameSource.c_str());
@@ -763,6 +819,236 @@ static bool doRegister() {
   return true;
 }
 
+#if POD_SD_CS_PIN
+// ─── microSD : la dernière œuvre du réseau (image OU clip d'animation) est gardée pour être réaffichée sans réseau (28/10/2026) ───────────────────────
+// Le bus SPI est PARTAGÉ avec le TFT : jamais d'accès à la carte entre tft.startWrite() et tft.endWrite() (une ligne reçue est écrite sur la carte AVANT d'être envoyée au TFT). SD.open demande ≈ 1 Ko de pile :
+// toute opération de haut niveau lancée depuis la pile principale passe par la pile de travail dédiée (podWorkRun) ; depuis une transaction réseau (déjà sur une pile dédiée) elle est appelée directement.
+// Fichiers : frame.bin = 40 960 o RGB565 little-endian tels que reçus ; frame.met = frameId + cartel ; anim.pbc = clip PBC1 ; anim.met = hash du bloc + frameId de l'affiche.
+static void sdInitImpl() {
+  for (int attempt = 0; attempt < 3 && !sdOk; attempt++) { sdOk = SD.begin(POD_SD_CS_PIN); if (!sdOk) delay(250); }   // certaines cartes ne répondent qu'au 2e essai
+  if (sdOk && !SD.exists(SD_DIR)) SD.mkdir(SD_DIR);
+  logf("[SD] %s", sdOk ? "carte lisible (dernière œuvre gardée)" : "carte absente, non formatée FAT/FAT32 ou illisible : l'œuvre ne sera pas gardée");
+}
+static void __attribute__((noinline)) sdInit() { PodNetInfo ni; auto wk = [&]() { sdInitImpl(); }; if (!podWorkRun(wk, &ni)) { sdOk = false; tftWorkFailed("SD init", ni); } }
+
+/** Redessine l'image gardée (ligne par ligne : lecture de la carte, PUIS écriture TFT). */
+static bool restoreFrameImpl() {
+  File f = SD.open(SD_FRAME, FILE_READ);
+  if (!f) return false;
+  if (f.size() != (unsigned long)FRAME_BYTES) { f.close(); return false; }
+  bool ok = true;
+  for (int y = 0; y < IMG_H; y++) {
+    if (f.read(g_rowBytes, ROW_BYTES) != ROW_BYTES) { ok = false; break; }
+    for (int x = 0; x < IMG_W; x++) g_rowPixels[x] = (uint16_t)g_rowBytes[x * 2] | ((uint16_t)g_rowBytes[x * 2 + 1] << 8);
+    tft.startWrite(); tft.setAddrWindow(0, y, IMG_W, 1); tft.writePixels(g_rowPixels, IMG_W, true); tft.endWrite();
+  }
+  f.close();
+  return ok;
+}
+static bool __attribute__((noinline)) restoreFrame() {
+  bool ok = false; PodNetInfo ni;
+  auto wk = [&]() { ok = restoreFrameImpl();
+#if !POD_RENDER_V1
+    if (ok) drawCartelImpl();
+#endif
+  };
+  if (!podWorkRun(wk, &ni)) { tftWorkFailed("réaffichage SD", ni); return false; }
+  return ok;
+}
+
+static void sdSaveMetaImpl(const String& frameId) {
+  if (!sdOk || !sdFrameValid) return;
+  if (SD.exists(SD_FMETA)) SD.remove(SD_FMETA);
+  File m = SD.open(SD_FMETA, FILE_WRITE);
+  if (!m) return;
+  m.println(frameId); m.println(currentBlockIndex); m.println(asciiFold(pendingWorkTitle)); m.println(asciiFold(pendingArtistName));
+  m.close();
+}
+static void __attribute__((noinline)) sdSaveMeta(const String& frameId) { PodNetInfo ni; auto wk = [&]() { sdSaveMetaImpl(frameId); }; if (!podWorkRun(wk, &ni)) tftWorkFailed("SD méta", ni); }
+
+/** Au démarrage : relit le cartel et l'identifiant de l'œuvre gardée (l'image n'est redessinée que si la carte la porte complète). */
+static bool sdLoadMetaImpl() {
+  if (!sdOk || !SD.exists(SD_FMETA) || !SD.exists(SD_FRAME)) return false;
+  File m = SD.open(SD_FMETA, FILE_READ);
+  if (!m) return false;
+  String id = m.readStringUntil('\n'); id.trim();
+  String idx = m.readStringUntil('\n'); idx.trim();
+  String title = m.readStringUntil('\n'); title.trim();
+  String artist = m.readStringUntil('\n'); artist.trim();
+  m.close();
+  if (id.length() < 8 || id.length() > 64) return false;
+  lastFrameId = id; currentBlockIndex = idx.toInt(); pendingWorkTitle = title; pendingArtistName = artist;
+  return true;
+}
+
+// ─── Animation : clip PBC1 sur la carte, validé et joué EN FLUX (2 048 o de travail quel que soit le clip) ────────────────────────────────────────
+struct SdClipSource {
+  File f;
+  bool read(uint8_t* d, size_t n) { return n == 0 || f.read(d, n) == (int)n; }
+  bool seek(uint32_t p) { return f.seek(p); }
+};
+typedef podbench::GeoOne<48> Geo18;                 // 128×64 au centre de l'écran 128×160 : y = 48..111 (le cartel occupe le haut et le bas)
+
+static void animRemoveFilesImpl() { if (SD.exists(SD_AMETA)) SD.remove(SD_AMETA); if (SD.exists(SD_ANIM)) SD.remove(SD_ANIM); }
+static void __attribute__((noinline)) animForget() {
+  if (animOn) logf("[ANIM] arrêt : nouvelle image fixe");
+  animOn = false; animHash = "";
+  if (!sdOk) return;
+  PodNetInfo ni; auto wk = [&]() { animRemoveFilesImpl(); }; if (!podWorkRun(wk, &ni)) tftWorkFailed("animForget", ni);
+}
+/** Au démarrage : le clip de la carte appartient-il à l'œuvre réaffichée ? */
+static void animLoadMarkerImpl() {
+  if (!sdOk || !SD.exists(SD_AMETA) || !SD.exists(SD_ANIM)) return;
+  File m = SD.open(SD_AMETA, FILE_READ);
+  if (!m) return;
+  String hash = m.readStringUntil('\n'); hash.trim();
+  String fid = m.readStringUntil('\n'); fid.trim();
+  m.close();
+  if (hash.length() != 64 || fid != lastFrameId) { logf("[ANIM] clip de la carte ne correspond pas à l'œuvre : ignoré"); return; }
+  animOn = true; animHash = hash;
+  logf("[ANIM] clip trouvé sur la carte (bloc %s...) : lecture en boucle", hash.substring(0, 12).c_str());
+}
+static void __attribute__((noinline)) animLoadMarker() { PodNetInfo ni; auto wk = [&]() { animLoadMarkerImpl(); }; if (!podWorkRun(wk, &ni)) tftWorkFailed("animLoadMarker", ni); }
+
+/** Reçoit le clip du bloc et l'écrit sur la carte AU FIL DE L'EAU (pile réseau dédiée : la carte est utilisée dans la transaction, comme le cache d'image). true = `announced` octets reçus ET écrits. */
+static bool __attribute__((noinline)) netGetBlockClipToSd(const String& hash, size_t announced, bool& writeFailed) {
+  bool got = false;
+  PodNetInfo ni;
+  auto tx = [&]() {
+    Conn c(HTTP_TIMEOUT_MS);
+    const int code = c.request("GET", "/api/block-clip?hash=" + hash, nullptr);
+    logf("[HTTP GET] /api/block-clip -> %d (contenu %ld)", code, c.rd.contentLength());
+    if (code == 200 && (c.rd.contentLength() < 0 || (size_t)c.rd.contentLength() == announced)) {
+      File f = SD.open(SD_ANIM, FILE_WRITE);
+      if (!f) writeFailed = true;
+      else {
+        size_t left = announced; bool ok = true;
+        while (left > 0) {
+          const size_t k = left < (size_t)ROW_BYTES ? left : (size_t)ROW_BYTES;
+          if (c.rd.readBody(g_rowBytes, k) != k) { ok = false; break; }
+          if (f.write(g_rowBytes, k) != k) { ok = false; writeFailed = true; break; }
+          left -= k;
+        }
+        f.close();
+        got = ok && c.rd.complete() && c.client.fault() == 0;
+      }
+    }
+    c.client.stop();
+  };
+  const bool ran = podNetRun(tx, &ni);
+  if (!ran) { got = false; logf("[ANIM] pile réseau dédiée : %s (erreur %u, marge %u o) — clip NON retenu", podNetWhy(ni), (unsigned)ni.err, (unsigned)ni.margin); }
+  return got;
+}
+static void __attribute__((noinline)) animRemoveFiles() { PodNetInfo ni; auto wk = [&]() { animRemoveFilesImpl(); }; if (!podWorkRun(wk, &ni)) tftWorkFailed("animRemove", ni); }
+
+/** Valide le clip rangé (en flux, depuis la carte) puis écrit le marqueur. true = clip valide ET marqueur écrit. work : ANIM_WORK_BYTES. */
+static bool __attribute__((noinline)) animValidateAndMark(const String& hash, size_t announced, uint8_t* work, uint16_t& frames) {
+  uint8_t err = 0xFF;                                         // 0xFF : non exécuté
+  frames = 0;
+  PodNetInfo ni;
+  auto chk = [&]() {
+    SdClipSource src;
+    src.f = SD.open(SD_ANIM, FILE_READ);
+    if (!src.f) { err = 0xFE; return; }
+    if (src.f.size() != announced) { err = 0xFD; src.f.close(); return; }
+    podbench::StreamInfo si;
+    const podbench::Err e = podbench::validateStream(src, announced, si, work, work + ANIM_FRAME);
+    src.f.close();
+    err = (uint8_t)e;
+    if (e != podbench::OK) return;
+    frames = si.frames;
+    File m = SD.open(SD_AMETA, FILE_WRITE);
+    if (m) { m.println(hash); m.println(lastFrameId); m.close(); } else err = 0xFC;
+  };
+  if (!podWorkRun(chk, &ni)) { logf("[ANIM] validation du clip NON faite (pile de travail : %s)", podNetWhy(ni)); return false; }
+  if (err == podbench::OK) return true;
+  if (err == 0xFE) logf("[ANIM] clip illisible après écriture");
+  else if (err == 0xFD) logf("[ANIM] taille du clip rangé différente de la taille annoncée");
+  else if (err == 0xFC) logf("[ANIM] écriture du marqueur impossible");
+  else logf("[ANIM] clip refusé (%s)", podbench::errNameStream((podbench::Err)err));
+  return false;
+}
+static bool fetchAnimToSd(const String& hash, size_t announced) {
+  if (!sdOk) { logf("[ANIM] pas de carte SD : animation non lue (l'affiche reste à l'écran)"); return false; }
+  if (announced < (size_t)(podbench::HEADER_BYTES + 5 + ANIM_FRAME) || announced > ANIM_MAX_CLIP) { logf("[ANIM] taille refusée (%u)", (unsigned)announced); return false; }
+  const unsigned long t0 = millis();
+  animRemoveFiles();                                          // marqueur d'abord : un arrêt en cours d'écriture ne laisse jamais un clip à moitié « actif »
+  bool writeFailed = false;
+  const bool got = netGetBlockClipToSd(hash, announced, writeFailed);   // retour complet = client TLS détruit ET pile réseau libérée ; AUCUN tampon de validation n'existe avant ce point
+  uint16_t frames = 0;
+  bool ok = false;
+  if (!got) logf("[ANIM] clip refusé (%s)", writeFailed ? "écriture sur la carte impossible" : "téléchargement incomplet");
+  else {
+    uint8_t* work = (uint8_t*)malloc(ANIM_WORK_BYTES);        // alloué SEULEMENT après le téléchargement
+    if (!work) logf("[ANIM] mémoire insuffisante (%u o de travail) après le téléchargement : clip supprimé, animation non activée", (unsigned)ANIM_WORK_BYTES);
+    else { ok = animValidateAndMark(hash, announced, work, frames); free(work); }
+  }
+  if (!ok) { animRemoveFiles(); return false; }
+  animOn = true; animHash = hash;
+  logf("[ANIM] clip reçu en %lu ms, %u images, rangé sur la carte (%u o) : lecture en boucle", millis() - t0, (unsigned)frames, (unsigned)announced);
+  return true;
+}
+static void maybeFetchAnim(const String& frameId) {
+  if (pendingAnimHash.length() != 64) return;
+  if (animOn && animHash == pendingAnimHash) return;         // déjà sur la carte
+  if (frameId != lastFrameId) return;                        // l'affiche doit être ce qui est à l'écran
+  fetchAnimToSd(pendingAnimHash, pendingAnimBytes);
+}
+enum AnimEnd : uint8_t { AE_TIME = 0, AE_NET = 1, AE_ERROR = 2 };
+/** Un travail réseau (pull, vote, observation) est-il dû ? L'animation lui rend alors la main. */
+static bool netWorkDue() {
+  const unsigned long now = millis();
+  if (now - lastPullMs >= nextPullIntervalMs) return true;
+  if (pendingCandidateId.length() > 0 && now - lastValidateMs >= VALIDATE_INTERVAL) return true;
+  return pendingObsHashes.length() > 0;
+}
+/** Joue le clip de la carte EN BOUCLE pendant au plus `budgetMs`, ou jusqu'à ce qu'un travail réseau soit dû. Lecture EN FLUX : 2 048 o de travail, jamais le clip entier. */
+static AnimEnd __attribute__((noinline)) runAnim(unsigned long budgetMs) {
+  uint8_t* work = (uint8_t*)malloc(ANIM_WORK_BYTES);
+  if (!work) { logf("[ANIM] mémoire insuffisante pour la lecture (%u o de travail)", (unsigned)ANIM_WORK_BYTES); return AE_ERROR; }
+  AnimEnd why = AE_TIME;
+  uint8_t st = 0;                                             // 0 lecture faite ; 1 ouverture ; 2 taille ; 3 clip refusé ; 4 lecture de la carte interrompue
+  podbench::Err perr = podbench::OK;
+  PodNetInfo ni;
+  auto play = [&]() {
+    SdClipSource src;
+    src.f = SD.open(SD_ANIM, FILE_READ);
+    if (!src.f) { st = 1; return; }
+    const size_t n = src.f.size();
+    if (n < (size_t)(podbench::HEADER_BYTES + 5 + ANIM_FRAME) || n > ANIM_MAX_CLIP) { st = 2; src.f.close(); return; }
+    podbench::StreamInfo si;
+    perr = podbench::validateStream(src, n, si, work, work + ANIM_FRAME);
+    if (perr != podbench::OK) { st = 3; src.f.close(); return; }
+    tft.fillScreen(si.bg);
+#if !POD_RENDER_V1
+    drawCartelImpl();
+#endif
+    const unsigned long tEnd = millis() + budgetMs;
+    unsigned long target = millis();
+    const podbench::PlayEnd pe = podbench::playStream<Geo18>(src, si, work, work + ANIM_FRAME, tft, g_rowPixels, [&](uint32_t, uint16_t delayMs) -> bool {
+      target += delayMs;                                      // horloge ABSOLUE : pas de dérive cumulée
+      while ((long)(millis() - target) < 0) {
+        if ((long)(millis() - tEnd) >= 0) return false;
+        if (netWorkDue()) { why = AE_NET; return false; }
+        delay(1);
+      }
+      if (netWorkDue()) { why = AE_NET; return false; }
+      return (long)(millis() - tEnd) < 0;
+    });
+    if (pe == podbench::PLAY_IO) st = 4;
+    src.f.close();
+  };
+  const bool ran = podWorkRun(play, &ni);
+  free(work);
+  if (!ran) { tftWorkFailed("lecture du clip", ni); return AE_ERROR; }
+  if (st == 1) { logf("[ANIM] clip illisible"); return AE_ERROR; }
+  if (st == 2) { logf("[ANIM] taille de clip invalide"); return AE_ERROR; }
+  if (st == 3) { logf("[ANIM] clip de la carte refusé (%s)", podbench::errNameStream(perr)); return AE_ERROR; }
+  if (st == 4) { logf("[ANIM] lecture de la carte interrompue"); return AE_ERROR; }
+  return why;
+}
+#endif
+
 // ─── PULL ──────────────────────────────────────────────────────────────────
 #define PULL_ID_MAX     64
 #define PULL_SRC_MAX    16
@@ -775,10 +1061,10 @@ enum PullStatus : uint8_t { PULL_P_NONE = 0, PULL_P_OK = 1, PULL_P_RATE = 2, PUL
 struct PullParsed {
   uint8_t status;                  // PullStatus : le résultat n'est exploitable que pour PULL_P_OK et PULL_P_RATE
   bool hasCartel, hasObs;
-  int blockIndex, retryAfter, cartelBlockIndex, rateRetrySec;
+  int blockIndex, retryAfter, cartelBlockIndex, rateRetrySec, animBytes;
   const char* jsonErr;             // texte statique de DeserializationError (PULL_P_JSON)
-  String blockHash, candId, frameSource, frameId, workTitle, artistName, displayTs, obsHashes, obsTarget, owned;
-  PullParsed() : status(PULL_P_NONE), hasCartel(false), hasObs(false), blockIndex(-1), retryAfter(60), cartelBlockIndex(-1), rateRetrySec(60), jsonErr(nullptr) {}
+  String blockHash, candId, frameSource, frameId, workTitle, artistName, displayTs, obsHashes, obsTarget, owned, animHash;
+  PullParsed() : status(PULL_P_NONE), hasCartel(false), hasObs(false), blockIndex(-1), retryAfter(60), cartelBlockIndex(-1), rateRetrySec(60), animBytes(0), jsonErr(nullptr) {}
 };
 // copie bornée d'un identifiant : au-delà de max => PULL_P_BOUNDS ; copie incomplète (tas) => PULL_P_HEAP
 static bool __attribute__((noinline)) pullSetId(String& dst, const char* src, size_t max, PullParsed& r) {
@@ -819,6 +1105,8 @@ static void __attribute__((noinline)) pullParseWork(const String& resp, int code
   if (!pullSetId(r.frameSource, doc["frameSource"] | "none", PULL_SRC_MAX, r)) return;
   if (!pullSetId(r.frameId, doc["frameId"] | "", PULL_ID_MAX, r)) return;
   r.retryAfter = doc["retryAfter"] | 60;
+  JsonObject an = doc["anim"];                                // pointeur d'animation (r4tft18 >= 2.3 seulement)
+  if (!an.isNull()) { if (!pullSetId(r.animHash, an["hash"] | "", PULL_ID_MAX, r)) return; r.animBytes = an["bytes"] | 0; if (r.animBytes < 0) r.animBytes = 0; }
   if (r.retryAfter <= 0) r.retryAfter = 60;
   if (r.frameId.length() == 0) { JsonObject fo = doc["frame"]; if (!fo.isNull() && !pullSetId(r.frameId, fo["frameId"] | "", PULL_ID_MAX, r)) return; }
 
@@ -896,6 +1184,7 @@ static int __attribute__((noinline)) doPullApply(PullParsed& r, const String& re
     logf("[PULL] nouveau bloc #%d", currentBlockIndex);
   }
   if (r.candId.length() > 0) pendingCandidateId = r.candId;
+  pendingAnimHash = r.animHash; pendingAnimBytes = (size_t)r.animBytes;
   frameId = r.frameId; frameSource = r.frameSource;
   return 1;
 }
@@ -922,10 +1211,24 @@ static bool doPull() {
 
   if (newFrameSource == "none" || newFrameId.length() == 0) { logf("[PULL] aucune frame");
   return true; }
-  if (newFrameId == lastFrameId) { logf("[PULL] frame déjà affichée"); return true; }
+  if (newFrameId == lastFrameId) {
+    logf("[PULL] frame déjà affichée");
+#if POD_SD_CS_PIN
+    maybeFetchAnim(newFrameId);                      // l'affiche est là mais pas encore le clip (ou le clip a changé)
+#endif
+    return true;
+  }
   logf("[PULL] nouvelle frame %s (%s)", newFrameId.c_str(), newFrameSource.c_str());
 
-  doFetchFrame(newFrameId, newFrameSource);          // échec : on retourne quand même true (pas de boucle pull→échec→pull)
+  const bool fetched = doFetchFrame(newFrameId, newFrameSource) && lastFrameId == newFrameId;   // échec : on retourne quand même true (pas de boucle pull→échec→pull)
+#if POD_SD_CS_PIN
+  if (fetched) {
+    if (pendingAnimHash.length() == 64) maybeFetchAnim(newFrameId);   // l'affiche est à l'écran : on rapatrie le clip sur la carte
+    else animForget();                                                // nouvelle image fixe : l'animation précédente s'arrête
+  }
+#else
+  (void)fetched;
+#endif
   reportMem("après pull");
   return true;
 }
@@ -1256,22 +1559,21 @@ static void __attribute__((noinline)) sensorsTick() {
 }
 
 #if POD_ENV_DISPLAY
-// ─── Écran de station (28/10/2026) : page « mesures » ↔ page « animation » toutes les ENV_PAGE_MS ───────────────────────────────────────────
-// Lectures VIVANTES, pour l'écran seulement : DHT22 toutes les 5 s, SGP40 chaque seconde (le chauffage reste allumé), RSSI toutes les 15 s. Elles n'alimentent PAS le tampon d'envoi (lecture / 30 min, envoi / h, inchangés).
-// TOUT dessin passe par podWorkRun (pile de travail dédiée) ; aucun tableau, aucune String : des tampons de 12 octets et des entiers. Les œuvres reçues restent ENV_PAGE_MS à l'écran (aucune copie n'est gardée : la SD viendra).
+// ─── Écran de station (28/10/2026) : page « relevés » ↔ œuvre du réseau (image ou animation), toutes les ENV_PAGE_MS ─────────────────────────────
+// Page relevés : lectures VIVANTES, pour l'écran seulement — DHT22 toutes les 5 s, SGP40 chaque seconde (le chauffage reste allumé), RSSI toutes les 15 s. Elles n'alimentent PAS le tampon d'envoi
+// (lecture / 30 min, envoi / h, inchangés : le serveur refuse moins de 50 min entre deux envois).
+// Page œuvre : la dernière œuvre minée reçue du réseau — l'animation jouée depuis la carte SD (clip PBC1, en boucle) ou l'image redessinée depuis la carte. Sans carte, l'œuvre reste à l'écran jusqu'à la fin de sa page
+// puis ne revient pas (aucune copie en mémoire). TOUT dessin passe par podWorkRun (pile de travail dédiée) ; aucun tableau, aucune String : des tampons de 12 octets et des entiers.
 #include <math.h>
-static unsigned long g_envDhtAt = 0, g_envDhtOkAt = 0, g_envSgpAt = 0, g_envRssiAt = 0, g_envDrawAt = 0, g_envFrameAt = 0;
+static unsigned long g_envDhtAt = 0, g_envDhtOkAt = 0, g_envSgpAt = 0, g_envRssiAt = 0, g_envDrawAt = 0;
 static int32_t g_envRssi = 0;
-static uint8_t g_envFrame = 0;
-static int16_t g_envRing[3];                       // rayons précédents des anneaux (animation) — −1 = rien à effacer
-static int16_t g_envDot[6][2];                     // positions précédentes des points en orbite
-static int16_t g_envCore = -1;
 
 static uint16_t envColor(uint8_t r, uint8_t g, uint8_t b) { return ((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3); }
 /** Température -> couleur : bleu (≤ 10 °C) … vert … rouge (≥ 30 °C). */
 static uint16_t envTempColor() {
   int t10 = (g_lastT == NO_T) ? 220 : (int)g_lastT;
-  if (t10 < 100) t10 = 100; if (t10 > 300) t10 = 300;
+  if (t10 < 100) t10 = 100;
+  if (t10 > 300) t10 = 300;
   const int x = (t10 - 100) * 255 / 200;           // 0..255
   if (x < 128) return envColor(0, (uint8_t)(x * 2), (uint8_t)(255 - x * 2));
   return envColor((uint8_t)((x - 128) * 2), (uint8_t)(255 - (x - 128) * 2), 0);
@@ -1294,7 +1596,8 @@ static void envFmtU(char* o, int w, unsigned v) {
   o[n] = 0;
 }
 static void envBar(int y, int pct, uint16_t col) {
-  if (pct < 0) pct = 0; if (pct > 100) pct = 100;
+  if (pct < 0) pct = 0;
+  if (pct > 100) pct = 100;
   const int w = 120, f = w * pct / 100;
   tft.drawRect(3, y, w + 2, 7, C_GREY);
   tft.fillRect(4, y + 1, f, 5, col);
@@ -1330,52 +1633,15 @@ static void envDrawDataImpl(bool full) {
   // pied
   tft.fillRect(0, 146, IMG_W, 14, C_DARK);
   tft.setTextSize(1); tft.setTextColor(C_WHITE, C_DARK); tft.setCursor(3, 150);
-  if (g_envRssi < 0) { tft.print("Wi-Fi "); envFmtU(b, 0, (unsigned)(-g_envRssi)); tft.print("-"); tft.print(b); } else tft.print("Wi-Fi ?");
+  if (g_envRssi < 0) { tft.print("Wi-Fi -"); envFmtU(b, 0, (unsigned)(-g_envRssi)); tft.print(b); } else tft.print("Wi-Fi ?");
   tft.setTextColor(g_sendOk ? 0x07E0 : C_GREY, C_DARK); tft.setCursor(70, 150);
   if (g_sendOk) { tft.print("envoi "); envFmtU(b, 0, (unsigned)((now - g_lastSendMs) / 60000UL)); tft.print(b); tft.print("m"); } else tft.print("envoi en attente");
 }
-/** Une image de l'animation : 3 anneaux qui respirent (couleur = température), un coeur (couleur = humidité), 6 points en orbite (vitesse = air). Efface seulement ce qu'elle a dessiné. */
-static void envDrawAnimImpl(bool full, unsigned long now) {
-  const int cx = 64, cy = 78;
-  if (full) {
-    tft.fillScreen(C_BLACK);
-    tft.fillRect(0, 0, IMG_W, 14, C_DARK);
-    tft.setTextSize(1); tft.setTextColor(C_GOLD, C_DARK); tft.setCursor(3, 3); tft.print("PoD STATION");
-    for (uint8_t i = 0; i < 3; i++) g_envRing[i] = -1;
-    for (uint8_t i = 0; i < 6; i++) g_envDot[i][0] = -1;
-    g_envCore = -1;
-  }
-  const float t = (float)now / 1000.0f;
-  const uint16_t col = envTempColor();
-  for (uint8_t i = 0; i < 3; i++) if (g_envRing[i] >= 0) tft.drawCircle(cx, cy, g_envRing[i], C_BLACK);
-  for (uint8_t i = 0; i < 6; i++) if (g_envDot[i][0] >= 0) tft.fillCircle(g_envDot[i][0], g_envDot[i][1], 3, C_BLACK);
-  for (uint8_t i = 0; i < 3; i++) {
-    const int r = 14 + i * 13 + (int)(5.0f * sinf(t * 1.6f - (float)i * 0.9f));
-    tft.drawCircle(cx, cy, r, col); g_envRing[i] = (int16_t)r;
-  }
-  const int core = 6 + (int)(3.0f * sinf(t * 3.2f));
-  if (g_envCore != core) { tft.fillCircle(cx, cy, 11, C_BLACK); tft.fillCircle(cx, cy, core, g_lastH == NO_H ? C_GREY : envColor(0, 160, 255)); g_envCore = core; }
-  const float speed = (g_sgpSeen && g_lastVoc < 24000) ? 1.8f : 0.7f;                       // air chargé : les points s'agitent
-  for (uint8_t i = 0; i < 6; i++) {
-    const float a = t * speed + (float)i * 1.0471976f;
-    const int x = cx + (int)(54.0f * cosf(a)), y = cy + (int)(54.0f * sinf(a));
-    tft.fillCircle(x, y, 3, i & 1 ? C_GOLD : C_WHITE); g_envDot[i][0] = (int16_t)x; g_envDot[i][1] = (int16_t)y;
-  }
-  if (g_envFrame == 0 || full) {                                                              // texte rafraîchi ~1 fois par seconde
-    char b[12];
-    tft.fillRect(0, 146, IMG_W, 14, C_DARK);
-    tft.setTextSize(1); tft.setTextColor(C_WHITE, C_DARK); tft.setCursor(3, 150);
-    if (g_lastT != NO_T) { envFmt10(b, 0, g_lastT); tft.print(b); tft.print("C "); }
-    if (g_lastH != NO_H) { envFmt10(b, 0, g_lastH); tft.print(b); tft.print("% "); }
-    if (g_sgpSeen) { envFmtU(b, 0, g_lastVoc); tft.print(b); }
-  }
-}
-static void __attribute__((noinline)) envDrawData(bool full) { PodNetInfo ni; auto wk = [&]() { envDrawDataImpl(full); }; if (!podWorkRun(wk, &ni)) tftWorkFailed("page mesures", ni); }
-static void __attribute__((noinline)) envDrawAnim(bool full, unsigned long now) { PodNetInfo ni; auto wk = [&]() { envDrawAnimImpl(full, now); }; if (!podWorkRun(wk, &ni)) tftWorkFailed("page animation", ni); }
+static void __attribute__((noinline)) envDrawData(bool full) { PodNetInfo ni; auto wk = [&]() { envDrawDataImpl(full); }; if (!podWorkRun(wk, &ni)) tftWorkFailed("page relevés", ni); }
 /** Lectures vives (DHT22 / SGP40 / RSSI) : jamais dans une transaction réseau, jamais sur le tampon d'envoi. */
 static void __attribute__((noinline)) envSample(unsigned long now) {
   if (g_envDhtAt == 0 || now - g_envDhtAt >= 5000UL) {
-    int16_t tt = 0; uint16_t hh = 0; g_envDhtAt = now; if (g_envDhtAt == 0) g_envDhtAt = 1;
+    int16_t tt = 0; uint16_t hh = 0; g_envDhtAt = now ? now : 1;
     if (dht22Read(DHT_PIN, tt, hh)) { g_lastT = tt; g_lastH = hh; g_envDhtOkAt = now ? now : 1; }
   }
   if (now - g_envSgpAt >= 1000UL) {
@@ -1386,21 +1652,40 @@ static void __attribute__((noinline)) envSample(unsigned long now) {
   }
   if (now - g_envRssiAt >= 15000UL) { int32_t r = 0; g_envRssiAt = now; if (wifiRssi(r) && r < 0 && r >= -127) g_envRssi = r; }
 }
+/** Une œuvre est-elle disponible pour la page œuvre ? (carte lisible ET image complète ou clip valide) */
+static bool envArtAvailable() {
+#if POD_SD_CS_PIN
+  return sdOk && (animOn || sdFrameValid);
+#else
+  return false;
+#endif
+}
 static void __attribute__((noinline)) envTick() {
   const unsigned long now = millis();
   envSample(now);
-  if (g_envPage == 255) {                           // une œuvre est à l'écran : on la laisse ENV_PAGE_MS
-    if (now - g_envPageAtMs < ENV_PAGE_MS) return;
-    g_envPage = 0; g_envFull = true; g_envPageAtMs = now;
-  } else if (now - g_envPageAtMs >= ENV_PAGE_MS) {
-    g_envPage ^= 1; g_envFull = true; g_envPageAtMs = now;
-    logf("[ENV] page %s", g_envPage ? "animation" : "mesures");
+  if (now - g_envPageAtMs >= ENV_PAGE_MS) {
+    if (g_envPage == 1) { g_envPage = 0; g_envFull = true; g_envPageAtMs = now; logf("[ENV] page relevés"); }
+    else if (envArtAvailable()) { g_envPage = 1; g_envFull = true; g_envArtDrawn = false; g_envPageAtMs = now; logf("[ENV] page œuvre (%s)", animOn ? "animation" : "image"); }
+    else g_envPageAtMs = now;                      // rien à montrer : les relevés restent
   }
   if (g_envPage == 0) {
     if (g_envFull || now - g_envDrawAt >= 1000UL) { envDrawData(g_envFull); g_envFull = false; g_envDrawAt = now; }
-  } else if (g_envFull || now - g_envFrameAt >= 50UL) {
-    envDrawAnim(g_envFull, now); g_envFull = false; g_envFrameAt = now; g_envFrame = (uint8_t)((g_envFrame + 1) % 16);
+    return;
   }
+#if POD_SD_CS_PIN
+  if (animOn) {                                    // l'animation tourne jusqu'à la fin de la page, ou jusqu'à ce qu'un travail réseau soit dû (puis repart)
+    const unsigned long left = ENV_PAGE_MS - (now - g_envPageAtMs);
+    const AnimEnd e = runAnim(left);
+    g_envFull = false; g_envArtDrawn = true;
+    if (e == AE_ERROR) { logf("[ANIM] lecture impossible : l'image fixe est réaffichée"); animForget(); g_envFull = true; g_envArtDrawn = false; }
+    return;
+  }
+  if (g_envFull || !g_envArtDrawn) {               // image fixe : redessinée depuis la carte, une seule fois par page
+    if (sdFrameValid && restoreFrame()) { g_envArtDrawn = true; }
+    else { g_envPage = 0; g_envFull = true; g_envPageAtMs = now; logf("[ENV] image illisible sur la carte : retour aux relevés"); sdFrameValid = false; }
+    g_envFull = false;
+  }
+#endif
 }
 #endif
 #endif
@@ -1435,6 +1720,9 @@ void setup() {
   tft.initR(INITR_BLACKTAB);
   tft.setRotation(0);
   tftStatus("Connexion Wi-Fi...");
+#if POD_SD_CS_PIN
+  sdInit();
+#endif
 
   if (wifiStatusT("status (module present ?)") == WL_NO_MODULE) { logf("[WIFI] module absent"); while (true) delay(1000); }
   logf("[WIFI] firmware du module: %s", wifiFirmware().c_str());
@@ -1464,6 +1752,17 @@ void setup() {
 #if POD_OTA_R4
   otar4::setServer(OTAR4_HOST, OTAR4_PORT, OTAR4_BASE);
   otar4::confirmBoot();
+#endif
+#if POD_SD_CS_PIN
+  if (paired && sdOk) {                              // l'œuvre gardée est redessinée tout de suite (le TFT a tout perdu) ; l'ID mémorisé évite de la retélécharger
+    bool had = false;
+    { PodNetInfo ni; auto wk = [&]() { had = sdLoadMetaImpl(); }; if (!podWorkRun(wk, &ni)) tftWorkFailed("SD méta", ni); }
+    if (had) {
+      sdFrameValid = restoreFrame();
+      if (sdFrameValid) { logf("[SD] dernière œuvre réaffichée (frameId=%s)", lastFrameId.c_str()); animLoadMarker(); ENV_ART_SHOWN(); }
+      else lastFrameId = "";
+    }
+  }
 #endif
   if (paired) {
     logf("[BOOT] premier pull immédiat");

@@ -43,7 +43,7 @@ test("ENV R4 : TOUT le JSON est décodé sur la pile de travail (4 deserializeJs
 
 test("ENV R4 : l'affichage TFT n'est atteint que depuis la pile de travail (enveloppes), le flux de l'image ou setup()", () => {
   const lines = code.split("\n");
-  const allowed = new Set(["tftStatusImpl", "drawCartelImpl", "displayKeyMaterialOnceImpl", "displayOnboardingQRImpl", "streamFrame", "podStreamFrame", "setup", "envDrawDataImpl", "envDrawAnimImpl", "envBar"]);
+  const allowed = new Set(["tftStatusImpl", "drawCartelImpl", "displayKeyMaterialOnceImpl", "displayOnboardingQRImpl", "streamFrame", "podStreamFrame", "setup", "envDrawDataImpl", "envBar", "restoreFrameImpl", "runAnim"]);
   lines.forEach((l, i) => { if (/\btft\.\w+\(/.test(l) && !/^Adafruit_ST7735 tft/.test(l)) { const f = functionAt(lines, i); assert.ok(allowed.has(f), `tft.* dans ${f || "?"} : ${l.trim()}`); } });
   for (const w of ["tftStatus", "drawCartel", "displayKeyMaterialOnce", "displayOnboardingQR"]) {
     const i = code.indexOf(`) ${w}(`);                                   // enveloppe « static void __attribute__((noinline)) w(...) { PodNetInfo ni; auto wk = [&]() { wImpl(... »
@@ -73,4 +73,33 @@ test("ENV R4 : OTA dans la famille uno-r4-wifi-tft18, chemin /firmware-r4/tft18/
   const gi = rd(root, ".gitignore");
   for (const p of ["arduino_uno_r4/**/pod_ota_r4_keys.h", "arduino_uno_r4/**/pod_build_flags.h", "arduino_uno_r4/**/pod_lab_ca.h", "arduino_uno_r4/**/secrets.h"]) assert.ok(gi.includes(p), p);
   assert.match(rd(D, "pod_ota_r4_client.h"), /#define OTAR4_BASE "\/firmware-r4\/" OTAR4_KIND "\/" OTAR4_CHANNEL/);
+});
+
+test("ENV R4 : animations — le serveur n'envoie le pointeur qu'à r4tft18 >= 2.3 (clip sur la SD), l'ESP tft18 reste inchangé", async () => {
+  const { supportsAnimPointer } = await import("../lib/anim/pointer");
+  assert.equal(supportsAnimPointer(["tft18"], "r4tft18-2.3"), true);
+  assert.equal(supportsAnimPointer(["tft18"], "r4tft18-2.10"), true);
+  assert.equal(supportsAnimPointer(["tft18"], "r4tft18-2.0"), false);
+  assert.equal(supportsAnimPointer(["tft18"], "r4tft18-2.2"), false);
+  assert.equal(supportsAnimPointer(["tft18"], "tft18-2.2"), true);
+  assert.equal(supportsAnimPointer(["tft18"], "tft18-2.1"), false);
+  assert.equal(supportsAnimPointer(["tft28"], "r4tft18-2.3"), false);
+  const v = /#define FIRMWARE_VERSION\s+"([^"]+)"/.exec(ino);
+  assert.ok(v && supportsAnimPointer(["tft18"], v[1]), `la version du firmware (${v?.[1]}) doit pouvoir recevoir les animations`);
+});
+
+test("ENV R4 : SD partagée avec le TFT — l'image est écrite sur la carte AVANT chaque transaction TFT, jamais pendant ; clip et SD sur la pile de travail ; pas de SD sans écran de station", () => {
+  const sf = code.slice(code.indexOf("static bool streamFrame"));
+  const sd = sf.slice(0, sf.indexOf("#else"));
+  const iWrite = sd.indexOf("f.write(g_rowBytes"), iStart = sd.indexOf("tft.startWrite()");
+  assert.ok(iWrite > 0 && iStart > iWrite, "f.write avant tft.startWrite dans la boucle");
+  assert.equal(/f\.write[^\n]*\n(?:(?!tft\.endWrite)[\s\S])*?tft\.startWrite[\s\S]*?f\.write/.test(sd.slice(iStart, iStart + 400)), false);
+  assert.match(ino, /#if !POD_ENV_DISPLAY\n#error "POD_SD_CS_PIN exige POD_ENV_DISPLAY/);
+  for (const w of ["sdInit", "animForget", "animLoadMarker", "animRemoveFiles", "restoreFrame", "sdSaveMeta"]) {
+    const i = code.indexOf(`) ${w}(`);
+    assert.ok(i > 0 && code.slice(i, i + 260).includes("podWorkRun"), `${w} passe par podWorkRun`);
+  }
+  assert.match(code, /podWorkRun\(play, &ni\)/);
+  assert.match(code, /podWorkRun\(chk, &ni\)/);
+  assert.equal(/\bSD\.(open|begin|exists|remove)\(/.test(code.slice(code.indexOf("static void envTick"))), false, "aucun appel SD direct depuis envTick");
 });
