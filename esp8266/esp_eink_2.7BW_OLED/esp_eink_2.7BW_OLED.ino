@@ -1536,7 +1536,7 @@ bool doFetchFrameOLED(const String& frameId, const String& frameSource) {
   lastFrameIdOLED       = frameId;
   hasDisplayedFrame     = true;
   lastFrameWasConsensus = (frameSource == "consensus");
-  pendingCandidateId    = "";
+  // LOT 1 (28/10/2026) : une frame n'efface PAS le candidat en attente (un même pull peut apporter les deux) ; seul doValidate le retire, une fois l'issue classée.
   ackFrame(frameId, SCREEN_OLED);
 
   Serial.printf_P(PSTR("[FETCHFRAME-OLED] ✅ frameId=%s source=%s\n"),
@@ -1799,7 +1799,7 @@ bool doFetchFrameE27(const String& frameId, const String& frameSource) {
   }
   lastFrameIdE27        = frameId;
   lastFrameWasConsensus = (frameSource == "consensus");
-  pendingCandidateId    = "";
+  // LOT 1 (28/10/2026) : une frame n'efface PAS le candidat en attente (un même pull peut apporter les deux) ; seul doValidate le retire, une fois l'issue classée.
   canaryStep(PCP_DONE, F("ACK recu (HTTP 200) : frame acquittee"));
   Serial.printf_P(PSTR("[FETCHFRAME-E27] ✅ affichée et acquittée frameId=%s source=%s\n"), frameId.c_str(), frameSource.c_str());
   logHeapState("FETCHFRAME-E27-AFTER");
@@ -1812,7 +1812,7 @@ bool doFetchFrameE27(const String& frameId, const String& frameSource) {
   lastFrameIdE27        = frameId;
   hasDisplayedFrame     = true;
   lastFrameWasConsensus = (frameSource == "consensus");
-  pendingCandidateId    = "";
+  // LOT 1 (28/10/2026) : une frame n'efface PAS le candidat en attente (un même pull peut apporter les deux) ; seul doValidate le retire, une fois l'issue classée.
   ackFrame(frameId, SCREEN_E27);
 
   Serial.printf_P(PSTR("[FETCHFRAME-E27] ✅ frameId=%s source=%s\n"),

@@ -58,6 +58,7 @@
 #include <SHA256.h>
 #include "pod_http.h"
 #include "pod_vote_r4.h"
+#include "pod_vote_policy.h"   // LOT 1 : règles pures du vote (essais, tampon à la demande, pannes transitoires) — testées sur l'hôte
 #include "pod_ssl_bounded.h"   // client TLS à réception modem BORNÉE (240 o) : validé sur carte (e-ink 2,9″ 11/10, TFT 2,8″ 13/10, capteur R4 12/10)
 #include "dht22.h"
 #include "sgp40.h"
@@ -718,7 +719,7 @@ static bool doFetchFrame(const String& frameId, const String& frameSource) {
   sdSaveMeta(frameId);                                // cartel + identifiant de l'image gardée (réaffichage au démarrage)
 #endif
   lastFrameWasConsensus = frameSource == "consensus";
-  pendingCandidateId = "";
+  // LOT 1 (28/10/2026) : le candidat en attente SURVIT à l'arrivée d'une frame (un même pull peut apporter les deux). Seuls un vote classé, un candidat obsolète ou l'abandon (voteKeepOrDrop) le retirent.
   logf("[FRAME] OK en %lu ms (frameId=%s source=%s)", millis() - t0, frameId.c_str(), frameSource.c_str());
   ackFrame(frameId);
   return true;
@@ -1260,41 +1261,62 @@ static bool doPull() {
 
 // ─── VALIDATION RÉELLE (vote v2) — ⚠ NON TESTÉE SUR LA CARTE ─────────────
 static uint8_t g_voteChunk[256];
-static uint8_t g_voteScratch[4736];   // tampon de l'OLED (1 024 o) et de l'e-ink 2,9" (4 736 o) : un candidat de N'IMPORTE QUEL écran est relu (le serveur ne l'oblige pas à voter pour son type)
+// LOT 1 (28/10/2026) : plus de tampon STATIQUE de 4 736 o (il retirait 4,7 Ko au tas pour TOUS les formats). Le tampon est pris au tas le temps de la lecture, SEULEMENT pour les formats qui en exigent :
+// OLED 1 024 o, e-ink 2,9" 4 736 o ; aucun pour l'e-ink 2,7", le TFT 1,8" et le TFT 2,8". Un candidat de N'IMPORTE QUEL écran est relu (le serveur ne l'oblige pas à voter pour son type).
+static const char* g_abstainWhy = "";   // raison BORNÉE de la dernière abstention (littéral statique) : memoire, pile-reseau, http, telechargement, signature, post, ecran-inconnu
+static PodVoteTries g_vt = {{0}, 0};                 // essais par candidat (pod_vote_policy.h)
+static bool g_voteRetry = false;                  // le dernier essai a échoué AVANT l'envoi du vote, pour une cause transitoire : le candidat est conservé
+static void __attribute__((noinline)) voteKeepOrDrop(const char* why) {   // cause transitoire : garder le candidat pour le prochain cycle, au plus VOTE_MAX_TRIES fois
+  if (podVoteKeep(g_vt)) { logf("[VOTE] abstention : %s — candidat conservé (essai %u/%u)", why, (unsigned)g_vt.tries, (unsigned)VOTE_MAX_TRIES); return; }
+  logf("[VOTE] abstention : %s — abandon après %u essais", why, (unsigned)VOTE_MAX_TRIES);
+  pendingCandidateId = "";
+}
 
 // POD_NET_STACK : lecture du candidat sur la pile réseau dédiée. Fonction à part (noinline) : ses variables ne vivent que pendant la transaction, FERMÉE avant la signature (jamais imbriquée dans PodEd),
 // et ne gonflent pas le cadre de doValidate, qui porte ensuite l'appel de signature. Échec de la pile dédiée : chk remis à zéro (chk.ok = false) → « calcul impossible », pas de vote.
 static void __attribute__((noinline)) netReadCandidate(const String& candidateId, PodScreenKind kind, size_t bytes, PodCheck& chk) {
   PodNetInfo ni;
+  const size_t need = podScratchNeed(kind);
+  uint8_t* const scratch = need ? (uint8_t*)malloc(need) : nullptr;
+  if (need && !scratch) { memset(&chk, 0, sizeof(chk)); g_abstainWhy = "memoire"; g_voteRetry = true; logf("[VOTE] abstention : memoire (tampon de %u o indisponible)", (unsigned)need); return; }   // jamais un faux refus
   auto tx = [&]() {
     Conn c(HTTP_TIMEOUT_MS);
     const int code = c.request("GET", String("/api/candidate-frame?candidateId=") + candidateId, nullptr);
     chk.http = code;
-    if (code == 200) podCheckStream(c.rd, kind, bytes, g_voteScratch, sizeof(g_voteScratch), g_voteChunk, sizeof(g_voteChunk), &chk);
+    if (code == 200) podCheckStream(c.rd, kind, bytes, scratch, need, g_voteChunk, sizeof(g_voteChunk), &chk);
     c.client.stop();
   };
   const bool ran = podNetRun(tx, &ni);
-  if (!ran) { memset(&chk, 0, sizeof(chk)); logf("[VALIDATE2] pile réseau dédiée : %s (erreur %u, marge %u o) — pas de vote", podNetWhy(ni), (unsigned)ni.err, (unsigned)ni.margin); }
+  free(scratch);
+  if (!ran) { g_abstainWhy = "pile-reseau"; g_voteRetry = true; memset(&chk, 0, sizeof(chk)); logf("[VALIDATE2] pile réseau dédiée : %s (erreur %u, marge %u o) — pas de vote", podNetWhy(ni), (unsigned)ni.err, (unsigned)ni.margin); }
 }
 
 static bool doValidateV2(const String& candidateId, const String& screenName, size_t bytes, const String& announcedHash) {
+  g_voteRetry = false; g_abstainWhy = "";
   PodScreenKind kind;
   if (!podKindFromName(screenName.c_str(), &kind)) {
-    logf("[VALIDATE2] écran inconnu : %s", screenName.c_str());
+    g_abstainWhy = "ecran-inconnu"; logf("[VOTE] abstention : ecran-inconnu (%s)", screenName.c_str());
     return false;
   }
   PodCheck chk; memset(&chk, 0, sizeof(chk));
   netReadCandidate(candidateId, kind, bytes, chk);
-  if (!chk.ok) { logf("[VALIDATE2] calcul impossible (%u/%u octets)", (unsigned)chk.bytes, (unsigned)bytes); return false; }
+  if (!chk.ok) {
+    if (!g_voteRetry) {                                                       // pas déjà classé (mémoire / pile) : HTTP ou téléchargement
+      g_abstainWhy = chk.http == 200 ? "telechargement" : "http"; g_voteRetry = podCandidateReadRetry(chk.http);   // 4xx : candidat disparu ou refusé, définitif
+    }
+    logf("[VOTE] abstention : %s (http=%d, %u/%u octets)", g_abstainWhy, chk.http, (unsigned)chk.bytes, (unsigned)bytes);
+    return false;
+  }
   bool accept = false; const char* reason = podVerdict(chk, announcedHash, &accept);
   const String msg = podVoteMessage(deviceId, candidateId, chk.hash, chk.m, accept);
-  uint8_t sig[64]; if (!PodEd::sign(sig, privateKey, publicKey, (const uint8_t*)msg.c_str(), msg.length())) { logf("[VALIDATE2] signature impossible (pile Ed25519 dédiée) — vote NON envoyé"); return false; }   // POD_ED_STACK
+  uint8_t sig[64]; if (!PodEd::sign(sig, privateKey, publicKey, (const uint8_t*)msg.c_str(), msg.length())) { logf("[VALIDATE2] signature impossible (pile Ed25519 dédiée) — vote NON envoyé"); g_abstainWhy = "signature"; g_voteRetry = true; return false; }   // POD_ED_STACK
   const String body = String("{\"v\":2,\"deviceId\":\"") + deviceId + "\",\"candidateId\":\"" + candidateId + "\",\"rawHash\":\"" + chk.hash + "\"," +
                       "\"e\":" + String((unsigned long)chk.m.e) + ",\"t\":" + String((unsigned long)chk.m.t) + ",\"r\":" + String((unsigned long)chk.m.r) + "," +
                       "\"verdict\":\"" + (accept ? "accept" : "reject") + "\"" + (accept ? String("") : String(",\"reason\":\"") + reason + "\"") +
                       ",\"signature\":\"" + bytesToHex(sig, 64) + "\"}";
   String resp; const int code = httpCall("POST", "/api/validation-result", &body, resp);
   logf("[VALIDATE2] e=%lu t=%lu r=%lu verdict=%s HTTP=%d", (unsigned long)chk.m.e, (unsigned long)chk.m.t, (unsigned long)chk.m.r, accept ? "accept" : reason, code);
+  if (code == -4) { g_abstainWhy = "post"; g_voteRetry = true; }   // pile réseau indisponible : le vote n'est PAS parti, on peut réessayer ; toute autre issue est classée (le vote a pu partir)
   // 403 « Signature » = clé publique désynchronisée côté serveur : on se ré-enregistre pour la renvoyer (comme le chemin v1), le prochain cycle votera.
   if (code != 200 && resp.indexOf("Signature") >= 0) { logf("[VALIDATE2] resynchronisation de la clé publique (re-register)"); doRegister(); }
   return code == 200 && resp.indexOf("\"blockMined\":true") >= 0;
@@ -1378,18 +1400,25 @@ static int __attribute__((noinline)) doValidateDecode(const String& resp, String
 
 static bool doValidate() {
   if (pendingCandidateId.length() == 0) return false;
+  podVoteTrack(g_vt, pendingCandidateId.c_str());
+  if (podVoteGaveUp(g_vt)) { pendingCandidateId = ""; return false; }   // abandonné : le serveur peut le ré-annoncer, il ne repart pas
   String candidateId, v2screen, v2hash;
   size_t v2bytes = 0;
   float score = 0.5f;
   int mode = 0;
   {
     String resp;
-    if (httpCall("GET", "/api/validate-candidate?deviceId=" + deviceId, nullptr, resp) != 200 || resp.length() == 0) { pendingCandidateId = ""; return false; }
+    const int vc = httpCall("GET", "/api/validate-candidate?deviceId=" + deviceId, nullptr, resp);
+    if (vc != 200 || resp.length() == 0) { if (podHttpTransient(vc)) voteKeepOrDrop("validate-candidate"); else pendingCandidateId = ""; return false; }   // panne transitoire : on garde ; refus du serveur : on classe
     mode = doValidateDecode(resp, candidateId, v2screen, v2bytes, v2hash, score);
   }                                                  // resp libérée ici, avant la lecture du candidat, la signature et le vote
   if (mode == 0) { pendingCandidateId = ""; return false; }
   // Validation RÉELLE : si le serveur annonce { v2 }, on revérifie le contenu au lieu de recopier son score (anciens serveurs / animations : chemin v1 ci-dessous).
-  if (mode == 1) { pendingCandidateId = ""; return doValidateV2(candidateId, v2screen, v2bytes, v2hash); }
+  if (mode == 1) {
+    const bool mined = doValidateV2(candidateId, v2screen, v2bytes, v2hash);
+    if (g_voteRetry) voteKeepOrDrop(g_abstainWhy); else { pendingCandidateId = ""; podVoteClassified(g_vt); }   // vote classé (envoyé, refusé par le serveur ou candidat disparu) : retiré
+    return mined;
+  }
 
   const String signature = signED25519(candidateId, score);
   if (signature.length() == 0) { pendingCandidateId = ""; return false; }   // POD_ED_STACK : signature impossible → pas de vote

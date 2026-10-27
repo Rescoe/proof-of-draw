@@ -37,8 +37,10 @@ const SKETCHES: Array<{ name: string; ino: string; backup: string; drivers: Arra
 ];
 
 /** Vue « POD_RENDER_V1 = 0 » : retire les blocs balisés POD_RENDER_V1_BEGIN / _END, évalue les `#if POD_RENDER_V1` / `#if !POD_RENDER_V1` (autres conditionnelles conservées telles quelles), ignore les lignes vides. */
+/** LOT 1 (28/10/2026) : une frame n'efface plus le candidat en attente — seule modification volontaire depuis les sauvegardes ; la ligne retirée est restaurée avant la comparaison « identique au firmware d'avant ». */
+const restoreLot1 = (t: string): string => t.replace(/^  \/\/ LOT 1 \(28\/10\/2026\) : une frame n'efface PAS le candidat[^\n]*\n/gm, '  pendingCandidateId    = "";\n');
 function offView(src: string): string {
-  const noMarked = src.replace(/\n?\/\/ POD_RENDER_V1_BEGIN[\s\S]*?\/\/ POD_RENDER_V1_END\n?/g, "\n");
+  const noMarked = restoreLot1(src).replace(/\n?\/\/ POD_RENDER_V1_BEGIN[\s\S]*?\/\/ POD_RENDER_V1_END\n?/g, "\n");
   const out: string[] = [];
   const stack: Array<{ ours: boolean; active: boolean }> = [];
   const keep = () => stack.every((s) => !s.ours || s.active);

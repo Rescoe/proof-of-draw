@@ -827,7 +827,7 @@ bool doFetchFrame(const String& frameId, const String& frameSource) {
   lastFrameId           = frameId;
   hasDisplayedFrame     = true;
   lastFrameWasConsensus = (frameSource == "consensus");
-  pendingCandidateId    = "";
+  // LOT 1 (28/10/2026) : une frame n'efface PAS le candidat en attente (un même pull peut apporter les deux) ; seul doValidate le retire, une fois l'issue classée.
   ackFrame(frameId);
 
   Serial.printf("[FETCHFRAME] ✅ frameId=%s source=%s\n",

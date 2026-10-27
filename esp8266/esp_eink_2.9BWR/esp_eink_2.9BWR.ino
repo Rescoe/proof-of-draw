@@ -1670,7 +1670,7 @@ frameTlsDone:
   lastFrameId           = frameId;
   frameReady            = true;
   lastFrameWasConsensus = (frameSource == "consensus");
-  pendingCandidateId    = "";
+  // LOT 1 (28/10/2026) : une frame n'efface PAS le candidat en attente (un même pull peut apporter les deux) ; seul doValidate le retire, une fois l'issue classée.
   canaryStep(PCP_DONE, F("ACK recu (HTTP 200) : frame acquittee"));
   Serial.printf_P(PSTR("[FETCHFRAME] ✅ affichée et acquittée frameId=%s source=%s\n"), frameId.c_str(), frameSource.c_str());
   logHeapState("FETCHFRAME-AFTER");
@@ -1695,7 +1695,7 @@ frameTlsDone:
 #endif
 // POD_BWR_END
   lastFrameWasConsensus = (frameSource == "consensus");
-  pendingCandidateId    = "";
+  // LOT 1 (28/10/2026) : une frame n'efface PAS le candidat en attente (un même pull peut apporter les deux) ; seul doValidate le retire, une fois l'issue classée.
 
   Serial.printf_P(PSTR("[FETCHFRAME] ✅ affichée frameId=%s source=%s\n"),
                 frameId.c_str(), frameSource.c_str());
@@ -1952,11 +1952,18 @@ bool doValidateV2(const String& candidateId, const String& screenName, size_t by
   PodScreenKind kind;
   if (!podKindFromName(screenName, &kind)) { Serial.println("[VALIDATE2] écran inconnu: " + screenName); return false; }
 
-  uint8_t* scratch = (uint8_t*)malloc(POD_SCRATCH_BYTES);
-  if (!scratch) { Serial.println(F("[VALIDATE2] malloc scratch impossible")); return false; }
+  // LOT 1 (28/10/2026) : le tampon n'est réservé QUE pour les formats qui en exigent (OLED 1 024 o, e-ink 2,9″ 4 736 o) ; un candidat TFT / e-ink 2,7″ n'en demande aucun. Avant : 4 736 o systématiques,
+  // donc une abstention silencieuse sur ce profil à mémoire serrée pour des formats qui n'avaient pas besoin de tampon.
+  uint8_t* scratch = nullptr;
+  size_t scratchLen = 0;
+  if (kind == POD_OLED096 || kind == POD_EINK29BWR) {
+    scratchLen = POD_SCRATCH_BYTES;
+    scratch = (uint8_t*)malloc(scratchLen);
+    if (!scratch) { Serial.println(F("[VOTE] abstention : memoire (tampon de validation indisponible)")); return false; }
+  }
   logHeapState("VALIDATE2-BEFORE");
   PodCheck chk;
-  bool ok = podFetchAndCheck(String(SERVER_URL) + "/api/candidate-frame?candidateId=" + candidateId, kind, bytes, scratch, POD_SCRATCH_BYTES, &chk);
+  bool ok = podFetchAndCheck(String(SERVER_URL) + "/api/candidate-frame?candidateId=" + candidateId, kind, bytes, scratch, scratchLen, &chk);
   free(scratch);
   if (!ok) {
     Serial.printf_P(PSTR("[VALIDATE2] lecture/calcul impossible (http=%d, %u/%u octets)\n"), chk.http, (unsigned)chk.bytes, (unsigned)bytes);

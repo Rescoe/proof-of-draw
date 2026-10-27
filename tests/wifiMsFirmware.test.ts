@@ -49,7 +49,8 @@ const ino = read(INO);
 test("MULTISCREEN : toutes les options à 0 ⇒ le sketch est EXACTEMENT celui d'avant le lot (au texte près)", () => {
   const ref = BASELINE_PIN || BASELINE;
   const base = execFileSync("git", ["show", `${ref}:${INO}`], { cwd: root, encoding: "utf8", maxBuffer: 20_000_000 }).replace(/\r\n/g, "\n");
-  assert.equal(stripMs(ino), base);
+  // LOT 1 (28/10/2026) : seule modification volontaire — une frame n'efface plus le candidat ; la ligne retirée est restaurée avant la comparaison
+  assert.equal(stripMs(ino.replace(/^  \/\/ LOT 1 \(28\/10\/2026\) : une frame n'efface PAS le candidat[^\n]*\n/gm, '  pendingCandidateId    = "";\n')), base);
 });
 test("MULTISCREEN : branchement du portail et du client OTA — aucune violation", () => { assert.deepEqual(msViolations(ino), []); });
 test("MULTISCREEN : les en-têtes partagés du dossier sont identiques à leurs originaux", () => {

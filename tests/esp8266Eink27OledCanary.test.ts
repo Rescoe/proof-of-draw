@@ -46,7 +46,8 @@ test("dépôt : POD_RENDER_V1 = 0 et POD_CANARY = 0 ; aucun drapeau à 1", () =>
 });
 
 test("OFF : retirer les blocs de canari et le drapeau redonne le firmware d'avant AU TEXTE PRÈS (sketch ET pilote)", () => {
-  const s = read(INO).replace(CANARY_RE, "").replace(/#ifndef POD_CANARY\n#define POD_CANARY 0 [^\n]*\n#endif\n/, "");
+  // LOT 1 (28/10/2026) : seule modification volontaire depuis la sauvegarde — une frame n'efface plus le candidat ; la ligne retirée est restaurée avant la comparaison
+  const s = read(INO).replace(/^  \/\/ LOT 1 \(28\/10\/2026\) : une frame n'efface PAS le candidat[^\n]*\n/gm, '  pendingCandidateId    = "";\n').replace(CANARY_RE, "").replace(/#ifndef POD_CANARY\n#define POD_CANARY 0 [^\n]*\n#endif\n/, "");
   assert.equal(trimEnds(s), readBk(`esp_eink_2.7BW_OLED.ino`));
   assert.equal(trimEnds(read(DRV).replace(CANARY_RE, "")), readBk(`epd2in7_V2.cpp`));
 });
