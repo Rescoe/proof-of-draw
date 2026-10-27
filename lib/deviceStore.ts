@@ -8,6 +8,7 @@ import { decrementDeviceCount, incrementDeviceCount } from "@/lib/rateLimit";
 import type { SceneCapability } from "@/lib/scene/spec";
 import { generateLinkCode, type LinkCodeStatus } from "@/lib/linkCode";
 import { isSensorScreens, measureKindsOf, type MeasureKind } from "@/lib/measures";
+import { fixedWorksScreensOf } from "@/lib/fixedWorks";
 import { participatesInVoteNetwork } from "@/lib/voteCapability";
 import { summarizePool, type PoolSummary } from "@/lib/electorate";
 import { isValidatorNode, type VoteCap } from "@/lib/voteCapability";
@@ -47,6 +48,9 @@ export interface Device {
   // y compris pour les ESP nouvellement appairés) ; dès le premier basculement
   // la liste devient explicite. Toujours lire via convertedScreensOf().
   acceptsConvertedScreens?: string[];
+
+  // ── Œuvres fixes (29/10/2026, lib/fixedWorks.ts) : écrans de CE device qui affichent des œuvres fixes. ABSENT = tous sauf les écrans dynamiques (TFT, OLED : animations seulement par défaut). Toujours lire via fixedWorksScreensOf().
+  fixedWorksScreens?: string[];
 
   // ── scene-v1 : capacité d'animation locale déclarée par le firmware à l'enregistrement
   // (contrat ANA↔PoD note 37 §6). ABSENT = pas de scene-v1 → l'appareil reçoit toujours une frame fixe.
@@ -140,6 +144,7 @@ export interface OwnedDevice {
   publicMode?: boolean;
   acceptsAnaArt?: boolean;
   acceptsConvertedScreens?: string[];
+  fixedWorksScreens?: string[];
   lastFrameReceivedAt?: number;
   /** Grandeurs mesurées (capteurs) : permet à l'interface d'afficher « Mesures » sans deviner. */
   sensors?: MeasureKind[];
@@ -222,6 +227,7 @@ export function toOwnedDevice(d: Device): OwnedDevice {
     publicMode:         d.publicMode ?? false,
     acceptsAnaArt:      d.acceptsAnaArt ?? false,
     acceptsConvertedScreens: convertedScreensOf(d),
+    fixedWorksScreens: fixedWorksScreensOf(d),
     lastFrameReceivedAt: d.lastFrameReceivedAt,
     ...(measureKindsOf(d).length > 0 ? { sensors: measureKindsOf(d) } : {}),
   };
@@ -521,10 +527,21 @@ export async function setAcceptsConvertedScreen(
   return device;
 }
 
-/** Devices dont l'écran `screen` a opté pour la réception de dessins convertis. */
+/** Active/désactive, pour UN écran d'un device, l'affichage des œuvres fixes (lib/fixedWorks.ts). */
+export async function setShowsFixedWorks(deviceId: string, screen: string, enabled: boolean): Promise<Device | null> {
+  const device = await getDevice(deviceId);
+  if (!device || !device.screens.includes(screen) || screen === "sensor") return null;
+  const set = new Set(fixedWorksScreensOf(device));
+  if (enabled) set.add(screen); else set.delete(screen);
+  device.fixedWorksScreens = [...set];
+  await saveDevice(device);
+  return device;
+}
+
+/** Devices dont l'écran `screen` a opté pour la réception de dessins convertis ET qui affichent des œuvres fixes sur cet écran (un écran dynamique en « animations seulement » n'en reçoit pas). */
 export async function getConvertedReceivers(screen: string): Promise<Device[]> {
   const all = await getAllDevices();
-  return all.filter((d) => convertedScreensOf(d).includes(screen));
+  return all.filter((d) => convertedScreensOf(d).includes(screen) && fixedWorksScreensOf(d).includes(screen));
 }
 
 /**

@@ -24,7 +24,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { revalidatePath } from "next/cache";
 import { redis } from "@/lib/redis";
 import { frameKey } from "@/lib/queue";
-import { broadcastConverted } from "@/lib/broadcast";
+import { broadcastConverted, filterFixedWorks } from "@/lib/broadcast";
 import type { Device } from "@/lib/deviceStore";
 import { markHot } from "@/lib/hot";
 import { countRejects, parseCandidateRaw, parseVotesRaw, PULL_KEY_CANDIDATE, PULL_KEY_VOTES, getVotes, castVote, claimFinalization, finalizeBlock, clearCandidate, ValidationVote } from "@/lib/chain";
@@ -60,7 +60,7 @@ async function broadcastValidatedFrame(poolScreen: string, payload: Record<strin
   if (!members || members.length === 0) return;
 
   const banValues = await redis.mget<(string | null)[]>(...members.map((dId) => `bl:dev:${dId}`));
-  const eligible = members.filter((_, i) => !banValues[i]);
+  const eligible = await filterFixedWorks(members.filter((_, i) => !banValues[i]), poolScreen);   // œuvres fixes : un écran dynamique en « animations seulement » n'en reçoit pas (lib/fixedWorks.ts)
 
   const enrichedPayload = {
     ...payload,
@@ -272,7 +272,7 @@ async function POST_(req: NextRequest) {
       if (candidate.anim) {
         // Animation : diffusée à TOUS les écrans dynamiques (TFT 2.8", TFT 1.8", OLED) dont le firmware la joue — affiche à leur géométrie + pointeur du clip.
         // Jamais d'e-ink, jamais de firmware ancien ; pas besoin d'avoir opté pour les conversions (lib/anim/broadcast.ts).
-        await broadcastAnimation({ part: candidate.anim, blockHash: block.blockHash, blockIndex: block.blockIndex, artistName: candidate.artistName, frameId, displayTime: block.displayTime })
+        await broadcastAnimation({ originScreen: candidate.poolScreen, part: candidate.anim, blockHash: block.blockHash, blockIndex: block.blockIndex, artistName: candidate.artistName, frameId, displayTime: block.displayTime })
           .catch((e) => console.error("[validation-result] diffusion de l'animation échouée:", e));
       } else {
         await broadcastValidatedFrame(candidate.poolScreen, candidate.payload, frameId, block.displayTime, block.blockIndex, candidate.artistName, block.blockHash);

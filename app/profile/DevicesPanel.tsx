@@ -13,6 +13,7 @@ import type { OwnedDevice } from "@/lib/deviceStore";
 import { SCREEN_PROFILES } from "@/lib/screenProfiles";
 import { deleteConfirmWord, deleteConfirmed } from "@/lib/deviceDeleteGuard";
 import { BENCH_SCREENS } from "@/lib/bench/screens";
+import { isDynamicScreen } from "@/lib/fixedWorks";
 import { animCapable, ANIM_POINTER_FIRMWARE } from "@/lib/anim/pointer";
 import { InlineEdit } from "./InlineEdit";
 import { GiveDeviceModal } from "./GiveDeviceModal";
@@ -348,10 +349,22 @@ function ManagePanel({ d, devices, profile, tab, setTab, onReload, onGive, onAsk
               >{busy === "tz" ? "…" : "Enregistrer"}</button>
             </div>
           </div>
+          {d.screens.filter(isDynamicScreen).map((sid) => {
+            const fixedOn = (d.fixedWorksScreens ?? []).includes(sid);
+            return (
+              <SettingRow
+                key={"fixed-" + sid}
+                title={"Œuvres fixes — " + screenName(sid)}
+                desc={fixedOn ? "Cet écran affiche les animations ET les dessins fixes." : "Cet écran n'affiche que des animations (réglage par défaut). Activez pour y voir aussi les dessins fixes."}
+              >
+                <Switch name={"Œuvres fixes pour " + screenName(sid)} on={fixedOn} busy={busy === "fixed-" + sid} onChange={() => toggle("fixed-" + sid, "fixed-works", { screen: sid, enabled: !fixedOn })} />
+              </SettingRow>
+            );
+          })}
           <div style={{ padding: "0.7rem 0", borderTop: "1px solid var(--border)" }}>
-            <div style={{ fontSize: "0.85rem", fontWeight: 600 }}>Dessins d&apos;autres écrans</div>
+            <div style={{ fontSize: "0.85rem", fontWeight: 600 }}>Œuvres d&apos;autres écrans (conversion)</div>
             <p style={{ ...muted, marginTop: 2, marginBottom: "0.55rem" }}>
-              Reçoit les dessins conçus pour un autre type d&apos;écran, convertis automatiquement au format de l&apos;écran choisi.
+              Reçoit les œuvres conçues pour un autre type d&apos;écran, converties au format de l&apos;écran choisi : les animations, et — si « Œuvres fixes » est activé pour cet écran — aussi les dessins fixes. Désactivé : seules les œuvres faites pour ce type d&apos;écran arrivent.
             </p>
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "1rem", flexWrap: "wrap" }}>
               {d.screens.length > 1 ? (

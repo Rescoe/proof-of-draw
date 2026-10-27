@@ -7,7 +7,9 @@
 import { BENCH_SCREENS } from "@/lib/bench/screens";
 import { animCapable, animOledAuxCapable } from "@/lib/anim/pointer";
 
-export interface TargetDevice { screens?: string[]; firmware?: string | null; caps?: string[] }
+import { acceptsAnimationFrom } from "@/lib/fixedWorks";
+
+export interface TargetDevice { screens?: string[]; firmware?: string | null; caps?: string[]; acceptsConvertedScreens?: string[] }
 export interface AnimTarget { deviceId: string; screen: string }
 
 /** Les écrans qui peuvent jouer un clip. */
@@ -22,6 +24,7 @@ export function animTargets(
   pools: Record<string, string[]>,
   banned: (deviceId: string) => boolean,
   device: (deviceId: string) => TargetDevice | null,
+  origin?: string | null,   // écran pour lequel l'animation a été faite : un autre type d'écran la reçoit seulement s'il accepte les conversions (lib/fixedWorks.ts)
 ): AnimTarget[] {
   const out: AnimTarget[] = [];
   const seen = new Set<string>();
@@ -30,7 +33,8 @@ export function animTargets(
       const key = `${deviceId}|${screen}`;
       if (seen.has(key) || banned(deviceId)) continue;
       seen.add(key);
-      if (animCapable(device(deviceId), screen)) out.push({ deviceId, screen });
+      const dev = device(deviceId);
+      if (animCapable(dev, screen) && acceptsAnimationFrom(dev, screen, origin)) out.push({ deviceId, screen });
     }
   }
   return out;

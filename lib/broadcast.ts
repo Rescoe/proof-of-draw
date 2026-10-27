@@ -12,6 +12,7 @@ import { frameKey } from "@/lib/queue";
 import { getConvertedReceivers } from "@/lib/deviceStore";
 import { convertPayload } from "@/lib/screenConvert";
 import { SCREEN_IDS } from "@/lib/screenProfiles";
+import { isDynamicScreen, showsFixedWorks } from "@/lib/fixedWorks";
 import type { ScenePointer } from "@/lib/scene/delivery";
 
 const DRAW_WINDOW_SEC = parseInt(process.env.DRAW_WINDOW_SEC ?? "900");
@@ -88,6 +89,18 @@ export async function broadcastConverted(
   }
 }
 
+/**
+ * Œuvres fixes (lib/fixedWorks.ts) : retire de la liste les appareils dont CET écran n'affiche que des animations. Écran non dynamique (e-ink) : liste inchangée, AUCUNE lecture Redis ;
+ * écran dynamique : 1 MGET des fiches. Une fiche illisible = écran exclu (défaut « animations seulement »).
+ */
+export async function filterFixedWorks(ids: string[], screen: string): Promise<string[]> {
+  if (ids.length === 0 || !isDynamicScreen(screen)) return ids;
+  const raws = await redis.mget<unknown[]>(...ids.map((id) => `device:${id}`));
+  return ids.filter((_, i) => {
+    try { const r = raws[i]; const d = (typeof r === "string" ? JSON.parse(r) : r) as { screens?: string[]; fixedWorksScreens?: string[] } | null; return showsFixedWorks(d, screen); } catch { return false; }
+  });
+}
+
 export async function broadcastDirect(
   screen: string,
   payload: Record<string, string>,
@@ -96,7 +109,7 @@ export async function broadcastDirect(
 ): Promise<void> {
   const stored  = buildFrame(screen, payload, deviceId, meta);
   const members = (await redis.smembers(`pool:screen:${screen}`)) as string[];
-  const targets = members.length > 0 ? members : [deviceId];
+  const targets = members.length > 0 ? await filterFixedWorks(members, screen) : [deviceId];
   await Promise.all(
     targets.map((dId) => redis.set(frameKey(dId, screen), stored, { ex: DRAW_WINDOW_SEC })),
   );

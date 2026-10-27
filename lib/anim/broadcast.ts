@@ -19,9 +19,9 @@ const parse = (raw: unknown): TargetDevice | null => {
 };
 
 export async function broadcastAnimation(opts: {
-  part: AnimCandidatePart; blockHash: string; blockIndex: number; artistName: string; frameId: string; displayTime: number;
+  originScreen?: string; part: AnimCandidatePart; blockHash: string; blockIndex: number; artistName: string; frameId: string; displayTime: number;
 }): Promise<number> {
-  const { part, blockHash, blockIndex, artistName, frameId, displayTime } = opts;
+  const { part, blockHash, blockIndex, artistName, frameId, displayTime, originScreen } = opts;
   const ttl = Math.max(900, Math.min(displayTime, 7200));
   const pointer: AnimPointer = { hash: blockHash, bytes: part.bytes, frames: part.frames };
   const _block = { index: blockIndex, artistName, displayTime, frameId, minedAt: Date.now(), hash: blockHash };
@@ -38,7 +38,7 @@ export async function broadcastAnimation(opts: {
   ]);
   const banned = new Set(ids.filter((_, i) => bans[i]));
   const byId = new Map(ids.map((id, i) => [id, parse(devs[i])] as const));
-  const targets = animTargets(pools, (id) => banned.has(id), (id) => byId.get(id) ?? null);
+  const targets = animTargets(pools, (id) => banned.has(id), (id) => byId.get(id) ?? null, originScreen);
   console.log(`[anim] diffusion bloc #${blockIndex} : ${targets.length} écran(s) capable(s) sur ${ids.length} dans les pools dynamiques`);
   if (targets.length === 0) return 0;
 
