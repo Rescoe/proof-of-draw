@@ -1581,7 +1581,8 @@ static void __attribute__((noinline)) sensorsTick() {
 // TOUT dessin passe par podWorkRun (pile de travail dédiée) ; des tampons de 12 octets et des entiers (+ 1,7 Ko au tas, le temps d'un tracé).
 static unsigned long g_envDhtAt = 0, g_envDhtOkAt = 0, g_envSgpAt = 0, g_envRssiAt = 0, g_envDrawAt = 0;
 static int32_t g_envRssi = 0;
-static uint8_t g_envRange = 0;                      // plage de la prochaine page courbes : 0 = 24 h, 1 = 7 jours, 2 = 30 jours, 3 = 1 an
+static uint8_t g_envRange = 0;                      // plage de la PROCHAINE page courbes : 0 = 24 h, 1 = 7 jours, 2 = 30 jours, 3 = 1 an
+static uint8_t g_envRangeCur = 0;                   // plage de la page courbes EN COURS (les redessins toutes les 20 s gardent la même plage)
 
 // Qualité de l'air (INDICATIF) : le SGP40 donne des « ticks » bruts (plus haut = air plus sain). Sans algorithme COV complet, on suit une ligne de base propre (maximum récent qui redescend lentement)
 // et on classe la CHUTE par rapport à elle. Les seuils ne sont pas étalonnés : à ajuster après des essais (fumée, cuisine, alcool).
@@ -1871,8 +1872,9 @@ static void __attribute__((noinline)) envTick() {
     else to = 0;
     g_envPage = to; g_envFull = true; g_envArtDrawn = false; g_envPageAtMs = now; g_envDrawAt = 0;
     if (to == 2) {
+      g_envRangeCur = g_envRange; g_envRange = (uint8_t)((g_envRange + 1) % 4);
 #if POD_SD_CS_PIN
-      logf("[ENV] page courbes (%s)", HIST_NAME[g_envRange]);
+      logf("[ENV] page courbes (%s)", HIST_NAME[g_envRangeCur]);
 #endif
     } else logf("[ENV] page %s", to == 1 ? (animOn ? "œuvre (animation)" : "œuvre (image)") : "relevés");
   }
@@ -1884,8 +1886,7 @@ static void __attribute__((noinline)) envTick() {
   if (g_envPage == 2) {                            // courbes : tracé à l'entrée, puis une fois toutes les 20 s (nouveaux points)
     if (g_envFull || now - g_envDrawAt >= 20000UL) {
       const uint32_t t = wifiEpoch();
-      if (t == 0 || !envDrawChart(g_envRange, t)) { g_envPage = 0; g_envFull = true; g_envPageAtMs = now; return; }
-      if (g_envFull) g_envRange = (uint8_t)((g_envRange + 1) % 4);
+      if (t == 0 || !envDrawChart(g_envRangeCur, t)) { g_envPage = 0; g_envFull = true; g_envPageAtMs = now; return; }
       g_envFull = false; g_envDrawAt = now;
     }
     return;
