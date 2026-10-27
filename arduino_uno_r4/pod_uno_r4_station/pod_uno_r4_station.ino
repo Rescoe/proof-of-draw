@@ -539,7 +539,11 @@ void loop() {
   }
 
 #if POD_OTA_R4
-  if (Serial.available()) { const int ch = Serial.peek(); if (ch == 'o') { while (Serial.available()) Serial.read(); otaTick(true); } else if (ch == 'f') { while (Serial.available()) Serial.read(); otar4::dumpBlocks(); } }   // laboratoire : o = vérifier maintenant, f = data flash
+  if (Serial.available()) { const int ch = Serial.peek(); if (ch == 'o') { while (Serial.available()) Serial.read(); otaTick(true); } else if (ch == 'f') { while (Serial.available()) Serial.read(); otar4::dumpBlocks(); }
+#if OTAR4_LAB_TEST
+    else if (ch >= '1' && ch <= '5') { while (Serial.available()) Serial.read(); static const char* const T[] = {"/b130.bin", "/b150.bin", "/b160.bin", "/b200.bin", "/b245.bin"}; otar4::testDownload(T[ch - '1']); }   // banc : capacité du staging du module
+#endif
+  }   // laboratoire : o = vérifier maintenant, f = data flash
 #endif
   if (wifiStatus() != WL_CONNECTED) { wifiBegin(); delay(5000); return; }
   if (!registered) { if (!doRegister()) { delay(5000); return; } lastRegisterMs = millis(); }

@@ -1149,9 +1149,17 @@ static uint16_t __attribute__((noinline)) readSgp40() {
 static bool takeReading() {
   int16_t c10 = NO_T; uint16_t h10 = NO_H;
   int16_t tt = 0; uint16_t hh = 0;
-  if (dht22Read(DHT_PIN, tt, hh)) { c10 = tt; h10 = hh; g_lastT = tt; g_lastH = hh; logf("[DHT22] %d.%d C, %u.%u %%", (int)(tt / 10), (int)(tt < 0 ? -(tt % 10) : tt % 10), (unsigned)(hh / 10), (unsigned)(hh % 10)); }
+  bool dhtOk = false;
+#ifndef POD_NO_DHT
+  dhtOk = dht22Read(DHT_PIN, tt, hh);
+#endif
+  if (dhtOk) { c10 = tt; h10 = hh; g_lastT = tt; g_lastH = hh; logf("[DHT22] %d.%d C, %u.%u %%", (int)(tt / 10), (int)(tt < 0 ? -(tt % 10) : tt % 10), (unsigned)(hh / 10), (unsigned)(hh % 10)); }
   else logf("[DHT22] lecture impossible (câblage D2 ? alimentation ? ordre des broches ?)");
+#ifdef POD_NO_SGP
+  const uint16_t voc = 0;
+#else
   const uint16_t voc = readSgp40();
+#endif
   if (voc) { g_lastVoc = voc; g_sgpSeen = true; logf("[SGP40] %u ticks (brut ; plus bas = plus de gaz)", (unsigned)voc); }
   else logf("[SGP40] lecture impossible (câble Grove sur SDA/SCL ? adresse 0x59 ?)");
   if (c10 == NO_T && h10 == NO_H && voc == 0) return false;
@@ -1243,7 +1251,7 @@ void setup() {
   while (!Serial && millis() < 2500) {}
   logf("\n[BOOT] Proof-of-Draw UNO R4 WiFi + TFT 1.8\" — %s", FIRMWARE_VERSION);
   logf("[WARNING] PRODUIT R4 TFT 1,8 ENV : COMPILE SEULEMENT, JAMAIS ESSAYE SUR LA CARTE (26/10/2026)");
-#if POD_SENSORS
+#if POD_SENSORS && !defined(POD_NO_WIRE_BEGIN)
   Wire.begin();
 #endif
   reportMem("boot");
@@ -1294,11 +1302,16 @@ void loop() {
   const unsigned long now = millis();
 
   if (!registered) { if (!doRegister()) { delay(5000); return; } }
-#if POD_SENSORS
+#if POD_SENSORS && !defined(POD_NO_SENSORS_TICK)
   sensorsTick();
 #endif
 #if POD_OTA_R4
-  if (Serial.available()) { const int ch = Serial.peek(); if (ch == 'o') { while (Serial.available()) Serial.read(); otaTick(true); } else if (ch == 'f') { while (Serial.available()) Serial.read(); otar4::dumpBlocks(); } }   // laboratoire : o = vérifier maintenant, f = data flash
+  if (Serial.available()) { const int ch = Serial.peek(); if (ch == 'o') { while (Serial.available()) Serial.read(); otaTick(true); } else if (ch == 'f') { while (Serial.available()) Serial.read(); otar4::dumpBlocks(); }
+#if OTAR4_LAB_TEST
+    else if (ch == 't') { while (Serial.available()) Serial.read(); otar4::testDownload("/logo.png"); }   // banc : TLS + staging, 10 Ko
+    else if (ch >= '1' && ch <= '5') { while (Serial.available()) Serial.read(); static const char* const T[] = {"/b130.bin", "/b150.bin", "/b160.bin", "/b200.bin", "/b245.bin"}; otar4::testDownload(T[ch - '1']); }   // banc : capacité du staging du module
+#endif
+  }   // laboratoire : o = vérifier maintenant, f = data flash
   otaTick(false);                                  // la mise à jour ne dépend NI de l'appairage NI des capteurs
 #endif
 

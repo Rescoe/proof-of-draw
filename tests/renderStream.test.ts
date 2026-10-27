@@ -101,9 +101,9 @@ test("mesures de compilation ARCHIVÉES (docs/mesures/8B1_2026_10_07) : objets b
   assert.ok(Math.max(...lib) <= 112, `plus grand cadre du noyau (R4) : ${Math.max(...lib)}`);
   // aucun firmware de production ne l'utilise ; seules les sondes (exemples « NE PAS DÉPLOYER ») l'incluent
   const walk = (d: string): string[] => fs.readdirSync(path.join(root, d), { withFileTypes: true }).flatMap((e) => e.name === "node_modules" || e.name === ".next" || e.name === ".claude" ? [] : e.isDirectory() ? walk(path.join(d, e.name)) : /\.(ino|h|cpp|ts|tsx)$/.test(e.name) ? [path.join(d, e.name)] : []);
-  const users = ["esp8266", "arduino_uno_r4", "app", "lib", "consensus-pod", "scripts"].flatMap(walk).filter((f) => /podRenderStream/.test(fs.readFileSync(path.join(root, f), "utf8"))).map((f) => f.replace(/\\/g, "/")).sort();
+  const users = ["esp8266", "arduino_uno_r4", "app", "lib", "consensus-pod", "scripts"].flatMap(walk).filter((f) => /podRenderStream/.test(fs.readFileSync(path.join(root, f), "utf8"))).map((f) => f.replace(/\\/g, "/")).filter((f) => !f.startsWith("arduino_uno_r4/pod_uno_r4_tft18_env/")).sort();   // le produit complet porte ses propres copies du noyau (tests/tft18EnvR4.test.ts)
   // lot 8B-2A : seuls les 4 dossiers canaris (4 .ino + 4 copies du noyau) l'utilisent, avec les sondes, le harnais et l'original
-  const canary = ["esp8266/esp_eink_2.9BWR/", "esp8266/esp_tft1.8/", "arduino_uno_r4/pod_uno_r4_eink29/", "arduino_uno_r4/pod_uno_r4_tft18/", "esp8266/esp_eink_2.7BW/", "esp8266/esp_eink_2.7BW_OLED/", "arduino_uno_r4/pod_uno_r4_eink27/", "arduino_uno_r4/pod_uno_r4_eink27_oled/"];
+  const canary = ["esp8266/esp_eink_2.9BWR/", "esp8266/esp_tft1.8/", "arduino_uno_r4/pod_uno_r4_eink29/", "arduino_uno_r4/pod_uno_r4_tft18/", "arduino_uno_r4/pod_uno_r4_tft18_env/", "esp8266/esp_eink_2.7BW/", "esp8266/esp_eink_2.7BW_OLED/", "arduino_uno_r4/pod_uno_r4_eink27/", "arduino_uno_r4/pod_uno_r4_eink27_oled/"];
   const outside = users.filter((u) => !canary.some((c) => u.startsWith(c)));
   assert.deepEqual(outside, [
     "consensus-pod/examples/RenderProbeEsp8266/RenderProbeEsp8266.ino", "consensus-pod/examples/RenderProbeUnoR4/RenderProbeUnoR4.ino", "consensus-pod/host/esp27_frame_harness.cpp", "consensus-pod/host/esp_frame_harness.cpp", "consensus-pod/host/render_stream_harness.cpp", "consensus-pod/host/scratch_cycle_test.cpp",

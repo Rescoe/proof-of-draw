@@ -3,7 +3,7 @@
 // ⚠ COMPILÉ + validé en laboratoire sur UNE carte (S1/S2 du 26/10/2026 : staging, 40 cas négatifs). Option POD_OTA_R4 = 0 par défaut : à 0, aucun octet de ce fichier n'est compilé.
 // Dépend du croquis hôte : logf(), PodNet/podWifiRun (podNetStack.h), PodEd (podEdStack.h), podotar4 (podOtaR4.h), et les macros OTAR4_* définies AVANT l'inclusion.
 //
-// Piles (pile principale du cœur R4 = 1 024 o) : TLS + écriture +FS dans UNE transaction sur la pile réseau agrandie (OTAR4_NET_STACK, 3 072 o ; marge 2 212 o mesurée sur carte) ; relecture du staging et appels
+// Piles (pile principale du cœur R4 = 1 024 o) : TLS + écriture +FS dans UNE transaction sur la pile réseau agrandie (OTAR4_NET_STACK, 2 048 o ; 812 o utilisés mesurés sur carte avec 3 072 o alloués) ; relecture du staging et appels
 // au module sur podWifiRun ; Ed25519 sur PodEd. Aucun appel au module Wi-Fi hors d'une pile dédiée. Jamais imbriqué.
 // Règles de sécurité : le transport n'est pas une preuve (TLS sans vérification de certificat) — la preuve est la signature du manifeste + le SHA-256 du binaire complet ; clés de TEST du dépôt = zéros (REFUSÉES) ;
 // ota.update(chemin) n'est appelé qu'APRÈS consommation du ticket, port USB fermé, et jamais si le port série d'un hôte est ouvert (la programmation échoue 3/3 dans ce cas : OTA-3).
@@ -15,6 +15,7 @@
 #include <EEPROM.h>
 #include <SHA256.h>
 #include <new>
+#include <malloc.h>
 #include "podEdStack.h"
 #include "podOtaR4.h"
 
@@ -28,7 +29,7 @@
 #define OTAR4_TLS 1                       // 0 = HTTP clair vers un serveur de laboratoire sur le réseau local (jamais en production)
 #endif
 #ifndef OTAR4_NET_STACK
-#define OTAR4_NET_STACK 3072u
+#define OTAR4_NET_STACK 2048u      // 812 o utilisés mesurés sur carte (TLS + écriture +FS) : garde 64 + 812 + invocateur 32 + exception 104 → marge ≈ 1 000 o
 #endif
 #ifndef OTAR4_PATH
 #define OTAR4_PATH "/update.bin"
@@ -54,7 +55,8 @@
 #if OTAR4_TLS
 typedef PodBoundedSSL OtaR4Conn;
 #else
-typedef WiFiClient OtaR4Conn;
+#include "pod_plain_bounded.h"   // BANC SEULEMENT : client en clair à réception bornée (le WiFiClient du cœur fait abort() sur un tas fragmenté)
+typedef PodBoundedPlain OtaR4Conn;
 #endif
 
 extern "C" char* sbrk(int incr);
@@ -74,9 +76,16 @@ static bool g_pubSet[2] = {false, false};
 static uint16_t g_manifestLen = 0;
 static Manifest g_man;
 // Tampons de travail au TAS, le temps d'une passe (≈ 2,4 Ko) : 2,4 Ko de RAM statique permanente de moins (le produit complet n'a pas la place : l'éditeur de liens refuse un tas < 8 Ko).
-struct Bufs { uint8_t manifestRaw[MAX_MANIFEST + 1]; uint8_t work[WORK_BYTES]; uint8_t rx[256]; char hdr[96]; uint8_t blk[FLASH_BLOCK]; };
+struct Bufs { uint8_t manifestRaw[MAX_MANIFEST + 1]; uint8_t work[WORK_BYTES]; uint8_t rx[256]; char hdr[96]; };
 static Bufs* g_bufs = nullptr;
 static Bufs& B() { return *g_bufs; }
+// Bloc de 1 Ko de la data flash : pris seulement par les fonctions de séquence (jamais pendant le téléchargement : le tas de la R4 est étroit).
+struct BlkScope {
+  uint8_t* p;
+  BlkScope() : p(new (std::nothrow) uint8_t[FLASH_BLOCK]) {}
+  ~BlkScope() { delete[] p; }
+  bool ok() const { return p != nullptr; }
+};
 struct BufScope {
   bool owned;
   BufScope() : owned(false) { if (!g_bufs) { g_bufs = new (std::nothrow) Bufs; owned = g_bufs != nullptr; } }
@@ -117,21 +126,21 @@ static bool flWrite(void*, uint8_t blk, const uint8_t* in) {
 static Flash flash() { return Flash{flRead, flWrite, nullptr}; }
 
 /** Séquence effective (max(compilée, enregistrements)). OTA refusée (ok=false) si les deux blocs sont non vierges ET invalides. */
-static SeqState seqState() { BufScope bs; if (!bs.ok()) { SeqState e; e.ok = false; e.seq = 0; e.gen = 0; e.newest = -1; return e; } return seqLoad(flash(), (uint32_t)OTAR4_COMPILED_SEQ, B().blk); }
+static SeqState seqState() { BlkScope bs; if (!bs.ok()) { SeqState e; e.ok = false; e.seq = 0; e.gen = 0; e.newest = -1; return e; } return seqLoad(flash(), (uint32_t)OTAR4_COMPILED_SEQ, bs.p); }
 
 /** Diagnostic de banc : 32 premiers octets des blocs 0 à 7 de la data flash (les blocs 2 et 3 doivent être vierges, 0xFF, ou porter un enregistrement OTS1 valide). */
 static void dumpBlocks() {
-  BufScope bs; if (!bs.ok()) { logf("[OTA] mémoire insuffisante"); return; }
-  for (uint8_t b = 0; b < 8; b++) { if (!flRead(nullptr, b, B().blk)) { logf("[OTA] bloc %u : lecture impossible", (unsigned)b); continue; } char h[100]; for (uint8_t i = 0; i < 24; i++) snprintf(h + 2 * i, 3, "%02x", B().blk[i]); uint32_t sq = 0, gn = 0; const RecKind k = classify(B().blk, sq, gn); logf("[OTA] bloc %u : %s | %s seq=%lu", (unsigned)b, h, k == R_VIRGIN ? "vierge" : (k == R_VALID ? "valide" : "INVALIDE"), (unsigned long)sq); }
+  BlkScope bs; if (!bs.ok()) { logf("[OTA] mémoire insuffisante"); return; }
+  for (uint8_t b = 0; b < 8; b++) { if (!flRead(nullptr, b, bs.p)) { logf("[OTA] bloc %u : lecture impossible", (unsigned)b); continue; } char h[100]; for (uint8_t i = 0; i < 24; i++) snprintf(h + 2 * i, 3, "%02x", bs.p[i]); uint32_t sq = 0, gn = 0; const RecKind k = classify(bs.p, sq, gn); logf("[OTA] bloc %u : %s | %s seq=%lu", (unsigned)b, h, k == R_VIRGIN ? "vierge" : (k == R_VALID ? "valide" : "INVALIDE"), (unsigned long)sq); }
 }
 
 /** À appeler quand la NOUVELLE image a démarré et fonctionne (Wi-Fi + enregistrement) : inscrit la séquence compilée si elle dépasse celle des enregistrements. Idempotent. */
 static void confirmBoot() {
-  BufScope bs; if (!bs.ok()) { logf("[OTA] confirmation de séquence : mémoire insuffisante"); return; }
-  const SeqState r = seqLoad(flash(), 0, B().blk);                              // enregistrements SEULS (compiledSeq = 0)
+  BlkScope bs; if (!bs.ok()) { logf("[OTA] confirmation de séquence : mémoire insuffisante"); return; }
+  const SeqState r = seqLoad(flash(), 0, bs.p);                              // enregistrements SEULS (compiledSeq = 0)
   if (!r.ok) { logf("[OTA] séquence : deux blocs invalides -> OTA REFUSÉE (récupération par câble)"); return; }
   if ((uint32_t)OTAR4_COMPILED_SEQ <= r.seq) return;                          // déjà couverte (ou image plus ANCIENNE flashée par câble : ne jamais baisser)
-  const bool ok = seqCommit(flash(), 0, (uint32_t)OTAR4_COMPILED_SEQ, B().blk);
+  const bool ok = seqCommit(flash(), 0, (uint32_t)OTAR4_COMPILED_SEQ, bs.p);
   logf("[OTA] séquence %lu inscrite en data flash : %s", (unsigned long)OTAR4_COMPILED_SEQ, ok ? "OK" : "ÉCHEC (non fatal)");
 }
 
@@ -222,6 +231,39 @@ static void loadKeys() {
   g_pubSet[1] = (strlen(hb) == 64) && hexN((const uint8_t*)hb, 64, g_pub[1]);
 #endif
 }
+
+#ifndef OTAR4_LAB_TEST
+#define OTAR4_LAB_TEST 0
+#endif
+#if OTAR4_LAB_TEST
+// ── BANC SEULEMENT : télécharge un fichier PUBLIC du site (ex. /logo.png, 10 Ko) par TLS vers le staging du module, par blocs de 200 o, relit et compare le SHA-256 ; ne vérifie AUCUNE signature, ne programme RIEN.
+//    But : mesurer la marge de la pile réseau et le débit des écritures +FS PENDANT la lecture TLS, avec la vraie chaîne de certificats du site. Commande série « t » dans la boucle du croquis.
+static uint32_t g_tdGot = 0;
+static bool tdLen(int64_t n) { if (n <= 0 || n > (int64_t)MAX_SIZE) return false; g_tdGot = 0; g_sha.reset(); stRemove(nullptr); return true; }
+static bool tdData(const uint8_t* d, size_t n) {
+  size_t off = 0;
+  while (off < n) { const size_t c = (n - off > BLOCK) ? BLOCK : (n - off); if (!stWrite(nullptr, g_tdGot, d + off, c)) return false; g_sha.update(d + off, c); g_tdGot += (uint32_t)c; off += c; }
+  return true;
+}
+static void testDownload(const char* path) {
+  BufScope bs; if (!bs.ok()) { logf("[OTA-TEST] mémoire insuffisante"); return; }
+  if (!g_mounted && !mountFs()) { logf("[OTA-TEST] montage du système de fichiers du module impossible"); return; }
+  { struct mallinfo mi = mallinfo(); logf("[OTA-TEST] tas : arène %lu o, libre dans l'arène %lu o, sommet %p, limite %p", (unsigned long)mi.arena, (unsigned long)mi.fordblks, (void*)sbrk(0), (void*)&__HeapLimit); }
+  const char* oldBase = g_base; g_base = "";
+  GetJob j = { path, tdLen, tdData, 0, 0, 0, false }; PodNetInfo ni; const uint32_t t0 = millis();
+  const bool net = httpGet(j, ni);
+  g_base = oldBase;
+  logf("[OTA-TEST] %s : statut %d, Content-Length %ld, reçu %lu en %lu ms | pile réseau %u/%u o, marge %u o, erreur %u", path, j.status, (long)j.clen, (unsigned long)j.got, (unsigned long)(millis() - t0), (unsigned)ni.used, (unsigned)OTAR4_NET_STACK, (unsigned)ni.margin, (unsigned)ni.err);
+  if (!net || !j.ok) { removeStaging(); logf("[OTA-TEST] ÉCHEC du téléchargement TLS"); return; }
+  uint8_t h1[32]; g_sha.finalize(h1, 32);
+  g_sha.reset(); bool okRead = true; uint32_t off = 0;
+  { PodNetInfo n2; auto rb = [&]() { while (off < g_tdGot) { const uint32_t c = (g_tdGot - off > BLOCK) ? BLOCK : (g_tdGot - off); if (!stRead(nullptr, off, B().rx, c)) { okRead = false; return; } g_sha.update(B().rx, c); off += c; } };
+    if (!podWifiRun(rb, &n2)) okRead = false; }
+  uint8_t h2[32]; g_sha.finalize(h2, 32);
+  logf("[OTA-TEST] relecture du staging : %s, SHA-256 identique : %s", okRead ? "OK" : "ÉCHEC", (okRead && memcmp(h1, h2, 32) == 0) ? "OUI" : "NON");
+  removeStaging();
+}
+#endif
 
 /** Une passe complète. true dans `staged` si un ticket a été émis. N'appelle la programmation que si `allowProgram`. */
 static Result checkOnce(bool allowProgram, bool dryRun = false) {

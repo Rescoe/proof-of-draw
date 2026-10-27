@@ -1,0 +1,17 @@
+﻿[WIFI] firmware du module: 0.5.2
+[WIFI] IP: 0.0.0.0
+[HTTP POST] /api/register -> 200
+[REGISTER] deviceId=dev_I25D9Z7A paired=oui
+[BOOT] pr??t ??? lecture toutes les 30 min, envoi toutes les 60 min
+[DHT22] lecture impossible (c??blage D2 ? alimentation ? ordre des broches ?)
+[SGP40] lecture impossible (c??ble Grove sur SDA/SCL ? adresse 0x59 ?)
+[OTA] mise ?? jour disponible : r4env-1.2 seq 2 (119628 o, canal canary, cl?? r4-a) ; install??e 1
+[OTA] binaire : statut 200, Content-Length 119628, re??u 119628 en 51089 ms (pile 788/3072 o, marge 2220)
+[OTA] TICKET PR??T : image r4env-1.2 seq 2 relue et conforme
+[OTA] ota.update(/update.bin) : le module reprogramme le RA4M1 (??? 50 s) ; la carte red??marrera sur r4env-1.2
+
+=== PORT FERME (164 s)
+=== REOUVERTURE
+[OTA] ?? jour (s??quence install??e 2)
+[OTA] r??sultat : aucune mise ?? jour ; prochaine v??rification dans 21600 s
+=== FIN

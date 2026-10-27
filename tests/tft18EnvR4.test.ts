@@ -18,7 +18,7 @@ function functionAt(lines: string[], i: number): string {
 }
 
 test("ENV R4 : copies identiques — pile réseau / Ed25519 / HTTP / TLS borné / capteurs / OTA (station) et vote / rendu / métriques (TFT 1,8″ d'origine)", () => {
-  for (const f of ["podNetStack.h", "podEdStack.h", "pod_http.h", "pod_ssl_bounded.h", "dht22.h", "sgp40.h", "podOtaR4.h", "pod_ota_r4_client.h"]) assert.equal(rd(D, f), rd(root, "arduino_uno_r4/pod_uno_r4_station", f), `station/${f}`);
+  for (const f of ["podNetStack.h", "podEdStack.h", "pod_http.h", "pod_ssl_bounded.h", "dht22.h", "sgp40.h", "podOtaR4.h", "pod_ota_r4_client.h", "pod_plain_bounded.h"]) assert.equal(rd(D, f), rd(root, "arduino_uno_r4/pod_uno_r4_station", f), `station/${f}`);
   for (const f of ["consensusPoD.h", "crypto_uno_r4.h", "podRender.h", "podRenderStream.h", "pod_metrics.h", "pod_metrics_table.h", "pod_vote_r4.h"]) assert.equal(rd(D, f), rd(root, "arduino_uno_r4/pod_uno_r4_tft18", f), `tft18/${f}`);
 });
 

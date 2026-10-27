@@ -1,0 +1,11 @@
+﻿[WIFI] firmware du module: 0.5.2
+[WIFI] IP: 0.0.0.0
+[HTTP POST] /api/register -> 200
+[REGISTER] deviceId=dev_I25D9Z7A paired=oui
+[BOOT] pr??t ??? lecture toutes les 30 min, envoi toutes les 60 min
+>>> GET http://127.0.0.1:8081/manifest.txt
+[DHT22] lecture impossible (c??blage D2 ? alimentation ? ordre des broches ?)
+[SGP40] lecture impossible (c??ble Grove sur SDA/SCL ? adresse 0x59 ?)
+[OTA] aucun manifeste publi?? (404) : rien ?? faire
+[OTA] r??sultat : aucune mise ?? jour ; prochaine v??rification dans 21600 s
+=== FIN

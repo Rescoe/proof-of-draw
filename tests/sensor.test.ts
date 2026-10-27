@@ -153,7 +153,7 @@ const cc = findCompiler();
 test("DHT22 : décodage (code réel de dht22.h) — trames de la fiche technique, signe, bornes, somme de contrôle", { skip: cc.path ? false : describeChoice(cc) }, () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "dht22-"));
   const exe = path.join(dir, "h");
-  const r0 = runProcess(cc.path as string, ["-std=c++11", "-Wall", "-Wextra", "-Werror", `-I${path.join(root, "arduino_uno_r4/pod_uno_r4_dht22")}`, "-o", exe, path.join(root, "consensus-pod/host/dht22_harness.cpp")], 60000);
+  const r0 = runProcess(cc.path as string, ["-std=c++11", "-Wall", "-Wextra", "-Werror", `-I${path.join(root, "arduino_uno_r4/pod_uno_r4_dht22")}`, "-o", exe, path.join(root, "consensus-pod/host/dht22_r4_harness.cpp")], 60000);
   assert.equal(r0.status, 0, `${r0.stdout}\n${r0.stderr}`);
   const r = runProcess(exe, [], 30000);
   assert.equal(r.status, 0, r.stdout);
