@@ -132,6 +132,21 @@ export function metricsFromRaw(screen: PodScreen, raw: Uint8Array): PodMetricsDe
   return acc.finish();
 }
 
+/**
+ * Contenu brut RÉELLEMENT uniforme (28/10/2026) : aucune variation. Écran couleur (tft18, tft28) : tous les pixels RGB565 sont identiques — la projection binaire « encre = ≠ blanc » ne voit pas
+ * un fond noir ou coloré avec des traits colorés ; autres écrans : e = t = 0 suffit. C'est la règle « blank » des validateurs (pod_vote_*.h) : un candidat uniforme serait refusé par tous.
+ */
+export function rawIsUniform(screen: PodScreen, raw: Uint8Array): boolean {
+  if (screen === "tft18" || screen === "tft28") {
+    if (raw.length < 2) return true;
+    const lo = raw[0], hi = raw[1];
+    for (let i = 2; i + 1 < raw.length; i += 2) if (raw[i] !== lo || raw[i + 1] !== hi) return false;
+    return true;
+  }
+  const m = metricsFromRaw(screen, raw);
+  return m.e === 0 && m.t === 0;
+}
+
 export function metricsFromPayload(screen: PodScreen, p: { buffer?: string; black?: string; red?: string }): PodMetricsDetail {
   return metricsFromRaw(screen, rawContent(screen, p));
 }

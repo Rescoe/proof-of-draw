@@ -27,7 +27,7 @@ import { setCandidate, getCurrentCandidate, Candidate } from "@/lib/chain";
 import { markHot } from "@/lib/hot";
 import { getEffectiveThresholds } from "@/lib/adaptiveValidation";
 import { buildCandidateV2 } from "@/lib/podVote";
-import { PPM } from "@/lib/podMetrics";
+import { PPM, rawContent, rawIsUniform, type PodScreen } from "@/lib/podMetrics";
 import type { ActionEvent, ReplayEvent } from "@/lib/types/actions";
 import { BENCH_SCREENS } from "@/lib/bench/screens";
 import { gateDerivation } from "@/lib/derivationGate";
@@ -126,6 +126,12 @@ export async function POST(req: NextRequest) {
   // du candidat devient celui de la V2 (corrige le score ≈ 0 de l'e-ink 2,9" BWR, défaut de la V1 : lib/podMetrics.ts).
   const v2 = animSub ? null : buildCandidateV2(screen, screen === "eink29bwr" ? { black, red } : { buffer });
   const effectiveScore = v2 ? v2.s / PPM : metrics.score;
+  // 28/10/2026 : un contenu réellement UNIFORME (rien à voir, aucune variation) est refusé tout de suite : tous les validateurs le refuseraient (« blank ») après 30 minutes d'attente. Un fond noir ou coloré avec des traits n'est PAS uniforme.
+  if (v2) {
+    let uniform = false;
+    try { uniform = rawIsUniform(screen as PodScreen, rawContent(screen as PodScreen, screen === "eink29bwr" ? { black, red } : { buffer })); } catch { uniform = false; }
+    if (uniform) return NextResponse.json({ rejected: true, reason: "uniform_image", message: "L'image est uniforme : aucun pixel ne varie, les validateurs la refuseraient. Dessinez au moins un trait." }, { status: 400 });
+  }
 
   // ── Analyse géométrique et temporelle du replay ──────────────────────────────
   const [podGeometry, thresholds] = await Promise.all([
