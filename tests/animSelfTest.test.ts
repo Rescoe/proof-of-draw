@@ -95,7 +95,8 @@ test("aucun firmware de production, aucune route de vote/finalisation, aucune va
   // lot 8B-2A : le noyau de RENDU (copies de consensusPoD.h dans 4 dossiers canaris, inactif par défaut) est autorisé là ; le noyau d'ANIMATION ne l'est nulle part
   const canary = ["esp8266/esp_eink_2.9BWR/", "esp8266/esp_tft1.8/", "arduino_uno_r4/pod_uno_r4_eink29/", "arduino_uno_r4/pod_uno_r4_tft18/", "arduino_uno_r4/pod_uno_r4_tft18_env/", "esp8266/esp_eink_2.7BW/", "esp8266/esp_eink_2.7BW_OLED/", "arduino_uno_r4/pod_uno_r4_eink27/", "arduino_uno_r4/pod_uno_r4_eink27_oled/"];
   for (const f of [...walk("esp8266"), ...walk("arduino_uno_r4")]) {
-    assert.doesNotMatch(read(f), /podAnim|PodAnim|podAnimSelfTest|AnimSelfTest/, f);
+    // 28/10/2026 (lot 6, OMBRE) : la station R4 peut calculer (sans voter) le résultat d'un clip reçu — drapeau POD_ANIM_V3_SHADOW = 0 par défaut
+    if (!["arduino_uno_r4/pod_uno_r4_tft18_env/podAnimV3.h", "arduino_uno_r4/pod_uno_r4_tft18_env/pod_uno_r4_tft18_env.ino"].includes(f)) assert.doesNotMatch(read(f), /podAnim|PodAnim|podAnimSelfTest|AnimSelfTest/, f);
     if (!canary.some((c) => f.startsWith(c))) assert.doesNotMatch(read(f), /consensusPoD/, f);
   }
   const adapters = (read("consensus-pod/src/adapters/crypto_esp8266.h") + read("consensus-pod/src/adapters/crypto_uno_r4.h")).replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/.*$/gm, "");
