@@ -43,7 +43,7 @@ test("ENV R4 : TOUT le JSON est décodé sur la pile de travail (4 deserializeJs
 
 test("ENV R4 : l'affichage TFT n'est atteint que depuis la pile de travail (enveloppes), le flux de l'image ou setup()", () => {
   const lines = code.split("\n");
-  const allowed = new Set(["tftStatusImpl", "drawCartelImpl", "displayKeyMaterialOnceImpl", "displayOnboardingQRImpl", "streamFrame", "podStreamFrame", "setup", "envDrawDataImpl", "envBar", "restoreFrameImpl", "runAnim"]);
+  const allowed = new Set(["tftStatusImpl", "drawCartelImpl", "displayKeyMaterialOnceImpl", "displayOnboardingQRImpl", "streamFrame", "podStreamFrame", "setup", "envDrawDataImpl", "envBar", "restoreFrameImpl", "runAnim", "histDrawSeries", "histDrawImpl"]);
   lines.forEach((l, i) => { if (/\btft\.\w+\(/.test(l) && !/^Adafruit_ST7735 tft/.test(l)) { const f = functionAt(lines, i); assert.ok(allowed.has(f), `tft.* dans ${f || "?"} : ${l.trim()}`); } });
   for (const w of ["tftStatus", "drawCartel", "displayKeyMaterialOnce", "displayOnboardingQR"]) {
     const i = code.indexOf(`) ${w}(`);                                   // enveloppe « static void __attribute__((noinline)) w(...) { PodNetInfo ni; auto wk = [&]() { wImpl(... »
@@ -51,7 +51,7 @@ test("ENV R4 : l'affichage TFT n'est atteint que depuis la pile de travail (enve
     const line = code.slice(i, code.indexOf("\n", i));
     assert.ok(line.includes("PodNetInfo ni; auto wk = [&]() { " + w + "Impl(") && line.includes("podWorkRun(wk, &ni)"), `${w} passe par podWorkRun`);
   }
-  assert.match(ino, /#define POD_NET_STACK_TOTAL 3072u/);
+  assert.match(ino, /#define POD_NET_STACK_TOTAL 2048u/); assert.match(ino, /#define POD_NET_STACK_BIG 3072u/);
 });
 
 test("ENV R4 : la voie du vote lit le candidat dans une transaction FERMÉE avant de signer (PodEd), jamais l'inverse ; ACK après affichage", () => {

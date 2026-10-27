@@ -47,8 +47,12 @@
 #include <qrcode.h>
 #include <Ed25519.h>
 #include "podEdStack.h"   // POD_ED_STACK : Ed25519 sur PILE DÉDIÉE (la pile principale de la R4 n'a que 1 024 o) — docs/LOT_8B2B2_PILE_ED25519_R4_2026_10_08.md
+#ifndef POD_WORK_STACK_TOTAL
+#define POD_WORK_STACK_TOTAL 2560u   // pile de travail dédiée : SD.open (~1,3 Ko) + tracé des courbes ; prise au tas le temps d'un appel seulement
+#endif
 #ifndef POD_NET_STACK_TOTAL
-#define POD_NET_STACK_TOTAL 3072u   // le flux de l'image (Adafruit + SPI) s'écrit DANS la transaction TLS : 1 024 o de plus que les autres firmwares R4
+#define POD_NET_STACK_TOTAL 2048u   // transactions courtes (register, pull, vote, ACK, candidat) : comme les autres firmwares R4. Le tas libre (~9 Ko) ne tolère pas 3 Ko contigus à chaque appel (28/10/2026 : vote NOMEM)
+#define POD_NET_STACK_BIG 3072u     // le flux de l'image (Adafruit + SPI) et le clip (carte SD) s'écrivent DANS la transaction TLS : 1 024 o de plus, SEULEMENT pour ces deux transactions
 #endif
 #include "podNetStack.h"   // POD_NET_STACK : transactions réseau/TLS ET journal sur PILE DÉDIÉE (connect() déborde de 456 o sous __StackLimit) — docs/LOT_8B2B2_NETSTACK_FIX1_2026_10_09.md, docs/LOT_8B2B2_NETSTACK_FIX2_2026_10_09.md
 #include <SHA256.h>
@@ -60,6 +64,7 @@
 #include <Wire.h>
 #include <new>
 #include "pod_bench.h"          // lecteur de clips PBC1 (copie identique de arduino_uno_r4/pod_uno_r4/pod_bench.h : scripts/sync-bench-header.js) — AVANT les macros ROW_BYTES / FRAME_BYTES du sketch
+#include "pod_hist.h"           // historique des mesures : enregistrement de 10 octets, date civile, nom de fichier mensuel (purs, testés sur l'hôte)
 #include "pod_bench_stream.h"   // validation et lecture EN FLUX d'un clip stocké sur la carte SD (même fichier que le TFT 2,8″)
 
 // POD_RENDER_V1_BEGIN
@@ -251,6 +256,8 @@ static void logf(const char* fmt, ...) {
 extern "C" char* sbrk(int incr);
 extern char __HeapLimit;
 static const uint32_t STACK_PAINT_BYTES = 2048;
+/** Exécute `tx` (lambda sans argument) sur une pile réseau dédiée de POD_NET_STACK_BIG o (image, clip). Même contrat que podNetRun : échec fermé. */
+#define POD_NET_RUN_BIG(tx, ni) PodNet::runSized([](void* p) { (*static_cast<decltype(tx)*>(p))(); }, &(tx), POD_NET_STACK_BIG, &(ni))
 static uint32_t freeHeapBytes() {
   struct mallinfo mi = mallinfo();
   return (uint32_t)mi.fordblks + (uint32_t)(&__HeapLimit - (char*)sbrk(0));
@@ -400,6 +407,13 @@ static bool __attribute__((noinline)) wifiRssi(int32_t& rssi) {
   rssi = r;
   return true;
 }
+/** Heure (secondes epoch UTC) fournie par le module Wi-Fi (NTP). 0 = inconnue (pas encore synchronisée) : l'appelant n'invente jamais d'heure. */
+static uint32_t __attribute__((noinline)) wifiEpoch() {
+  uint32_t t = 0; PodNetInfo ni;
+  auto wx = [&]() { t = (uint32_t)WiFi.getTime(); };
+  if (!podWifiRun(wx, &ni)) { wifiFailed("getTime", ni); return 0; }
+  return t >= 1700000000UL ? t : 0;
+}
 static String __attribute__((noinline)) wifiIpString() {
   String ip; PodNetInfo ni;                  // la chaîne « a.b.c.d » est formée SUR la pile dédiée (IPAddress::toString → sniprintf : jamais sur la pile principale)
   auto wx = [&]() { ip = WiFi.localIP().toString(); };
@@ -479,7 +493,7 @@ static int httpCall(const char* method, const String& path, const String* body, 
   resp = "";
   int code = -4; bool complete = false; PodNetInfo ni;
   const bool ran = netHttpRaw(method, path, body, code, complete, ni);
-  if (!ran) { logf("[HTTP %s] pile réseau dédiée : %s (erreur %u, marge %u o)%s", method, podNetWhy(ni), (unsigned)ni.err, (unsigned)ni.margin, podNetExecuted(ni) ? " — la requête a PU atteindre le serveur (POST, vote ou ACK possibles)" : ""); return podNetExecuted(ni) ? -5 : -4; }
+  if (!ran) { reportMem("avant l'echec de la pile reseau"); logf("[HTTP %s] pile réseau dédiée : %s (erreur %u, marge %u o)%s", method, podNetWhy(ni), (unsigned)ni.err, (unsigned)ni.margin, podNetExecuted(ni) ? " — la requête a PU atteindre le serveur (POST, vote ou ACK possibles)" : ""); return podNetExecuted(ni) ? -5 : -4; }
   logf("[HTTP %s] %s -> %d", method, path.length() > 60 ? (path.substring(0, 60) + "...").c_str() : path.c_str(), code);
   if (code < 0) { if (code == -2) logf("[HTTP] connexion TLS impossible (voir l'en-tête du sketch)"); return code; }
   if (!complete) { logf("[HTTP] corps incomplet ou > %u octets", (unsigned)sizeof(g_body) - 1); return -3; }
@@ -678,7 +692,7 @@ static bool doFetchFrame(const String& frameId, const String& frameSource) {
     }
     c.client.stop();
   };
-  const bool ran = podNetRun(tx, &ni);
+  const bool ran = POD_NET_RUN_BIG(tx, ni);
   if (!ran) { shown = false; noFrame = false; logf("[FRAME] pile réseau dédiée : %s (erreur %u, marge %u o) — pas d'ACK ; l'écran a pu être partiellement ou totalement redessiné", podNetWhy(ni), (unsigned)ni.err, (unsigned)ni.margin); }
   if (noFrame) { logf("[FRAME] pas de frame disponible"); return true; }
   if (!shown) { logf("[FRAME] image incomplète — pas d'ACK, nouvel essai au prochain pull"); return false; }
@@ -935,7 +949,7 @@ static bool __attribute__((noinline)) netGetBlockClipToSd(const String& hash, si
     }
     c.client.stop();
   };
-  const bool ran = podNetRun(tx, &ni);
+  const bool ran = POD_NET_RUN_BIG(tx, ni);
   if (!ran) { got = false; logf("[ANIM] pile réseau dédiée : %s (erreur %u, marge %u o) — clip NON retenu", podNetWhy(ni), (unsigned)ni.err, (unsigned)ni.margin); }
   return got;
 }
@@ -1559,14 +1573,35 @@ static void __attribute__((noinline)) sensorsTick() {
 }
 
 #if POD_ENV_DISPLAY
-// ─── Écran de station (28/10/2026) : page « relevés » ↔ œuvre du réseau (image ou animation), toutes les ENV_PAGE_MS ─────────────────────────────
+// ─── Écran de station (28/10/2026) : relevés ↔ œuvre du réseau ↔ courbes, une page toutes les ENV_PAGE_MS ───────────────────────────────────────
 // Page relevés : lectures VIVANTES, pour l'écran seulement — DHT22 toutes les 5 s, SGP40 chaque seconde (le chauffage reste allumé), RSSI toutes les 15 s. Elles n'alimentent PAS le tampon d'envoi
 // (lecture / 30 min, envoi / h, inchangés : le serveur refuse moins de 50 min entre deux envois).
-// Page œuvre : la dernière œuvre minée reçue du réseau — l'animation jouée depuis la carte SD (clip PBC1, en boucle) ou l'image redessinée depuis la carte. Sans carte, l'œuvre reste à l'écran jusqu'à la fin de sa page
-// puis ne revient pas (aucune copie en mémoire). TOUT dessin passe par podWorkRun (pile de travail dédiée) ; aucun tableau, aucune String : des tampons de 12 octets et des entiers.
-#include <math.h>
+// Page œuvre : la dernière œuvre minée reçue du réseau — l'animation jouée depuis la carte SD (clip PBC1, en boucle) ou l'image redessinée depuis la carte.
+// Page courbes : température / humidité / air sur 24 h, 7 jours, 30 jours, 1 an, lues sur la carte SD (historique local, aucune requête réseau, aucune commande Redis).
+// TOUT dessin passe par podWorkRun (pile de travail dédiée) ; des tampons de 12 octets et des entiers (+ 1,7 Ko au tas, le temps d'un tracé).
 static unsigned long g_envDhtAt = 0, g_envDhtOkAt = 0, g_envSgpAt = 0, g_envRssiAt = 0, g_envDrawAt = 0;
 static int32_t g_envRssi = 0;
+static uint8_t g_envRange = 0;                      // plage de la prochaine page courbes : 0 = 24 h, 1 = 7 jours, 2 = 30 jours, 3 = 1 an
+
+// Qualité de l'air (INDICATIF) : le SGP40 donne des « ticks » bruts (plus haut = air plus sain). Sans algorithme COV complet, on suit une ligne de base propre (maximum récent qui redescend lentement)
+// et on classe la CHUTE par rapport à elle. Les seuils ne sont pas étalonnés : à ajuster après des essais (fumée, cuisine, alcool).
+static int32_t g_airBase = 0;
+static unsigned long g_airBaseAt = 0, g_airFirstAt = 0;
+#define AIR_WARMUP_MS  600000UL                     // 10 min d'apprentissage de la ligne de base avant d'afficher un verdict
+static void envAirUpdate(uint16_t raw, unsigned long now) {
+  if (g_airFirstAt == 0) { g_airFirstAt = now ? now : 1; g_airBase = raw; g_airBaseAt = now; return; }
+  if ((int32_t)raw >= g_airBase) { g_airBase = raw; g_airBaseAt = now; }
+  else if (now - g_airBaseAt >= 60000UL) { g_airBase -= 2; g_airBaseAt = now; }   // la ligne de base redescend de 2 ticks / minute (≈ 120 / h)
+}
+/** 0 = calibrage, 1 = bon, 2 = moyen, 3 = chargé ; pct = 0..100 (100 = air propre) */
+static uint8_t envAirClass(int& pct) {
+  pct = 0;
+  if (!g_sgpSeen || g_airFirstAt == 0 || millis() - g_airFirstAt < AIR_WARMUP_MS) return 0;
+  const int32_t d = g_airBase - (int32_t)g_lastVoc;
+  int p = 100 - (int)(d * 100 / 3000);
+  pct = p < 0 ? 0 : (p > 100 ? 100 : p);
+  return d < 300 ? 1 : (d < 1200 ? 2 : 3);
+}
 
 static uint16_t envColor(uint8_t r, uint8_t g, uint8_t b) { return ((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3); }
 /** Température -> couleur : bleu (≤ 10 °C) … vert … rouge (≥ 30 °C). */
@@ -1606,6 +1641,7 @@ static void envBar(int y, int pct, uint16_t col) {
 static void envDrawDataImpl(bool full) {
   const unsigned long now = millis();
   tft.setTextWrap(false);
+  tft.cp437(true);                                  // le « ° » de la police Adafruit est le code 248 (CP437)
   char b[12];
   if (full) {
     tft.fillScreen(C_BLACK);
@@ -1614,30 +1650,182 @@ static void envDrawDataImpl(bool full) {
     tft.setTextColor(C_GREY, C_BLACK);
     tft.setCursor(3, 18); tft.print("TEMPERATURE");
     tft.setCursor(3, 62); tft.print("HUMIDITE");
-    tft.setCursor(3, 104); tft.print("AIR (brut, haut = sain)");
+    tft.setCursor(3, 104); tft.print("QUALITE DE L'AIR");
   }
   const bool fresh = g_envDhtOkAt != 0 && now - g_envDhtOkAt < 30000UL;
-  // temperature
+  // temperature : 19.3 °C
   tft.setTextSize(3); tft.setTextColor(fresh ? envTempColor() : C_GREY, C_BLACK); tft.setCursor(3, 29);
   if (fresh && g_lastT != NO_T) { envFmt10(b, 5, g_lastT); tft.print(b); } else tft.print("  -- ");
-  tft.setTextSize(2); tft.setTextColor(C_WHITE, C_BLACK); tft.setCursor(98, 33); tft.print("C");
-  // humidite
+  tft.setTextSize(2); tft.setTextColor(C_WHITE, C_BLACK); tft.setCursor(92, 33); tft.write((uint8_t)248); tft.print("C");
+  // humidite : 81.9 %
   tft.setTextSize(2); tft.setTextColor(fresh ? 0x07FF : C_GREY, C_BLACK); tft.setCursor(3, 72);
   if (fresh && g_lastH != NO_H) { envFmt10(b, 5, g_lastH); tft.print(b); tft.print("%"); } else tft.print("  -- ");
   envBar(91, (fresh && g_lastH != NO_H) ? (int)(g_lastH / 10) : 0, 0x07FF);
-  // air
-  tft.setTextSize(2); tft.setTextColor(g_sgpSeen ? C_WHITE : C_GREY, C_BLACK); tft.setCursor(3, 114);
-  if (g_sgpSeen) { envFmtU(b, 5, g_lastVoc); tft.print(b); } else tft.print("  -- ");
-  int air = 0; if (g_sgpSeen) { air = ((int)g_lastVoc - 20000) / 120; }                // 20 000 -> 0 %, 32 000 -> 100 % (indicatif, non calibré)
-  envBar(133, air, air > 55 ? 0x07E0 : (air > 25 ? C_GOLD : C_RED));
+  // air : verdict + barre + valeur brute
+  int pct = 0; const uint8_t cls = envAirClass(pct);
+  static const char* const AIRN[] = {"CALIBRAGE", "BON      ", "MOYEN    ", "CHARGE   "};
+  const uint16_t acol = cls == 1 ? 0x07E0 : (cls == 2 ? C_GOLD : (cls == 3 ? C_RED : C_GREY));
+  tft.setTextSize(2); tft.setTextColor(acol, C_BLACK); tft.setCursor(3, 113); tft.print(AIRN[cls]);
+  envBar(131, cls ? pct : 0, acol);
+  tft.setTextSize(1); tft.setTextColor(C_GREY, C_BLACK); tft.setCursor(3, 140);
+  if (g_sgpSeen) { envFmtU(b, 5, g_lastVoc); tft.print("brut "); tft.print(b); tft.print(cls ? "        " : " (10 min)"); } else tft.print("capteur absent       ");
   // pied
-  tft.fillRect(0, 146, IMG_W, 14, C_DARK);
-  tft.setTextSize(1); tft.setTextColor(C_WHITE, C_DARK); tft.setCursor(3, 150);
+  tft.fillRect(0, 150, IMG_W, 10, C_DARK);
+  tft.setTextSize(1); tft.setTextColor(C_WHITE, C_DARK); tft.setCursor(3, 151);
   if (g_envRssi < 0) { tft.print("Wi-Fi -"); envFmtU(b, 0, (unsigned)(-g_envRssi)); tft.print(b); } else tft.print("Wi-Fi ?");
-  tft.setTextColor(g_sendOk ? 0x07E0 : C_GREY, C_DARK); tft.setCursor(70, 150);
-  if (g_sendOk) { tft.print("envoi "); envFmtU(b, 0, (unsigned)((now - g_lastSendMs) / 60000UL)); tft.print(b); tft.print("m"); } else tft.print("envoi en attente");
+  tft.setTextColor(g_sendOk ? 0x07E0 : C_GREY, C_DARK); tft.setCursor(70, 151);
+  if (g_sendOk) { tft.print("envoi "); envFmtU(b, 0, (unsigned)((now - g_lastSendMs) / 60000UL)); tft.print(b); tft.print("m"); } else tft.print("envoi attente");
 }
 static void __attribute__((noinline)) envDrawData(bool full) { PodNetInfo ni; auto wk = [&]() { envDrawDataImpl(full); }; if (!podWorkRun(wk, &ni)) tftWorkFailed("page relevés", ni); }
+
+#if POD_SD_CS_PIN
+// ─── Historique des mesures sur la carte SD (local : AUCUNE requête réseau, AUCUNE commande Redis) ─────────────────────────────────────────────
+// Un enregistrement de 10 octets toutes les 5 min (heure par NTP du module Wi-Fi) : un fichier PAR MOIS /pod18/dAAMM.bin (≈ 87 Ko / mois) et un fichier horaire /pod18/h.bin (moyenne de chaque heure, 87 Ko / an).
+// ≈ 1,1 Mo par an au total : très en dessous de la réserve de 1 Go prévue pour les mesures (le reste de la carte est laissé aux œuvres et aux clips). Rétention : 14 mois de fichiers mensuels (le plus ancien est supprimé
+// à la création du nouveau mois) ; le fichier horaire est conservé. Pas d'heure NTP = pas d'enregistrement (jamais d'horodatage inventé).
+// Enregistrement : { uint32 t (epoch s), int16 température ×10 (−32768 = absente), uint16 humidité ×10 (0xFFFF = absente), uint16 ticks SGP40 (0 = absent) }, petit-boutiste.
+static uint32_t g_histN = 0;                        // enregistrements du mois courant (courbes disponibles à partir de 3)
+static unsigned long g_histAt = 0;
+static uint32_t g_hHour = 0; static int32_t g_hSumT = 0, g_hSumH = 0, g_hSumV = 0; static uint16_t g_hNT = 0, g_hNH = 0, g_hNV = 0;
+static bool histAppendFile(const char* path, const HistRec& r) {
+  File f = SD.open(path, FILE_WRITE);
+  if (!f) return false;
+  uint8_t o[HIST_REC]; histPut(o, r);
+  const bool ok = f.write(o, HIST_REC) == (size_t)HIST_REC;
+  f.close();
+  return ok;
+}
+/** Ajoute un enregistrement 5 min au fichier du mois, et ferme l'heure précédente (moyenne) dans le fichier horaire quand l'heure change. */
+static void histAppendImpl(const HistRec& r) {
+  int y, m; histYm(r.t, y, m);
+  char p[20]; histMonthPath(p, y, m);
+  const bool isNew = !SD.exists(p);
+  if (!histAppendFile(p, r)) { logf("[HIST] écriture impossible (carte pleine / protégée ?)"); return; }
+  if (isNew) {                                                  // nouveau mois : les fichiers de plus de HIST_KEEP_MONTHS mois sont supprimés
+    const int mi = y * 12 + (m - 1);
+    for (int k = HIST_KEEP_MONTHS + 1; k <= HIST_KEEP_MONTHS + 12; k++) { char q[20]; const int mj = mi - k; histMonthPath(q, mj / 12, mj % 12 + 1); if (SD.exists(q)) SD.remove(q); }
+    g_histN = 0;
+  }
+  g_histN++;
+  const uint32_t hour = r.t / 3600UL;
+  if (g_hHour != 0 && hour != g_hHour && (g_hNT | g_hNH | g_hNV)) {   // l'heure est close : moyenne de chaque grandeur
+    HistRec h; h.t = g_hHour * 3600UL;
+    h.t10 = g_hNT ? (int16_t)(g_hSumT / g_hNT) : (int16_t)-32768; h.h10 = g_hNH ? (uint16_t)(g_hSumH / g_hNH) : (uint16_t)0xFFFF; h.voc = g_hNV ? (uint16_t)(g_hSumV / g_hNV) : (uint16_t)0;
+    histAppendFile(HIST_FILE_HOURLY, h);
+    g_hSumT = g_hSumH = g_hSumV = 0; g_hNT = g_hNH = g_hNV = 0;
+  }
+  g_hHour = hour;
+  if (r.t10 != (int16_t)-32768) { g_hSumT += r.t10; g_hNT++; }
+  if (r.h10 != 0xFFFF) { g_hSumH += r.h10; g_hNH++; }
+  if (r.voc) { g_hSumV += r.voc; g_hNV++; }
+}
+static void __attribute__((noinline)) histAppend(const HistRec& r) { PodNetInfo ni; auto wk = [&]() { histAppendImpl(r); }; if (!podWorkRun(wk, &ni)) tftWorkFailed("historique SD", ni); }
+/** Au démarrage : nombre d'enregistrements déjà présents dans le fichier du mois (courbes disponibles dès le redémarrage). */
+static void __attribute__((noinline)) histCount(uint32_t epoch) {
+  PodNetInfo ni; int y, m; histYm(epoch, y, m); char p[20]; histMonthPath(p, y, m);
+  auto wk = [&]() { if (SD.exists(p)) { File f = SD.open(p, FILE_READ); if (f) { g_histN = (uint32_t)f.size() / HIST_REC; f.close(); } } };
+  if (!podWorkRun(wk, &ni)) tftWorkFailed("historique SD", ni);
+}
+static bool __attribute__((noinline)) histLog() {
+  const uint32_t t = wifiEpoch();
+  if (t == 0) return false;                                          // heure inconnue (NTP pas encore reçu) : on réessaie plus tard, sans rien inventer
+  if (g_histN == 0) histCount(t);
+  HistRec r; r.t = t; r.t10 = g_lastT; r.h10 = g_lastH; r.voc = g_sgpSeen ? g_lastVoc : 0;
+  if (r.t10 == NO_T) r.t10 = (int16_t)-32768;
+  histAppend(r);
+  return true;
+}
+
+/** Lit la fin d'un fichier d'enregistrements (au plus maxRecs) et range chaque valeur dans la colonne de sa date. */
+static void histAccumulate(const char* path, uint32_t maxRecs, uint32_t t0, uint32_t span, HistPlot* p) {
+  if (!SD.exists(path)) return;
+  File f = SD.open(path, FILE_READ);
+  if (!f) return;
+  const uint32_t total = (uint32_t)f.size() / HIST_REC;
+  uint32_t start = total > maxRecs ? total - maxRecs : 0;
+  if (!f.seek(start * HIST_REC)) { f.close(); return; }
+  uint8_t buf[HIST_REC * 10];
+  uint32_t left = total - start;
+  while (left > 0) {
+    const uint32_t n = left < 10 ? left : 10;
+    if (f.read(buf, n * HIST_REC) != (int)(n * HIST_REC)) break;
+    for (uint32_t i = 0; i < n; i++) {
+      const HistRec r = histGet(buf + i * HIST_REC);
+      if (r.t < t0 || r.t >= t0 + span) continue;
+      uint32_t b = (uint32_t)(((uint64_t)(r.t - t0) * HIST_BUCKETS) / span);
+      if (b >= HIST_BUCKETS) b = HIST_BUCKETS - 1;
+      if (r.t10 != (int16_t)-32768) { p->sT[b] += r.t10; p->nT[b]++; }
+      if (r.h10 != 0xFFFF) { p->sH[b] += r.h10; p->nH[b]++; }
+      if (r.voc) { p->sV[b] += r.voc; p->nV[b]++; }
+    }
+    left -= n;
+  }
+  f.close();
+}
+/** Trace UNE courbe dans le cadre [x0 .. x0+HIST_BUCKETS) × [y0 .. y0+h) ; div : 1 (tickes ×1) ; les libellés min / max sont à gauche. */
+static void histDrawSeries(int y0, int h, const int32_t* sum, const uint16_t* cnt, uint16_t col, int labelKind) {
+  const int x0 = 30;
+  int32_t vmin = 0x7FFFFFFF, vmax = -0x7FFFFFFF; int have = 0;
+  for (int b = 0; b < HIST_BUCKETS; b++) if (cnt[b]) { const int32_t v = sum[b] / cnt[b]; if (v < vmin) vmin = v; if (v > vmax) vmax = v; have++; }
+  tft.fillRect(0, y0, IMG_W, h, C_BLACK);
+  tft.drawFastVLine(x0 - 2, y0, h, 0x39E7);
+  tft.drawFastHLine(x0 - 2, y0 + h - 1, HIST_BUCKETS + 2, 0x39E7);
+  if (have < 2) { tft.setTextSize(1); tft.setTextColor(C_GREY, C_BLACK); tft.setCursor(x0 + 6, y0 + h / 2 - 4); tft.print("pas assez de donnees"); return; }
+  int32_t span = vmax - vmin;
+  int32_t lo = vmin, hi = vmax;
+  if (span < (labelKind == 2 ? 100 : 5)) { const int32_t pad = (labelKind == 2 ? 100 : 5) - span; lo -= pad / 2; hi += pad - pad / 2; span = hi - lo; }   // plage minimale : un bruit de mesure ne devient pas une montagne
+  int px = -1, py = 0;
+  for (int b = 0; b < HIST_BUCKETS; b++) {
+    if (!cnt[b]) { px = -1; continue; }
+    const int32_t v = sum[b] / cnt[b];
+    const int x = x0 + b, y = y0 + h - 2 - (int)((int64_t)(v - lo) * (h - 3) / span);
+    if (px >= 0) tft.drawLine(px, py, x, y, col); else tft.drawPixel(x, y, col);
+    px = x; py = y;
+  }
+  char s[12];
+  tft.setTextSize(1); tft.setTextColor(col, C_BLACK);
+  tft.setCursor(0, y0); if (labelKind == 2) envFmtU(s, 3, (unsigned)(hi / 100)); else envFmt10(s, 4, (int)hi); tft.print(s);
+  tft.setCursor(0, y0 + h - 9); if (labelKind == 2) envFmtU(s, 3, (unsigned)(lo / 100)); else envFmt10(s, 4, (int)lo); tft.print(s);
+}
+static const uint32_t HIST_SPAN[4] = {86400UL, 604800UL, 2592000UL, 31536000UL};
+static const char* const HIST_NAME[4] = {"24 h", "7 jours", "30 jours", "1 an"};
+static bool histDrawImpl(uint8_t range, uint32_t now, HistPlot* p) {
+  const uint32_t span = HIST_SPAN[range], t0 = now > span ? now - span : 0;
+  memset(p, 0, sizeof(*p));
+  if (range <= 1) {                                                // 5 min : fichiers mensuels (le mois précédent d'abord)
+    int y, m; histYm(now, y, m);
+    const int mi = y * 12 + (m - 1) - 1;
+    char q[20]; histMonthPath(q, mi / 12, mi % 12 + 1);
+    const uint32_t maxRecs = span / 300UL + 4;
+    histAccumulate(q, maxRecs, t0, span, p);
+    histMonthPath(q, y, m);
+    histAccumulate(q, maxRecs, t0, span, p);
+  } else {
+    histAccumulate(HIST_FILE_HOURLY, span / 3600UL + 4, t0, span, p);
+  }
+  tft.setTextWrap(false);
+  tft.fillScreen(C_BLACK);
+  tft.fillRect(0, 0, IMG_W, 14, C_DARK);
+  tft.setTextSize(1); tft.setTextColor(C_GOLD, C_DARK); tft.setCursor(3, 3); tft.print("COURBES "); tft.print(HIST_NAME[range]);
+  histDrawSeries(18, 40, p->sT, p->nT, envTempColor(), 0);
+  histDrawSeries(62, 40, p->sH, p->nH, 0x07FF, 1);
+  histDrawSeries(106, 40, p->sV, p->nV, C_GOLD, 2);
+  tft.setTextSize(1); tft.setTextColor(C_GREY, C_BLACK);
+  tft.setCursor(3, 150); tft.print("T/H/AIR (ticks/100)");
+  return true;
+}
+static bool __attribute__((noinline)) envDrawChart(uint8_t range, uint32_t now) {
+  HistPlot* const p = (HistPlot*)malloc(sizeof(HistPlot));
+  if (!p) { logf("[HIST] mémoire insuffisante pour le tracé (%u o)", (unsigned)sizeof(HistPlot)); return false; }
+  bool ok = false; PodNetInfo ni;
+  auto wk = [&]() { ok = histDrawImpl(range, now, p); };
+  if (!podWorkRun(wk, &ni)) tftWorkFailed("courbes", ni);
+  else logf("[HIST] courbe %u tracee, pile de travail : utilise %u o, marge %u o", (unsigned)range, (unsigned)ni.used, (unsigned)ni.margin);
+  free(p);
+  return ok;
+}
+#endif
+
 /** Lectures vives (DHT22 / SGP40 / RSSI) : jamais dans une transaction réseau, jamais sur le tampon d'envoi. */
 static void __attribute__((noinline)) envSample(unsigned long now) {
   if (g_envDhtAt == 0 || now - g_envDhtAt >= 5000UL) {
@@ -1648,7 +1836,7 @@ static void __attribute__((noinline)) envSample(unsigned long now) {
     g_envSgpAt = now; uint16_t raw = 0; bool ok = false; PodNetInfo ni;
     const int h10 = (g_lastH == NO_H) ? 500 : (int)g_lastH, t10 = (g_lastT == NO_T) ? 250 : (int)g_lastT;
     auto wk = [&]() { ok = sgp40Measure(h10, t10, raw); };
-    if (podWorkRun(wk, &ni) && ok && raw) { g_lastVoc = raw; g_sgpSeen = true; }
+    if (podWorkRun(wk, &ni) && ok && raw) { g_lastVoc = raw; g_sgpSeen = true; envAirUpdate(raw, now); }
   }
   if (now - g_envRssiAt >= 15000UL) { int32_t r = 0; g_envRssiAt = now; if (wifiRssi(r) && r < 0 && r >= -127) g_envRssi = r; }
 }
@@ -1660,19 +1848,48 @@ static bool envArtAvailable() {
   return false;
 #endif
 }
+static bool envChartAvailable() {
+#if POD_SD_CS_PIN
+  return sdOk && g_histN >= 3;
+#else
+  return false;
+#endif
+}
 static void __attribute__((noinline)) envTick() {
   const unsigned long now = millis();
   envSample(now);
+#if POD_SD_CS_PIN
+  if (sdOk && (g_histAt == 0 || now - g_histAt >= HIST_INTERVAL_MS) && g_envDhtOkAt != 0 && now - g_envDhtOkAt < 30000UL) {
+    g_histAt = histLog() ? now : (now - HIST_INTERVAL_MS + 10000UL);   // heure inconnue : nouvel essai dans 10 s
+  }
+#endif
   if (now - g_envPageAtMs >= ENV_PAGE_MS) {
-    if (g_envPage == 1) { g_envPage = 0; g_envFull = true; g_envPageAtMs = now; logf("[ENV] page relevés"); }
-    else if (envArtAvailable()) { g_envPage = 1; g_envFull = true; g_envArtDrawn = false; g_envPageAtMs = now; logf("[ENV] page œuvre (%s)", animOn ? "animation" : "image"); }
-    else g_envPageAtMs = now;                      // rien à montrer : les relevés restent
+    const uint8_t from = g_envPage;
+    uint8_t to = 0;
+    if (from == 0) to = envArtAvailable() ? 1 : (envChartAvailable() ? 2 : 0);
+    else if (from == 1) to = envChartAvailable() ? 2 : 0;
+    else to = 0;
+    g_envPage = to; g_envFull = true; g_envArtDrawn = false; g_envPageAtMs = now; g_envDrawAt = 0;
+    if (to == 2) {
+#if POD_SD_CS_PIN
+      logf("[ENV] page courbes (%s)", HIST_NAME[g_envRange]);
+#endif
+    } else logf("[ENV] page %s", to == 1 ? (animOn ? "œuvre (animation)" : "œuvre (image)") : "relevés");
   }
   if (g_envPage == 0) {
     if (g_envFull || now - g_envDrawAt >= 1000UL) { envDrawData(g_envFull); g_envFull = false; g_envDrawAt = now; }
     return;
   }
 #if POD_SD_CS_PIN
+  if (g_envPage == 2) {                            // courbes : tracé à l'entrée, puis une fois toutes les 20 s (nouveaux points)
+    if (g_envFull || now - g_envDrawAt >= 20000UL) {
+      const uint32_t t = wifiEpoch();
+      if (t == 0 || !envDrawChart(g_envRange, t)) { g_envPage = 0; g_envFull = true; g_envPageAtMs = now; return; }
+      if (g_envFull) g_envRange = (uint8_t)((g_envRange + 1) % 4);
+      g_envFull = false; g_envDrawAt = now;
+    }
+    return;
+  }
   if (animOn) {                                    // l'animation tourne jusqu'à la fin de la page, ou jusqu'à ce qu'un travail réseau soit dû (puis repart)
     const unsigned long left = ENV_PAGE_MS - (now - g_envPageAtMs);
     const AnimEnd e = runAnim(left);
