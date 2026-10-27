@@ -10,6 +10,7 @@ import { generateLinkCode, type LinkCodeStatus } from "@/lib/linkCode";
 import { isSensorScreens, measureKindsOf, type MeasureKind } from "@/lib/measures";
 import { participatesInVoteNetwork } from "@/lib/voteCapability";
 import { summarizePool, type PoolSummary } from "@/lib/electorate";
+import { isValidatorNode, type VoteCap } from "@/lib/voteCapability";
 import { isResponsiveVoter } from "@/lib/quorumResponsive";
 
 export interface Device {
@@ -54,6 +55,9 @@ export interface Device {
 
   // ── Mesures : grandeurs que cette carte mesure (capteurs). ABSENT = aucune, sauf pour le pseudo-écran historique « sensor » (temp + hum) — toujours lire via measureKindsOf().
   sensors?: MeasureKind[];
+
+  // ── Vote : capacités DÉCLARÉES par le firmware (liste fermée, lib/voteCapability.ts). ABSENT = aucune ; une déclaration seule ne compte jamais dans le quorum.
+  caps?: VoteCap[];
 }
 
 // ─── ArtistProfile ────────────────────────────────────────────────────────────
@@ -278,7 +282,8 @@ export async function registerDevice(
   screens: string[],
   firmware: string,
   sceneCapability?: SceneCapability,
-  sensors?: MeasureKind[]
+  sensors?: MeasureKind[],
+  caps?: VoteCap[]
 ): Promise<{ device: Device; isNew: boolean }> {
   const existing = await getDeviceByMac(mac);
   const knownId  = existing ? null : await redis.get<string>(macKey(mac));
@@ -287,11 +292,12 @@ export async function registerDevice(
     existing.firmware = firmware;
     existing.screens  = screens;
     existing.sceneCapability = sceneCapability;   // absent = firmware sans scene-v1 (efface une déclaration périmée)
+    if (caps) existing.caps = caps; else delete existing.caps;   // capacités de vote : déclaration du firmware courant
     if (sensors) existing.sensors = sensors; else delete existing.sensors;   // grandeurs mesurées : déclaration du firmware courant
     existing.lastSeen = Date.now();
     await saveDevice(existing);
     // S'assurer que l'index global contient bien ce device (idempotent) — JAMAIS un capteur : il gonflerait le quorum de validation (getGlobalActiveCount / getPoolSnapshot)
-    if (!isSensorScreens(screens)) await redis.sadd("devices:all", existing.deviceId);
+    if (!isSensorScreens(screens) || isValidatorNode({ screens, firmware, caps })) await redis.sadd("devices:all", existing.deviceId);   // un validateur sans écran entre dans l'index électoral (jamais dans une pool d'écran)
     return { device: existing, isNew: false };
   }
 
@@ -309,6 +315,7 @@ export async function registerDevice(
     firmware,
     ...(sceneCapability ? { sceneCapability } : {}),
     ...(sensors ? { sensors } : {}),
+    ...(caps ? { caps } : {}),
     pairCode:   generatePairCode(),
     lastSeen:   Date.now(),
     lastPing:   Date.now(),
@@ -317,7 +324,7 @@ export async function registerDevice(
   };
 
   await saveDevice(device);
-  if (!isSensorScreens(screens)) await redis.sadd("devices:all", device.deviceId);   // jamais un capteur (voir plus haut)
+  if (!isSensorScreens(screens) || isValidatorNode({ screens, firmware, caps })) await redis.sadd("devices:all", device.deviceId);   // jamais un capteur SIMPLE (voir plus haut) ; un validateur déclaré et autorisé, oui
   if (!revivedId) await incrementDeviceCount();
   console.log(`[deviceStore] ${revivedId ? "REVIVED" : "NEW"} ${device.deviceId} (mac: ${mac})`);
   return { device, isNew: !revivedId };
@@ -448,7 +455,7 @@ export async function getPoolSnapshot(activeWindowMs = ACTIVE_WINDOW_MS): Promis
   const all: (Device | null)[] = [];
   for (const raw of values) {
     if (!raw) continue;
-    try { const d = typeof raw === "string" ? JSON.parse(raw) : (raw as Device); all.push(d); if (!isSensorScreens(d.screens) && participatesInVoteNetwork(d) && isResponsiveVoter(d)) devices.push(d); } catch { /* entrée illisible : ignorée */ }   // un capteur seul n'est jamais un validateur
+    try { const d = typeof raw === "string" ? JSON.parse(raw) : (raw as Device); all.push(d); if ((!isSensorScreens(d.screens) || isValidatorNode(d)) && participatesInVoteNetwork(d) && isResponsiveVoter(d)) devices.push(d); } catch { /* entrée illisible : ignorée */ }   // un capteur seul n'est jamais un validateur
   }
   const legacy = devices.filter((d) => !!(d.artistId || d.artistName) && now - d.lastPing < activeWindowMs).length;
   return { devices, legacyCount: Math.max(1, legacy), summary: summarizePool(all, now, activeWindowMs).summary };

@@ -24,12 +24,55 @@ export const VOTE_V2_FIRMWARE: Record<string, [number, number]> = {
   tft18: [2, 4],            // ESP8266 + TFT 1,8″
 };
 
+// ── Capacités de vote DÉCLARÉES (28/10/2026, lot 5 du plan docs/PLAN_RESEAU_VALIDATEURS_ET_STATION_R4_2026_10_28.md) ───────────────────────────────────────────────
+// Affichage (`screens`), mesure (`sensors`), vote (`caps`) et mise à jour à distance sont QUATRE capacités indépendantes. `caps` est une liste FERMÉE et bornée envoyée à /api/register ;
+// une déclaration seule ne compte JAMAIS dans le quorum : le serveur exige aussi que la famille et la version du firmware soient autorisées, et le vote reste vérifié cryptographiquement.
+export const VOTE_CAPS = ["vote-static-v2", "vote-anim-v3"] as const;
+export type VoteCap = (typeof VOTE_CAPS)[number];
+
+/** Lecture stricte de `caps` : tableau de 1 à 4 chaînes DISTINCTES de la liste fermée ; toute autre forme => undefined (aucune capacité déclarée). Jamais de texte libre persisté. */
+export function parseVoteCaps(raw: unknown): VoteCap[] | undefined {
+  if (!Array.isArray(raw) || raw.length === 0 || raw.length > 4) return undefined;
+  const out: VoteCap[] = [];
+  for (const c of raw) {
+    if (typeof c !== "string" || !(VOTE_CAPS as readonly string[]).includes(c)) return undefined;
+    if (!out.includes(c as VoteCap)) out.push(c as VoteCap);
+  }
+  return out;
+}
+
+/** Familles de validateurs SANS écran (UNO R4 / ESP + capteurs, aucun écran) : préfixe de firmware -> version minimale. VIDE aujourd'hui — aucun firmware de ce type n'existe ; le jour où il existe, ajouter sa famille ICI et dans la matrice. */
+export const VALIDATOR_NODE_FIRMWARE: Record<string, [number, number]> = {};
+/** Familles dont le firmware embarque réellement le vote d'animation v3 (calcul de chaque image). VIDE aujourd'hui : l'animation v3 n'est activée sur aucune carte (lot 6, mode `shadow`). */
+export const VOTE_ANIM_V3_FIRMWARE: Record<string, [number, number]> = {};
+
+function firmwareAtLeast(firmware: string | null | undefined, table: Record<string, [number, number]>): boolean {
+  const f = String(firmware ?? "").trim().toLowerCase();
+  const m = /^([a-z0-9]+)-(\d+)\.(\d+)(?:\.\d+)?$/.exec(f);
+  if (!m) return false;
+  const min = table[m[1]];
+  if (!min) return false;
+  const major = Number(m[2]), minor = Number(m[3]);
+  return major > min[0] || (major === min[0] && minor >= min[1]);
+}
+
+/** Validateur SANS écran : profil capteur seul qui déclare `vote-static-v2` ET dont la famille/version est autorisée. Reçoit des candidats, jamais de frame d'affichage, n'entre dans aucune pool d'écran. */
+export function isValidatorNode(device: { screens?: readonly string[] | null; firmware?: string | null; caps?: readonly string[] | null } | null | undefined): boolean {
+  if (!device || !device.screens || !isSensorScreens(device.screens)) return false;
+  return !!device.caps?.includes("vote-static-v2") && firmwareAtLeast(device.firmware, VALIDATOR_NODE_FIRMWARE);
+}
+
+/** Le firmware de cet appareil sait-il voter une animation v3 ? (table vide aujourd'hui => toujours faux) */
+export function votesAnimV3(device: { firmware?: string | null; caps?: readonly string[] | null } | null | undefined): boolean {
+  return !!device && !!device.caps?.includes("vote-anim-v3") && firmwareAtLeast(device.firmware, VOTE_ANIM_V3_FIRMWARE);
+}
+
 /** Ce firmware (chaîne déclarée par l'appareil) sait-il voter en v2 ? */
 export function voteV2Capable(firmware: string | null | undefined): boolean {
   const f = String(firmware ?? "").trim().toLowerCase();
   const m = /^([a-z0-9]+)-(\d+)\.(\d+)(?:\.\d+)?$/.exec(f);   // ancrée aux deux bouts (VOTE-NETWORK-GATE-FIX1) : « r4tft28-2.5abc » ou « r4tft28-2.5-x » ne passent pas
   if (!m) return false;
-  const min = VOTE_V2_FIRMWARE[m[1]];
+  const min = VOTE_V2_FIRMWARE[m[1]] ?? VALIDATOR_NODE_FIRMWARE[m[1]];   // 28/10/2026 : + familles de validateurs SANS écran (table vide aujourd'hui : aucun firmware)
   if (!min) return false;
   const major = Number(m[2]), minor = Number(m[3]);
   return major > min[0] || (major === min[0] && minor >= min[1]);
@@ -73,7 +116,7 @@ export type VoteAdmission = { ok: true } | { ok: false; status: 403 | 404; reaso
  * `VOTE_ONLY_NETWORK=false` : comportement historique (tout est admis ici ; les contrôles de la route restent).
  */
 export function voteAdmission(
-  device: { screens?: readonly string[] | null; firmware?: string | null; artistId?: string | null; artistName?: string | null; lastPing?: number; lastSeen?: number } | null | undefined,
+  device: { screens?: readonly string[] | null; firmware?: string | null; caps?: readonly string[] | null; artistId?: string | null; artistName?: string | null; lastPing?: number; lastSeen?: number } | null | undefined,
   isV2: boolean,
   now: number = Date.now(),
   env: NodeJS.ProcessEnv = process.env,
@@ -81,7 +124,7 @@ export function voteAdmission(
 ): VoteAdmission {
   if (!device) return { ok: false, status: 404, reason: "device-unknown", error: "Device inconnu" };
   if (!voteOnlyNetwork(env)) return { ok: true };
-  if (device.screens && isSensorScreens(device.screens)) return { ok: false, status: 403, reason: "sensor-cannot-vote", error: "Un capteur ne vote pas" };
+  if (device.screens && isSensorScreens(device.screens) && !isValidatorNode(device as never)) return { ok: false, status: 403, reason: "sensor-cannot-vote", error: "Un capteur ne vote pas" };
   if (!voteV2Capable(device.firmware)) return { ok: false, status: 403, reason: "firmware-not-vote-capable", error: "Firmware sans vote v2 : mise à jour requise" };
   if (!isV2 && !(opts.animationCandidate && animationV1VoteEnabled(env))) return { ok: false, status: 403, reason: "v1-vote-refused", error: "Vote v1 (écho du score) refusé : vote v2 requis" };
   if (!(device.artistId || device.artistName)) return { ok: false, status: 403, reason: "device-not-paired", error: "Appareil non appairé" };

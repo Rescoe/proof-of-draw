@@ -6,7 +6,7 @@
 //
 // Règle de décompte (inchangée, seulement nommée) : un appareil est compté s'il est appairé, actif (lastPing < fenêtre), n'est pas un capteur seul (règle actuelle, voir docs/PLAN_RESEAU_…),
 // son firmware sait voter en v2 et il n'a pas dépassé le seuil de manques consécutifs (QUORUM_MAX_MISSED, 3 par défaut depuis le 28/10/2026). Un appareil exclu pour manques reste INVITÉ à voter et revient au premier vote.
-import { participatesInVoteNetwork } from "@/lib/voteCapability";
+import { participatesInVoteNetwork, isValidatorNode } from "@/lib/voteCapability";
 import { isSensorScreens } from "@/lib/measures";
 import { isResponsiveVoter, maxMissedFromEnv } from "@/lib/quorumResponsive";
 
@@ -30,13 +30,13 @@ export interface PoolSummary {
   at: number;                                             // date du calcul (ms)
 }
 
-export interface DeviceLike { screens?: readonly string[] | null; firmware?: string | null; artistId?: string | null; artistName?: string | null; lastPing?: number; missedVotes?: number }
+export interface DeviceLike { screens?: readonly string[] | null; firmware?: string | null; caps?: readonly string[] | null; artistId?: string | null; artistName?: string | null; lastPing?: number; missedVotes?: number }
 
 /** Raison de l'exclusion d'un appareil, ou null s'il est compté. Ordre de priorité : non appairé, inactif, capteur seul, firmware incapable, manques. */
 export function exclusionReason(d: DeviceLike, now: number, activeWindowMs: number, env: NodeJS.ProcessEnv = process.env): ExclusionReason | null {
   if (!(d.artistId || d.artistName)) return "not-paired";
   if (!(now - (d.lastPing ?? 0) < activeWindowMs)) return "inactive";
-  if (isSensorScreens(d.screens)) return "sensor-only";
+  if (isSensorScreens(d.screens) && !isValidatorNode(d)) return "sensor-only";   // un validateur sans écran (capacité déclarée + famille autorisée) est compté
   if (!participatesInVoteNetwork(d, env)) return "firmware-not-capable";
   if (!isResponsiveVoter(d, maxMissedFromEnv(env))) return "missed-votes";
   return null;

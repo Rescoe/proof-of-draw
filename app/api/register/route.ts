@@ -13,6 +13,7 @@ import {
 import { redis } from "@/lib/redis";
 import { parseSceneCapability } from "@/lib/scene/delivery";
 import { isSensorScreens, measureKindsOf, parseDeclaredSensors, MEASURE_INDEX_KEY } from "@/lib/measures";
+import { parseVoteCaps } from "@/lib/voteCapability";
 
 // TTL du Set de pool = durée de vie max d'un device inactif
 // Si un device ne se re-register pas pendant 48h son entrée device: expire,
@@ -46,7 +47,7 @@ async function POST_(req: NextRequest) {
     // 3. Device cap — vérifié seulement pour les nouveaux devices
     const capReached = await isDeviceCapReached();
     // scene-v1 : déclaration facultative (firmware OLED/TFT compatibles) ; toute valeur invalide = pas de scene-v1.
-    const { device, isNew } = await registerDevice(macNorm, screens, firmware ?? "unknown", parseSceneCapability(body.sceneCapability), parseDeclaredSensors(body.sensors));
+    const { device, isNew } = await registerDevice(macNorm, screens, firmware ?? "unknown", parseSceneCapability(body.sceneCapability), parseDeclaredSensors(body.sensors), parseVoteCaps(body.caps));
 
     if (isNew && capReached) {
       return NextResponse.json(
