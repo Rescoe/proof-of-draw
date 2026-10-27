@@ -49,6 +49,17 @@ export function participatesInVoteNetwork(device: { screens?: readonly string[] 
   return voteV2Capable(device.firmware);
 }
 
+/**
+ * Vote v1 (écho signé du score serveur) admis pour une ANIMATION : actif PAR DÉFAUT (28/10/2026) ; `ANIM_V1_VOTE=false` (ou 0 / off / non) le désactive.
+ * Pourquoi : une animation n'a pas de spécification v2 (`v2: null`, app/api/submit-candidate : le clip PBC1 n'est pas rejoué par les appareils avant le lot 8), donc son seul vote possible est v1 — que
+ * `voteAdmission` refusait pour TOUT candidat depuis le 14/10/2026 (403 v1-vote-refused) : aucune animation n'atteignait le quorum. Cette exception ne vaut QUE pour un candidat de nature « animation » ; les
+ * dessins restent en vote v2 obligatoire. Elle admet l'identité (firmware capable, appairé, actif, signature Ed25519 stricte), PAS une revérification du contenu du clip.
+ */
+export function animationV1VoteEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
+  const v = String(env.ANIM_V1_VOTE ?? "").trim().toLowerCase();
+  return !(v === "false" || v === "0" || v === "off" || v === "non" || v === "no");
+}
+
 /** Résultat de l'admission d'un VOTE (VOTE-NETWORK-GATE-FIX1). */
 export type VoteAdmission = { ok: true } | { ok: false; status: 403 | 404; reason: string; error: string };
 
@@ -66,12 +77,13 @@ export function voteAdmission(
   isV2: boolean,
   now: number = Date.now(),
   env: NodeJS.ProcessEnv = process.env,
+  opts: { animationCandidate?: boolean } = {},
 ): VoteAdmission {
   if (!device) return { ok: false, status: 404, reason: "device-unknown", error: "Device inconnu" };
   if (!voteOnlyNetwork(env)) return { ok: true };
   if (device.screens && isSensorScreens(device.screens)) return { ok: false, status: 403, reason: "sensor-cannot-vote", error: "Un capteur ne vote pas" };
   if (!voteV2Capable(device.firmware)) return { ok: false, status: 403, reason: "firmware-not-vote-capable", error: "Firmware sans vote v2 : mise à jour requise" };
-  if (!isV2) return { ok: false, status: 403, reason: "v1-vote-refused", error: "Vote v1 (écho du score) refusé : vote v2 requis" };
+  if (!isV2 && !(opts.animationCandidate && animationV1VoteEnabled(env))) return { ok: false, status: 403, reason: "v1-vote-refused", error: "Vote v1 (écho du score) refusé : vote v2 requis" };
   if (!(device.artistId || device.artistName)) return { ok: false, status: 403, reason: "device-not-paired", error: "Appareil non appairé" };
   const lastPing = Number(device.lastPing) || 0;
   if (now - lastPing >= ACTIVE_WINDOW_MS) return { ok: false, status: 403, reason: "device-inactive", error: "Appareil inactif" };

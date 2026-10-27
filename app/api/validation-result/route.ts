@@ -97,10 +97,12 @@ async function POST_(req: NextRequest) {
     try { device = raws[1] ? (typeof raws[1] === "string" ? JSON.parse(raws[1] as string) : (raws[1] as Device)) : null; } catch { device = null; }
     if (!device) return json({ error: "Device inconnu" }, 404);
     // Réseau de vote réel (VOTE_ONLY_NETWORK, VOTE-NETWORK-GATE-FIX1) : capteur, firmware sans vote v2, vote v1 (écho), appareil non appairé ou inactif => 403. Le vote v2 reste vérifié plus bas (signature, hash, métriques).
-    const admission = voteAdmission(device, isV2);
+    // Une ANIMATION n'a pas de spécification v2 : son seul vote possible est v1 (admis pour elle seule : ANIM_V1_VOTE, lib/voteCapability.ts) ; un dessin reste en v2 obligatoire.
+    const rawCandidate = parseCandidateRaw(raws[2]);
+    const admission = voteAdmission(device, isV2, Date.now(), process.env, { animationCandidate: rawCandidate?.kind === "animation" && !!rawCandidate.anim && rawCandidate.candidateId === String(candidateId) });
     if (!admission.ok) return json({ error: admission.error, reason: admission.reason }, admission.status);
 
-    const candidate = parseCandidateRaw(raws[2]);
+    const candidate = rawCandidate;
     if (!candidate) return json({ error: "Aucun candidat actif" }, 409);
     const prefetchedVotes = parseVotesRaw(raws[3]);
     if (candidate.candidateId !== String(candidateId)) return json({ error: "candidateId ne correspond pas au candidat actif", current: candidate.candidateId }, 409);

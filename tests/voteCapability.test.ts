@@ -85,3 +85,23 @@ test("frontière de l'activité : juste sous 45 minutes accepté, exactement 45 
 test("rollback VOTE_ONLY_NETWORK=false : l'activité n'est pas contrôlée ici (comportement historique)", () => {
   assert.equal(reason(voteAdmission(dev({ lastPing: NOW - 600 * MIN, lastSeen: NOW }), true, NOW, off)), "ok");
 });
+
+// ── 28/10/2026 : les ANIMATIONS n'ont pas de spécification v2 (submit-candidate : v2 = null) — leur vote v1 est admis pour elles seules ──────────────────────
+test("admission : vote v1 ADMIS pour un candidat animation (ANIM_V1_VOTE par défaut), toujours REFUSÉ pour un dessin", () => {
+  assert.equal(reason(voteAdmission(dev(), false, NOW, on, { animationCandidate: true })), "ok");
+  assert.equal(reason(voteAdmission(dev(), false, NOW, on, { animationCandidate: false })), "v1-vote-refused");
+  assert.equal(reason(voteAdmission(dev(), false, NOW, on)), "v1-vote-refused");
+});
+test("admission : l'exception animation garde TOUTES les autres portes (firmware capable, appairé, actif, pas un capteur) ; ANIM_V1_VOTE=false la ferme", () => {
+  const a = { animationCandidate: true };
+  assert.equal(reason(voteAdmission(dev({ firmware: "r4tft28-2.4" }), false, NOW, on, a)), "firmware-not-vote-capable");
+  assert.equal(reason(voteAdmission(dev({ artistId: undefined, artistName: undefined }), false, NOW, on, a)), "device-not-paired");
+  assert.equal(reason(voteAdmission(dev({ lastPing: NOW - 46 * MIN }), false, NOW, on, a)), "device-inactive");
+  assert.equal(reason(voteAdmission(dev({ screens: ["sensor"] }), false, NOW, on, a)), "sensor-cannot-vote");
+  for (const v of ["false", "0", "off", "non", "no"]) assert.equal(reason(voteAdmission(dev(), false, NOW, { ANIM_V1_VOTE: v } as unknown as NodeJS.ProcessEnv, a)), "v1-vote-refused", v);
+});
+test("route validation-result : l'exception animation ne vaut que pour un candidat de nature animation portant un clip ET le candidat voté", async () => {
+  const fs = await import("node:fs"), path = await import("node:path");
+  const src = fs.readFileSync(path.join(__dirname, "..", "app/api/validation-result/route.ts"), "utf8");
+  assert.match(src, /animationCandidate: rawCandidate\?\.kind === "animation" && !!rawCandidate\.anim && rawCandidate\.candidateId === String\(candidateId\)/);
+});
