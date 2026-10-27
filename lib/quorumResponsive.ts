@@ -1,7 +1,7 @@
 // lib/quorumResponsive.ts — feuille sans dépendance : un appareil compte-t-il dans le quorum ? (voir lib/quorumHealth.ts pour la règle et le règlement des candidats expirés)
 export function maxMissedFromEnv(env: NodeJS.ProcessEnv = process.env): number {
   const n = Number(env.QUORUM_MAX_MISSED);
-  return Number.isFinite(n) && n >= 1 ? Math.floor(n) : 1;
+  return Number.isFinite(n) && n >= 1 ? Math.floor(n) : 3;   // 28/10/2026 : 3 manques CONSÉCUTIFS (avant : 1 — un seul candidat d'animation impossible à voter vidait l'électorat, cf. docs/PLAN_RESEAU_VALIDATEURS_ET_STATION_R4_2026_10_28.md)
 }
 
 /** Faux après trop de candidats expirés sans le vote de l'appareil ; jamais utilisé pour REFUSER un vote (un appareil exclu reste invité et se réhabilite en votant). */

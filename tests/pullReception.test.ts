@@ -38,10 +38,11 @@ test("audit : `mayVote` ne conditionne QUE pendingValidation — images, blocs, 
 
 test("audit : l'appareil non votant n'est jamais compté dans le quorum (deviceStore) et ne peut ni lire un candidat ni voter", () => {
   const store = read("lib/deviceStore.ts"), vc = read("app/api/validate-candidate/route.ts"), vr = read("app/api/validation-result/route.ts");
-  assert.ok((store.match(/participatesInVoteNetwork\(/g) ?? []).length >= 2, "getGlobalActiveCount ET getPoolSnapshot filtrent");
+  assert.ok((store.match(/participatesInVoteNetwork\(/g) ?? []).length >= 1, "getPoolSnapshot filtre");
+  assert.match(read("lib/electorate.ts"), /participatesInVoteNetwork\(d, env\)/, "getGlobalActiveCount (via lib/electorate.ts, source unique) filtre aussi");
   assert.match(vc, /participatesInVoteNetwork\(/);
   assert.match(vc, /firmware-not-vote-capable/);
-  assert.match(vr, /voteAdmission\(device, isV2\)/);
+  assert.match(vr, /voteAdmission\(device, isV2,/);   // 28/10/2026 : + exception « candidat animation » (ANIM_V1_VOTE)
 });
 
 test("audit : obs-confirm reste autorisé SANS capacité de vote, comme simple confirmation de réception, et n'a aucun effet sur les votes ni le quorum", () => {

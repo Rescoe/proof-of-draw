@@ -248,7 +248,7 @@ test("HOSTILE — l'avant-Lot 2 reste identique : sans profil, 3 cartes d'un poo
 // ── câblage : les routes appellent la porte, et « off » n'ajoute AUCUN accès Redis ───────────────────────────────────────────────────────────────
 test("câblage : validate-candidate, validation-result et submit-candidate utilisent lib/eligibility ; « off » garde getGlobalActiveCount ; aucun SCAN ni nouvelle commande", () => {
   const sub = read("app/api/submit-candidate/route.ts");
-  assert.match(sub, /eligMode === "off"[\s\S]{0,80}getGlobalActiveCount\(\)/, "mode off : appel historique inchangé");
+  assert.match(sub, /eligMode === "off"[\s\S]{0,260}getGlobalPoolInfo\(\)/, "mode off : même lecture que l'historique getGlobalActiveCount (qui en est le résumé numérique) ; 28/10/2026 : le résumé de l'électorat est figé dans le candidat");
   assert.match(sub, /getPoolSnapshot\(\)/);
   assert.match(sub, /effective\.mode === "enforce" \? plan\.poolSize : snap\.legacyCount/, "shadow : quorum inchangé (et mode effectif après ramenée éventuelle d'un électorat > 64)");
   const val = read("app/api/validate-candidate/route.ts"), res = read("app/api/validation-result/route.ts");

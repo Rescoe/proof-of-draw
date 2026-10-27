@@ -140,6 +140,7 @@ export interface Candidate {
   submittedAt: number;
   expiresAt: number;
   poolSize: number;
+  pool?: import("@/lib/electorate").PoolSummary;   // 28/10/2026 : électorat figé au dépôt (compté / exclu par raison / plancher) — explique plus tard un « réseau de N »
   warning?: string | null;
 
   // ── Axe 2 : ESP prêt public ──────────────────────────────────────────────────

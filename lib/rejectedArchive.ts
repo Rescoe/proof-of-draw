@@ -15,6 +15,7 @@
 // Tout est « au mieux » côté appelant : un échec d'archive n'interrompt JAMAIS le minage ni le dépôt (les appels sont rattrapés).
 // Les scripts lisent/suppriment `candidate:archive:<id>` dont l'id vient d'une entrée de liste (clé construite dans le script : Redis NON clusterisé, comme Upstash ; voir docs).
 import type { Candidate } from "@/lib/chain";
+import { poolSummaryText, readPoolSummary } from "@/lib/electorate";
 
 /** Sous-ensemble de Redis utilisé (injectable pour les tests). */
 export interface ArchiveKV {
@@ -130,6 +131,8 @@ export function expiredReason(c: CandidateLike, now: number): string {
     const ratio = parseFloat(process.env.QUORUM_RATIO ?? "0.51");
     parts.push(`réseau de ${c.poolSize} validateur(s), ${Math.max(1, Math.ceil(c.poolSize * ratio))} vote(s) nécessaire(s)`);
   }
+  const pool = readPoolSummary((c as { pool?: unknown }).pool);
+  if (pool) parts.push(`électorat au dépôt : ${poolSummaryText(pool)}`);
   if (typeof c.submittedAt === "number" && now > c.submittedAt) parts.push(`${Math.round((now - c.submittedAt) / 60000)} min sans décision`);
   return parts.length ? `expiré ou remplacé sans quorum (${parts.join(" · ")})` : "expiré ou remplacé sans quorum";
 }

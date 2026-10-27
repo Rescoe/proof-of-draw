@@ -3,7 +3,7 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { redis } from "@/lib/redis";
-import { getDevice, getGlobalActiveCount, getPoolSnapshot } from "@/lib/deviceStore";
+import { getDevice, getGlobalPoolInfo, getPoolSnapshot } from "@/lib/deviceStore";
 import { getChainHead } from "@/lib/chain";
 import { archiveOnCreate, reconcileLostCandidate, type ArchiveKV } from "@/lib/rejectedArchive";
 import { settleLostPrevious } from "@/lib/quorumHealth";
@@ -211,10 +211,12 @@ export async function POST(req: NextRequest) {
   const eligMode = eligibilityModeFromEnv();
   await settleLostPrevious();   // quorum vivant : le candidat précédent, expiré sans quorum, pénalise les appareils actifs qui n'ont pas voté AVANT le calcul de la taille du réseau (lib/quorumHealth.ts)
   let poolSize: number;
+  let poolSummary: import("@/lib/electorate").PoolSummary | undefined;
   let eligibility: CandidateEligibility | undefined;
   let committee: CandidateCommittee | undefined;
   if (eligMode === "off") {
-    poolSize = await getGlobalActiveCount();
+    const info = await getGlobalPoolInfo();   // même lecture que getGlobalActiveCount (aucune commande Redis de plus), plus le résumé figé
+    poolSize = info.count; poolSummary = info.summary;
   } else {
     const snap = await getPoolSnapshot();
     const plan = planPool(snap.devices, authorProfilesOf(device, drawArtistName, snap.devices), Date.now(), eligibilityConfigFromEnv());
@@ -234,6 +236,7 @@ export async function POST(req: NextRequest) {
     if (effective.downgraded) console.warn(`[eligibility] ENFORCE ramené à SHADOW pour ce candidat : ${plan.profiles.length} profils > ${ELECTORATE_MAX} (électorat non figeable) et comité « enforce » inactif ; quorum historique conservé`);
     eligibility = candidateEligibilityOf(effective.mode, plan);
     poolSize = effective.mode === "enforce" ? plan.poolSize : snap.legacyCount;
+    poolSummary = snap.summary;
     console.log(`[eligibility] ${eligMode.toUpperCase()}${effective.downgraded ? "→SHADOW" : ""} plan=${plan.kind} profils=${plan.profiles.length} indépendants=${plan.independentProfiles} auteur=[${plan.authorProfiles.join(",")}] poolHistorique=${snap.legacyCount} poolRetenu=${poolSize}`);
   }
   const CANDIDATE_TTL_SEC = parseInt(process.env.CANDIDATE_TTL_SEC ?? "1800");
@@ -270,6 +273,7 @@ export async function POST(req: NextRequest) {
     submittedAt: Date.now(),
     expiresAt: Date.now() + CANDIDATE_TTL_SEC * 1000,
     poolSize,
+    ...(poolSummary ? { pool: poolSummary } : {}),
     ...(eligibility ? { eligibility } : {}),
     ...(committee ? { committee } : {}),
     warning,

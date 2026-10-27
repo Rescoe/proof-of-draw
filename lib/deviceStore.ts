@@ -9,6 +9,7 @@ import type { SceneCapability } from "@/lib/scene/spec";
 import { generateLinkCode, type LinkCodeStatus } from "@/lib/linkCode";
 import { isSensorScreens, measureKindsOf, type MeasureKind } from "@/lib/measures";
 import { participatesInVoteNetwork } from "@/lib/voteCapability";
+import { summarizePool, type PoolSummary } from "@/lib/electorate";
 import { isResponsiveVoter } from "@/lib/quorumResponsive";
 
 export interface Device {
@@ -407,11 +408,10 @@ export async function deleteDevice(deviceId: string): Promise<void> {
  * Un device est "actif" si son lastPing est récent (< ACTIVE_WINDOW_MS).
  * Utilisé pour le quorum global de validation Proof-of-Draw.
  */
-export async function getGlobalActiveCount(activeWindowMs = ACTIVE_WINDOW_MS): Promise<number> {
+export async function getGlobalPoolInfo(activeWindowMs = ACTIVE_WINDOW_MS): Promise<{ count: number; summary: PoolSummary }> {
   const allIds = (await redis.smembers("devices:all")) as string[];
-  if (!allIds || allIds.length === 0) return 1; // minimum 1 pour éviter division par zéro
-
   const now = Date.now();
+  if (!allIds || allIds.length === 0) return summarizePool([], now, activeWindowMs);   // plancher de 1 : jamais de division par zéro
   const values = await redis.mget<(string | null)[]>(...allIds.map(deviceKey));
 
   // Nettoyer les IDs expirés en fire-and-forget
@@ -422,48 +422,36 @@ export async function getGlobalActiveCount(activeWindowMs = ACTIVE_WINDOW_MS): P
 
   const devices = values.map((raw) => {
     if (!raw) return null;
-    try {
-      const d = typeof raw === "string" ? JSON.parse(raw) : raw;
-      // N'inclure que les devices APPAIRÉS (artistId ou artistName défini)
-      // et actifs (lastPing récent).
-      // Les devices en onboarding (non appairés) ne participent pas au quorum :
-      // ils pourraient déclencher un poolSize > 1 pendant l'appairage et bloquer
-      // indéfiniment le minage.
-      const isPaired  = !!(d.artistId || d.artistName);
-      const isActive  = now - d.lastPing < activeWindowMs;
-      if (isSensorScreens(d.screens)) return null;   // un capteur seul ne vote pas (entrée héritée d'avant le correctif du 12/10/2026)
-      if (!participatesInVoteNetwork(d)) return null;   // 14/10/2026 : un firmware qui ne sait pas voter en v2 n'est pas compté dans le quorum
-      if (!isResponsiveVoter(d)) return null;           // 25/10/2026 : un appareil actif qui ne vote jamais (candidats expirés sans son vote) sort du quorum jusqu'à son prochain vote
-      return (isPaired && isActive) ? d : null;
-    } catch {
-      return null;
-    }
+    try { return (typeof raw === "string" ? JSON.parse(raw) : raw) as Device; } catch { return null; }
   });
+  // Règle de décompte nommée et testée dans lib/electorate.ts (appairé, actif, pas un capteur seul, firmware capable de voter en v2, pas trop de manques consécutifs).
+  // Minimum 1 : si aucun device n'est compté, on autorise 1 vote pour éviter un blocage total — le résumé le dit (`floor`) : ce « 1 » n'est alors PAS un validateur.
+  return summarizePool(devices, now, activeWindowMs);
+}
 
-  const count = devices.filter(Boolean).length;
-  // Minimum 1 : si aucun device appairé actif, on autorise 1 vote pour éviter
-  // un blocage total (e.g. tous les devices hors ligne momentanément)
-  return Math.max(1, count);
+export async function getGlobalActiveCount(activeWindowMs = ACTIVE_WINDOW_MS): Promise<number> {
+  return (await getGlobalPoolInfo(activeWindowMs)).count;
 }
 
 /**
  * Instantané de TOUS les appareils lus pour le plan d'éligibilité (Lot 2, ELIGIBILITY_MODE shadow/enforce). Même coût que getGlobalActiveCount (1 SMEMBERS + 1 MGET) : à appeler À SA PLACE,
  * jamais en plus. `legacyCount` = exactement ce que renvoie getGlobalActiveCount (appairés ET actifs, minimum 1) : le quorum historique reste calculable pour comparaison.
  */
-export async function getPoolSnapshot(activeWindowMs = ACTIVE_WINDOW_MS): Promise<{ devices: Device[]; legacyCount: number }> {
+export async function getPoolSnapshot(activeWindowMs = ACTIVE_WINDOW_MS): Promise<{ devices: Device[]; legacyCount: number; summary: PoolSummary }> {
   const allIds = (await redis.smembers("devices:all")) as string[];
-  if (!allIds || allIds.length === 0) return { devices: [], legacyCount: 1 };
+  if (!allIds || allIds.length === 0) return { devices: [], legacyCount: 1, summary: summarizePool([], Date.now(), activeWindowMs).summary };
   const now = Date.now();
   const values = await redis.mget<(string | null)[]>(...allIds.map(deviceKey));
   const expired = allIds.filter((_, i) => !values[i]);
   if (expired.length > 0) Promise.all(expired.map((id) => redis.srem("devices:all", id))).catch(() => {});
   const devices: Device[] = [];
+  const all: (Device | null)[] = [];
   for (const raw of values) {
     if (!raw) continue;
-    try { const d = typeof raw === "string" ? JSON.parse(raw) : (raw as Device); if (!isSensorScreens(d.screens) && participatesInVoteNetwork(d) && isResponsiveVoter(d)) devices.push(d); } catch { /* entrée illisible : ignorée */ }   // un capteur seul n'est jamais un validateur
+    try { const d = typeof raw === "string" ? JSON.parse(raw) : (raw as Device); all.push(d); if (!isSensorScreens(d.screens) && participatesInVoteNetwork(d) && isResponsiveVoter(d)) devices.push(d); } catch { /* entrée illisible : ignorée */ }   // un capteur seul n'est jamais un validateur
   }
   const legacy = devices.filter((d) => !!(d.artistId || d.artistName) && now - d.lastPing < activeWindowMs).length;
-  return { devices, legacyCount: Math.max(1, legacy) };
+  return { devices, legacyCount: Math.max(1, legacy), summary: summarizePool(all, now, activeWindowMs).summary };
 }
 
 // ─── Axe 2 : ESP en prêt public ──────────────────────────────────────────────
