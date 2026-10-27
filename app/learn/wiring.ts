@@ -68,7 +68,7 @@ const UNO_R4_PIN_INFO: Record<string, string> = {
 
 const UNO_R4_ORDER = ["A4", "A5", "D4", "D7", "D8", "D9", "D10", "D11", "D12", "D13", "3.3V", "GND"];
 
-export const WIRING: Record<"eink29bwr" | "eink27bw" | "oled" | "tft18" | "tftSd" | "r4Eink29" | "r4Eink27" | "r4Oled" | "r4Tft18" | "r4Tft28", WiringSpec> = {
+export const WIRING: Record<"eink29bwr" | "eink27bw" | "oled" | "tft18" | "tftSd" | "r4Tft18Sd" | "r4Eink29" | "r4Eink27" | "r4Oled" | "r4Tft18" | "r4Tft28", WiringSpec> = {
   eink29bwr: {
     id: "eink29bwr",
     title: 'E-Ink 2.9" BWR — firmware esp_eink_2.9BWR',
@@ -128,6 +128,21 @@ export const WIRING: Record<"eink29bwr" | "eink27bw" | "oled" | "tft18" | "tftSd
       { pin: "MISO", node: "D6", color: "#16a34a", note: "Uniquement côté SD (l'écran n'a pas de MISO)" },
     ],
     nodeOrder: NODE_ORDER, gpio: NODEMCU_GPIO,
+  },
+  // Lecteur microSD du module TFT 1,8″ sur UNO R4 — OPTIONNEL. Source : arduino_uno_r4/pod_uno_r4_tft18_env (POD_SD_CS_PIN = 4) et docs/PRODUIT_R4_TFT18_ENV_2026_10_26.md : CS D4, bus SPI partagé avec l'écran (SCK D13, MOSI D11), MISO D12.
+  r4Tft18Sd: {
+    id: "r4Tft18Sd",
+    title: "Carte SD du module TFT 1,8″ (optionnelle) — bus SPI partagé avec l'écran",
+    controllerName: "UNO R4 WiFi",
+    moduleName: "Lecteur SD du module",
+    wires: [
+      { pin: "SD_CS", node: "D4", color: "#f97316", note: "Chip select de la SD (tenu haut au démarrage = SD désélectionnée)" },
+      { pin: "SD_MOSI", node: "D11", color: "#2563eb", note: "Même fil que SDA de l'écran (bus partagé)" },
+      { pin: "SD_SCK", node: "D13", color: "#eab308", note: "Même fil que SCL de l'écran (bus partagé)" },
+      { pin: "SD_MISO", node: "D12", color: "#0ea5e9", note: "Uniquement côté SD (l'écran n'a pas de MISO) : CIPO de la R4" },
+    ],
+    nodeOrder: UNO_R4_ORDER,
+    gpio: UNO_R4_PIN_INFO,
   },
   // Source : arduino_uno_r4/pod_uno_r4_eink29/epd29b.h et docs/UNO_R4_EINK29.md.
   r4Eink29: {

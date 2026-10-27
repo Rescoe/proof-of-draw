@@ -210,7 +210,7 @@ export function InstallGuide({ initialProfileId = "eink29bwr" }: { initialProfil
         ))}
         {selected.optionalWiring ? (
           <Disclosure id="i-cablage-sd" title="Optionnel — câbler le lecteur de carte SD du TFT">
-            <p>Le firmware TFT démarre sans carte SD. Ce câblage n’est utile que si vous souhaitez utiliser le lecteur intégré.</p>
+            <p>{selected.optionalWiringNote ?? "Le firmware TFT démarre sans carte SD. Ce câblage n’est utile que si vous souhaitez utiliser le lecteur intégré."}</p>
             <WiringDiagram spec={selected.optionalWiring} />
           </Disclosure>
         ) : null}

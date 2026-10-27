@@ -43,6 +43,8 @@ export interface InstallProfile {
   wiringIntro: string;
   wiring: WiringSpec[];
   optionalWiring?: WiringSpec;
+  /** Phrase d'introduction du câblage optionnel quand elle diffère du texte par défaut (honnête sur ce que le firmware de ce profil fait de la carte). */
+  optionalWiringNote?: string;
   /** Version du firmware qui sait jouer les animations (blocs d'animation), pour les écrans concernés. */
   animationFirmware?: string;
   specificLibraries: LibraryRequirement[];
@@ -187,6 +189,8 @@ export const INSTALL_PROFILES: Record<InstallProfileId, InstallProfile> = {
     shortDescription: "TFT couleur piloté en SPI matériel ; l’image RGB565 est reçue ligne par ligne pour préserver la RAM.",
     wiringIntro: "Reliez le TFT au SPI matériel de la R4 : SDA sur D11, SCL sur D13 et les contrôles sur D8 à D10.",
     wiring: [WIRING.r4Tft18],
+    optionalWiring: WIRING.r4Tft18Sd,
+    optionalWiringNote: "Le firmware de ce profil démarre sans carte SD et ne l'utilise pas encore : ce câblage est celui de l'écran de station (firmware pod_uno_r4_tft18_env : relevés, courbes, cartel et animations rangés sur la carte, option POD_SD_CS_PIN = 4). Les broches SCL et SDA de l'écran servent de bus commun, seuls CS et MISO sont en plus.",
     specificLibraries: [
       { name: "Adafruit GFX Library", version: "dernière version", purpose: "Base graphique du TFT." },
       { name: "Adafruit ST7735 and ST7789 Library", version: "dernière version", purpose: "Pilote du TFT 1.8\"." },
