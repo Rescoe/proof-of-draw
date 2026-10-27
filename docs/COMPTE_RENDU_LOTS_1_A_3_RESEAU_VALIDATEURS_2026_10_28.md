@@ -65,3 +65,10 @@
 - **Décision** : les sketchs R4 e-ink et TFT 2,8″, validés sur matériel et protégés par des tests d'identité, ne sont PAS modifiés ce soir (le défaut ne coûte qu'un cycle de pull) ; lot dédié en backlog.
 - **Animation v3 (lot 6) — OMBRE sur la station** : `POD_ANIM_V3_SHADOW` (0 par défaut ; image à 0 identique octet pour octet à `r4tft18-2.4`) relit le clip reçu depuis la SD dans l'automate `podAnimV3.h` (copie identique de l'original, objet de ~2 Ko au tas, pile de travail dédiée) et JOURNALISE ce qu'un vote v3 signerait (règle, images, E/T/R/S, `clipHash`, `animRoot`, durée, pile, tas) ; **aucun réseau, aucune signature, aucun vote** (testé). Sert à mesurer sur la carte et à comparer au calcul du serveur (journal `[anim-v3]`). Compilé : +3 328 o de flash, RAM statique inchangée. **Jamais exécuté sur la carte.**
 - **(avant) Animation v3 (lot 6)** : non intégrée au firmware. Le noyau de calcul (TypeScript et C++ en flux, vecteurs, route `candidate-clip`, mode `shadow`) existe depuis le 07/10 ; manque l'appel depuis un sketch (relecture du clip sur la SD ou en flux, signature `pod-vote-v3-anim`), à faire sur la station d'abord puis à mesurer. `ANIM_V1_VOTE` reste le secours étiqueté.
+
+## 7. Essai matériel du 27/10/2026 (GO du porteur)
+
+- Branche `claude/r4-ota-station` poussée (hors `main`, serveur déployé inchangé). Station flashée en `r4tft18-2.4` (`station-2.4`, sha `5230fa7b…`, programme seul) ; `deviceId` inchangé, appairée, 0 manque.
+- **Bloc #121 « Fond noir »** (TFT 1,8″, fond noir) : miné avec le seul validateur BWR `dev_T46HBXG1` (vote v2 accepté) = **premier vote croisé v2 réel**. La station n'a pas voté (quorum 1 atteint avant son pull).
+- **Bloc #122 « 2eme dessin tft »** : validé par la station ET le BWR (`v2:2, v1:0, rejects:0`) — plus de refus « blank » pour un fond noir avec traits colorés.
+- **Non vérifié** : lignes série `[VALIDATE2]`/`[ACK]` (capture USB sans pull ni vote visible), affichage de l'image sur l'écran, étape 4 (candidat + frame dans un même pull), animations, démarrage (clés), pile et tas pendant le vote. Niveaux : `V2` serveur, `M` partiel.
