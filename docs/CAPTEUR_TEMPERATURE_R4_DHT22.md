@@ -108,3 +108,11 @@ Par POST accepté : limite IP 2 + lecture appareil 1 + anti-rafale 1 + `LPUSH/LT
 ## Rollback
 
 `git revert` des commits du capteur ; les listes `meas:*` expirent seules (40 jours) ; `meas:devices` peut être supprimé à la main.
+
+## Station R4 TFT 1,8″ : relevés de 5 min poussés toutes les 30 min (29/10/2026)
+
+- Firmware `r4tft18-2.5` (option `POD_ENV_DISPLAY`) : **un relevé toutes les 5 min** (même rythme que l'historique de la carte SD) et **un seul POST toutes les 30 min** contenant tous les relevés de la période (≈ 6 ; tampon de 48 = 4 h de coupure rattrapées). Les autres firmwares (DHT22 seul, BWR…) gardent lecture 30 min / envoi 1 h.
+- Serveur : intervalle minimal entre deux envois **25 min** (`MEASURE_MIN_INTERVAL_SEC = 1500`, avant 50), `MEASURE_BATCH_MAX = 64`, `MEASURE_KEEP = 4 032` entrées (14 jours à 5 min ; 84 jours à 30 min, TTL 40 j).
+- **Coût Redis** : inchangé par envoi (≈ 8 commandes : gate `SET NX`, un `LPUSH` pour tout le lot + `LTRIM` + `EXPIRE` + `SADD`, présence rare) ; l'envoi passe de 1 h à 30 min : ≈ **11 500 commandes/mois** pour la station (contre ≈ 5 800), pour six fois plus de points. Lecture d'historique : 1 `LRANGE` (≈ 140 Ko pour 4 032 entrées), mise en cache (CDN 2 min en public, 60 s en privé).
+- Interface : le profil du **propriétaire** utilise désormais le même explorateur que le profil public (Graphique · Œuvre · Interprétation, `MeasuresExplorer owner`) ; le tableau des relevés reste sous « Tableau des relevés » (288 lignes les plus récentes).
+- Écran de la station : courbes **continues et lissées** (`histSmoothCurve`, jointure des colonnes vides, lissage 1-2-3-2-1, trait de 2 px), valeurs **min / max réelles** à gauche et repères blancs sur ces deux points. Compilé, non vu sur l'écran avant le flash.

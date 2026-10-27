@@ -42,7 +42,7 @@ export const isMeasureKind = (k: unknown): k is MeasureKind => typeof k === "str
 
 // ── Cadence ──────────────────────────────────────────────────────────────────
 /** Intervalle minimal entre deux ENVOIS en production : la carte lit la température toutes les 30 min (48 points/jour) mais n'ENVOIE qu'une fois par heure, deux lectures par envoi (décision du 12/10/2026 : même coût Redis qu'une mesure horaire). */
-export const MEASURE_MIN_INTERVAL_SEC = 3000;
+export const MEASURE_MIN_INTERVAL_SEC = 1500;   // 29/10/2026 : 25 min (était 50) — la station R4 envoie toutes les 30 min les relevés de 5 min ; une carte à 1 envoi/h reste très en deçà
 /** PHASE D'ESSAI (firmware à 1 mesure / 5 min) : intervalle minimal abaissé, avec EXTINCTION AUTOMATIQUE à cette date (règle « mode test » de CLAUDE.md). 16/10/2026 00:00 UTC. */
 export const MEASURE_TEST_UNTIL_MS = Date.UTC(2026, 9, 16);
 export const MEASURE_TEST_INTERVAL_SEC = 240;
@@ -50,14 +50,14 @@ export function measureMinIntervalSec(now: number = Date.now()): number {
   return now < MEASURE_TEST_UNTIL_MS ? MEASURE_TEST_INTERVAL_SEC : MEASURE_MIN_INTERVAL_SEC;
 }
 /** Mesures conservées par appareil : 31 jours à 1 mesure / 30 min. Les grandeurs de diagnostic (rssi, lat, dl) sont DANS la même entrée : aucune commande Redis de plus ; elles s'effacent d'elles-mêmes quand l'anneau fait le tour (pas de persistance dédiée). */
-export const MEASURE_KEEP = 48 * 31;
+export const MEASURE_KEEP = 288 * 14;   // 29/10/2026 : 4 032 entrées = 14 jours à 1 relevé / 5 min (station R4) ou 84 jours à 1 / 30 min (TTL 40 j) ; l'historique complet de la station reste sur sa carte SD
 /** Fenêtre d'historique maximale demandable à l'interface, en heures. */
 export const MEASURE_MAX_HOURS = 24 * 31;
 export const MEASURE_TTL_SEC = 40 * 24 * 3600;
 /** Un capteur est « en ligne » s'il a mesuré depuis moins de 2 h 30 (envoi horaire, dernière lecture jusqu'à 30 min avant l'envoi). */
 export const MEASURE_ONLINE_MS = 150 * 60 * 1000;
 /** Lectures par envoi (la carte les met en tampon, même pendant une coupure) et âge maximal d'une lecture à l'envoi. */
-export const MEASURE_BATCH_MAX = 16;
+export const MEASURE_BATCH_MAX = 64;   // 29/10/2026 : 48 relevés de 5 min = 4 h de coupure rattrapées en un seul envoi
 export const MEASURE_MAX_AGE_SEC = 24 * 3600;
 /** Réécriture de la fiche appareil (TTL 90 j des appairés) : au plus toutes les 12 h. */
 export const MEASURE_PRESENCE_REFRESH_MS = 12 * 3600 * 1000;

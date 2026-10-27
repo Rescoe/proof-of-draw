@@ -99,7 +99,7 @@
 #define SERVER_HOST         "proof-of-draw.vercel.app"
 #define SCREEN_TYPE         "tft18"
 #ifndef FIRMWARE_VERSION
-#define FIRMWARE_VERSION    "r4tft18-2.4"
+#define FIRMWARE_VERSION    "r4tft18-2.5"
 #endif
 #ifndef POD_SENSORS
 #define POD_SENSORS 0                                // 1 : DHT22 (D2) + SGP40 (I2C) lus toutes les 30 min, envoyés toutes les heures à /api/sensor (comme la station)
@@ -151,8 +151,13 @@ static_assert(podbench::W * podbench::H / 8 == ANIM_FRAME, "pod_bench.h : consta
 #define OTAR4_COMPILED_SEQ 1
 #endif
 #define DHT_PIN             2
+#if POD_ENV_DISPLAY
+#define READ_INTERVAL_MS    300000UL                 // 29/10/2026 : station — UN relevé toutes les 5 min (le même rythme que l'historique de la carte SD) …
+#define POST_INTERVAL_MS    1800000UL                // … poussé TOUTES LES 30 MIN en UN seul POST (≈ 6 relevés) : même coût Redis par envoi, six fois plus de points
+#else
 #define READ_INTERVAL_MS    1800000UL
 #define POST_INTERVAL_MS    3600000UL
+#endif
 #define SPEED_EVERY_N_POSTS 1
 #define SENSOR_RETRY_MS     300000UL
 #define SGP_WARMUP_SAMPLES  12
@@ -1537,7 +1542,11 @@ static unsigned long g_lastLatMs = 0;                      // durée du dernier 
 // La température est LUE toutes les 30 min (48 points/jour) mais ENVOYÉE une fois par heure, plusieurs lectures par POST : même coût Redis qu'une mesure horaire (8 commandes par envoi,
 // quel que soit le nombre de lectures). Les lectures restent en RAM (12 au plus = 6 h) tant que l'envoi n'a pas réussi : une coupure Internet ne fait plus perdre de points.
 // Chaque lecture porte son ÂGE à l'envoi (le serveur calcule l'heure : la carte n'a pas d'horloge). Un redémarrage de la carte perd les lectures non envoyées (RAM).
+#if POD_ENV_DISPLAY
+#define RING_MAX 48                                 // station : 4 h de relevés de 5 min rattrapées en un envoi après une coupure (576 o de RAM)
+#else
 #define RING_MAX 12
+#endif
 #define NO_T   ((int16_t)-32768)
 #define NO_H   ((uint16_t)0xFFFF)
 struct Reading { uint32_t tMs; int16_t c10; uint16_t h10; uint16_t voc; uint16_t vocidx; };   // température absente : NO_T ; humidité absente : NO_H ; gaz absent : 0
@@ -1939,18 +1948,23 @@ static void histDrawSeries(int y0, int h, const HistSeries& s, uint16_t col, int
   int32_t lo = vmin, hi = vmax, span = vmax - vmin;
   const int32_t minSpan = labelKind == 2 ? 20 : 5;                                  // plage minimale : un bruit de mesure ne devient pas une montagne
   if (span < minSpan) { const int32_t pad = minSpan - span; lo -= pad / 2; hi += pad - pad / 2; span = hi - lo; }
-  int px = -1, py = 0;
+  // Courbe CONTINUE et lissée (histSmoothCurve) : trait de 2 px, colonnes vides jointes, marques sur le vrai minimum et le vrai maximum
+  int32_t cv[HIST_BUCKETS]; histSmoothCurve(s, cv);
+  int px = -1, py = 0, minX = -1, minY = 0, maxX = -1, maxY = 0;
   for (int b = 0; b < HIST_BUCKETS; b++) {
-    if (!s.n[b]) { px = -1; continue; }
-    const int32_t v = s.s[b] / s.n[b];
+    if (cv[b] == HIST_NONE) { px = -1; continue; }
+    int32_t v = cv[b]; if (v < lo) v = lo; if (v > hi) v = hi;
     const int x = x0 + b, y = y0 + h - 2 - (int)((int64_t)(v - lo) * (h - 3) / span);
-    if (px >= 0) tft.drawLine(px, py, x, y, col); else tft.drawPixel(x, y, col);
+    if (px >= 0) { tft.drawLine(px, py, x, y, col); tft.drawLine(px, py + 1, x, y + 1, col); } else { tft.drawPixel(x, y, col); tft.drawPixel(x, y + 1, col); }
+    if (s.n[b]) { const int32_t rv = s.s[b] / s.n[b]; if (rv == vmin && minX < 0) { minX = x; minY = y; } if (rv == vmax) { maxX = x; maxY = y; } }
     px = x; py = y;
   }
+  if (maxX >= 0) tft.fillCircle(maxX, maxY < y0 + 2 ? y0 + 2 : maxY, 2, C_WHITE);                     // marques tenues dans le cadre de la courbe
+  if (minX >= 0) tft.fillCircle(minX, minY > y0 + h - 4 ? y0 + h - 4 : minY, 2, C_WHITE);
   char b[12];
   tft.setTextColor(col, C_BLACK);
-  tft.setCursor(0, y0); if (labelKind == 2) envFmtU(b, 4, (unsigned)hi); else envFmt10(b, 4, (int)hi); tft.print(b);
-  tft.setCursor(0, y0 + h - 9); if (labelKind == 2) envFmtU(b, 4, (unsigned)lo); else envFmt10(b, 4, (int)lo); tft.print(b);
+  tft.setCursor(0, y0); if (labelKind == 2) envFmtU(b, 4, (unsigned)vmax); else envFmt10(b, 4, (int)vmax); tft.print(b);
+  tft.setCursor(0, y0 + h - 9); if (labelKind == 2) envFmtU(b, 4, (unsigned)vmin); else envFmt10(b, 4, (int)vmin); tft.print(b);
   if (tag && tag[0]) { tft.setTextColor(C_GREY, C_BLACK); tft.setCursor(IMG_W - 6 * (int)strlen(tag) - 1, y0); tft.print(tag); }
 }
 static void histSetTag(char* o, uint32_t wantSec, uint32_t effSec) {          // « 24 h » quand la plage est pleine, « depuis 2h10 » sinon

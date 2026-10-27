@@ -160,9 +160,11 @@ export interface MeasuresExplorerProps {
   ownerName?: string;
   /** Grandeurs déclarées ; sans température ni humidité, rien à explorer ici. */
   kinds: MeasureKind[];
+  /** PROPRIÉTAIRE : lit son historique privé (cookie de session, même route, même coût Redis : 1 LRANGE) au lieu de la vue publique ; mêmes graphique, œuvre et interprétation (29/10/2026). */
+  owner?: boolean;
 }
 
-export function MeasuresExplorer({ deviceId, sensorLabel, ownerName, kinds }: MeasuresExplorerProps) {
+export function MeasuresExplorer({ deviceId, sensorLabel, ownerName, kinds, owner = false }: MeasuresExplorerProps) {
   const [mode, setMode] = useState<Mode>("chart");
   const [range, setRange] = useState<VizRange>("day");
   const [load, setLoad] = useState<Load>({ kind: "loading" });
@@ -174,15 +176,15 @@ export function MeasuresExplorer({ deviceId, sensorLabel, ownerName, kinds }: Me
   const fetchData = useCallback(() => {
     setLoad({ kind: "loading" });
     setNowSec(Math.floor(Date.now() / 1000));
-    fetch(`/api/sensor?deviceId=${encodeURIComponent(deviceId)}&public=1&hours=${VIZ_RANGES.month.hours}`)
+    fetch(`/api/sensor?deviceId=${encodeURIComponent(deviceId)}${owner ? "" : "&public=1"}&hours=${VIZ_RANGES.month.hours}`, owner ? { credentials: "same-origin" } : undefined)
       .then(async (r) => {
-        if (r.status === 404) { setLoad({ kind: "unavailable" }); return; }
+        if (r.status === 404 && !owner) { setLoad({ kind: "unavailable" }); return; }
         if (!r.ok) throw new Error(String(r.status));
         const j = await r.json();
         setLoad({ kind: "ready", measures: Array.isArray(j.measures) ? (j.measures as Measure[]) : [] });
       })
       .catch(() => setLoad({ kind: "error", message: "Impossible de charger les mesures (erreur réseau ou serveur)." }));
-  }, [deviceId]);
+  }, [deviceId, owner]);
   // eslint-disable-next-line react-hooks/set-state-in-effect -- une seule lecture à l'ouverture (et à chaque changement d'appareil)
   useEffect(() => { if (relevant) fetchData(); }, [relevant, fetchData]);
   useEffect(() => {

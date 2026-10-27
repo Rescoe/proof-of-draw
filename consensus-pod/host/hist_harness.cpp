@@ -40,6 +40,30 @@ int main(int argc, char** argv) {
   if (histMean(sparse, 1, 4, &mean)) ok = false;               // aucune valeur dans [1, 4)
   int32_t lo = 0, hi = 0;
   if (histMinMax(ramp, &lo, &hi) != HIST_BUCKETS || lo != 0 || hi != 950) ok = false;
+  // courbe lissée : continue entre deux points, vide avant/après, plate sur une série plate, rampe conservée, un seul point reste lui-même
+  {
+    int32_t c[HIST_BUCKETS];
+    if (histSmoothCurve(sparse, c) != HIST_BUCKETS / 4) ok = false;
+    for (int i = 0; i < HIST_BUCKETS; i++) { const bool inside = i >= 0 && i <= HIST_BUCKETS - 4; if (inside != (c[i] != HIST_NONE)) ok = false; }   // de la colonne 0 à la 92 (dernier point)
+    HistSeries flat; std::memset(&flat, 0, sizeof(flat));
+    for (int i = 10; i < 80; i += 7) { flat.s[i] = 215; flat.n[i] = 1; }
+    histSmoothCurve(flat, c);
+    for (int i = 10; i <= 73; i++) if (c[i] != 215) ok = false;
+    if (c[9] != HIST_NONE || c[74] != HIST_NONE) ok = false;
+    histSmoothCurve(ramp, c);
+    for (int i = 2; i < HIST_BUCKETS - 2; i++) if (c[i] < i * 10 - 1 || c[i] > i * 10 + 1) ok = false;   // une rampe lissée reste une rampe (hors bords)
+    HistSeries one; std::memset(&one, 0, sizeof(one)); one.s[5] = 77; one.n[5] = 1;
+    if (histSmoothCurve(one, c) != 1 || c[5] != 77 || c[4] != HIST_NONE || c[6] != HIST_NONE) ok = false;
+    HistSeries none; std::memset(&none, 0, sizeof(none));
+    if (histSmoothCurve(none, c) != 0 || c[0] != HIST_NONE) ok = false;
+    // lissage : un pic isolé est abaissé, mais jamais au-delà des extrêmes de la série
+    HistSeries peak; std::memset(&peak, 0, sizeof(peak));
+    for (int i = 20; i < 40; i++) { peak.s[i] = 100; peak.n[i] = 1; }
+    peak.s[30] = 400;
+    histSmoothCurve(peak, c);
+    if (!(c[30] < 400 && c[30] > 100)) ok = false;
+    for (int i = 20; i < 40; i++) if (c[i] < 100 || c[i] > 400) ok = false;
+  }
   char a[20];
   const uint32_t ages[] = {0, 59, 60, 2699, 3599, 3600, 7800, 172799, 172800, 86400UL * 30};
   for (uint32_t s : ages) { histFmtAge(a, s); std::printf("AGE %lu %s\n", (unsigned long)s, a); }

@@ -296,6 +296,8 @@ function ManagePanel({ d, devices, profile, tab, setTab, onReload, onGive, onAsk
       </div>
       {err && <p role="alert" style={{ ...muted, color: "#f87171", margin: "0.3rem 0" }}>{err}</p>}
 
+      {tab === "settings" && <RenameRow d={d} onSaved={onReload} />}
+
       {tab === "settings" && isSensorScreens(d.screens) && (
         <p style={muted}>Capteur de température : aucun réglage d&apos;affichage. Il envoie une mesure par heure ; l&apos;historique est dans « 🌡 Températures ».</p>
       )}
@@ -503,7 +505,7 @@ function DeviceCard({ d, open, onToggle, onRenamed, profile, children }: {
   const convCount = (d.acceptsConvertedScreens ?? []).length;
   const mine = !profile || d.artistId === profile.artistId;
   return (
-    <div style={{ padding: "1rem 1.1rem", borderRadius: 10, border: `1px solid ${open ? "var(--accent)" : "var(--border)"}`, background: "var(--bg2)" }}>
+    <div className="dev-card" style={{ padding: "1rem 1.1rem", borderRadius: 10, border: `1px solid ${open ? "var(--accent)" : "var(--border)"}`, background: "var(--bg2)" }}>
       <div className="dev-head" style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: "0.75rem" }}>
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
@@ -516,7 +518,7 @@ function DeviceCard({ d, open, onToggle, onRenamed, profile, children }: {
             {d.firmware ?? "firmware inconnu"} · {d.deviceId}
           </div>
         </div>
-        <div className="dev-actions" style={{ display: "flex", gap: "0.4rem", flexShrink: 0 }}>
+        <div className="dev-actions" style={{ display: "flex", gap: "0.4rem", flexShrink: 0, flexWrap: "wrap", justifyContent: "flex-end" }}>
           {showsMeasures(d, !!d.latest) && <SensorButton d={d} />}
           {!isSensorScreens(d.screens) && (<><DrawMenu d={d} /><DrawMenu d={d} mode="animate" /></>)}
           <button
@@ -549,6 +551,42 @@ function DeviceCard({ d, open, onToggle, onRenamed, profile, children }: {
       </div>
 
       {open && children}
+    </div>
+  );
+}
+
+/** « Nom de l'écran » dans Gérer → Réglages (29/10/2026) : seul le NOM change ; l'identifiant, les œuvres, les mesures et l'historique restent attachés à l'appareil. Même route que le clic sur le nom. */
+function RenameRow({ d, onSaved }: { d: OwnedDevice; onSaved: () => void }) {
+  const [name, setName] = useState(d.deviceName ?? "");
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
+  const clean = name.trim();
+  const unchanged = clean === (d.deviceName ?? "").trim();
+  async function save() {
+    if (!clean || unchanged || busy) return;
+    setBusy(true); setMsg(null);
+    try {
+      const { ok, data } = await postJson("/api/devices/rename", { deviceId: d.deviceId, deviceName: clean });
+      if (ok) { setMsg({ ok: true, text: "Nom enregistré." }); onSaved(); }
+      else setMsg({ ok: false, text: typeof data.error === "string" ? data.error : "Échec de l'enregistrement" });
+    } catch { setMsg({ ok: false, text: "Erreur réseau" }); } finally { setBusy(false); }
+  }
+  const off = !clean || unchanged || busy;
+  return (
+    <div style={{ padding: "0.2rem 0 0.8rem" }}>
+      <div style={{ fontSize: "0.85rem", fontWeight: 600 }}>Nom de l&apos;écran</div>
+      <p style={{ ...muted, marginTop: 2, marginBottom: "0.55rem" }}>
+        Renommer cet appareil ne change rien d&apos;autre : les œuvres, les mesures, l&apos;historique et l&apos;identifiant ({d.deviceId}) restent attachés.
+      </p>
+      <div style={{ display: "flex", alignItems: "center", gap: "0.6rem", flexWrap: "wrap" }}>
+        <input
+          aria-label="Nom de l'écran" value={name} onChange={(e) => { setName(e.target.value); setMsg(null); }} maxLength={40} placeholder="Nommer cet appareil…"
+          onKeyDown={(e) => { if (e.key === "Enter") void save(); }}
+          style={{ padding: "0.4rem 0.6rem", borderRadius: 8, border: "1px solid var(--border)", background: "var(--bg)", color: "var(--text)", fontSize: "0.82rem", flex: "1 1 200px", minWidth: 0, maxWidth: 360 }}
+        />
+        <button type="button" onClick={save} disabled={off} style={{ ...ghostBtn, opacity: off ? 0.5 : 1 }}>{busy ? "…" : "Enregistrer"}</button>
+        {msg && <span role={msg.ok ? "status" : "alert"} style={{ fontSize: "0.78rem", color: msg.ok ? "#4ade80" : "#f87171" }}>{msg.text}</span>}
+      </div>
     </div>
   );
 }
@@ -721,10 +759,13 @@ export function DevicesPanel({ devices, profile, loading, onReload }: {
 
       <style>{`
         @media (max-width: 600px) {
-          .dev-head { flex-direction: column !important; }
-          .dev-actions { width: 100%; }
-          .dev-actions > * { flex: 1; }
-          .dev-actions > * > a, .dev-actions > * > button, .dev-actions > a, .dev-actions > button { width: 100%; text-align: center; box-sizing: border-box; }
+          /* 29/10/2026 : jusqu'à QUATRE boutons (Historique, Dessiner, Animer, Gérer) : deux par ligne, jamais hors du cadre d'un téléphone */
+          .dev-head { flex-direction: column !important; width: 100%; }
+          .dev-head > div:first-child { width: 100%; }
+          .dev-actions { width: 100%; justify-content: stretch !important; }
+          .dev-actions > * { flex: 1 1 calc(50% - 0.4rem); min-width: 0; }
+          .dev-actions > * > a, .dev-actions > * > button, .dev-actions > a, .dev-actions > button, .dev-actions > span { width: 100%; text-align: center; box-sizing: border-box; padding-left: 0.4rem !important; padding-right: 0.4rem !important; white-space: normal !important; }
+          .dev-card { max-width: 100%; box-sizing: border-box; }
         }
       `}</style>
     </div>

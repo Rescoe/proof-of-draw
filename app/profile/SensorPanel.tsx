@@ -7,6 +7,7 @@ import { useEffect, useMemo, useState } from "react";
 import type { OwnedDevice } from "@/lib/deviceStore";
 import { MEASURE_GROUPS, MEASURE_KINDS, MEASURE_MAX_HOURS, formatMeasure, kindsOfGroup, measureKindsOf, type Measure, type MeasureKind } from "@/lib/measures";
 import { MeasuresChart, fmtMeasureDate } from "../MeasuresChart";
+import { MeasuresExplorer } from "../MeasuresExplorer";
 
 const PERIODS = [{ h: 24, label: "24 h" }, { h: 168, label: "7 jours" }, { h: MEASURE_MAX_HOURS, label: "31 jours" }];
 
@@ -77,7 +78,7 @@ function SensorModal({ d, onClose }: { d: OwnedDevice; onClose: () => void }) {
     <div role="dialog" aria-modal="true" aria-label="Historique des mesures" onClick={onClose}
       style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1000, padding: 16 }}>
       <div onClick={(e) => e.stopPropagation()}
-        style={{ background: "var(--bg2, var(--bg))", border: "1px solid var(--border)", borderRadius: 12, padding: "1.1rem", width: "min(680px, 100%)", maxHeight: "90vh", overflowY: "auto" }}>
+        style={{ background: "var(--bg2, var(--bg))", border: "1px solid var(--border)", borderRadius: 12, padding: "1.1rem", width: "min(860px, 100%)", maxHeight: "90vh", overflowY: "auto" }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 12 }}>
           <h2 style={{ margin: 0, fontSize: "1.05rem" }}>📈 {d.deviceName || d.deviceId}</h2>
           <button type="button" onClick={onClose} aria-label="Fermer" style={{ background: "none", border: "none", color: "var(--text2)", fontSize: "1.2rem", cursor: "pointer" }}>✕</button>
@@ -109,7 +110,19 @@ function SensorModal({ d, onClose }: { d: OwnedDevice; onClose: () => void }) {
                     ) : null; })}
                     <span style={{ color: "var(--text3)", fontSize: "0.76rem" }}>{fmtMeasureDate((lastOf(gk[0]) ?? last).t)}</span>
                   </div>
-                  <MeasuresChart measures={shown} kinds={gk} showTable />
+                  {g.id === "env" && (gk.includes("temp") || gk.includes("hum")) ? (
+                    // 29/10/2026 : MÊME explorateur que le profil public (Graphique · Œuvre · Interprétation), sur l'historique PRIVÉ du propriétaire ; le tableau reste disponible en dessous
+                    <>
+                      <MeasuresExplorer deviceId={d.deviceId} sensorLabel={d.deviceName || d.deviceId} ownerName={d.artistName} kinds={kinds} owner />
+                      {gk.some((k) => k !== "temp" && k !== "hum") && <MeasuresChart measures={shown} kinds={gk.filter((k) => k !== "temp" && k !== "hum")} />}
+                      <details style={{ marginTop: 10 }}>
+                        <summary style={{ cursor: "pointer", fontSize: "0.82rem", color: "var(--text2)" }}>Tableau des relevés ({hours >= 720 ? "31 jours" : hours >= 168 ? "7 jours" : "24 h"}, les plus récents d&apos;abord)</summary>
+                        <MeasuresChart measures={shown} kinds={gk} showTable />
+                      </details>
+                    </>
+                  ) : (
+                    <MeasuresChart measures={shown} kinds={gk} showTable />
+                  )}
                 </section>
               );
             })}

@@ -52,6 +52,31 @@ static int histMinMax(const HistSeries& p, int32_t* lo, int32_t* hi) {
   *lo = mn; *hi = mx;
   return have;
 }
+#define HIST_NONE (-0x7FFFFFFF - 1)                  // colonne sans valeur dans une courbe lissée (avant le premier point ou après le dernier)
+/**
+ * Courbe CONTINUE et LISSÉE à partir d'une série binée : les colonnes vides situées ENTRE deux points connus sont rejointes par une droite (la courbe ne devient plus un semis de points),
+ * puis un lissage 1-2-3-2-1 (renormalisé aux bords) adoucit le bruit. Avant le premier point et après le dernier : HIST_NONE (rien n'est inventé). Retourne le nombre de colonnes garnies d'origine.
+ * Les extrêmes affichés restent ceux des VRAIES moyennes (histMinMax) : le lissage ne change que le tracé.
+ */
+static int histSmoothCurve(const HistSeries& p, int32_t out[HIST_BUCKETS]) {
+  int32_t raw[HIST_BUCKETS]; int have = 0, first = -1, last = -1;
+  for (int i = 0; i < HIST_BUCKETS; i++) { if (p.n[i]) { raw[i] = p.s[i] / p.n[i]; have++; if (first < 0) first = i; last = i; } else raw[i] = HIST_NONE; }
+  for (int i = 0; i < HIST_BUCKETS; i++) out[i] = HIST_NONE;
+  if (have == 0) return 0;
+  int prev = first;
+  for (int i = first + 1; i <= last; i++) {
+    if (raw[i] == HIST_NONE) continue;
+    for (int k = prev + 1; k < i; k++) raw[k] = raw[prev] + (int32_t)((int64_t)(raw[i] - raw[prev]) * (k - prev) / (i - prev));
+    prev = i;
+  }
+  static const int w[5] = {1, 2, 3, 2, 1};
+  for (int i = first; i <= last; i++) {
+    int64_t sum = 0; int wt = 0;
+    for (int d = -2; d <= 2; d++) { const int j = i + d; if (j < first || j > last) continue; sum += (int64_t)raw[j] * w[d + 2]; wt += w[d + 2]; }
+    out[i] = (int32_t)(sum / wt);
+  }
+  return have;
+}
 /**
  * Pente par moindres carrés des colonnes [a, b) (au moins 4 colonnes garnies), en CENTIÈMES d'unité par colonne ×… renvoyée en millièmes d'unité PAR COLONNE : slopeMilli.
  * Pour l'exprimer par heure : slopeMilli * 3600 / binSec / 1000.

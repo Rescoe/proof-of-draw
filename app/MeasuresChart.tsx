@@ -26,6 +26,9 @@ function Chart({ points, kind }: { points: { t: number; x: number }[]; kind: Mea
   );
 }
 
+/** Lignes du tableau : une station envoie un relevé toutes les 5 min (jusqu'à 4 032 entrées) — on n'affiche que les plus récentes. */
+const TABLE_MAX_ROWS = 288;
+
 /** `measures` : du plus récent au plus ancien. `showTable` : tableau horaire (profil). */
 export function MeasuresChart({ measures, kinds, showTable = false }: { measures: Measure[]; kinds: MeasureKind[]; showTable?: boolean }) {
   const [kind, setKind] = useState<MeasureKind>(kinds[0] ?? "temp");
@@ -53,7 +56,7 @@ export function MeasuresChart({ measures, kinds, showTable = false }: { measures
         <div style={{ overflowX: "auto" }}><table style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.8rem", marginTop: 8 }}>
           <thead><tr style={{ textAlign: "left", color: "var(--text3)" }}><th>Heure</th>{kinds.map((k) => <th key={k}>{MEASURE_KINDS[k].label}</th>)}</tr></thead>
           <tbody>
-            {measures.filter((m) => kinds.some((k) => m.v[k] !== undefined)).map((m) => (
+            {measures.filter((m) => kinds.some((k) => m.v[k] !== undefined)).slice(0, TABLE_MAX_ROWS).map((m) => (
               <tr key={m.t} style={{ borderTop: "1px solid var(--border)" }}>
                 <td style={{ padding: "3px 0" }}>{fmtMeasureDate(m.t)}</td>
                 {kinds.map((k) => <td key={k}>{m.v[k] !== undefined ? formatMeasure(k, m.v[k] as number) : "—"}</td>)}

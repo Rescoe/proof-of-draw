@@ -50,13 +50,13 @@ test("summarize par grandeur, formats, bornes d'historique", () => {
   assert.deepEqual([h.min, h.max, h.avg, h.count, h.last?.t], [500, 700, 600, 2, 20]);
   assert.equal(summarize([], "temp").count, 0);
   assert.equal(formatMeasure("temp", 215), "21,5 °C"); assert.equal(formatMeasure("temp", -35), "-3,5 °C"); assert.equal(formatMeasure("hum", 456), "45,6 %");
-  assert.equal(clampHours(undefined), 168); assert.equal(clampHours("abc"), 168); assert.equal(clampHours(0), 168); assert.equal(clampHours(24), 24); assert.equal(clampHours(99999), MEASURE_MAX_HOURS); assert.equal(MEASURE_MAX_HOURS, 744); assert.equal(MEASURE_KEEP, 1488, "31 jours à 48 points par jour");
+  assert.equal(clampHours(undefined), 168); assert.equal(clampHours("abc"), 168); assert.equal(clampHours(0), 168); assert.equal(clampHours(24), 24); assert.equal(clampHours(99999), MEASURE_MAX_HOURS); assert.equal(MEASURE_MAX_HOURS, 744); assert.equal(MEASURE_KEEP, 4032, "14 jours à 288 points par jour (station R4, un relevé / 5 min) — 84 jours à 48 points par jour");
 });
 
 test("CADENCE : l'essai à 5 min s'éteint tout seul le 16/10/2026 00:00 UTC", () => {
   assert.equal(measureMinIntervalSec(MEASURE_TEST_UNTIL_MS - 1), MEASURE_TEST_INTERVAL_SEC);
   assert.equal(measureMinIntervalSec(MEASURE_TEST_UNTIL_MS), MEASURE_MIN_INTERVAL_SEC);
-  assert.equal(MEASURE_TEST_INTERVAL_SEC, 240); assert.equal(MEASURE_MIN_INTERVAL_SEC, 3000);   // envoi horaire, refus sous 50 min
+  assert.equal(MEASURE_TEST_INTERVAL_SEC, 240); assert.equal(MEASURE_MIN_INTERVAL_SEC, 1500);   // refus sous 25 min (la station envoie toutes les 30 min ; les autres cartes toutes les heures)
   assert.equal(new Date(MEASURE_TEST_UNTIL_MS).toISOString(), "2026-10-16T00:00:00.000Z");
 });
 
@@ -242,9 +242,9 @@ test("ENVOI GROUPÉ : lectures en tampon avec âge, un seul LPUSH pour tout le l
   // anciens corps : une seule lecture d'âge 0
   assert.deepEqual(parseMeasureBatch({ m: { temp: 200 } }), { ok: true, readings: [{ ageSec: 0, values: { temp: 200 } }] });
   assert.deepEqual(parseMeasureBatch({ c: 215, h: 456 }), { ok: true, readings: [{ ageSec: 0, values: { temp: 215, hum: 456 } }] });
-  for (const bad of [{ r: [] }, { r: "x" }, { r: [{ a: -1, temp: 1 }] }, { r: [{ a: 86401, temp: 1 }] }, { r: [{ a: 1.5, temp: 1 }] }, { r: [{ temp: 1 }] }, { r: [{ a: 0 }] }, { r: [{ a: 0, temp: 9999 }] }, { r: [{ a: 0, temp: 1 }], m: { rssi: 3 } }, { r: Array.from({ length: 17 }, () => ({ a: 0, temp: 1 })) }])
+  for (const bad of [{ r: [] }, { r: "x" }, { r: [{ a: -1, temp: 1 }] }, { r: [{ a: 86401, temp: 1 }] }, { r: [{ a: 1.5, temp: 1 }] }, { r: [{ temp: 1 }] }, { r: [{ a: 0 }] }, { r: [{ a: 0, temp: 9999 }] }, { r: [{ a: 0, temp: 1 }], m: { rssi: 3 } }, { r: Array.from({ length: 65 }, () => ({ a: 0, temp: 1 })) }])
     assert.equal(parseMeasureBatch(bad).ok, false, JSON.stringify(bad).slice(0, 60));
-  assert.equal(parseMeasureBatch({ r: Array.from({ length: 16 }, (_, i) => ({ a: i * 100, temp: 1 })) }).ok, true);
+  assert.equal(parseMeasureBatch({ r: Array.from({ length: 64 }, (_, i) => ({ a: i * 100, temp: 1 })) }).ok, true);
   const r = read("app/api/sensor/route.ts");
   assert.match(r, /\.lpush\(key, \.\.\.stored\.map\(encodeMeasure\)\)/, "un seul LPUSH, N valeurs");
   assert.match(r, /\.sort\(\(a, b\) => a\.t - b\.t\)/, "ordre chronologique : la plus récente en tête de liste");
