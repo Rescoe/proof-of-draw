@@ -41,20 +41,20 @@ test("RÉEL du 27/10 : 8 appareils lus, un seul compté — le résumé dit pour
   ];
   const { count, summary } = summarizePool(devices, NOW, W, ON);
   assert.equal(count, 1);
-  assert.deepEqual(summary, { total: 8, counted: 1, floor: false, excluded: { inactive: 6, "missed-votes": 1 }, maxMissed: 3, at: NOW });
-  assert.equal(poolSummaryText(summary), "1 compté(s) sur 8 : 6 inactif, 1 exclu après des manques");
+  assert.deepEqual(summary, { total: 8, counted: 1, floor: false, excluded: { inactive: 6, "missed-votes": 1 }, maxMissed: 3, animV3: 0, at: NOW });
+  assert.equal(poolSummaryText(summary), "1 compté(s) sur 8 : 6 inactif, 1 exclu après des manques ; 0 capable(s) de voter une animation v3");
   // aucun appareil compté : le « 1 » est un PLANCHER, et le résumé le dit
   const none = summarizePool(devices.filter((_, i) => i !== 4), NOW, W, ON);
   assert.equal(none.count, 1);
   assert.equal(none.summary.floor, true);
   assert.equal(none.summary.counted, 0);
-  assert.match(poolSummaryText(none.summary), /aucun appareil compté sur 7 \(plancher de 1\)/);
+  assert.match(poolSummaryText(none.summary), /aucun appareil compté sur 7 \(plancher de 1\) : 6 inactif, 1 exclu après des manques ; 0 capable/);
   assert.equal(summarizePool([], NOW, W, ON).summary.floor, true);
 });
 
 test("le résumé est BORNÉ et sans secret : clés fixes, aucun identifiant, taille < 200 octets ; readPoolSummary refuse tout le reste", () => {
   const { summary } = summarizePool([dev(), dev({ lastPing: 0 }), dev({ missedVotes: 9 })], NOW, W, ON);
-  assert.deepEqual(Object.keys(summary).sort(), ["at", "counted", "excluded", "floor", "maxMissed", "total"]);
+  assert.deepEqual(Object.keys(summary).sort(), ["animV3", "at", "counted", "excluded", "floor", "maxMissed", "total"]);
   assert.ok(JSON.stringify(summary).length < 200);
   assert.deepEqual(readPoolSummary(JSON.parse(JSON.stringify(summary))), summary);
   for (const bad of [null, undefined, 3, "x", {}, { ...summary, total: -1 }, { ...summary, floor: "oui" }, { ...summary, counted: 1.5 }, { ...summary, at: "x" }, { ...summary, total: 10 ** 9 }]) assert.equal(readPoolSummary(bad), null, JSON.stringify(bad));

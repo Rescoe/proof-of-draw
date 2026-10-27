@@ -6,7 +6,7 @@
 //
 // Règle de décompte (inchangée, seulement nommée) : un appareil est compté s'il est appairé, actif (lastPing < fenêtre), n'est pas un capteur seul (règle actuelle, voir docs/PLAN_RESEAU_…),
 // son firmware sait voter en v2 et il n'a pas dépassé le seuil de manques consécutifs (QUORUM_MAX_MISSED, 3 par défaut depuis le 28/10/2026). Un appareil exclu pour manques reste INVITÉ à voter et revient au premier vote.
-import { participatesInVoteNetwork, isValidatorNode } from "@/lib/voteCapability";
+import { participatesInVoteNetwork, isValidatorNode, votesAnimV3 } from "@/lib/voteCapability";
 import { isSensorScreens } from "@/lib/measures";
 import { isResponsiveVoter, maxMissedFromEnv } from "@/lib/quorumResponsive";
 
@@ -27,6 +27,7 @@ export interface PoolSummary {
   floor: boolean;                                         // vrai si AUCUN appareil n'est compté et que le plancher « 1 » s'applique : le « réseau de 1 » n'est alors pas un validateur
   excluded: Partial<Record<ExclusionReason, number>>;     // exclusions par raison (zéros omis)
   maxMissed: number;                                      // seuil de manques consécutifs appliqué
+  animV3: number;                                         // parmi les appareils comptés, combien savent voter une animation v3 (0 tant qu'aucun firmware ne la déclare) : la couverture exigée AVANT de passer le mode d'animation de « shadow » à « enforce »
   at: number;                                             // date du calcul (ms)
 }
 
@@ -45,21 +46,22 @@ export function exclusionReason(d: DeviceLike, now: number, activeWindowMs: numb
 /** Décompte et résumé à partir des fiches lues (null = fiche absente / illisible : ignorée). Le nombre rendu garde le plancher historique de 1. */
 export function summarizePool(devices: ReadonlyArray<DeviceLike | null>, now: number, activeWindowMs: number, env: NodeJS.ProcessEnv = process.env): { count: number; summary: PoolSummary } {
   const excluded: Partial<Record<ExclusionReason, number>> = {};
-  let counted = 0, total = 0;
+  let counted = 0, total = 0, animV3 = 0;
   for (const d of devices) {
     if (!d) continue;
     total++;
     const why = exclusionReason(d, now, activeWindowMs, env);
-    if (why === null) counted++; else excluded[why] = (excluded[why] ?? 0) + 1;
+    if (why === null) { counted++; if (votesAnimV3(d)) animV3++; } else excluded[why] = (excluded[why] ?? 0) + 1;
   }
-  return { count: Math.max(1, counted), summary: { total, counted, floor: counted === 0, excluded, maxMissed: maxMissedFromEnv(env), at: now } };
+  return { count: Math.max(1, counted), summary: { total, counted, floor: counted === 0, excluded, maxMissed: maxMissedFromEnv(env), animV3, at: now } };
 }
 
 /** Texte court pour « Rejetés » et le diagnostic : « 1 compté sur 8 (5 inactifs, 1 exclu après 3 manques) ». */
 export function poolSummaryText(s: PoolSummary): string {
   const bits = EXCLUSION_REASONS.filter((r) => (s.excluded[r] ?? 0) > 0).map((r) => `${s.excluded[r]} ${EXCLUSION_LABEL[r]}`);
   const head = s.floor ? `aucun appareil compté sur ${s.total} (plancher de 1)` : `${s.counted} compté(s) sur ${s.total}`;
-  return bits.length ? `${head} : ${bits.join(", ")}` : head;
+  const tail = `${head}${bits.length ? " : " + bits.join(", ") : ""}`;
+  return `${tail} ; ${s.animV3} capable(s) de voter une animation v3`;
 }
 
 /** Valide un résumé relu depuis Redis / une archive (défensif : le champ est facultatif et peut venir d'une ancienne version). */
@@ -67,10 +69,10 @@ export function readPoolSummary(raw: unknown): PoolSummary | null {
   if (!raw || typeof raw !== "object") return null;
   const r = raw as Record<string, unknown>;
   const n = (v: unknown) => (typeof v === "number" && Number.isInteger(v) && v >= 0 && v <= 100000 ? v : null);
-  const total = n(r.total), counted = n(r.counted), maxMissed = n(r.maxMissed), at = typeof r.at === "number" ? r.at : null;
-  if (total === null || counted === null || maxMissed === null || at === null || typeof r.floor !== "boolean") return null;
+  const total = n(r.total), counted = n(r.counted), maxMissed = n(r.maxMissed), animV3 = r.animV3 === undefined ? 0 : n(r.animV3), at = typeof r.at === "number" ? r.at : null;   // animV3 absent (candidat du 28/10 matin) = 0
+  if (total === null || counted === null || maxMissed === null || animV3 === null || at === null || typeof r.floor !== "boolean") return null;
   const excluded: Partial<Record<ExclusionReason, number>> = {};
   const ex = (r.excluded && typeof r.excluded === "object" ? r.excluded : {}) as Record<string, unknown>;
   for (const k of EXCLUSION_REASONS) { const v = n(ex[k]); if (v !== null && v > 0) excluded[k] = v; }
-  return { total, counted, floor: r.floor, excluded, maxMissed, at };
+  return { total, counted, floor: r.floor, excluded, maxMissed, animV3, at };
 }
