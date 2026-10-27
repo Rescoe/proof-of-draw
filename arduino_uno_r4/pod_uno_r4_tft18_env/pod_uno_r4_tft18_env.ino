@@ -99,7 +99,7 @@
 #define SERVER_HOST         "proof-of-draw.vercel.app"
 #define SCREEN_TYPE         "tft18"
 #ifndef FIRMWARE_VERSION
-#define FIRMWARE_VERSION    "r4tft18-2.3"
+#define FIRMWARE_VERSION    "r4tft18-2.4"
 #endif
 #ifndef POD_SENSORS
 #define POD_SENSORS 0                                // 1 : DHT22 (D2) + SGP40 (I2C) lus toutes les 30 min, envoyés toutes les heures à /api/sensor (comme la station)

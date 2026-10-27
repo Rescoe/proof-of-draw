@@ -126,3 +126,18 @@ Soumettre successivement : un dessin BWR, un dessin TFT 1,8″, un dessin OLED, 
 ## 8. Ce qui ne change pas
 
 Pas de nouvelle base, pas de refonte de l'application ni de l'interface globale, aucun secret touché, quotas Redis préservés (aucun polling nouveau, lectures groupées), un seul flash par étape sur la station, binaire de retour conservé, aucune publication OTA ni fusion sans GO.
+
+## 9. Avancement au 28/10/2026 (fin de journée) — mis à jour par Claude
+
+| Lot | État | Niveau | Référence |
+|---|---|---|---|
+| L3 — refus « blank » | **cause prouvée**, correctif dans les 6 en-têtes R4 (commit local) | `C` + `H` | `COMPTE_RENDU_LOTS_1_A_3…` § 1 |
+| L1 — candidat conservé, tampon à la demande, abstentions | station R4 + ESP BWR / multiscreen / e-ink 2,7″ (commits locaux) ; **R4 e-ink et TFT 2,8″ non modifiés** (même défaut recensé) | `C` + `H` | § 2 |
+| L2 — électorat expliqué, seuil à 3 manques, résumé figé, diagnostic lecture seule | codé (commits locaux) ; **le diagnostic a été exécuté** sur Redis en lecture seule | `H` + `S` | § 3 |
+| L4 — matrice validateur × format | générée depuis le code et testée | `C` + `H` | `MATRICE_VALIDATEUR_X_FORMAT_2026_10_28.md` |
+| L5 — capacités déclarées, validateur sans écran | codé, **sans effet** tant qu'aucune famille n'est autorisée | `H` | `lib/voteCapability.ts` |
+| L6 — vote d'animation v3 | noyau existant ; **pas d'intégration firmware** ; compteur de couverture ajouté | `H` | § 6 du compte rendu |
+| L7 — station : observer œuvre, ACK, animation, acceptation | image `r4tft18-2.4` et retour arrière prêts ; **essai non exécuté** | — | `PROTOCOLE_ESSAI_STATION_R4_2026_10_28.md` |
+| L8 — OTA ciblée | non commencée (aucune publication sans GO) | — | — |
+
+**Prochain et seul GO nécessaire** : pousser les commits comportementaux et exécuter l'essai matériel instrumenté sur la station.
