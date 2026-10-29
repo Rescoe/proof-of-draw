@@ -23,7 +23,7 @@ export const MEASURE_KINDS: Record<MeasureKind, MeasureKindInfo> = {
   // Qualité de l'air (26/10/2026) : sortie BRUTE du SGP40 (SRAW_VOC, « ticks » 0..65535, plus bas = plus de gaz organiques), compensée en température/humidité par la carte. Ce n'est PAS l'indice VOC 0..500 de Sensirion (algorithme à part, plus tard) : la valeur est relative à la puce et à son ancienneté.
   voc:  { label: "Gaz (VOC brut)", unit: "ticks", icon: "🌫", min: 0, max: 65535, scale: 1, primary: false },
   // Indice COV de Sensirion (28/10/2026) : sortie de l'algorithme officiel « Gas Index Algorithm » appliqué au brut du SGP40 à 1 Hz sur la carte — 1..500, 100 = air habituel du lieu (la ligne de base s'adapte sur ~12 h), plus haut = plus de gaz. 0 est absent (apprentissage).
-  vocidx: { label: "Indice COV (Sensirion)", unit: "", icon: "🌫", min: 1, max: 500, scale: 1, primary: false },
+  vocidx: { label: "Qualité de l'air (Sensirion)", unit: "", icon: "🌫", min: 1, max: 500, scale: 1, primary: false },
   // Diagnostic de la liaison Wi-Fi de la carte (dans la MÊME mesure : aucune commande Redis de plus) : puissance du signal reçu et temps de réponse du serveur
   rssi: { label: "Signal Wi-Fi", unit: "dBm", icon: "📶", min: -127, max: 0, scale: 1, primary: false },
   lat:  { label: "Latence serveur", unit: "ms", icon: "⏱", min: 0, max: 60000, scale: 1, primary: false },
@@ -33,7 +33,7 @@ export const MEASURE_KINDS: Record<MeasureKind, MeasureKindInfo> = {
 export const MEASURE_KIND_IDS = Object.keys(MEASURE_KINDS) as MeasureKind[];
 /** Groupes d'affichage : l'environnement (température, humidité) est SÉPARÉ de la qualité de la liaison (signal, latence, débit). */
 export const MEASURE_GROUPS: { id: "env" | "link"; label: string; kinds: MeasureKind[] }[] = [
-  { id: "env", label: "Environnement", kinds: ["temp", "hum", "vocidx", "voc"] },
+  { id: "env", label: "Environnement", kinds: ["temp", "hum", "vocidx"] },   // 29/10/2026 : le brut du SGP40 (`voc`) reste stocké mais n'est plus affiché — seul l'indice Sensirion a un sens
   { id: "link", label: "Connexion de la carte", kinds: ["rssi", "lat", "dl"] },
 ];
 /** Grandeurs d'un groupe que l'appareil mesure réellement. */
@@ -189,8 +189,31 @@ export function summarize(measures: Measure[], kind: MeasureKind): MeasureSummar
   return { count: own.length, min, max, avg: Math.round(sum / own.length), last };
 }
 
-/** « 21,5 °C » depuis des dixièmes. */
+// ── Qualité de l'air : niveaux de l'indice COV Sensirion (29/10/2026) ───────────────────────────────────────────────────────
+/** Niveau qualitatif d'un indice COV (1..500). Choix de visualisation du projet PoD, PAS des seuils sanitaires. L'interface n'affiche jamais le nombre : niveau, couleur, tendance. */
+export interface VocLevel { level: 1 | 2 | 3 | 4 | 5 | 6; label: string; color: string }
+const VOC_LEVELS: { max: number; l: VocLevel }[] = [
+  { max: 50, l: { level: 1, label: "Très faible", color: "#22c55e" } },
+  { max: 100, l: { level: 2, label: "Faible", color: "#84cc16" } },
+  { max: 150, l: { level: 3, label: "Modéré", color: "#eab308" } },
+  { max: 200, l: { level: 4, label: "Élevé", color: "#f97316" } },
+  { max: 300, l: { level: 5, label: "Très élevé", color: "#ef4444" } },
+  { max: Infinity, l: { level: 6, label: "Extrême", color: "#a855f7" } },
+];
+export function vocLevel(idx: number): VocLevel { return (VOC_LEVELS.find((x) => idx <= x.max) ?? VOC_LEVELS[VOC_LEVELS.length - 1]).l; }
+/** Explication courte de l'indice, pour le bouton « ⓘ » de l'interface. */
+export const VOC_EXPLAIN = "L'algorithme de Sensirion compare l'air actuel à ce que le capteur a « appris » ces dernières heures (100 = air habituel du lieu) : il mesure des variations relatives de composés organiques volatils, ni une concentration, ni un danger sanitaire, ni le CO₂ ou le formaldéhyde.";
+/** Tendance d'une série d'indices (du plus ancien au plus récent, ≥ 8 valeurs) : dernier quart contre le reste, écart de 8 points d'indice. null si trop peu de valeurs. */
+export function vocTrend(values: number[]): "up" | "down" | "stable" | null {
+  if (values.length < 8) return null;
+  const cut = Math.floor(values.length * 0.75), mean = (a: number[]) => a.reduce((x, y) => x + y, 0) / a.length;
+  const d = mean(values.slice(cut)) - mean(values.slice(0, cut));
+  return d >= 8 ? "up" : d <= -8 ? "down" : "stable";
+}
+
+/** « 21,5 °C » depuis des dixièmes. Qualité de l'air : le niveau en toutes lettres (jamais le nombre). */
 export function formatMeasure(kind: MeasureKind, stored: number): string {
+  if (kind === "vocidx") return vocLevel(stored).label;
   const info = MEASURE_KINDS[kind];
   if (kind === "dl" && stored >= 1000) return `${(stored / 1000).toFixed(1).replace(".", ",")} Mbit/s`;
   return info.scale === 10 ? `${(stored / 10).toFixed(1).replace(".", ",")} ${info.unit}` : `${stored} ${info.unit}`;

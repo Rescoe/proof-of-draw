@@ -2,7 +2,7 @@
 // app/MeasuresChart.tsx — courbe + résumé d'une grandeur mesurée (partagé : profil du propriétaire, vue réseau publique). Aucune requête ici : les données viennent du parent.
 
 import { useMemo, useState } from "react";
-import { MEASURE_KINDS, formatMeasure, summarize, type Measure, type MeasureKind } from "@/lib/measures";
+import { MEASURE_KINDS, VOC_EXPLAIN, formatMeasure, summarize, vocLevel, vocTrend, type Measure, type MeasureKind } from "@/lib/measures";
 import { nearestPointIndex, timeAxisTicks } from "@/lib/timeAxis";
 
 export const fmtMeasureDate = (t: number) => new Date(t * 1000).toLocaleString("fr-FR", { weekday: "short", day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" });
@@ -44,17 +44,34 @@ function Chart({ points, kind }: { points: { t: number; x: number }[]; kind: Mea
           </g>); })}
         <line x1={P} y1={H - P} x2={W - P} y2={H - P} stroke="var(--border)" />
         <line x1={P} y1={P} x2={P} y2={H - P} stroke="var(--border)" />
-        <text x={4} y={P + 4} fontSize="10" fill="var(--text3)">{(hi / sc).toFixed(0)}</text>
-        <text x={4} y={H - P} fontSize="10" fill="var(--text3)">{(lo / sc).toFixed(0)}</text>
+        {kind !== "vocidx" && <text x={4} y={P + 4} fontSize="10" fill="var(--text3)">{(hi / sc).toFixed(0)}</text>}
+        {kind !== "vocidx" && <text x={4} y={H - P} fontSize="10" fill="var(--text3)">{(lo / sc).toFixed(0)}</text>}
         <path d={d} fill="none" stroke="var(--accent)" strokeWidth="2" strokeLinejoin="round" />
         {sel && (<>
           <line x1={px(sel.t)} x2={px(sel.t)} y1={P} y2={H - P} stroke="var(--text3)" strokeDasharray="3 3" />
-          <circle cx={px(sel.t)} cy={py(sel.x)} r={5} fill="var(--accent)" stroke="var(--bg)" strokeWidth={1.5} />
+          <circle cx={px(sel.t)} cy={py(sel.x)} r={5} fill={kind === "vocidx" ? vocLevel(sel.x).color : "var(--accent)"} stroke="var(--bg)" strokeWidth={1.5} />
         </>)}
       </svg>
       <p style={{ color: sel ? "var(--text2)" : "var(--text3)", fontSize: "0.78rem", margin: "2px 0 0", minHeight: "1.2em" }} aria-live="polite">
-        {sel ? <><b>{fmtMeasureDate(sel.t)}</b> · {formatMeasure(kind, sel.x)}</> : "Touche (ou survole) la courbe pour lire une valeur."}
+        {sel ? <><b>{fmtMeasureDate(sel.t)}</b> · {kind === "vocidx" ? <span style={{ color: vocLevel(sel.x).color, fontWeight: 600 }}>{formatMeasure(kind, sel.x)}</span> : formatMeasure(kind, sel.x)}</> : "Touche (ou survole) la courbe pour lire une valeur."}
       </p>
+    </div>
+  );
+}
+
+/** Qualité de l'air : niveau actuel (couleur), tendance et bouton « ⓘ » qui explique l'indice Sensirion en une phrase. Jamais le nombre. */
+function AirNote({ points }: { points: { t: number; x: number }[] }) {
+  const [open, setOpen] = useState(false);
+  const last = points.length ? points[points.length - 1].x : null;
+  const trend = vocTrend(points.map((p) => p.x));
+  const lv = last !== null ? vocLevel(last) : null;
+  return (
+    <div style={{ fontSize: "0.78rem", color: "var(--text2)", marginBottom: 4 }}>
+      {lv && <span>Actuellement : <b style={{ color: lv.color }}>{lv.label}</b></span>}
+      {trend && <span> · tendance : {trend === "up" ? "↗ en hausse" : trend === "down" ? "↘ en baisse" : "→ stable"}</span>}
+      <button type="button" aria-expanded={open} aria-label="Comment lire cet indice ?" onClick={() => setOpen((v) => !v)}
+        style={{ marginLeft: 8, width: 22, height: 22, borderRadius: 999, border: "1px solid var(--border)", background: "transparent", color: "var(--text2)", cursor: "pointer", fontSize: "0.75rem", lineHeight: 1 }}>ⓘ</button>
+      {open && <p style={{ margin: "4px 0 0", color: "var(--text3)" }}>{VOC_EXPLAIN}</p>}
     </div>
   );
 }
@@ -84,6 +101,7 @@ export function MeasuresChart({ measures, kinds, showTable = false }: { measures
       <div style={{ fontSize: "0.78rem", color: "var(--text2)", marginBottom: 4 }}>
         {info.label} : min {sum.min !== null ? formatMeasure(kind, sum.min) : "—"} · max {sum.max !== null ? formatMeasure(kind, sum.max) : "—"} · moyenne {sum.avg !== null ? formatMeasure(kind, sum.avg) : "—"} · {sum.count} mesure{sum.count > 1 ? "s" : ""}
       </div>
+      {kind === "vocidx" && <AirNote points={points} />}
       <Chart points={points} kind={kind} />
       {showTable && (
         <div style={{ overflowX: "auto" }}><table style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.8rem", marginTop: 8 }}>

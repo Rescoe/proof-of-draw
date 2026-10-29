@@ -209,4 +209,8 @@ static int histTicks(uint32_t t0, uint32_t span, HistTickFn fn, void* ctx) {
   return n;
 }
 
+// ─── Niveaux de l'indice COV Sensirion (29/10/2026) : l'écran n'affiche JAMAIS le nombre, seulement le niveau, sa couleur et la tendance ───────────────────────────────────────
+// 0 = apprentissage / absent ; 1 très faible (≤ 50), 2 faible (≤ 100), 3 modéré (≤ 150), 4 élevé (≤ 200), 5 très élevé (≤ 300), 6 extrême (> 300). Choix de visualisation du projet, PAS des seuils sanitaires.
+static uint8_t histVocLevel(int32_t idx) { if (idx <= 0) return 0; return idx <= 50 ? 1 : (idx <= 100 ? 2 : (idx <= 150 ? 3 : (idx <= 200 ? 4 : (idx <= 300 ? 5 : 6)))); }
+
 #endif  // POD_HIST_H

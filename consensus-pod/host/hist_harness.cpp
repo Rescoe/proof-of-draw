@@ -76,6 +76,11 @@ int main(int argc, char** argv) {
     if (!(c[30] < 400 && c[30] > 100)) ok = false;
     for (int i = 20; i < 40; i++) if (c[i] < 100 || c[i] > 400) ok = false;
   }
+  {   // niveaux de l'indice COV : bornes incluses
+    const int32_t in[] = {-5, 0, 1, 50, 51, 100, 101, 150, 151, 200, 201, 300, 301, 500, 5000};
+    const uint8_t out[] = {0, 0, 1, 1, 2, 2, 3, 3, 4, 4, 5, 5, 6, 6, 6};
+    for (size_t i = 0; i < sizeof in / sizeof in[0]; i++) if (histVocLevel(in[i]) != out[i]) ok = false;
+  }
   char a[20];
   const uint32_t ages[] = {0, 59, 60, 2699, 3599, 3600, 7800, 172799, 172800, 86400UL * 30};
   for (uint32_t s : ages) { histFmtAge(a, s); std::printf("AGE %lu %s\n", (unsigned long)s, a); }

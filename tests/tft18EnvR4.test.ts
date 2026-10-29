@@ -43,7 +43,7 @@ test("ENV R4 : TOUT le JSON est décodé sur la pile de travail (4 deserializeJs
 
 test("ENV R4 : l'affichage TFT n'est atteint que depuis la pile de travail (enveloppes), le flux de l'image ou setup()", () => {
   const lines = code.split("\n");
-  const allowed = new Set(["tftStatusImpl", "drawCartelImpl", "displayKeyMaterialOnceImpl", "displayOnboardingQRImpl", "streamFrame", "podStreamFrame", "setup", "envDrawDataImpl", "envBar", "restoreFrameImpl", "runAnim", "histDrawSeries", "histTickDraw", "histDetailImpl", "histSynthImpl"]);
+  const allowed = new Set(["tftStatusImpl", "drawCartelImpl", "displayKeyMaterialOnceImpl", "displayOnboardingQRImpl", "streamFrame", "podStreamFrame", "setup", "envDrawDataImpl", "envBar", "restoreFrameImpl", "runAnim", "histDrawSeries", "histTickDraw", "envPrintLevel", "histDetailImpl", "histSynthImpl"]);
   lines.forEach((l, i) => { if (/\btft\.\w+\(/.test(l) && !/^Adafruit_ST7735 tft/.test(l)) { const f = functionAt(lines, i); assert.ok(allowed.has(f), `tft.* dans ${f || "?"} : ${l.trim()}`); } });
   for (const w of ["tftStatus", "drawCartel", "displayKeyMaterialOnce", "displayOnboardingQR"]) {
     const i = code.indexOf(`) ${w}(`);                                   // enveloppe « static void __attribute__((noinline)) w(...) { PodNetInfo ni; auto wk = [&]() { wImpl(... »

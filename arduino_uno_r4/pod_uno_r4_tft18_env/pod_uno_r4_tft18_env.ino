@@ -1705,8 +1705,9 @@ static void envSgpStepRaw(unsigned long now) {      // UNE mesure + UN pas de l'
     if (g_vocStartMs == 0) g_vocStartMs = now ? now : 1;
   }
 }
-/** 0 = apprentissage, 1 = bon, 2 = moyen, 3 = élevé. Repères usuels de l'indice : ≤ 120 normal, ≤ 200 à surveiller, au-delà élevé (indicatif). */
-static uint8_t envVocClass() { if (g_vocIdx <= 0) return 0; return g_vocIdx <= 120 ? 1 : (g_vocIdx <= 200 ? 2 : 3); }
+/** 0 = apprentissage, 1..6 = très faible, faible, modéré, élevé, très élevé, extrême (pod_hist.h : histVocLevel ; choix de visualisation, pas des seuils sanitaires). */
+static uint8_t envVocClass() { return histVocLevel(g_vocIdx); }
+static const char* const ENV_VOC_NAME[7] = {"CALIBRAGE", "TRES FAIBLE", "FAIBLE", "MODERE", "ELEVE", "TRES ELEVE", "EXTREME"};
 
 static uint16_t envColor(uint8_t r, uint8_t g, uint8_t b) { return ((r & 0xF8) << 8) | ((g & 0xFC) << 3) | (b >> 3); }
 /** Température -> couleur : bleu (≤ 10 °C) … vert … rouge (≥ 30 °C). */
@@ -1718,7 +1719,16 @@ static uint16_t envTempColor() {
   if (x < 128) return envColor(0, (uint8_t)(x * 2), (uint8_t)(255 - x * 2));
   return envColor((uint8_t)((x - 128) * 2), (uint8_t)(255 - (x - 128) * 2), 0);
 }
-static uint16_t envVocColor(uint8_t cls) { return cls == 1 ? 0x07E0 : (cls == 2 ? C_GOLD : (cls == 3 ? C_RED : C_GREY)); }
+static uint16_t envVocColor(uint8_t cls) {
+  switch (cls) { case 1: return 0x07E0; case 2: return envColor(160, 255, 0); case 3: return C_GOLD; case 4: return envColor(255, 140, 0); case 5: return C_RED; case 6: return envColor(190, 60, 255); default: return C_GREY; }
+}
+/** Nom du niveau à (x, y) : taille 2 si les 10 caractères tiennent, sinon taille 1 ; la zone à sa droite est effacée (un nom plus court ne laisse pas de reste). */
+static void envPrintLevel(int x, int y, uint8_t cls) {
+  const char* n = ENV_VOC_NAME[cls > 6 ? 0 : cls];
+  const bool big = strlen(n) <= 10;
+  tft.fillRect(x, y, IMG_W - x, 16, C_BLACK);
+  tft.setTextSize(big ? 2 : 1); tft.setTextColor(envVocColor(cls), C_BLACK); tft.setCursor(x, big ? y : y + 4); tft.print(n);
+}
 /** "-12.3" aligné à droite sur w caractères (v10 = dixièmes). */
 static void envFmt10(char* o, int w, int v10) {
   char b[10]; uint8_t k = 0; const bool neg = v10 < 0; unsigned a = neg ? (unsigned)(-v10) : (unsigned)v10;
@@ -1767,14 +1777,13 @@ static void envDrawDataImpl(bool full) {
   tft.setTextSize(2); tft.setTextColor(fresh ? 0x07FF : C_GREY, C_BLACK); tft.setCursor(3, 72);
   if (fresh && g_lastH != NO_H) { envFmt10(b, 5, g_lastH); tft.print(b); tft.print("%"); } else tft.print("  -- ");
   envBar(91, (fresh && g_lastH != NO_H) ? (int)(g_lastH / 10) : 0, 0x07FF);
-  // air : verdict + barre + indice COV et valeur brute
+  // air : niveau qualitatif + barre (plus elle est pleine, plus le niveau est haut) ; jamais le nombre de l'indice ni la valeur brute du capteur
   const uint8_t cls = envVocClass();
-  static const char* const AIRN[] = {"CALIBRAGE", "BON      ", "MOYEN    ", "ELEVE    "};
   const uint16_t acol = envVocColor(cls);
-  tft.setTextSize(2); tft.setTextColor(acol, C_BLACK); tft.setCursor(3, 113); tft.print(AIRN[cls]);
-  envBar(131, cls ? 100 - (int)(g_vocIdx > 300 ? 100 : g_vocIdx * 100 / 300) : 0, acol);
+  envPrintLevel(3, 113, cls);
+  envBar(131, cls * 100 / 6, acol);
   tft.setTextSize(1); tft.setTextColor(C_GREY, C_BLACK); tft.setCursor(3, 140);
-  if (g_sgpSeen) { tft.print("COV "); envFmtU(b, 3, g_vocIdx > 0 ? (unsigned)g_vocIdx : 0); tft.print(b); tft.print("  brut "); envFmtU(b, 5, g_lastVoc); tft.print(b); tft.print(" "); } else tft.print("capteur absent                ");
+  if (g_sgpSeen) tft.print("air : indice relatif   "); else tft.print("capteur absent         ");
   // pied
   tft.fillRect(0, 150, IMG_W, 10, C_DARK);
   tft.setTextSize(1); tft.setTextColor(C_WHITE, C_DARK); tft.setCursor(3, 151);
@@ -1979,8 +1988,10 @@ static void histDrawSeries(int y0, int h, const HistSeries& s, uint16_t col, int
   if (minX >= 0) tft.fillCircle(minX, minY > y0 + ph - 4 ? y0 + ph - 4 : minY, 2, C_WHITE);
   char b[12];
   tft.setTextColor(col, C_BLACK);
-  tft.setCursor(0, y0); if (labelKind == 2) envFmtU(b, 4, (unsigned)vmax); else envFmt10(b, 4, (int)vmax); tft.print(b);
-  tft.setCursor(0, y0 + ph - 9); if (labelKind == 2) envFmtU(b, 4, (unsigned)vmin); else envFmt10(b, 4, (int)vmin); tft.print(b);
+  if (labelKind != 2) {                                                            // courbe de l'indice COV : aucun nombre sur l'axe (seulement les repères blancs min / max)
+    tft.setCursor(0, y0); envFmt10(b, 4, (int)vmax); tft.print(b);
+    tft.setCursor(0, y0 + ph - 9); envFmt10(b, 4, (int)vmin); tft.print(b);
+  }
   if (tag && tag[0]) { tft.setTextColor(C_GREY, C_BLACK); tft.setCursor(IMG_W - 6 * (int)strlen(tag) - 1, y0); tft.print(tag); }
 }
 static void histSetTag(char* o, uint32_t wantSec, uint32_t effSec) {          // « 24 h » quand la plage est pleine, « depuis 2h10 » sinon
@@ -2015,7 +2026,7 @@ static void histTrendLine(int kind, const HistSeries& s, uint32_t effSec, char* 
   *col = d <= -8 ? 0x07E0 : (d >= 8 ? C_RED : C_GREY);
   strcpy(out, d <= -8 ? "AMELIORATION" : (d >= 8 ? "DEGRADATION" : "STABLE"));
   char a[12], c[12]; envFmtU(a, 0, (unsigned)mr); envFmtU(c, 0, (unsigned)mp);
-  strcpy(line2, "recent "); strcat(line2, a); strcat(line2, " avant "); strcat(line2, c);
+  (void)a; (void)c; line2[0] = 0;                                                  // pas de nombres de l'indice à l'écran : la flèche et le mot suffisent
 }
 /** Page de détail d'UNE grandeur : valeur, tendance, extrêmes, courbe 24 h (plage adaptée) et courbe longue (7 jours, puis 30 jours) quand l'historique existe. */
 static void histDetailImpl(int kind, uint32_t now, uint32_t wantBottom, HistSeries* sa, HistSeries* sb, bool hasBottom) {
@@ -2034,8 +2045,7 @@ static void histDetailImpl(int kind, uint32_t now, uint32_t wantBottom, HistSeri
   if (kind == 2) {
     const uint8_t cls = envVocClass();
     tft.setTextColor(envVocColor(cls), C_BLACK); tft.setCursor(3, 18);
-    if (g_vocIdx > 0) { envFmtU(b, 3, (unsigned)g_vocIdx); tft.print(b); } else tft.print(" --");
-    tft.setTextSize(2); tft.setCursor(66, 24); tft.print(cls == 0 ? "CALIB" : (cls == 1 ? "BON" : (cls == 2 ? "MOYEN" : "ELEVE")));
+    envPrintLevel(3, 20, cls);                                                      // le niveau, jamais le nombre
   } else {
     const bool fresh = g_envDhtOkAt != 0 && millis() - g_envDhtOkAt < 30000UL;
     const bool ok = fresh && (kind == 0 ? g_lastT != NO_T : g_lastH != NO_H);
