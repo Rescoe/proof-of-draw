@@ -13,7 +13,7 @@ test("Galerie : titre, sous-titre, onglets « Œuvres validées / rejetées », 
   assert.match(g, /Œuvres validées par le réseau/);
   assert.match(g, /Œuvres validées\n\s*<\/button>/);
   assert.match(g, /Œuvres rejetées\n\s*<\/button>/);
-  assert.ok(g.includes('href="/gallery-ana"'), "Agents IA reste atteignable depuis la Galerie");
+  assert.ok(g.includes("/gallery-ana"), "Agents IA reste atteignable depuis la Galerie");
   assert.ok(g.includes('["animation", "🎞 Animations"]'));
   assert.ok(read("app/BlockGalleryClient.tsx").includes("Œuvres récentes"));
 });
@@ -41,4 +41,16 @@ test("les chemins n'ont pas changé : /onboard, /gallery-ana, /learn?path=instal
   assert.ok(read("app/profile/page.tsx").includes('href="/onboard"'));
   assert.ok(read("app/circles/CirclesClient.tsx").includes('href="/onboard"'));
   assert.ok(read("app/draw/DrawChoice.tsx").includes('href="/onboard"'));
+});
+
+test("Galerie : titre et sous-titre empilés, recherche courte et pleine largeur sur téléphone, « Créations IA » = lien secondaire hors du groupe de filtres", () => {
+  const g = read("app/gallery/GalleryClient.tsx");
+  assert.ok(g.includes('<div className="gc-titlebar">'));
+  assert.match(g, /\.gc-titlebar \{ display: flex; flex-direction: column/);
+  assert.ok(g.includes('placeholder="Titre, artiste, hash, n° de bloc…"'));
+  assert.match(g, /@media \(max-width: 640px\) \{[\s\S]*\.gc-search-bar \{ flex-direction: column/);
+  assert.match(g, /\.gc-search-input \{ min-height: 44px; font-size: 16px; \}/);
+  const filters = g.slice(g.indexOf('aria-label="Type d’œuvre"'), g.indexOf("{/* Les dessins d’agents IA"));
+  assert.ok(!filters.includes("/gallery-ana"), "le lien n'est plus dans le groupe de filtres");
+  assert.ok(g.includes('<Link href="/gallery-ana" className="gc-link-secondary">Créations d’agents IA →</Link>'));
 });

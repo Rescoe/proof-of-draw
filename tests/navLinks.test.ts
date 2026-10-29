@@ -71,3 +71,21 @@ test("tiroir : focus piégé (Tab / Maj+Tab), premier lien focalisé à l'ouvert
     assert.ok(nav.includes(needle), needle);
   }
 });
+
+test("Communauté : le bouton n'a jamais aria-current (ce n'est pas un lien vers la page) ; les liens du menu et du tiroir utilisent isCurrentPage", () => {
+  const nav = read("app/NavMenu.tsx");
+  assert.ok(!nav.includes('aria-controls={`nav-${id}-menu`} aria-current'), "pas d'aria-current sur le bouton Communauté");
+  assert.ok((nav.match(/isCurrentPage\(/g) ?? []).length >= 4, "barre, menu, tiroir (accueil + groupes)");
+});
+
+test("tiroir : ancré sous la barre (top: 100%), défilable jusqu'au dernier lien, zones sûres respectées", () => {
+  const css = read("app/globals.css").replace(/\r\n/g, "\n");
+  const m = /\.nav-drawer \{([^}]*)\}/.exec(css);
+  assert.ok(m, ".nav-drawer");
+  assert.match(m[1], /position: absolute/);
+  assert.match(m[1], /top: 100%/);
+  assert.match(m[1], /overflow-y: auto/);
+  assert.match(m[1], /max-height: calc\(100dvh - 80px\)/);
+  assert.match(m[1], /env\(safe-area-inset-bottom/);
+  assert.doesNotMatch(m[1], /76px/, "plus de valeur magique pour la hauteur de la barre");
+});

@@ -1,7 +1,7 @@
 // UX jalon 1 (29/10/2026) — états actifs de la navigation : exactement UNE entrée active dans la barre bureau pour chaque URL historique, et un lien actif par destination dans le tiroir.
 import test from "node:test";
 import assert from "node:assert/strict";
-import { DRAWER_GROUPS, activeDrawerHrefs, activeEntryId, isActive, type NavLink } from "../lib/navLinks";
+import { DRAWER_GROUPS, NAV_ENTRIES, activeDrawerHrefs, activeEntryId, isActive, isCurrentPage, type NavLink } from "../lib/navLinks";
 
 const split = (url: string): [string, string] => { const i = url.indexOf("?"); return i < 0 ? [url, ""] : [url.slice(0, i), url.slice(i)]; };
 
@@ -59,4 +59,19 @@ test("isActive : préfixe exact (« /drawing » n'est pas « /draw »), règles 
   assert.equal(isActive(understand, "/learn", ""), true);
   assert.equal(isActive(understand, "/learn", "?path=install"), false);
   assert.equal(isActive(understand, "/learn", "?path=network"), false);
+});
+
+test("aria-current=\"page\" est réservé au lien qui représente EXACTEMENT la page courante ; une section parente reste « active » (style) sans aria-current", () => {
+  const nav = NAV_ENTRIES.flatMap((e) => (e.kind === "link" ? [e.link] : e.links));
+  const cur = (url: string) => { const [p, q] = split(url); return nav.filter((l) => isCurrentPage(l, p, q)).map((l) => l.label); };
+  assert.deepEqual(cur("/artists"), ["Artistes"]);
+  assert.deepEqual(cur("/artists/abc"), [], "page d'un artiste : Communauté reste active (style), aucun lien n'est « la page courante »");
+  assert.equal(activeEntryId("/artists/abc"), "communaute");
+  assert.deepEqual(cur("/circles"), ["Cercles privés"]);
+  assert.deepEqual(cur("/learn"), ["Apprendre"]);
+  assert.deepEqual(cur("/onboard"), [], "/onboard allume « Mon espace » (style) mais n'est pas la page /profile");
+  assert.equal(activeEntryId("/onboard"), "espace");
+  assert.deepEqual(cur("/gallery-ana"), [], "autre galerie : Galerie active (style), pas la page courante");
+  assert.deepEqual(cur("/gallery"), ["Galerie"]);
+  assert.deepEqual(cur("/"), ["Accueil"]);
 });

@@ -81,6 +81,11 @@ export function isActive(link: NavLink, pathname: string, search = ""): boolean 
   return true;
 }
 
+/** Le lien représente-t-il EXACTEMENT la page courante ? (aria-current="page" lui est réservé ; une section parente reste « active » pour le style seulement.) */
+export function isCurrentPage(link: NavLink, pathname: string, search = ""): boolean {
+  return isActive(link, pathname, search) && pathname === pathOf(link.href);
+}
+
 /** Identifiant de l'unique entrée de la barre « bureau » active pour cette adresse (null si aucune : page hors navigation, ex. /bench). */
 export function activeEntryId(pathname: string, search = ""): string | null {
   for (const e of NAV_ENTRIES) {

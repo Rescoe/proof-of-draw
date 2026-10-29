@@ -316,11 +316,13 @@ export function GalleryClient() {
       {/* Header */}
       <div className="gc-topbar">
         <Link href="/" className="gc-back">← Accueil</Link>
-        <h1 className="gc-title">
-          <span className="gc-title-icon">◈</span>
-          Galerie
-        </h1>
-        <p className="gc-subtitle" style={{ margin: 0, color: "var(--text2)", fontSize: "0.9rem" }}>Œuvres validées par le réseau</p>
+        <div className="gc-titlebar">
+          <h1 className="gc-title">
+            <span className="gc-title-icon">◈</span>
+            Galerie
+          </h1>
+          <p className="gc-subtitle">Œuvres validées par le réseau</p>
+        </div>
       </div>
 
       {/* Tab bar */}
@@ -350,7 +352,8 @@ export function GalleryClient() {
                 ref={inputRef}
                 className="gc-search-input"
                 type="text"
-                placeholder="Hash, titre, artiste, deviceId, numéro de bloc…"
+                placeholder="Titre, artiste, hash, n° de bloc…"
+                aria-label="Rechercher une œuvre par titre, artiste, hash, appareil ou numéro de bloc"
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
                 spellCheck={false}
@@ -388,9 +391,9 @@ export function GalleryClient() {
                 {text}
               </button>
             ))}
-            {/* Les dessins d’agents IA vivent dans leur propre galerie : le lien garde cette destination atteignable depuis la Galerie */}
-            <Link href="/gallery-ana" className="gc-page-btn" style={{ textDecoration: "none" }}>🤖 Créations IA</Link>
           </div>
+          {/* Les dessins d’agents IA vivent dans leur propre galerie (autre page) : lien secondaire, pas un filtre */}
+          <p className="gc-more">Autre galerie : <Link href="/gallery-ana" className="gc-link-secondary">Créations d’agents IA →</Link></p>
 
           {/* Stats */}
           {data && !loading && (
@@ -489,6 +492,11 @@ export function GalleryClient() {
           gap: 16px;
           margin-bottom: 24px;
         }
+        .gc-titlebar { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+        .gc-subtitle { margin: 0; color: var(--text2, #a2a3bb); font-size: 0.9rem; }
+        .gc-more { margin: -4px 0 16px; font-size: 0.85rem; color: var(--text3, #64748b); }
+        .gc-link-secondary { color: var(--accent, #7c6bff); text-decoration: underline; text-underline-offset: 3px; font-weight: 500; }
+        .gc-link-secondary:hover { color: var(--text1, #f1f5f9); }
         .gc-back {
           font-size: 13px;
           color: var(--text3, #64748b);
@@ -582,6 +590,15 @@ export function GalleryClient() {
           color: var(--text1, #f1f5f9);
           outline: none;
           cursor: pointer;
+        }
+
+        @media (max-width: 640px) {
+          .gc-shell { padding-inline: 16px; }
+          .gc-topbar { align-items: flex-start; gap: 12px; }
+          .gc-search-bar { flex-direction: column; gap: 10px; }
+          .gc-search-wrap { min-width: 0; width: 100%; }
+          .gc-search-input { min-height: 44px; font-size: 16px; }          /* 16 px : pas de zoom automatique sur iOS */
+          .gc-screen-select { width: 100%; min-height: 44px; font-size: 16px; }
         }
 
         .gc-stats {
