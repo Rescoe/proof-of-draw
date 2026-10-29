@@ -5,5 +5,5 @@ export default async function NetworkPage({ searchParams }: { searchParams: Prom
   const params = await searchParams;
   const fixture = Array.isArray(params.fixture) ? params.fixture[0] : params.fixture;
   const snapshot = await getNetworkSnapshotFor(fixture);
-  return <NetworkMap snapshot={snapshot} fixture={fixture} />;
+  return <NetworkMap snapshot={snapshot} fixture={fixture} surface="network" />;
 }

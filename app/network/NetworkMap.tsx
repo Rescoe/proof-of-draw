@@ -11,13 +11,22 @@ import { ServerInfoPanel } from "./ServerInfoPanel";
 import { GlobalTerminalPanel, useNetworkEventStream } from "./GlobalTerminal";
 import { LiveDisplaysSection, useLiveDisplays } from "./LiveDisplays";
 
-type Props = { snapshot: NetworkSnapshot | null; fixture?: string };
+/**
+ * surface : où la carte est montrée (UX jalon 2, 29/10/2026).
+ *  • "network" (défaut) : la page /network — journal technique dans le panneau, section « Actuellement affiché » sous la carte.
+ *  • "home" : l'accueil — la constellation prend toute la largeur tant que rien n'est sélectionné (aucune colonne de terminal vide), le panneau de détail n'existe qu'une fois un nœud choisi
+ *    (à droite sur grand écran, sous la carte sur tablette / téléphone) ; ni terminal ni « Actuellement affiché » (le journal de l'accueil est EspActivityFeed). Les miniatures des nœuds et
+ *    les boucles d'animation sont conservées : elles viennent de la même lecture (useLiveDisplays) et ne coûtent aucune requête de plus.
+ */
+export type NetworkSurface = "home" | "network";
+type Props = { snapshot: NetworkSnapshot | null; fixture?: string; surface?: NetworkSurface };
 
 // Sélection unifiée : un device (+ éventuellement un de ses écrans), ou le
 // nœud central "RESCOE" (infos serveur/réseau global).
 type ViewMode = "classic" | "diagram";
 
-export function NetworkMap({ snapshot, fixture }: Props) {
+export function NetworkMap({ snapshot, fixture, surface = "network" }: Props) {
+  const isHome = surface === "home";
   const [selected, setSelected] = useState<GraphSelection | null>(null);
   const [viewMode, setViewMode] = useState<ViewMode>("diagram");
   // Isolation d'un artiste dans la Constellation (clé stable) : le reste du réseau s'estompe
@@ -32,11 +41,11 @@ export function NetworkMap({ snapshot, fixture }: Props) {
   const [reconEvents, setReconEvents] = useState<ReturnType<typeof reconstructedLogEvents>>([]);
   const liveDisplays = live.data?.displays ?? null;
   useEffect(() => {
-    if (!snapshot) { setReconEvents([]); return; }
+    if (!snapshot || isHome) { setReconEvents([]); return; }   // accueil : pas de terminal, donc rien à reconstituer
     const hierarchy = buildNetworkHierarchy(snapshot.devices);
     const flows = buildObservedFlows({ devices: snapshot.devices, artists: hierarchy.artists, displays: liveDisplays, events: eventStream.events, now: Date.now(), reconstruct: true });
     setReconEvents(reconstructedLogEvents(flows));
-  }, [snapshot, liveDisplays, eventStream.events]);
+  }, [snapshot, liveDisplays, eventStream.events, isHome]);
   const terminalStream = useMemo(() => ({
     connected: eventStream.connected,
     events: [...eventStream.events, ...reconEvents.filter((e) => !eventStream.events.some((x) => x.id === e.id))].sort((a, b) => a.ts - b.ts).slice(-200),
@@ -103,7 +112,7 @@ export function NetworkMap({ snapshot, fixture }: Props) {
       <p>{viewMode === "classic" ? "Vue historique conservée" : "Carte spatiale · niveaux de détail · flux observés et reconstitués*"}</p>
     </div>
     {/* Le panel est toujours présent — console par défaut, device info si sélectionné */}
-    <div className="nv2-layout nv2-layout--panel">
+    <div className={`nv2-layout nv2-layout--panel${isHome ? ` nv2-layout--home${selected ? " nv2-layout--home-selected" : ""}` : ""}`}>
       {viewMode === "classic" ? (
         <NetworkStage
           snapshot={snapshot}
@@ -126,6 +135,7 @@ export function NetworkMap({ snapshot, fixture }: Props) {
         />
       )}
 
+      {(!isHome || selected) && (
       <aside className={`nv2-panel-wrap${selected ? " nv2-panel-wrap--has-selection" : ""}`}>
         {selected?.kind === "device" || selected?.kind === "screen" ? (
           <SidePanel
@@ -176,6 +186,7 @@ export function NetworkMap({ snapshot, fixture }: Props) {
           </div>
         )}
       </aside>
+      )}
 
       <style>{`
         .nv2-view-switch {
@@ -290,7 +301,12 @@ export function NetworkMap({ snapshot, fixture }: Props) {
           overflow-y: auto !important;
         }
 
+        /* Accueil : UNE colonne tant que rien n'est sélectionné (la constellation occupe toute la largeur), deux colonnes seulement avec un détail ouvert */
+        .nv2-layout--home { grid-template-columns: minmax(0, 1fr); }
+        .nv2-layout--home.nv2-layout--home-selected { grid-template-columns: minmax(0, 1fr) minmax(300px, 340px); }
+
         @media (max-width: 900px) {
+          .nv2-layout--home.nv2-layout--home-selected { grid-template-columns: 1fr; }   /* détail SOUS la carte sur tablette / téléphone */
           .nv2-view-switch { align-items: flex-start; }
           .nv2-view-switch p { display: none; }
           /* Sur tablette/mobile : panel passe en dessous, en pleine page —
@@ -349,11 +365,13 @@ export function NetworkMap({ snapshot, fixture }: Props) {
       `}</style>
     </div>
 
-    <LiveDisplaysSection
-      snapshot={snapshot}
-      data={live.data}
-      onSelect={(device, screen) => handleSelect(device, screen)}
-    />
+    {!isHome && (
+      <LiveDisplaysSection
+        snapshot={snapshot}
+        data={live.data}
+        onSelect={(device, screen) => handleSelect(device, screen)}
+      />
+    )}
     </>
   );
 }
