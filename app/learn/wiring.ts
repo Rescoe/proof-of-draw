@@ -197,10 +197,10 @@ export const WIRING: Record<"eink29bwr" | "eink27bw" | "oled" | "tft18" | "tftSd
     nodeOrder: UNO_R4_ORDER,
     gpio: UNO_R4_PIN_INFO,
   },
-  // Source : arduino_uno_r4/pod_uno_r4_tft18/pod_uno_r4_tft18.ino.
+  // Source : arduino_uno_r4/pod_uno_r4_tft18_env/pod_uno_r4_tft18_env.ino (même câblage que l'ancien port pod_uno_r4_tft18).
   r4Tft18: {
     id: "r4Tft18",
-    title: 'TFT 1.8" ST7735S — firmware pod_uno_r4_tft18',
+    title: 'TFT 1.8" ST7735S — firmware pod_uno_r4_tft18_env',
     controllerName: "UNO R4 WiFi",
     moduleName: 'TFT 1.8" (ST7735S)',
     wires: [

@@ -66,7 +66,7 @@ Conséquence pratique : une mise à jour à distance de la carte de `dev_T46HBXG
 | `r4dht22-1.3` | aucun (`sensor`) | DHT22 | n'est ni écran ni votant **aujourd'hui** (capteur seul exclu du quorum ; cible : capacité de validation explicite, non implémentée) | — | `M` : DHT22 → `/api/sensor` 200 observé | profil capteur validé par câble ; pas d'OTA |
 | `r4eink27-1.1` | e-ink 2,7″ BW | — | `C` | — | — | port compilé, non essayé |
 | `r4multiscreen-1.1` | e-ink 2,7″ BW + OLED | — | `C` | — | — | port compilé, non essayé |
-| `r4tft18-1.1` | TFT 1,8″ | — | `C` | — | — | port compilé, non essayé |
+| `r4tft18-2.6` (`pod_uno_r4_tft18_env`, **téléchargeable** ; capteurs et écran de station éteints par défaut) | TFT 1,8″ | — | `V2` : vote réel, image, affichage et ACK observés sur la station (bloc #126, 29/10/2026) | OTA R4 éteinte (aucune clé de production publiée) | la station (DHT22 + SGP40 + microSD) est la ligne « produit complet » ci-dessus | téléchargeable ; un seul appareil, un seul essai de ce profil |
 
 Les essais OTA R4 de laboratoire (OTA-3, 16/10) ont prouvé le mécanisme de reprogrammation Wi-Fi et la conservation de l'état sur une R4 de canari. **Les 26 et 27/10/2026, un client applicatif OTA R4-B (manifeste signé Ed25519, binaire brut, staging, relecture, ticket, séquence en data flash) a mis à jour sur UNE carte : la station `r4env` de A vers B (2 réussites sur 3 essais), puis le produit complet `r4tft18` (1 réussite sur 1, 149 Ko ; staging de 245 Ko relu à l'identique)**, avec un serveur de banc en HTTP clair et des clés de test. 40 cas négatifs refusés. TLS : un 404 de production, et 10 Ko téléchargés par TLS (chaîne du site) avec écriture du staging. Ce n'est **pas** un client OTA distribué : aucune publication, pas de retour arrière automatique, pas de coupure d'alimentation essayée, un seul module Wi-Fi. Détails et réserves : `OTA_R4_CLIENT_ET_PUBLICATION_2026_10_26.md`.
 
@@ -91,7 +91,8 @@ Le serveur reconnaît une famille par le **préfixe de la version déclarée** �
 | `eink27bw` | 2.1 | — | 2.1 | **non** (jamais essayé en V2) | non |
 | `r4tft28` | 2.5 | — | 2.5 | oui (#100 et #103, 14/10) | non (pas de client OTA applicatif) |
 | `r4eink29` | 1.1 | — | 1.2 | oui (#100 et #101, 14/10) | non |
-| `r4eink27`, `r4multiscreen`, `r4tft18` | 1.1 | — | 1.1 | **non** (compilés seulement) | non |
+| `r4eink27`, `r4multiscreen` | 1.1 | — | 1.1 | **non** (compilés seulement) | non |
+| `r4tft18` | 1.1 | — | 2.6 | oui (bloc #126, 29/10) | non (client présent, éteint) |
 | `r4dht22` (capteur seul) | ne vote pas | — | 1.3 | sans objet | non |
 
 Les valeurs « dès » viennent de `lib/voteCapability.ts` (`VOTE_V2_FIRMWARE`) et `lib/otaDistribution.ts` (`OTA_CLIENT_FIRMWARE`) ; un test compare ce tableau au code.
@@ -166,3 +167,5 @@ Interdit de faire passer une case de `C` à `M`, `V2` ou `OTA` sans journal mat�
 - **29/10/2026 — station `r4tft18-2.6`** (compilée, non flashée) : échelle de temps sur les courbes de l'écran (trait par heure, 00/06/12/18, heure locale France). Le vote reste celui des lignes `r4tft18-2.4`/`2.5` ; l'écran avec échelle n'a **pas** été vu sur la carte. OTA : `POD_OTA_R4 = 0` sur la carte, donc câble. Détail : `docs/CAPTEUR_TEMPERATURE_R4_DHT22.md`.
 
 - **29/10/2026 — BWR téléchargeable remis au profil de distribution** : le code proposé au téléchargement était resté en `eink29bwr-2.3` (OTA et portail Wi-Fi éteints, Wi-Fi dans le binaire), donc sans mise à jour à distance. Il porte désormais `eink29bwr-2.13` avec `POD_WIFI_FROM_RECORD`, `POD_WIFI_PORTAL`, `POD_OTA`, `POD_OTA_CLIENT` et `POD_FRAME_CHUNK` à 1 par défaut ; capteur DHT22, OLED et affichage capteur restent à 0. Compilé (cœur 3.1.2, nodemcuv2 4M2M) : 529 424 o, RAM statique 34 176 o, deux clés publiques de publication présentes, aucun identifiant Wi-Fi. **Jamais flashé tel quel** : seule la combinaison avec capteur/OLED a traversé un canari.
+
+- **29/10/2026 — téléchargements remis à jour** : le BWR 2,9″ passe à `eink29bwr-2.13` (portail Wi-Fi + OTA, voir plus haut) ; le profil UNO R4 + TFT 1,8″ ne propose plus l'ancien port `pod_uno_r4_tft18` (1.1, jamais essayé) mais le produit `pod_uno_r4_tft18_env` (`r4tft18-2.6`), compilé depuis les seuls fichiers suivis par git (52 % flash, 49 % RAM, options capteur / station / OTA à 0). **Reste en retard** : le téléchargement UNO R4 + TFT 2,8″ est `r4tft28-2.5` alors que la carte tourne en `r4tft28-2.6` (portail Wi-Fi, branche `claude/r4-tft28-portail-vote`, non fusionnée) ; les ports e-ink 2,7″ (ESP8266 seul, UNO R4 seul et + OLED) n'ont jamais été essayés et n'ont pas d'OTA ; aucun firmware UNO R4 téléchargeable ne reçoit de mise à jour à distance.

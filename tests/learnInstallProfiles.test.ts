@@ -26,7 +26,8 @@ test("apprendre : les trois nouveaux ports complètent la matrice UNO R4", () =>
   assert.equal(profileForSelection("eink27bwSolo", "unoR4")?.id, "r4Eink27");
   assert.equal(profileForSelection("eink27bwOled", "unoR4")?.id, "r4Eink27Oled");
   assert.equal(profileForSelection("tft18", "unoR4")?.id, "r4Tft18");
-  for (const id of ["r4Eink27", "r4Eink27Oled", "r4Tft18"] as const) {
+  assert.equal(INSTALL_PROFILE_LIST.find((item) => item.id === "r4Tft18")?.testedOnHardware, true, "r4Tft18 = produit station r4tft18-2.6, observé sur carte (29/10/2026)");
+  for (const id of ["r4Eink27", "r4Eink27Oled"] as const) {
     const profile = INSTALL_PROFILE_LIST.find((item) => item.id === id);
     assert.equal(profile?.testedOnHardware, false);
     assert.match(profile?.statusNote ?? "", /non testé|pas encore été/i);

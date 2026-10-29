@@ -57,8 +57,8 @@ const FIRMWARE_VARIANTS: Record<string, FirmwareVariant> = {
   r4Tft18: {
     label: "pod-firmware-r4-tft18",
     board: "Arduino UNO R4 WiFi",
-    sources: [{ root: "arduino_uno_r4", folder: "pod_uno_r4_tft18" }],
-    statusWarning: "PORT NON TESTÉ SUR LE MATÉRIEL (06/10/2026) : TFT 1,8 pouces sur UNO R4 WiFi. Images fixes seulement avant validation.",
+    sources: [{ root: "arduino_uno_r4", folder: "pod_uno_r4_tft18_env" }],
+    statusWarning: "Station TFT 1,8 pouces (r4tft18-2.6) : vote réel v2 observé sur une UNO R4 (bloc #126 miné par la station, 29/10/2026) ; image, capteurs DHT22 / SGP40 et écran de station fonctionnent sur cette carte. PAS de mise à jour à distance (OTA) : le client existe mais reste éteint (aucune clé de production publiée). Capteurs et écran de station : options POD_SENSORS / POD_ENV_DISPLAY en tête du sketch (éteintes par défaut : TFT simple).",
   },
   r4Tft28: {
     label: "pod-firmware-r4-tft28",
@@ -78,7 +78,7 @@ const FIRMWARE_VARIANTS: Record<string, FirmwareVariant> = {
       { root: "arduino_uno_r4", folder: "pod_uno_r4_eink29" },
       { root: "arduino_uno_r4", folder: "pod_uno_r4_eink27" },
       { root: "arduino_uno_r4", folder: "pod_uno_r4_eink27_oled" },
-      { root: "arduino_uno_r4", folder: "pod_uno_r4_tft18" },
+      { root: "arduino_uno_r4", folder: "pod_uno_r4_tft18_env" },
       { root: "arduino_uno_r4", folder: "pod_uno_r4" },
     ],
   },

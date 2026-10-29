@@ -54,8 +54,8 @@ test("matrice : aucune variante capteur/OLED n'est présentée comme éprouvée 
 test("téléchargements : avertissements de /api/esp-firmware cohérents avec la matrice", () => {
   const route = read("app/api/esp-firmware/route.ts");
   const warn = (key: string) => { const i = route.indexOf(`  ${key}: {`); assert.ok(i > 0, key); const seg = route.slice(i, route.indexOf("\n  },", i) > 0 ? route.indexOf("\n  },", i) : i + 900); const m = /statusWarning:\s*"([^"]*)"/.exec(seg); return m ? m[1] : ""; };
-  for (const k of ["r4Eink27", "r4Eink27Oled", "r4Tft18"]) assert.match(warn(k), /NON TESTÉ/, k);
-  for (const k of ["r4Eink29", "r4Tft28"]) { assert.match(warn(k), /v2 observé|observés/, k); assert.doesNotMatch(warn(k), /reste à confirmer/, k); }
+  for (const k of ["r4Eink27", "r4Eink27Oled"]) assert.match(warn(k), /NON TESTÉ/, k);
+  for (const k of ["r4Eink29", "r4Tft28", "r4Tft18"]) { assert.match(warn(k), /v2 observé|observés/, k); assert.doesNotMatch(warn(k), /reste à confirmer/, k); }
   const solo = /eink27bwSolo: \{[\s\S]*?statusWarning: "([^"]*)"/.exec(route);
   assert.ok(solo && /NON ESSAYÉ/.test(solo[1]), "e-ink 2,7″ seul : avertissement attendu (aucune preuve matérielle en V2)");
 });
@@ -124,7 +124,7 @@ test("matrice : le tableau « qui vote en V2, qui est mis à jour à distance »
   for (const fam of Object.keys(VOTE_V2_FIRMWARE)) assert.ok(seen.has(fam), `famille ${fam} du serveur absente de la matrice`);
   // version téléchargeable (sketch) = version de la colonne 4, pour les familles ESP8266 et R4 recensées
   const sketches: Record<string, string> = { tft18: "esp8266/esp_tft1.8/esp_tft1.8.ino", eink29bwr: "esp8266/esp_eink_2.9BWR/esp_eink_2.9BWR.ino", multiscreen: "esp8266/esp_eink_2.7BW_OLED/esp_eink_2.7BW_OLED.ino", eink27bw: "esp8266/esp_eink_2.7BW/esp_eink_2.7BW.ino",
-    r4tft28: "arduino_uno_r4/pod_uno_r4/pod_uno_r4.ino", r4eink29: "arduino_uno_r4/pod_uno_r4_eink29/pod_uno_r4_eink29.ino", r4eink27: "arduino_uno_r4/pod_uno_r4_eink27/pod_uno_r4_eink27.ino", r4multiscreen: "arduino_uno_r4/pod_uno_r4_eink27_oled/pod_uno_r4_eink27_oled.ino", r4tft18: "arduino_uno_r4/pod_uno_r4_tft18/pod_uno_r4_tft18.ino" };
+    r4tft28: "arduino_uno_r4/pod_uno_r4/pod_uno_r4.ino", r4eink29: "arduino_uno_r4/pod_uno_r4_eink29/pod_uno_r4_eink29.ino", r4eink27: "arduino_uno_r4/pod_uno_r4_eink27/pod_uno_r4_eink27.ino", r4multiscreen: "arduino_uno_r4/pod_uno_r4_eink27_oled/pod_uno_r4_eink27_oled.ino", r4tft18: "arduino_uno_r4/pod_uno_r4_tft18_env/pod_uno_r4_tft18_env.ino" };
   for (const r of t.rows) for (const fam of (r[0].match(/`([a-z0-9]+)`/g) ?? []).map((x) => x.replace(/`/g, ""))) {
     if (!sketches[fam]) continue;
     const v = /#define FIRMWARE_VERSION\s+"([a-z0-9]+)-(\d+\.\d+)"/.exec(read(sketches[fam]))!;

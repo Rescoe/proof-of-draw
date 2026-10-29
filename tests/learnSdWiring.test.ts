@@ -19,7 +19,7 @@ test("TFT 1,8″ sur UNO R4 : le câblage SD optionnel existe, suit le firmware 
   assert.notEqual(wire(sd, "SD_CS"), wire(tft, "CS"), "deux chip selects distincts");
   const p = INSTALL_PROFILES.r4Tft18;
   assert.equal(p.optionalWiring, sd);
-  assert.match(p.optionalWiringNote ?? "", /ne l'utilise pas encore/, "honnête : le firmware du profil n'utilise pas encore la carte");
+  assert.match(p.optionalWiringNote ?? "", /Sans carte SD ni capteur/, "honnête : la carte SD n'est utilisée qu'avec les options de la station");
 });
 
 test("TFT 2,8″ tactile sur UNO R4 : la microSD du shield est câblée sur D4 comme dans le firmware, et l'aide microSD est présente", () => {
