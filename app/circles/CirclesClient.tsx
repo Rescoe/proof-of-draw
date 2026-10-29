@@ -74,7 +74,7 @@ export function CirclesClient() {
   );
 
   return (
-    <div style={{ maxWidth: 820, margin: "0 auto", padding: "1.5rem 0 3rem", display: "flex", flexDirection: "column", gap: "1.4rem" }}>
+    <div className="pod-page" style={{ maxWidth: 820, display: "flex", flexDirection: "column", gap: "1.4rem" }}>
       <header>
         <h1 style={{ margin: "0 0 0.4rem", fontSize: "1.7rem" }}>Cercles privés</h1>
         <p style={{ margin: 0, color: "var(--text2)", lineHeight: 1.6 }}>
@@ -214,8 +214,8 @@ function CirclePanel({ id, say, onChanged, onClosed }: { id: string; say: (k: "o
           <h3 style={{ margin: 0, fontSize: "1rem" }}>Messages</h3>
           <button type="button" style={btn()} onClick={() => void loadMsgs()}>Actualiser</button>
         </div>
-        <form onSubmit={(e) => { e.preventDefault(); if (!text.trim()) return; void run(() => api("POST", `/api/circles/${id}/messages`, { text }), undefined, () => { setText(""); void loadMsgs(); }); }} style={{ display: "flex", gap: 8, margin: "8px 0" }}>
-          <input value={text} onChange={(e) => setText(e.target.value)} maxLength={280} placeholder="Écrire au cercle (280 caractères)" aria-label="Message" style={{ ...input, flex: 1 }} />
+        <form onSubmit={(e) => { e.preventDefault(); if (!text.trim()) return; void run(() => api("POST", `/api/circles/${id}/messages`, { text }), undefined, () => { setText(""); void loadMsgs(); }); }} style={{ display: "flex", gap: 8, margin: "8px 0", flexWrap: "wrap" }}>
+          <input value={text} onChange={(e) => setText(e.target.value)} maxLength={280} placeholder="Écrire au cercle (280 caractères)" aria-label="Message" style={{ ...input, flex: "1 1 200px", minWidth: 0 }} />
           <button type="submit" disabled={busy || !text.trim()} style={btn(true)}>Publier</button>
         </form>
         {msgs === null ? <p style={muted}>Chargement…</p> : msgs.length === 0 ? <p style={muted}>Aucun message pour le moment.</p> : (

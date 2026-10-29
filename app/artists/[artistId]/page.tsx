@@ -558,6 +558,9 @@ export default function ArtistDetailPage() {
             grid-template-columns: repeat(2, 1fr);
           }
         }
+        @media (max-width: 420px) {
+          .ab-grid { grid-template-columns: 1fr; }   /* image, titre et badges respirent sur 320-420 px */
+        }
       `}</style>
     </div>
   );
