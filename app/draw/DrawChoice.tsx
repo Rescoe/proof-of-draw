@@ -60,7 +60,7 @@ export function DrawChoice() {
   return (
     <div className="pod-page pod-page--narrow" style={{ display: "flex", flexDirection: "column", gap: "1.75rem" }}>
       <header>
-        <h1 style={{ margin: "0 0 0.4rem", fontSize: "1.7rem" }}>Créer une œuvre</h1>
+        <h1 style={{ margin: "0 0 0.4rem", fontSize: "1.7rem" }}>Dessiner</h1>
         <p style={{ margin: 0, color: "var(--text2)" }}>Choisis l’écran sur lequel ton œuvre sera validée par le réseau, puis affichée. <b>Dessiner</b> crée une image fixe ; <b>Animer</b> compose plusieurs images (disponible sur les écrans capables de les jouer).</p>
       </header>
 

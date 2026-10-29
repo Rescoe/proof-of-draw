@@ -18,11 +18,12 @@ test("Galerie : titre, sous-titre, onglets « Œuvres validées / rejetées », 
   assert.ok(read("app/BlockGalleryClient.tsx").includes("Œuvres récentes"));
 });
 
-test("accueil : trois portes « Créer une œuvre », « Voir la galerie », « Connecter un appareil » (guide d'installation)", () => {
+test("accueil : trois portes « Dessiner », « Galerie », « Installer un appareil » (guide d'installation), sans emoji", () => {
   const h = read("app/page.tsx");
-  assert.match(h, /<strong>Créer une œuvre<\/strong>/);
-  assert.match(h, /<strong>Voir la galerie<\/strong>/);
-  assert.match(h, /href="\/learn\?path=install#installer"[^>]*>\s*<span[^>]*>🔌<\/span>\s*<strong>Connecter un appareil<\/strong>/);
+  assert.match(h, /<strong>Dessiner<\/strong>/);
+  assert.match(h, /<strong>Galerie<\/strong>/);
+  assert.match(h, /href="\/learn\?path=install#installer"[^>]*>\s*<strong>Installer un appareil<\/strong>/);
+  assert.doesNotMatch(h, /home-action__icon/);
   assert.doesNotMatch(h, /<strong>Découvrir<\/strong>|Connecter mon écran/);
 });
 

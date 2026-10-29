@@ -633,7 +633,7 @@ function buildEspDeviceLog(
     push(f.createdAt, "PULL",
       `Nouvelle frame frameId=${f.frameId.slice(0, 12)}… source=${f.sourceDeviceId ?? "consensus"} → fetch`);
     push(f.createdAt + 1, "FETCHFRAME",
-      `✅ affichée frameId=${f.frameId.slice(0, 12)}… source=${f.sourceDeviceId ?? "consensus"}`);
+      `affichée frameId=${f.frameId.slice(0, 12)}… source=${f.sourceDeviceId ?? "consensus"}`);
   } else {
     push(device.lastPing || Date.now(), "PULL", "Aucune frame");
   }
@@ -713,7 +713,7 @@ function DeviceMeasuresSection({ device }: { device: NetworkDevice }) {
         if (gk.length === 0) return null;
         return (
           <div className="nv2-panel__section" key={g.id}>
-            <div className="nv2-panel__section-label">{g.id === "env" ? "🌡" : "📶"} {g.label}</div>
+            <div className="nv2-panel__section-label">{g.label}</div>
             {!last && g.id === "env" && <p className="nv2-muted nv2-small">Aucune mesure reçue pour l&apos;instant.</p>}
             {last && (
               <div className="nv2-metrics-grid">

@@ -8,13 +8,13 @@ import { DRAWER_GROUPS, DRAWER_HOME, NAV_ENTRIES, allNavHrefs, pathOf } from "..
 const read = (p: string) => fs.readFileSync(path.join(__dirname, "..", p), "utf8");
 const label = (e: (typeof NAV_ENTRIES)[number]) => (e.kind === "link" ? e.link.label : e.label);
 
-test("barre bureau : Accueil · Galerie · Créer une œuvre · Réseau · Communauté · Apprendre · Mon espace (décision D1)", () => {
-  assert.deepEqual(NAV_ENTRIES.map(label), ["Accueil", "Galerie", "Créer une œuvre", "Réseau", "Communauté", "Apprendre", "Mon espace"]);
+test("barre bureau : Accueil · Galerie · Dessiner · Réseau · Communauté · Apprendre · Mon espace (décision D1)", () => {
+  assert.deepEqual(NAV_ENTRIES.map(label), ["Accueil", "Galerie", "Dessiner", "Réseau", "Communauté", "Apprendre", "Mon espace"]);
 });
 
-test("« Créer une œuvre » est l'unique appel à l'action ; « Communauté » regroupe Artistes et Cercles privés", () => {
+test("aucune entrée n'est mise en avant par la couleur ; « Communauté » regroupe Artistes et Cercles privés", () => {
   const ctas = NAV_ENTRIES.filter((e) => e.kind === "link" && e.cta);
-  assert.deepEqual(ctas.map(label), ["Créer une œuvre"]);
+  assert.deepEqual(ctas.map(label), []);
   const community = NAV_ENTRIES.find((e) => e.kind === "menu");
   assert.ok(community && community.kind === "menu");
   assert.deepEqual(community.links.map((l) => [l.label, l.href]), [["Artistes", "/artists"], ["Cercles privés", "/circles"]]);
@@ -24,7 +24,7 @@ test("tiroir : Accueil puis exactement les quatre groupes PARTICIPER · EXPLORER
   assert.equal(DRAWER_HOME.label, "Accueil");
   assert.deepEqual(DRAWER_GROUPS.map((g) => g.label), ["Participer", "Explorer", "Mon compte", "Aide"]);
   assert.deepEqual(DRAWER_GROUPS.map((g) => g.links.map((l) => l.label)), [
-    ["Créer une œuvre", "Galerie"],
+    ["Dessiner", "Galerie"],
     ["Réseau en direct", "Artistes", "Cercles privés"],
     ["Mon espace", "Associer un appareil"],
     ["Comprendre Proof-of-Draw", "Installer un appareil", "Documentation technique"],

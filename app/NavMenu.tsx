@@ -93,7 +93,7 @@ function NavMenuView({ search }: { search: string }) {
       <div className="site-nav__links">
         {NAV_ENTRIES.map((e) => e.kind === "link" ? (
           <Link key={e.id} href={e.link.href} aria-current={isCurrentPage(e.link, pathname, search) ? "page" : undefined}
-            className={`site-nav__link${e.cta ? " site-nav__link--cta" : ""}${activeId === e.id ? " site-nav__link--active" : ""}`}>
+            className={`site-nav__link${activeId === e.id ? " site-nav__link--active" : ""}`}>
             {e.link.label}
           </Link>
         ) : (

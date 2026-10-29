@@ -111,15 +111,6 @@ code { font-family: "JetBrains Mono", monospace; }
   border-color: rgba(124,107,255,0.5);
   background: rgba(124,107,255,0.1);
 }
-/* « Créer une œuvre » : appel à l'action principal de la barre */
-.site-nav__link--cta {
-  color: #fff;
-  font-weight: 600;
-  border-color: rgba(124,107,255,0.7);
-  background: linear-gradient(135deg, rgba(124,107,255,0.55), rgba(255,107,157,0.35));
-}
-.site-nav__link--cta:hover { border-color: rgba(255,255,255,0.5); }
-.site-nav__link--cta.site-nav__link--active { box-shadow: 0 0 0 2px rgba(124,107,255,0.45); }
 /* Menu « Communauté » (bureau) : bouton + liste, Échap et clic extérieur gérés par NavMenu */
 .site-nav__menu { position: relative; }
 .site-nav__menu-btn { font: inherit; font-size: 0.88rem; cursor: pointer; gap: 0.3rem; }
@@ -1306,8 +1297,6 @@ code { font-family: "JetBrains Mono", monospace; }
 .home-action:hover, .home-action:focus-visible { border-color: rgba(124,107,255,0.55); transform: translateY(-2px); outline: none; }
 .home-action strong { color: var(--text); font-size: 1.05rem; }
 .home-action span:last-child { font-size: 0.88rem; line-height: 1.5; }
-.home-action__icon { font-size: 1.6rem; }
-.home-action--primary { border-color: rgba(124,107,255,0.5); background: rgba(124,107,255,0.1); }
 .home-live-title { margin: 0 0 0.75rem; font-size: 1.1rem; color: var(--text2); }
 @media (max-width: 720px) { .home-actions { grid-template-columns: 1fr; } }
 

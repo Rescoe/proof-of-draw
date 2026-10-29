@@ -87,7 +87,7 @@ export function NetworkMap({ snapshot, fixture, surface = "network" }: Props) {
     return (
       <div className="nv2-layout nv2-empty">
         <div className="nv2-empty__content">
-          <div className="nv2-empty__icon">🌐</div>
+          
           <p>Aucun device détecté</p>
           <small>Le réseau est vide ou Redis indisponible</small>
         </div>

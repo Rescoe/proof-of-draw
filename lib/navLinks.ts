@@ -1,5 +1,5 @@
 // lib/navLinks.ts — navigation du site (UX jalon 1, 29/10/2026) : DEUX présentations d'une même architecture, sans changer aucun chemin.
-//   • barre « bureau » (≥ 1025 px) : Accueil · Galerie · Créer une œuvre · Réseau · Communauté ▾ · Apprendre · Mon espace ;
+//   • barre « bureau » (≥ 1025 px) : Accueil · Galerie · Dessiner · Réseau · Communauté ▾ · Apprendre · Mon espace ;
 //   • tiroir « tablette / téléphone » (≤ 1024 px) : Accueil, puis quatre groupes PARTICIPER · EXPLORER · MON COMPTE · AIDE.
 // Données pures (testées dans tests/navLinks.test.ts et tests/navActive.test.ts). Rien n'est supprimé : « Animations » reste le filtre de la Galerie, « Agents IA » un lien de la Galerie,
 // « Connecter mon écran » devient « Associer un appareil » (/onboard) ; toutes les anciennes URL répondent comme avant.
@@ -24,11 +24,11 @@ export type NavEntry =
 
 export interface NavGroup { id: "participer" | "explorer" | "compte" | "aide"; label: string; links: NavLink[] }
 
-/** Barre de navigation « bureau » : sept entrées, une seule ligne. « Créer une œuvre » est l'appel à l'action principal. */
+/** Barre de navigation « bureau » : sept entrées, une seule ligne.  */
 export const NAV_ENTRIES: NavEntry[] = [
   { kind: "link", id: "accueil", link: { href: "/", label: "Accueil" } },
   { kind: "link", id: "galerie", link: { href: "/gallery", label: "Galerie", match: ["/gallery-ana", "/gallery-anim"] } },
-  { kind: "link", id: "creer", cta: true, link: { href: "/draw", label: "Créer une œuvre", match: ["/animer", "/draw-lab"] } },
+  { kind: "link", id: "creer", link: { href: "/draw", label: "Dessiner", match: ["/animer", "/draw-lab"] } },
   { kind: "link", id: "reseau", link: { href: "/network", label: "Réseau" } },
   { kind: "menu", id: "communaute", label: "Communauté", links: [
     { href: "/artists", label: "Artistes" },
@@ -42,7 +42,7 @@ export const NAV_ENTRIES: NavEntry[] = [
 export const DRAWER_HOME: NavLink = { href: "/", label: "Accueil" };
 export const DRAWER_GROUPS: NavGroup[] = [
   { id: "participer", label: "Participer", links: [
-    { href: "/draw", label: "Créer une œuvre", match: ["/animer", "/draw-lab"] },
+    { href: "/draw", label: "Dessiner", match: ["/animer", "/draw-lab"] },
     { href: "/gallery", label: "Galerie", match: ["/gallery-ana", "/gallery-anim"] },
   ] },
   { id: "explorer", label: "Explorer", links: [

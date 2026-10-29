@@ -9,7 +9,7 @@ import { ArtistMiniAvatar } from "./RecentArtistsClient";
 
 type View = "active" | "recent";
 
-const initialsOf = (name: string) => name.split(" ").slice(0, 2).map((w) => w[0]?.toUpperCase() ?? "").join("") || "🎨";
+const initialsOf = (name: string) => name.split(" ").slice(0, 2).map((w) => w[0]?.toUpperCase() ?? "").join("") || "?";
 const dayLabel = (ms: number) => (ms > 0 ? new Date(ms).toLocaleDateString("fr-FR", { day: "2-digit", month: "2-digit", timeZone: "Europe/Paris" }) : "");
 
 export function NetworkArtistsClient({ summary, recent }: { summary: NetworkArtistsSummary | null; recent: RecentArtistSummary[] }) {

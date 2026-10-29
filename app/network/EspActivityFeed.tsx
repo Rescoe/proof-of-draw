@@ -97,7 +97,7 @@ function toEspLines(ev: LogEvent): EspLine[] {
           ts: ev.ts + 1,
           tag: "FETCHFRAME",
           tagColor: TAG_COLOR.FETCHFRAME,
-          text: `${esp} ▸ ✅ affichée frameId=${ev.id.slice(0, 14)}… source=consensus *`,
+          text: `${esp} ▸ affichée frameId=${ev.id.slice(0, 14)}… source=consensus *`,
         },
       ];
     }

@@ -24,19 +24,16 @@ export default async function HomePage() {
 
       {/* TROIS INTENTIONS — l'orientation vient avant la carte, qui reste la preuve vivante juste en dessous */}
       <section className="home-actions" aria-label="Par où commencer ?">
-        <Link href="/draw" className="home-action home-action--primary">
-          <span className="home-action__icon" aria-hidden>✏️</span>
-          <strong>Créer une œuvre</strong>
+        <Link href="/draw" className="home-action">
+          <strong>Dessiner</strong>
           <span>Dessine sur tes écrans ou sur un écran partagé, sans rien installer.</span>
         </Link>
         <Link href="/gallery" className="home-action">
-          <span className="home-action__icon" aria-hidden>🖼️</span>
-          <strong>Voir la galerie</strong>
+          <strong>Galerie</strong>
           <span>Les œuvres validées par le réseau, puis les artistes et les appareils qui les affichent.</span>
         </Link>
         <Link href="/learn?path=install#installer" className="home-action">
-          <span className="home-action__icon" aria-hidden>🔌</span>
-          <strong>Connecter un appareil</strong>
+          <strong>Installer un appareil</strong>
           <span>Installer un appareil, puis l’associer à ton profil avec son code.</span>
         </Link>
       </section>

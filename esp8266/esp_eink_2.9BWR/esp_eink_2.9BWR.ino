@@ -2189,7 +2189,12 @@ Adafruit_SSD1306 oled(128, 64, &Wire, -1);
 static bool g_oledReady = false, g_oledTried = false;
 /** Initialise l'OLED une seule fois ; false si absent (aucune alerte répétée, le firmware continue sans). */
 static bool ensureOLEDReady() {
-  if (g_oledReady) return true;
+  if (g_oledReady) {
+    // GPIO12 (D6 = SDA) est aussi la broche MISO du SPI matériel de l'e-ink : chaque IfInit() de l'e-ink appelle SPI.begin() qui la met en fonction SPECIAL, et le bus I2C logiciel (registres GPES/GPEC)
+    // n'atteint plus la broche => l'OLED se fige sur son dernier écran alors que le firmware croit l'afficher. On rend la broche au GPIO avant chaque usage (Twi::init = pinMode INPUT_PULLUP).
+    Wire.begin(D6, D4); Wire.setClock(100000);
+    return true;
+  }
   if (g_oledTried) return false;
   g_oledTried = true;
   Wire.begin(D6, D4); Wire.setClock(100000); delay(10);
