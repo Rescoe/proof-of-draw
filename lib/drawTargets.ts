@@ -4,7 +4,8 @@
 
 import { SCREEN_PROFILES, isValidScreenId, type ScreenId } from "./screenProfiles";
 
-export interface OwnedLike { deviceId: string; artistName?: string; deviceName?: string; screens?: string[]; isOnline?: boolean }
+/** animScreens : écrans où une animation peut être jouée, calculés côté serveur (lib/animScreens.ts) — absent = aucun. */
+export interface OwnedLike { deviceId: string; artistName?: string; deviceName?: string; screens?: string[]; isOnline?: boolean; animScreens?: string[] }
 export interface PublicLike { deviceId: string; artistName?: string; screens?: string[]; isOnline?: boolean }
 
 export interface DrawTarget {
@@ -12,8 +13,8 @@ export interface DrawTarget {
   /** Nom affiché : nom donné à l'appareil, sinon nom d'artiste, sinon identifiant. */
   label: string;
   online: boolean;
-  /** Écrans réellement dessinables (pseudo-écran « sensor » et écrans inconnus exclus). */
-  screens: { id: ScreenId; name: string }[];
+  /** Écrans réellement dessinables (pseudo-écran « sensor » et écrans inconnus exclus). canAnimate : le serveur a déclaré cet écran capable de jouer une animation (jamais déduit ici). */
+  screens: { id: ScreenId; name: string; canAnimate: boolean }[];
 }
 
 export type LoadState<T> =
@@ -22,20 +23,21 @@ export type LoadState<T> =
   | { kind: "ready"; data: T };
 
 /** Écrans dessinables d'un appareil : profils connus seulement, sans doublon, ordre conservé. */
-export function drawableScreens(screens: unknown): { id: ScreenId; name: string }[] {
+export function drawableScreens(screens: unknown, animScreens: unknown = []): { id: ScreenId; name: string; canAnimate: boolean }[] {
   if (!Array.isArray(screens)) return [];
+  const anim = new Set(Array.isArray(animScreens) ? animScreens.filter((x): x is string => typeof x === "string") : []);
   const seen = new Set<string>();
-  const out: { id: ScreenId; name: string }[] = [];
+  const out: { id: ScreenId; name: string; canAnimate: boolean }[] = [];
   for (const s of screens) {
     if (typeof s !== "string" || seen.has(s) || !isValidScreenId(s)) continue;
     seen.add(s);
-    out.push({ id: s, name: SCREEN_PROFILES[s].name });
+    out.push({ id: s, name: SCREEN_PROFILES[s].name, canAnimate: anim.has(s) });
   }
   return out;
 }
 
-function toTarget(d: OwnedLike | PublicLike, label: string): DrawTarget | null {
-  const screens = drawableScreens(d.screens);
+function toTarget(d: OwnedLike | PublicLike, label: string, withAnimation = false): DrawTarget | null {
+  const screens = drawableScreens(d.screens, withAnimation ? (d as OwnedLike).animScreens : []);
   if (!d.deviceId || screens.length === 0) return null;   // capteur seul, ou aucun écran connu : rien à dessiner
   return { deviceId: d.deviceId, label, online: d.isOnline === true, screens };
 }
@@ -43,7 +45,7 @@ function toTarget(d: OwnedLike | PublicLike, label: string): DrawTarget | null {
 /** Mes écrans : en ligne d'abord, puis par nom. */
 export function mineTargets(owned: OwnedLike[]): DrawTarget[] {
   return owned
-    .map((d) => toTarget(d, d.deviceName?.trim() || d.artistName?.trim() || d.deviceId))
+    .map((d) => toTarget(d, d.deviceName?.trim() || d.artistName?.trim() || d.deviceId, true))   // « Animer » seulement sur MES écrans : l'atelier signe l'œuvre depuis un de mes écrans
     .filter((t): t is DrawTarget => t !== null)
     .sort((a, b) => Number(b.online) - Number(a.online) || a.label.localeCompare(b.label, "fr"));
 }

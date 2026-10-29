@@ -9,8 +9,9 @@ const card: React.CSSProperties = { border: "1px solid var(--border)", borderRad
 const muted: React.CSSProperties = { color: "var(--text3)", fontSize: "0.85rem", margin: 0 };
 
 function TargetRow({ t }: { t: DrawTarget }) {
+  const dev = encodeURIComponent(t.deviceId);
   return (
-    <div style={{ ...card, padding: "0.85rem 1rem", display: "flex", alignItems: "center", justifyContent: "space-between", gap: "0.75rem", flexWrap: "wrap" }}>
+    <div style={{ ...card, padding: "0.85rem 1rem", display: "flex", flexDirection: "column", gap: "0.7rem" }}>
       <div style={{ display: "flex", alignItems: "center", gap: "0.6rem", minWidth: 0 }}>
         <span aria-hidden style={{ width: 9, height: 9, borderRadius: "50%", flexShrink: 0, background: t.online ? "#4ade80" : "var(--text3)" }} />
         <div style={{ minWidth: 0 }}>
@@ -18,14 +19,15 @@ function TargetRow({ t }: { t: DrawTarget }) {
           <div style={{ fontSize: "0.72rem", color: "var(--text3)" }}>{t.online ? "en ligne" : "hors ligne : l'œuvre attendra son retour"}</div>
         </div>
       </div>
-      <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap" }}>
-        {t.screens.map((s) => (
-          <Link key={s.id} href={`/draw/${encodeURIComponent(t.deviceId)}/${s.id}`}
-            style={{ padding: "0.5rem 1rem", minHeight: 40, display: "inline-flex", alignItems: "center", borderRadius: 8, background: "var(--accent)", color: "#fff", textDecoration: "none", fontWeight: 600, fontSize: "0.85rem" }}>
-            ✏️ {s.name}
-          </Link>
-        ))}
-      </div>
+      {t.screens.map((s) => (
+        <div key={s.id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "0.6rem", flexWrap: "wrap" }}>
+          <span style={{ fontSize: "0.85rem", color: "var(--text2)", overflowWrap: "anywhere" }}>{s.name}</span>
+          <span style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap" }}>
+            <Link href={`/draw/${dev}/${s.id}`} className="pod-btn pod-btn--primary" style={{ textDecoration: "none" }}>✏️ Dessiner</Link>
+            {s.canAnimate && <Link href={`/animer?device=${dev}&screen=${s.id}`} className="pod-btn" style={{ textDecoration: "none" }}>🎞 Animer</Link>}
+          </span>
+        </div>
+      ))}
     </div>
   );
 }
@@ -56,21 +58,21 @@ export function DrawChoice() {
   const shared = pub.kind === "ready" ? sharedTargets(pub.data, owned.kind === "ready" ? owned.data.map((d) => d.deviceId) : []) : [];
 
   return (
-    <div style={{ maxWidth: 760, margin: "0 auto", padding: "1.5rem 0 3rem", display: "flex", flexDirection: "column", gap: "1.75rem" }}>
+    <div className="pod-page pod-page--narrow" style={{ display: "flex", flexDirection: "column", gap: "1.75rem" }}>
       <header>
         <h1 style={{ margin: "0 0 0.4rem", fontSize: "1.7rem" }}>Créer une œuvre</h1>
-        <p style={{ margin: 0, color: "var(--text2)" }}>Choisis l’écran sur lequel ton dessin sera validé par le réseau, puis affiché.</p>
+        <p style={{ margin: 0, color: "var(--text2)" }}>Choisis l’écran sur lequel ton œuvre sera validée par le réseau, puis affichée. <b>Dessiner</b> crée une image fixe ; <b>Animer</b> compose plusieurs images (disponible sur les écrans capables de les jouer).</p>
       </header>
 
       <section aria-labelledby="mine-h" style={{ display: "flex", flexDirection: "column", gap: "0.7rem" }}>
-        <h2 id="mine-h" style={{ margin: 0, fontSize: "1.1rem" }}>Dessiner sur mes écrans</h2>
+        <h2 id="mine-h" style={{ margin: 0, fontSize: "1.1rem" }}>Créer sur mes écrans</h2>
         <ListBlock state={owned} retry={loadOwned} targets={mine} empty={
           <>
             <p style={{ margin: "0 0 0.5rem", color: "var(--text2)" }}>Tu n’as pas encore d’écran relié à ce navigateur.</p>
             <p style={muted}>
               <Link href="/onboard" style={{ color: "var(--accent)" }}>Associer un appareil</Link> avec le code affiché dessus, ou
-              {" "}<Link href="/learn?path=install#installer" style={{ color: "var(--accent)" }}>installer un écran</Link>.
-              Déjà un profil sur un autre appareil ? Utilise « Autoriser un autre équipement » dans <Link href="/profile" style={{ color: "var(--accent)" }}>Mes écrans</Link>.
+              {" "}<Link href="/learn?path=install#installer" style={{ color: "var(--accent)" }}>installer un appareil</Link>.
+              Déjà un profil sur un autre appareil ? Utilise « Autoriser un autre équipement » dans <Link href="/profile" style={{ color: "var(--accent)" }}>Mon espace</Link>.
             </p>
           </>
         } />

@@ -9,6 +9,7 @@ import { MEASURE_ONLINE_MS, decodeMeasure, measKey } from "@/lib/measures";
 import { getAllDevices, getDevicesByIds, toPublicDevice, toOwnedDevice } from "@/lib/deviceStore";
 import { getSession } from "@/lib/session";
 import { getArtistDeviceIds } from "@/lib/artistDirectory";
+import { animScreensOf } from "@/lib/animScreens";
 
 export const dynamic = "force-dynamic";
 
@@ -40,7 +41,7 @@ export async function GET(req: NextRequest) {
         await getDevicesByIds([...idSet])
       )
         .filter(Boolean)
-        .map((d) => toOwnedDevice(d!));
+        .map((d) => ({ ...toOwnedDevice(d!), animScreens: animScreensOf(d!) }));   // animScreens : même règle que la diffusion (animCapable), calculée ici — aucune lecture de plus
 
       // Appareils qui MESURENT : dernière mesure (UN pipeline de LINDEX) ; « en ligne » = a mesuré récemment (leur fiche n'est réécrite que toutes les 12 h)
       const measuring = owned.filter((d) => (d.sensors?.length ?? 0) > 0);
