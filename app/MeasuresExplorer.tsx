@@ -267,7 +267,7 @@ export function MeasuresExplorer({ deviceId, sensorLabel, ownerName, kinds, owne
 
   if (!big) return content;
   return createPortal(
-    <div role="dialog" aria-modal="true" aria-label={`Mesures de ${sensorLabel}`} style={{ position: "fixed", inset: 0, zIndex: 1000, background: "var(--bg)", color: "var(--text)", overflow: "auto", padding: "1rem" }}>
+    <div role="dialog" aria-modal="true" data-nested-dialog="" aria-label={`Mesures de ${sensorLabel}`} style={{ position: "fixed", inset: 0, zIndex: 1000, background: "var(--bg)", color: "var(--text)", overflow: "auto", padding: "1rem" }}>
       <div style={{ maxWidth: 1000, margin: "0 auto" }}>
         <h2 style={{ margin: "0 0 0.75rem", fontSize: "1.1rem" }}>{sensorLabel}{ownerName ? ` · ${ownerName}` : ""}</h2>
         {content}

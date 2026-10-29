@@ -1388,3 +1388,17 @@ code { font-family: "JetBrains Mono", monospace; }
   text-decoration: underline;
   text-underline-offset: 4px;
 }
+
+/* ── Dialogues partagés (UX jalon 5) : fenêtre centrée sur tablette / ordinateur, FEUILLE plein écran sur téléphone ─────────────── */
+.pod-dialog-backdrop { position: fixed; inset: 0; z-index: 1000; background: rgba(0,0,0,0.6); display: flex; align-items: center; justify-content: center; padding: 16px; }
+.pod-dialog { background: var(--bg2); border: 1px solid var(--border); border-radius: 14px; width: min(860px, 100%); max-height: 90dvh; overflow-y: auto; overscroll-behavior: contain; padding: 0 1.1rem 1.1rem; outline: none; }
+.pod-dialog__head { position: sticky; top: 0; z-index: 1; display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 0.9rem 0 0.6rem; background: var(--bg2); }
+.pod-dialog__title { margin: 0; font-size: 1.05rem; overflow-wrap: anywhere; }
+.pod-dialog__close { background: none; border: 0; color: var(--text2); font-size: 1.2rem; cursor: pointer; min-width: 44px; min-height: 44px; border-radius: 8px; }
+.pod-dialog__close:hover { background: rgba(255,255,255,0.06); color: var(--text); }
+.pod-dialog__close:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+@media (max-width: 600px) {
+  .pod-dialog-backdrop { padding: 0; align-items: stretch; }
+  .pod-dialog { width: 100%; max-height: none; height: 100dvh; border: 0; border-radius: 0; padding: 0 1rem calc(1rem + env(safe-area-inset-bottom)); }
+  .pod-dialog__head { padding-top: calc(0.6rem + env(safe-area-inset-top)); }
+}

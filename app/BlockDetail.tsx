@@ -4,6 +4,7 @@
 // Modal de détail d'un bloc — 3 onglets : Détails / Actions / Replay.
 // Axe 5.
 
+import { useDialog } from "./ui/useDialog";
 import { useState, useEffect, useRef, useCallback } from "react";
 import Link from "next/link";
 import type { BlockWithImage } from "@/lib/chain";
@@ -541,6 +542,7 @@ type Tab = "details" | "actions" | "replay";
 
 export function BlockDetail({ block, onClose }: { block: BlockWithImage; onClose: () => void }) {
   const [tab, setTab] = useState<Tab>("details");
+  const dialogRef = useDialog(true, onClose);   // Échap, focus piégé et rendu, défilement verrouillé (app/ui/useDialog.ts)
 
   const handleBackdrop = useCallback((e: React.MouseEvent) => {
     if (e.target === e.currentTarget) onClose();
@@ -548,7 +550,7 @@ export function BlockDetail({ block, onClose }: { block: BlockWithImage; onClose
 
   return (
     <div className="bd-backdrop" onClick={handleBackdrop}>
-      <div className="bd-modal" role="dialog" aria-modal="true" aria-label={`Bloc #${block.blockIndex}`}>
+      <div ref={dialogRef} className="bd-modal" role="dialog" aria-modal="true" aria-label={`Bloc #${block.blockIndex}`} tabIndex={-1}>
         {/* Header */}
         <div className="bd-header">
           <div className="bd-header-title">
@@ -632,6 +634,11 @@ export function BlockDetail({ block, onClose }: { block: BlockWithImage; onClose
         .bd-tab--active {
           color: var(--accent, #7c6bff);
           border-bottom-color: var(--accent, #7c6bff);
+        }
+        @media (max-width: 600px) {
+          .bd-backdrop { padding: 0; align-items: stretch; }
+          .bd-modal { max-width: none; max-height: none; height: 100dvh; border: 0; border-radius: 0; padding-bottom: env(safe-area-inset-bottom); }   /* feuille plein écran sur téléphone */
+          .bd-close { min-width: 44px; min-height: 44px; }
         }
         .bd-content { overflow-y: auto; padding: 16px 18px; flex: 1; }
 

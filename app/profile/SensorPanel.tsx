@@ -9,6 +9,7 @@ import { MEASURE_GROUPS, MEASURE_KINDS, formatMeasure, kindsOfGroup, measureKind
 import { fmtMeasureDate } from "../MeasuresChart";
 import { MeasuresPanel } from "../measures/MeasuresPanel";
 import { useDeviceMeasures } from "../measures/useDeviceMeasures";
+import { useDialog } from "../ui/useDialog";
 
 /** Valeurs de la dernière mesure, sur la carte de l'appareil (carte sans écran). */
 export function SensorSummary({ d }: { d: OwnedDevice }) {
@@ -54,24 +55,18 @@ function SensorModal({ d, onClose }: { d: OwnedDevice; onClose: () => void }) {
   const data = useDeviceMeasures(d.deviceId, { owner: true });
   const all = data.state === "ready" ? data.measures : null;
 
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
-    document.addEventListener("keydown", onKey);
-    return () => document.removeEventListener("keydown", onKey);
-  }, [onClose]);
+  const dialogRef = useDialog(true, onClose);   // Échap, focus piégé et rendu, défilement verrouillé (app/ui/useDialog.ts)
 
   const last = all?.[0];
   // dernière valeur connue de chaque grandeur (le débit n'est pas dans toutes les lectures)
   const lastOf = (k: MeasureKind) => all?.find((m) => m.v[k] !== undefined);
 
   return (
-    <div role="dialog" aria-modal="true" aria-label="Historique des mesures" onClick={onClose}
-      style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1000, padding: 16 }}>
-      <div onClick={(e) => e.stopPropagation()}
-        style={{ background: "var(--bg2, var(--bg))", border: "1px solid var(--border)", borderRadius: 12, padding: "1.1rem", width: "min(860px, 100%)", maxHeight: "90vh", overflowY: "auto" }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 12 }}>
-          <h2 style={{ margin: 0, fontSize: "1.05rem" }}>📈 {d.deviceName || d.deviceId}</h2>
-          <button type="button" onClick={onClose} aria-label="Fermer" style={{ background: "none", border: "none", color: "var(--text2)", fontSize: "1.2rem", cursor: "pointer", minWidth: 44, minHeight: 44 }}>✕</button>
+    <div className="pod-dialog-backdrop" onClick={onClose}>
+      <div ref={dialogRef} className="pod-dialog" role="dialog" aria-modal="true" aria-label="Historique des mesures" tabIndex={-1} onClick={(e) => e.stopPropagation()}>
+        <div className="pod-dialog__head">
+          <h2 className="pod-dialog__title">📈 {d.deviceName || d.deviceId}</h2>
+          <button type="button" className="pod-dialog__close" onClick={onClose} aria-label="Fermer">✕</button>
         </div>
         {last && (
           <div style={{ display: "flex", flexDirection: "column", gap: 4, margin: "0.4rem 0 0.9rem" }}>
