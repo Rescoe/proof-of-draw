@@ -21,9 +21,10 @@ export function Block({ block, id }: { block: MatrixBlock; id?: string | null })
     case "code": return <pre className={styles.codeBlock}>{block.text}</pre>;
     case "table": return (
       <div className={styles.synthTableWrap}>
-        <table className={styles.synthTable}>
+        {/* UX jalon 3 : tableau à partir de la tablette paysage ; une CARTE par ligne sur téléphone (data-label = titre de la colonne, répété devant chaque valeur) */}
+        <table className={`${styles.synthTable} ${styles.synthTableCards}`}>
           <thead><tr>{block.head.map((h, i) => <th key={i}><Inline text={h} /></th>)}</tr></thead>
-          <tbody>{block.rows.map((r, ri) => <tr key={ri}>{r.map((c, ci) => <td key={ci}><Inline text={c} /></td>)}</tr>)}</tbody>
+          <tbody>{block.rows.map((r, ri) => <tr key={ri}>{r.map((c, ci) => <td key={ci} data-label={(block.head[ci] ?? "").replace(/[`*]/g, "")}><Inline text={c} /></td>)}</tr>)}</tbody>
         </table>
       </div>
     );

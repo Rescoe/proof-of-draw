@@ -714,6 +714,7 @@
   background: var(--bg3);
   color: #b6aeff;
   font: 600 0.82em "JetBrains Mono", monospace;
+  overflow-wrap: anywhere;                 /* noms de fichiers et identifiants longs : retour à la ligne plutôt que défilement horizontal de la page */
 }
 
 .codeBlock {
@@ -1426,6 +1427,21 @@
 
 .synthTable td {
   color: var(--text2);
+}
+
+/* UX jalon 3 : sur téléphone (≤ 720 px) les tableaux issus d'un fichier Markdown (matrice de compatibilité) deviennent une carte par ligne ; les titres de colonnes sont répétés devant chaque valeur */
+@media (max-width: 720px) {
+  .synthTableCards { min-width: 0; display: block; font-size: 0.85rem; }
+  .synthTableCards thead { display: none; }   /* les titres de colonnes sont répétés devant chaque valeur (data-label) */
+  .synthTableCards tbody, .synthTableCards tr, .synthTableCards td { display: block; }
+  .synthTableCards tr { margin: 0 0 0.75rem; padding: 0.7rem 0.85rem; border: 1px solid var(--border); border-radius: 12px; background: var(--bg2); }
+  .synthTableCards td { padding: 0.3rem 0; border-bottom: 0; overflow-wrap: anywhere; }
+  .synthTableCards td::before { content: attr(data-label); display: block; color: var(--text3); font-size: 0.64rem; font-weight: 800; letter-spacing: 0.08em; text-transform: uppercase; }
+  .synthTableCards td:first-child { color: var(--text); font-weight: 700; font-size: 0.95rem; padding-bottom: 0.45rem; border-bottom: 1px solid var(--border-soft); margin-bottom: 0.25rem; }
+  .synthTableCards td:first-child::before { display: none; }
+  .synthTableCards td:empty { display: none; }
+  .synthTableCards code { white-space: normal; overflow-wrap: anywhere; word-break: break-word; }   /* identifiants de firmware et noms de fichiers longs : retour à la ligne, jamais de débordement */
+  .synthTableWrap:has(.synthTableCards) { border: 0; overflow: visible; }
 }
 
 .synthTable td:first-child {
