@@ -33,7 +33,7 @@ function coverTransform(screen: string, crop?: { cx: number; cy: number; zoom: n
   };
 }
 
-function ArtistMiniAvatar({ artist }: { artist: RecentArtistSummary }) {
+export function ArtistMiniAvatar({ artist }: { artist: RecentArtistSummary }) {
   if (artist.imagePayload) {
     const { tx, ty, scale } = coverTransform(artist.imagePayload.screen, artist.profileImageCrop);
     return (

@@ -17,13 +17,14 @@ export interface RecentArtistSummary {
   createdAt:   number;
 }
 
-export async function RecentArtists() {
+/** Les 10 artistes les plus récents (mêmes lectures qu'avant) : partagé par l'ancien bandeau et la section « Artistes du réseau » de l'accueil. Liste vide si indisponible. */
+export async function getRecentArtistSummaries(): Promise<RecentArtistSummary[]> {
   let artists: RecentArtistSummary[] = [];
   try {
     // Source unique (lib/artistDirectory) : profils + ESP appairés sans profil,
     // triés du plus récent au plus ancien — même liste que l'annuaire /artists.
     const top = (await listArtists()).map((e) => e.profile).slice(0, 10);
-    if (top.length === 0) return null;
+    if (top.length === 0) return [];
 
     artists = await Promise.all(top.map(async (p) => ({
       artistId:              p.artistId,
@@ -35,10 +36,13 @@ export async function RecentArtists() {
       createdAt:             p.createdAt,
     })));
   } catch {
-    return null;
+    return [];
   }
+  return artists;
+}
 
+export async function RecentArtists() {
+  const artists = await getRecentArtistSummaries();
   if (artists.length === 0) return null;
-
   return <RecentArtistsClient artists={artists} />;
 }

@@ -3,7 +3,7 @@ import { getNetworkSnapshot } from "@/lib/networkSnapshot";
 import { NetworkMap } from "./network/NetworkMap";
 import { EspActivityFeed } from "./network/EspActivityFeed";
 import { BlockGallery } from "./BlockGallery";
-import { RecentArtists } from "./RecentArtists";
+import { NetworkArtists } from "./NetworkArtists";
 
 export default async function HomePage() {
   const snapshot = await getNetworkSnapshot();
@@ -41,24 +41,29 @@ export default async function HomePage() {
         </Link>
       </section>
 
-      {/* CARTE RÉSEAU (topologie + side panel) : la preuve vivante, après l'orientation */}
+      {/* CARTE RÉSEAU : la preuve vivante, après l'orientation. surface="home" : constellation pleine largeur, ni terminal ni « Actuellement affiché » (UX jalon 2) */}
       <h2 className="home-live-title">Le réseau, en direct</h2>
       <div className="home-network-stack">
-        <NetworkMap snapshot={snapshot} />
+        <NetworkMap snapshot={snapshot} surface="home" />
 
-        {/* JOURNAL RÉSEAU — pleine largeur sous la carte : une colonne étroite
-            (ancienne disposition en rangée) tronquait chaque ligne et rendait
-            le journal illisible sur PC. Pleine largeur = lignes lisibles. */}
+        {/* JOURNAL RÉSEAU — UN SEUL sur l'accueil (le terminal technique reste sur /network) ; pleine largeur : lignes lisibles. */}
         <div className="home-network-stack__feed">
           <EspActivityFeed />
         </div>
       </div>
 
-      {/* GALERIE DES BLOCS MINÉS */}
+      {/* ARTISTES DU RÉSEAU — actifs maintenant + nouveaux, UNE section bornée (aucune lecture de plus : snapshot déjà chargé) */}
+      <NetworkArtists snapshot={snapshot} />
+
+      {/* ŒUVRES RÉCENTES */}
       <BlockGallery />
 
-      {/* DERNIERS ARTISTES INSCRITS — visibilité + accès à l'annuaire complet */}
-      <RecentArtists />
+      {/* COMPRENDRE OU REJOINDRE */}
+      <section className="home-learn" aria-label="Comprendre ou rejoindre">
+        <Link href="/learn" className="home-learn__link">Comprendre Proof-of-Draw <span aria-hidden>→</span></Link>
+        <Link href="/learn?path=install#installer" className="home-learn__link">Installer un appareil <span aria-hidden>→</span></Link>
+        <Link href="/onboard" className="home-learn__link">Associer un appareil <span aria-hidden>→</span></Link>
+      </section>
 
       <style>{`
         .home-network-stack {
@@ -69,6 +74,9 @@ export default async function HomePage() {
         .home-network-stack__feed {
           min-width: 0;
         }
+        .home-learn { display: flex; flex-wrap: wrap; gap: 0.75rem; margin: 2rem 0 1rem; }
+        .home-learn__link { display: inline-flex; align-items: center; gap: 0.4rem; min-height: 44px; padding: 0.5rem 1rem; border: 1px solid var(--border); border-radius: 10px; background: var(--bg2); color: var(--text); font-size: 0.9rem; font-weight: 500; text-decoration: none; }
+        .home-learn__link:hover { border-color: rgba(124,107,255,0.5); }
       `}</style>
     </div>
   );
