@@ -1285,3 +1285,81 @@ code { font-family: "JetBrains Mono", monospace; }
 .home-action--primary { border-color: rgba(124,107,255,0.5); background: rgba(124,107,255,0.1); }
 .home-live-title { margin: 0 0 0.75rem; font-size: 1.1rem; color: var(--text2); }
 @media (max-width: 720px) { .home-actions { grid-template-columns: 1fr; } }
+
+/* ============================================================
+   PRIMITIVES UX (jalon 1, 29/10/2026) — cadre de page, boutons, pilules.
+   Aucune page n'est migrée dans ce commit : ces classes sont disponibles pour les jalons suivants
+   (docs/PLAN_CHANTIER_UX_2026_10_29.md § 4). Espacements 4/8/12/16/24/32, rayons 8 (contrôles) / 12 (cartes) / 16 (grandes surfaces), cible tactile 44 px.
+   ============================================================ */
+.pod-page {
+  width: 100%;
+  max-width: 1100px;
+  margin: 0 auto;
+  padding: 1rem 16px 3rem;                       /* gouttière téléphone */
+  overflow-wrap: anywhere;                       /* noms et identifiants longs ne débordent pas */
+}
+.pod-page--wide { max-width: 1400px; }
+.pod-page--narrow { max-width: 760px; }
+@media (min-width: 600px) { .pod-page { padding-inline: 24px; } }    /* tablette */
+@media (min-width: 1024px) { .pod-page { padding-inline: 32px; } }   /* ordinateur */
+.pod-section { margin-block: 1.5rem; }
+.pod-card {
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--bg2);
+  padding: 16px;
+}
+
+.pod-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 44px;
+  padding: 8px 16px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg3);
+  color: var(--text);
+  font: inherit;
+  font-size: 0.9rem;
+  font-weight: 500;
+  line-height: 1.2;
+  text-align: center;
+  cursor: pointer;
+  transition: background 0.12s, border-color 0.12s, opacity 0.12s;
+}
+.pod-btn:hover:not(:disabled) { border-color: rgba(124,107,255,0.5); background: var(--bg4); }
+.pod-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.pod-btn:disabled, .pod-btn[aria-disabled="true"] { opacity: 0.5; cursor: not-allowed; }
+.pod-btn--primary { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
+.pod-btn--primary:hover:not(:disabled) { background: var(--accent); border-color: #fff; }
+.pod-btn--ghost { background: transparent; }
+.pod-btn--danger { border-color: rgba(248,113,113,0.6); color: var(--error); background: transparent; }
+.pod-btn--sm { min-height: 36px; padding: 4px 12px; font-size: 0.82rem; }    /* jamais pour l'action principale d'une page */
+
+/* Groupes de pilules / onglets : passent à la ligne, état actif marqué aussi par le trait (pas la couleur seule) */
+.pod-pills { display: flex; flex-wrap: wrap; gap: 8px; }
+.pod-pill {
+  display: inline-flex;
+  align-items: center;
+  min-height: 36px;
+  padding: 4px 14px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--text2);
+  font: inherit;
+  font-size: 0.82rem;
+  cursor: pointer;
+}
+.pod-pill:hover { color: var(--text); border-color: rgba(124,107,255,0.45); }
+.pod-pill:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.pod-pill[aria-pressed="true"], .pod-pill[aria-selected="true"], .pod-pill--active {
+  color: var(--accent);
+  border-color: var(--accent);
+  background: rgba(124,107,255,0.14);
+  font-weight: 600;
+  text-decoration: underline;
+  text-underline-offset: 4px;
+}
