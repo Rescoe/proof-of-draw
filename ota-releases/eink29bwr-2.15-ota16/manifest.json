@@ -1,0 +1,31 @@
+{
+  "schema": "pod-ota-manifest-v2",
+  "releaseId": "eink29bwr-2.15-ota16",
+  "family": "esp8266-eink29bwr",
+  "profile": {
+    "board": "esp8266",
+    "screen": "eink29bwr",
+    "flash": "4M2M"
+  },
+  "channel": "canary",
+  "firmwareVersion": "eink29bwr-2.15",
+  "otaSeq": 16,
+  "minOtaSeq": 1,
+  "revokedSeqs": [],
+  "url": "/firmware/eink29bwr-2.15-ota16/image.bin",
+  "size": 558656,
+  "sha256": "1c85f1e731a110bd1742b59e71b0810f549510257bd241e6eb3c23d39dcf1935",
+  "wave": {
+    "of": 100,
+    "upTo": 100
+  },
+  "canaryDevices": [
+    "dev_T46HBXG1"
+  ],
+  "notes": "Migration controlee vers multibwr-2.1 (multiscreen BWR 2,9 + OLED + DHT22), canari dev_T46HBXG1",
+  "signature": {
+    "alg": "rsa2048-pkcs1-sha256",
+    "keyId": "ota-a",
+    "sig": "A/dBFGOf47znKrrjUT3MNnS0t60y5x3IB7c3kUd2Z1AbocmtcS3Yts1PpZpUwOXlGp4dW+nVMxbZjIzy/9IEZ38uagPLSdYCcrteiYdeYYOe133ohA+vUob8Z7KMgHwxX88rv4F9XtwtEf0XeHAReNHubq2T2Lak0YYNaO1dGLBPWlL/lXEIIz4tVLfYj//xti3ubXHytJ49zPFxI4/7ZQqPBqF0UTqzf5NdwvCMNaAE3piqXatfunt9pw6DbmW8M6WGMaOzsL6k5tq+LEmCFzhavhugq+3/n4CEwLo6JZCiudZYvcgCZF6QJU0CgbPO3VGHupw9fBEjvEF/ak+K+g=="
+  }
+}
