@@ -13,6 +13,8 @@
 | `../README.md` | présentation publique, volontairement moins détaillée |
 | `../CLAUDE.md` | mémoire technique longue et historique, jamais prioritaire sur les documents précédents |
 | `ETAT_GIT_ET_REPRISE_MULTI_PC.md` | procédure de travail propre entre plusieurs ordinateurs |
+| `PROCEDURE_NOUVEAU_PC_2026_10_29.md` | clone, Node, secrets, artefacts privés et inventaire des worktrees avant tout nettoyage |
+| `LOT_MULTIBWR_MIGRATION_2026_10_29.md` | multiscreen e-ink BWR + OLED + DHT22 (`multibwr-2.1`) : construction, migration OTA signée non publiée, protocole du canari |
 | `INVENTAIRE_LOCAL_A_PRESERVER_2026_10_29.md` | inventaire de l'ancien checkout et des artefacts à trier sans perte |
 
 ## Documents de chantier récents

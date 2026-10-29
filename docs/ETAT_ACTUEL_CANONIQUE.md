@@ -102,7 +102,7 @@ Limites connues : Chromium principalement, pas d'audit complet lecteur d'écran/
 
 ## 9. Travaux actifs au 29/10/2026
 
-1. Migration de Claude2 vers un vrai profil multiscreen BWR + OLED + DHT22.
+1. Migration de Claude2 vers un vrai profil multiscreen BWR + OLED + DHT22 : firmware `multibwr-2.1` compilé et testé sur l'hôte, release de migration signée (`eink29bwr-2.15-ota16`) **non publiée** ; branche `claude/multibwr-migration` ; bloqué avant le canari par un GO matériel explicite (`docs/LOT_MULTIBWR_MIGRATION_2026_10_29.md`).
 2. Consolidation de la matrice et de la taxonomie dans l'application.
 3. Indexation des preuves OTA R4 Internet rapportées par le porteur.
 4. Vote d'animation complet et activation progressive par famille.
