@@ -2,13 +2,15 @@
 
 > Un réseau artistique expérimental dans lequel des dessins numériques deviennent des œuvres physiques, vérifiables et rejouables sur des écrans embarqués.
 
+> **État technique courant :** [`docs/ETAT_ACTUEL_CANONIQUE.md`](docs/ETAT_ACTUEL_CANONIQUE.md) · [familles matérielles](docs/TAXONOMIE_FAMILLES_COMPOSITIONS_MATERIELLES.md) · [matrice de compatibilité](docs/MATRICE_COMPATIBILITE_MATERIELLE.md) · [index documentaire](docs/INDEX_DOCUMENTATION.md)
+
 [Application](https://proof-of-draw.vercel.app) · [Créer](https://proof-of-draw.vercel.app/draw) · [Galerie](https://proof-of-draw.vercel.app/gallery) · [Réseau](https://proof-of-draw.vercel.app/network) · [Documentation interactive](https://proof-of-draw.vercel.app/learn)
 
 ## English summary
 
 Proof of Draw is an experimental art network connecting a web drawing studio, a serverless coordination layer and physical ESP8266 / Arduino UNO R4 WiFi displays. Artworks can be drawn or animated in the browser, converted into deterministic screen payloads, proposed to a pool of devices, signed and acknowledged by embedded clients, then rendered on e-paper, OLED or TFT screens.
 
-The project explores verifiable digital-to-physical art, constrained rendering, embedded signatures, device consensus, local SD archives and environmental measurements. It is active research software: display and acknowledgement paths have been validated on selected hardware, while real multi-device voting and remote firmware updates are still under validation.
+The project explores verifiable digital-to-physical art, constrained rendering, embedded signatures, device consensus, local SD archives and environmental measurements. It is active research software: display, acknowledgement, real multi-device voting and signed Internet OTA have been validated on selected hardware profiles, but none of those proofs automatically extends to every composition or release.
 
 This repository is public for transparency and research. **No software licence has been granted yet**; see [Licence and reuse](#licence-et-réutilisation) before reusing the code.
 
@@ -30,11 +32,12 @@ Le projet associe ainsi :
 
 Proof of Draw n’est pas, à ce stade, une blockchain autonome. Le serveur coordonne encore le réseau et Redis conserve son état opérationnel. La recherche porte précisément sur ce qui peut être vérifié, calculé, affiché ou archivé par les appareils eux-mêmes.
 
-## Parcours dans l'application (26/10/2026)
+## Parcours dans l'application (navigation du 29/10/2026)
 
-- **Créer** (`/draw`) : choisir un de ses écrans ou un écran partagé, puis le studio de dessin. Depuis la galerie, **Remix** d'un bloc miné (copie modifiable ; le bloc d'origine reste intact, la filiation `derivedFromBlockHash` est engagée dans le hash du nouveau bloc) ou **reprise d'un dessin rejeté**.
-- **Découvrir** : galerie, artistes (profils publics avec l'historique des capteurs rendus publics : graphique, œuvre générative, interprétation locale), réseau en direct.
-- **Mes écrans** : utiliser, gérer, maintenance avancée ; **Installer un écran** et **Connecter mon écran** (appairage par code).
+- **Dessiner** (`/draw`) : choisir un de ses écrans ou un écran partagé, puis le studio. Le choix **Animer** n'apparaît que pour une cible déclarée capable. Depuis la galerie : remix d'un bloc miné ou reprise d'un rejet, sans modifier l'original.
+- **Galerie** : œuvres validées/rejetées, animations, artistes et créations d'agents.
+- **Réseau** et **Communauté** : constellation, activité, artistes et cercles privés.
+- **Mon espace** : appareils liés, mesures et gestion ; **Associer un appareil** utilise le code d'appairage, tandis qu'**Installer un appareil** reste dans Apprendre.
 - **Cercles privés** (`/circles`) : cercles restreints entre artistes, invitation puis acceptation, messages texte ; aucun média pour l'instant (stockage objet privé à choisir).
 - **Apprendre** : cinq intentions, recherche et filtres (profondeur × type) ; feuille de route et matrice de compatibilité sont des pages dédiées.
 
@@ -57,7 +60,7 @@ Les autres firmwares présents dans le dépôt ont des niveaux de maturité diff
 
 - **Vote v2** : observé sur plusieurs familles (colonne ci-dessus). Ce qui reste en chantier est la **fiabilité multi-formats et le quorum** : le 27/10/2026 un seul appareil était compté dans l’électorat (les autres inactifs ou exclus après des candidats d’animation impossibles à voter), voir le [plan du 28/10](docs/PLAN_RESEAU_VALIDATEURS_ET_STATION_R4_2026_10_28.md).
 - **Règle visée** : toute carte disposant de la capacité de validation doit pouvoir voter sur tout dessin, quel que soit son écran. Aujourd’hui les profils **capteurs seuls** sont exclus du quorum ; les validateurs sans écran passeront par une capacité explicite, **non encore implémentée**.
-- **OTA Internet** : prouvée sur certaines familles ESP8266 (par exemple `tft18-2.7` → `2.8`, `eink29bwr-2.4` → `2.5`, `multiscreen-2.6` → `2.7`). Pour l’UNO R4, le produit complet `r4tft18` a été mis à jour **une fois en laboratoire** (clés de test, serveur HTTP local) ; **aucune OTA R4 distribuée sur Internet** n’est prouvée.
+- **OTA Internet** : prouvée sur plusieurs profils ESP8266 (par exemple `tft18-2.7` → `2.8`, `eink29bwr-2.4` → `2.5`, `multiscreen-2.6` → `2.7`). Pour l'UNO R4, le dépôt prouve le client et les canaris de laboratoire ; le porteur rapporte en plus deux OTA Internet réussies suivies du portail, de la reconnexion et du vote. Les commits, releases et journaux de ces deux essais doivent encore être indexés dans la matrice avant de les présenter comme une preuve reproductible complète.
 - La matrice canonique des profils et de leur niveau de preuve est [`docs/MATRICE_COMPATIBILITE_MATERIELLE.md`](docs/MATRICE_COMPATIBILITE_MATERIELLE.md).
 
 ### Ce qui fonctionne dans l’application
@@ -165,6 +168,14 @@ public/               ressources statiques de l’application
 Consulter [`docs/COMPATIBILITE_ECRANS.md`](docs/COMPATIBILITE_ECRANS.md) pour les brochages et contraintes connues. Les verdicts récents restent volontairement isolés sur leurs branches tant que leur intégration dans `main` n’a pas été auditée.
 
 ## Démarrage local
+
+### Prérequis
+
+- Node.js **22.13.0 ou plus récent** (ou une version LTS ultérieure) ;
+- npm et Git ;
+- utiliser le `package-lock.json` avec `npm ci` sur un clone propre.
+
+Le dépôt contient `.nvmrc`. La version 22.12.0 déclenche déjà un avertissement d'incompatibilité sur une dépendance ESLint récente ; ne pas l'utiliser comme version de référence pour un nouveau poste.
 
 ### Prérequis
 
