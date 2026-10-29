@@ -5,8 +5,20 @@
 #include <cstdlib>
 #include "pod_hist.h"
 
+static void printTick(void* ctx, const HistTick& tk) { (void)ctx; std::printf("TK %d %d %d\n", (int)tk.col, (int)tk.level, (int)tk.num); }
+
 int main(int argc, char** argv) {
   for (int i = 1; i < argc; i++) {
+    // « Z:epoch » : écart heure locale - UTC ; « T:t0:span » : repères de l'échelle de temps (une ligne TK col niveau nombre par repère, puis TKN n)
+    if (argv[i][0] == 'Z' && argv[i][1] == ':') { const unsigned long long e = std::strtoull(argv[i] + 2, nullptr, 10); std::printf("OFF %llu %ld\n", e, (long)histLocalOffset((uint32_t)e)); continue; }
+    if (argv[i][0] == 'T' && argv[i][1] == ':') {
+      char* end = nullptr; const unsigned long long t0 = std::strtoull(argv[i] + 2, &end, 10);
+      const unsigned long long sp = std::strtoull(end + 1, nullptr, 10);
+      std::printf("TKB %llu %llu\n", t0, sp);
+      const int n = histTicks((uint32_t)t0, (uint32_t)sp, printTick, nullptr);
+      std::printf("TKN %d\n", n);
+      continue;
+    }
     const unsigned long long e = std::strtoull(argv[i], nullptr, 10);
     int y = 0, m = 0; histYm((uint32_t)e, y, m);
     char p[20]; histMonthPath(p, y, m);

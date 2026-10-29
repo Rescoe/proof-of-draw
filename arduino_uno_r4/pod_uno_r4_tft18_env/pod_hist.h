@@ -109,4 +109,104 @@ static void histFmtAge(char* o, uint32_t sec) {
   o[n] = 0;
 }
 
+// ─── Échelle de temps des courbes (29/10/2026) : traits verticaux et repères, en HEURE LOCALE ────────────────────────────────────────────────────
+// La carte n'a que l'heure UTC du module Wi-Fi (NTP). Heure locale = UTC + HIST_TZ_STD_SEC, +1 h entre le dernier dimanche de mars et le dernier dimanche d'octobre à 01:00 UTC (règle européenne).
+// Défaut : France (UTC+1, heure d'été comprise). Autre fuseau : -DHIST_TZ_STD_SEC=… (secondes) ; -DHIST_TZ_EU_DST=0 pour couper l'heure d'été. Fonctions pures, testées sur l'hôte.
+#ifndef HIST_TZ_STD_SEC
+#define HIST_TZ_STD_SEC 3600
+#endif
+#ifndef HIST_TZ_EU_DST
+#define HIST_TZ_EU_DST 1
+#endif
+/** Jours depuis 1970-01-01 d'une date civile (H. Hinnant, m 1..12). */
+static int32_t histDays(int y, int m, int d) {
+  y -= m <= 2 ? 1 : 0;
+  const int32_t era = (y >= 0 ? y : y - 399) / 400;
+  const uint32_t yoe = (uint32_t)(y - era * 400);
+  const uint32_t doy = (153u * (uint32_t)(m > 2 ? m - 3 : m + 9) + 2u) / 5u + (uint32_t)d - 1u;
+  const uint32_t doe = yoe * 365u + yoe / 4u - yoe / 100u + doy;
+  return era * 146097 + (int32_t)doe - 719468;
+}
+/** Date civile d'un nombre de jours depuis 1970 (jour du mois en d). */
+static void histCivil(int32_t days, int& y, int& m, int& d) {
+  const int32_t z = days + 719468;
+  const int32_t era = (z >= 0 ? z : z - 146096) / 146097;
+  const uint32_t doe = (uint32_t)(z - era * 146097);
+  const uint32_t yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+  const uint32_t doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+  const uint32_t mp = (5 * doy + 2) / 153;
+  d = (int)(doy - (153 * mp + 2) / 5 + 1);
+  m = (int)(mp < 10 ? mp + 3 : mp - 9);
+  y = (int)yoe + (int)(era * 400) + (m <= 2 ? 1 : 0);
+}
+/** Jour de la semaine d'un nombre de jours depuis 1970 : 0 = dimanche … 6 = samedi. */
+static int histWeekday(int32_t days) { return (int)(((days % 7) + 7 + 4) % 7); }
+/** Écart local - UTC, en secondes, à l'instant UTC t (multiple de 3600). */
+static int32_t histLocalOffset(uint32_t t) {
+#if HIST_TZ_EU_DST
+  int y, m, d; histCivil((int32_t)(t / 86400UL), y, m, d);
+  const int32_t m31 = histDays(y, 3, 31), o31 = histDays(y, 10, 31);
+  const uint32_t start = (uint32_t)(m31 - histWeekday(m31)) * 86400UL + 3600UL;     // dernier dimanche de mars, 01:00 UTC
+  const uint32_t end = (uint32_t)(o31 - histWeekday(o31)) * 86400UL + 3600UL;       // dernier dimanche d'octobre, 01:00 UTC
+  if (t >= start && t < end) return HIST_TZ_STD_SEC + 3600;
+#endif
+  return HIST_TZ_STD_SEC;
+}
+/** Un repère de l'axe du temps : colonne (0 .. HIST_BUCKETS-1, la MÊME formule que le classement des relevés), importance, nombre à écrire dessous (-1 = aucun). */
+struct HistTick { uint8_t col; uint8_t level; int8_t num; };      // level 0 = trait fin, 1 = trait moyen, 2 = trait fort (00 h et 12 h ; lundi ; 1er du mois)
+typedef void (*HistTickFn)(void* ctx, const HistTick& tk);
+/** Plage tracée par une courbe (t0 = premier instant UTC, span = largeur en secondes) et présence des nombres sous l'axe ; HistTickCtx : contexte du rappel de tracé (types ici : le générateur de prototypes de l'IDE les place avant le .ino). */
+struct HistAxis { uint32_t t0, span; bool labels; };
+struct HistTickCtx { int x0, y0, ph; bool labels; };
+static uint8_t histTickCol(uint32_t u, uint32_t t0, uint32_t span) { const uint32_t c = (uint32_t)(((uint64_t)(u - t0) * HIST_BUCKETS) / span); return (uint8_t)(c >= HIST_BUCKETS ? HIST_BUCKETS - 1 : c); }
+/**
+ * Repères de l'axe du temps sur [t0, t0 + span) (UTC), appelés dans l'ordre chronologique, SANS tableau (une pile de 2 560 o sert déjà au tracé) :
+ *  • plage ≤ 48 h  : un trait PAR HEURE ; fort à 00 h et 12 h, moyen à 06 h et 18 h ; nombre (l'heure) tous les 1, 2, 3, 6 ou 12 h selon la place (≥ 20 px entre deux nombres) ;
+ *  • plage ≤ 10 j  : un trait par minuit (fort le lundi) ; nombre = jour du mois, à chaque jour si la place le permet, sinon aux seuls lundis ;
+ *  • au-delà       : un trait par lundi (fin) si la plage ≤ 100 j, un trait fort au 1er de chaque mois, nombre = mois (tous les 1, 2, 3, 6 ou 12 mois selon la place).
+ * Retourne le nombre de repères émis. span = 0 : aucun.
+ */
+static int histTicks(uint32_t t0, uint32_t span, HistTickFn fn, void* ctx) {
+  if (span == 0) return 0;
+  int n = 0; HistTick tk;
+  if (span <= 48UL * 3600UL) {
+    const uint32_t pxH10 = (uint32_t)(((uint64_t)HIST_BUCKETS * 3600ULL * 10ULL) / span);       // pixels par heure ×10
+    static const uint8_t steps[5] = {1, 2, 3, 6, 12};
+    uint8_t step = 12; for (int i = 0; i < 5; i++) if (pxH10 * steps[i] >= 200) { step = steps[i]; break; }
+    for (uint32_t u = ((t0 + 3599UL) / 3600UL) * 3600UL; u < t0 + span; u += 3600UL) {
+      const int h = (int)(((u + (uint32_t)histLocalOffset(u)) / 3600UL) % 24UL);
+      tk.col = histTickCol(u, t0, span);
+      tk.level = (h % 12 == 0) ? 2 : ((h % 6 == 0) ? 1 : 0);
+      tk.num = (h % step == 0) ? (int8_t)h : (int8_t)-1;
+      fn(ctx, tk); n++;
+    }
+    return n;
+  }
+  const bool daily = span <= 10UL * 86400UL;
+  const uint32_t pxD10 = (uint32_t)(((uint64_t)HIST_BUCKETS * 86400ULL * 10ULL) / span);       // pixels par jour ×10
+  const uint32_t pxM10 = (uint32_t)(((uint64_t)HIST_BUCKETS * 2592000ULL * 10ULL) / span);     // pixels par mois (30 j) ×10
+  static const uint8_t msteps[5] = {1, 2, 3, 6, 12};
+  uint8_t mstep = 12; for (int i = 0; i < 5; i++) if (pxM10 * msteps[i] >= 200) { mstep = msteps[i]; break; }
+  int32_t d0 = (int32_t)((t0 + (uint32_t)HIST_TZ_STD_SEC) / 86400UL);
+  for (int32_t day = d0 - 1; ; day++) {
+    const uint32_t u = (uint32_t)day * 86400UL - (uint32_t)histLocalOffset((uint32_t)day * 86400UL - 3600UL);    // minuit local de ce jour (en UTC)
+    if (u < t0) continue;
+    if (u >= t0 + span) break;
+    int y, m, dm; histCivil(day, y, m, dm);
+    const int wd = histWeekday(day);
+    tk.col = histTickCol(u, t0, span);
+    if (daily) {
+      tk.level = wd == 1 ? 2 : 1;
+      tk.num = (pxD10 >= 200 || wd == 1) ? (int8_t)dm : (int8_t)-1;
+    } else if (dm == 1) {
+      tk.level = 2;
+      tk.num = ((m - 1) % mstep == 0) ? (int8_t)m : (int8_t)-1;
+    } else if (wd == 1 && span <= 100UL * 86400UL) {
+      tk.level = 0; tk.num = -1;
+    } else continue;
+    fn(ctx, tk); n++;
+  }
+  return n;
+}
+
 #endif  // POD_HIST_H

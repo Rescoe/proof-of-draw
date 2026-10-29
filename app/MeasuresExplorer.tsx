@@ -6,6 +6,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
 import { formatMeasure, type Measure, type MeasureKind } from "@/lib/measures";
+import { NO_SELECT } from "./MeasuresChart";
 import {
   VIZ_RANGES, VIZ_RANGE_IDS, aggregate, bucketLabel, constellation, diskGrid, diskSpec, hasData, nearestBucket, niceScale, summarizePeriod,
   type Bucket, type VizRange,
@@ -66,8 +67,8 @@ function ChartView({ buckets, range, tz, big }: { buckets: Bucket[]; range: VizR
   const labelEvery = range === "day" ? 4 : range === "week" ? 1 : 5;
   return (
     <div>
-      <svg viewBox={`0 0 ${W} ${H}`} role="img" tabIndex={0} aria-label="Courbes de température et d'humidité" style={{ width: "100%", height: "auto", touchAction: "pan-y", outline: "none" }}
-        onPointerMove={move} onPointerDown={move} onPointerLeave={() => setHover(null)} onKeyDown={key}>
+      <svg viewBox={`0 0 ${W} ${H}`} role="img" tabIndex={0} aria-label="Courbes de température et d'humidité" style={{ width: "100%", height: "auto", touchAction: "pan-y", outline: "none", ...NO_SELECT }}
+        onPointerMove={move} onPointerDown={move} onPointerLeave={(e) => { if (e.pointerType === "mouse") setHover(null); }} onContextMenu={(e) => e.preventDefault()} onKeyDown={key}>
         <line x1={PL} y1={H - PB} x2={W - PR} y2={H - PB} stroke="var(--border)" />
         {tScale && tScale.ticks.map((v) => <g key={`t${v}`}><line x1={PL} x2={W - PR} y1={yOf(v * 10, tScale)} y2={yOf(v * 10, tScale)} stroke="var(--border)" opacity={0.35} /><text x={PL - 5} y={yOf(v * 10, tScale) + 3} fontSize="10" textAnchor="end" fill={TEMP_COLOR}>{v}°</text></g>)}
         {hScale && hScale.ticks.map((v) => <text key={`h${v}`} x={W - PR + 5} y={yOf(v * 10, hScale) + 3} fontSize="10" fill={HUM_COLOR}>{v}%</text>)}

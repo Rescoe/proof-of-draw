@@ -99,7 +99,7 @@
 #define SERVER_HOST         "proof-of-draw.vercel.app"
 #define SCREEN_TYPE         "tft18"
 #ifndef FIRMWARE_VERSION
-#define FIRMWARE_VERSION    "r4tft18-2.5"
+#define FIRMWARE_VERSION    "r4tft18-2.6"
 #endif
 #ifndef POD_SENSORS
 #define POD_SENSORS 0                                // 1 : DHT22 (D2) + SGP40 (I2C) lus toutes les 30 min, envoyés toutes les heures à /api/sensor (comme la station)
@@ -1935,15 +1935,31 @@ static uint32_t histEffective(uint32_t want, uint32_t now, uint32_t* t0) {
   *t0 = now >= span ? now - span + 1 : 0;
   return span;
 }
-/** Trace UNE courbe dans [x0 .. x0+HIST_BUCKETS) × [y0 .. y0+h). labelKind : 0 = dixièmes (température, humidité), 2 = entier (indice COV). tag : texte dans le coin haut-droit (« 24 h », « depuis 2h10 »…). */
-static void histDrawSeries(int y0, int h, const HistSeries& s, uint16_t col, int labelKind, const char* tag) {
+/** Un repère de l'échelle de temps : trait vertical sur toute la hauteur du tracé (plus clair quand l'heure compte : 00 h et 12 h), repère sous l'axe, nombre en dessous si demandé. */
+static void histTickDraw(void* vctx, const HistTick& tk) {
+  const HistTickCtx* c = (const HistTickCtx*)vctx;
+  const int x = c->x0 + tk.col;
+  tft.drawFastVLine(x, c->y0, c->ph - 1, tk.level == 2 ? 0x5AEB : (tk.level == 1 ? 0x3186 : 0x2104));
+  if (!c->labels) return;
+  if (tk.level >= 1) tft.drawFastVLine(x, c->y0 + c->ph, 2, tk.level == 2 ? C_WHITE : C_GREY);
+  if (tk.num < 0) return;
+  int lx = x - 5; if (lx < 0) lx = 0; if (lx > IMG_W - 11) lx = IMG_W - 11;                          // deux chiffres = 11 px
+  tft.setTextColor(tk.level == 2 ? C_WHITE : C_GREY, C_BLACK);
+  tft.setCursor(lx, c->y0 + c->ph + 2);
+  tft.write((uint8_t)('0' + tk.num / 10)); tft.write((uint8_t)('0' + tk.num % 10));
+}
+/** Trace UNE courbe dans [x0 .. x0+HIST_BUCKETS) × [y0 .. y0+h). labelKind : 0 = dixièmes (température, humidité), 2 = entier (indice COV). tag : texte dans le coin haut-droit (« 24 h », « depuis 2h10 »…).
+ *  ax : échelle de temps — traits verticaux dans la zone de tracé ; avec ax->labels, 10 lignes de pixels sont réservées sous l'axe pour les nombres. NULL = aucune (pas de paramètre par défaut : prototypes de l'IDE). */
+static void histDrawSeries(int y0, int h, const HistSeries& s, uint16_t col, int labelKind, const char* tag, const HistAxis* ax) {
   const int x0 = 30;
+  const int ph = (ax && ax->labels) ? h - 10 : h;                                                    // hauteur du tracé ; le reste (nombres de l'axe) est réservé sous l'axe
   int32_t vmin, vmax;
   const int have = histMinMax(s, &vmin, &vmax);
   tft.fillRect(0, y0, IMG_W, h, C_BLACK);
-  tft.drawFastVLine(x0 - 2, y0, h, 0x39E7);
-  tft.drawFastHLine(x0 - 2, y0 + h - 1, HIST_BUCKETS + 2, 0x39E7);
   tft.setTextSize(1);
+  if (ax && ax->span > 0) { HistTickCtx tc; tc.x0 = x0; tc.y0 = y0; tc.ph = ph; tc.labels = ax->labels; histTicks(ax->t0, ax->span, histTickDraw, &tc); }   // traits du temps SOUS la courbe
+  tft.drawFastVLine(x0 - 2, y0, ph, 0x39E7);
+  tft.drawFastHLine(x0 - 2, y0 + ph - 1, HIST_BUCKETS + 2, 0x39E7);
   if (have < 2) { tft.setTextColor(C_GREY, C_BLACK); tft.setCursor(2, y0 + h / 2 - 4); tft.print("pas assez de donnees"); return; }
   int32_t lo = vmin, hi = vmax, span = vmax - vmin;
   const int32_t minSpan = labelKind == 2 ? 20 : 5;                                  // plage minimale : un bruit de mesure ne devient pas une montagne
@@ -1954,17 +1970,17 @@ static void histDrawSeries(int y0, int h, const HistSeries& s, uint16_t col, int
   for (int b = 0; b < HIST_BUCKETS; b++) {
     if (cv[b] == HIST_NONE) { px = -1; continue; }
     int32_t v = cv[b]; if (v < lo) v = lo; if (v > hi) v = hi;
-    const int x = x0 + b, y = y0 + h - 2 - (int)((int64_t)(v - lo) * (h - 3) / span);
+    const int x = x0 + b, y = y0 + ph - 2 - (int)((int64_t)(v - lo) * (ph - 3) / span);
     if (px >= 0) { tft.drawLine(px, py, x, y, col); tft.drawLine(px, py + 1, x, y + 1, col); } else { tft.drawPixel(x, y, col); tft.drawPixel(x, y + 1, col); }
     if (s.n[b]) { const int32_t rv = s.s[b] / s.n[b]; if (rv == vmin && minX < 0) { minX = x; minY = y; } if (rv == vmax) { maxX = x; maxY = y; } }
     px = x; py = y;
   }
   if (maxX >= 0) tft.fillCircle(maxX, maxY < y0 + 2 ? y0 + 2 : maxY, 2, C_WHITE);                     // marques tenues dans le cadre de la courbe
-  if (minX >= 0) tft.fillCircle(minX, minY > y0 + h - 4 ? y0 + h - 4 : minY, 2, C_WHITE);
+  if (minX >= 0) tft.fillCircle(minX, minY > y0 + ph - 4 ? y0 + ph - 4 : minY, 2, C_WHITE);
   char b[12];
   tft.setTextColor(col, C_BLACK);
   tft.setCursor(0, y0); if (labelKind == 2) envFmtU(b, 4, (unsigned)vmax); else envFmt10(b, 4, (int)vmax); tft.print(b);
-  tft.setCursor(0, y0 + h - 9); if (labelKind == 2) envFmtU(b, 4, (unsigned)vmin); else envFmt10(b, 4, (int)vmin); tft.print(b);
+  tft.setCursor(0, y0 + ph - 9); if (labelKind == 2) envFmtU(b, 4, (unsigned)vmin); else envFmt10(b, 4, (int)vmin); tft.print(b);
   if (tag && tag[0]) { tft.setTextColor(C_GREY, C_BLACK); tft.setCursor(IMG_W - 6 * (int)strlen(tag) - 1, y0); tft.print(tag); }
 }
 static void histSetTag(char* o, uint32_t wantSec, uint32_t effSec) {          // « 24 h » quand la plage est pleine, « depuis 2h10 » sinon
@@ -2039,12 +2055,14 @@ static void histDetailImpl(int kind, uint32_t now, uint32_t wantBottom, HistSeri
   const uint16_t col = kind == 0 ? envTempColor() : (kind == 1 ? 0x07FF : C_GOLD);
   const int lk = kind == 2 ? 2 : 0;
   histSetTag(tag, 86400UL, effA);
+  HistAxis axA; axA.t0 = t0a; axA.span = effA; axA.labels = true;
   if (hasBottom) {
-    histDrawSeries(66, 38, *sa, col, lk, tag);
+    HistAxis axB; axB.t0 = t0b; axB.span = effB; axB.labels = true;
+    histDrawSeries(66, 40, *sa, col, lk, tag, &axA);
     histSetTag(tag, wantBottom, effB);
-    histDrawSeries(108, 38, *sb, col, lk, tag);
+    histDrawSeries(108, 40, *sb, col, lk, tag, &axB);
   } else {
-    histDrawSeries(66, 80, *sa, col, lk, tag);
+    histDrawSeries(66, 80, *sa, col, lk, tag, &axA);
   }
   tft.setTextSize(1); tft.setTextColor(C_GREY, C_BLACK); tft.setCursor(3, 150);
   if (g_histOldest) { char a[16]; histFmtAge(a, now > g_histOldest ? now - g_histOldest : 0); tft.print("historique : "); tft.print(a); }
@@ -2060,13 +2078,15 @@ static void histSynthImpl(uint32_t now, uint32_t want, HistPlot* p) {
   char tag[16]; histSetTag(tag, want, eff);
   tft.setTextSize(1); tft.setTextColor(C_GOLD, C_DARK); tft.setCursor(3, 3); tft.print("SYNTHESE "); tft.print(tag);
   char b[24], l2[28]; uint16_t tc; int ar;
-  histDrawSeries(18, 40, p->t, envTempColor(), 0, "");
+  HistAxis axS; axS.t0 = t0; axS.span = eff; axS.labels = false;
+  HistAxis axL = axS; axL.labels = true;
+  histDrawSeries(18, 40, p->t, envTempColor(), 0, "", &axS);
   histTrendLine(0, p->t, eff, b, &tc, &ar, l2);
   tft.setTextSize(1); tft.setTextColor(tc, C_BLACK); tft.setCursor(60, 20); tft.write((uint8_t)ar);
-  histDrawSeries(62, 40, p->h, 0x07FF, 0, "");
+  histDrawSeries(62, 40, p->h, 0x07FF, 0, "", &axS);
   histTrendLine(1, p->h, eff, b, &tc, &ar, l2);
   tft.setTextSize(1); tft.setTextColor(tc, C_BLACK); tft.setCursor(60, 64); tft.write((uint8_t)ar);
-  histDrawSeries(106, 40, p->v, C_GOLD, 2, "");
+  histDrawSeries(106, 42, p->v, C_GOLD, 2, "", &axL);
   histTrendLine(2, p->v, eff, b, &tc, &ar, l2);
   tft.setTextSize(1); tft.setTextColor(tc, C_BLACK); tft.setCursor(60, 108); tft.write((uint8_t)ar);
   tft.setTextColor(C_GREY, C_BLACK); tft.setCursor(3, 150); tft.print("T / H / COV");
