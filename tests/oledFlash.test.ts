@@ -84,7 +84,7 @@ test("SKETCH : drapeau POD_OLED_ANIM à 0 par défaut, exige POD_OLED_STATUS, au
   assert.match(ino, /#ifndef POD_OLED_ANIM\n#define POD_OLED_ANIM 0\n#endif/);
   assert.match(ino, /#if POD_OLED_ANIM && !POD_OLED_STATUS\n#error/);
   assert.doesNotMatch(ino, /LittleFS|SPIFFS/);
-  assert.match(ino, /#if POD_OLED_ANIM\n\s+"\\"caps\\":\[\\"anim-oled\\"\],"[^\n]*\n#endif/);
+  assert.match(ino, /#if POD_OLED_ANIM && !POD_MULTI_OLED\n\s+"\\"caps\\":\[\\"anim-oled\\"\],"[^\n]*\n#endif/);
   // tout ce qui est ajouté est dans des blocs POD_BWR_BEGIN/END (retirés par les tests d'identité) : retirer les blocs d'un sketch et de l'autre donne le même texte
 });
 

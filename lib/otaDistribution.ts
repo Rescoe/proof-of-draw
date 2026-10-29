@@ -67,7 +67,7 @@ export const otaImagePath = (releaseId: string): string => `/firmware/${releaseI
  * Seuls les firmwares qui LISENT `ota` (et dont le JSON de pull est dimensionné pour) reçoivent l'annonce : un firmware plus ancien obtient exactement la même réponse qu'avant
  * (son DynamicJsonDocument est dimensionné au plus juste ; ≈ 330 o de plus pourraient faire échouer son pull). À monter avec chaque famille dont le client est livré.
  */
-export const OTA_CLIENT_FIRMWARE: Readonly<Record<string, readonly [number, number]>> = { tft18: [2, 7], eink29bwr: [2, 4], multiscreen: [2, 6] };
+export const OTA_CLIENT_FIRMWARE: Readonly<Record<string, readonly [number, number]>> = { tft18: [2, 7], eink29bwr: [2, 4], multiscreen: [2, 6], multibwr: [2, 1] };
 export function otaClientCapable(firmware: string | null | undefined): boolean {
   const m = /^([a-z0-9]+)-(\d+)\.(\d+)(?:\.\d+)?$/.exec(String(firmware ?? "").trim().toLowerCase());
   if (!m || !Object.prototype.hasOwnProperty.call(OTA_CLIENT_FIRMWARE, m[1])) return false;
@@ -78,7 +78,7 @@ export function otaClientCapable(firmware: string | null | undefined): boolean {
 export interface OtaDeviceView { deviceId: string; firmware: string; otaSeq?: number; publicKey?: string }
 /** Famille d'un appareil = préfixe de son firmware déclaré (« tft18-2.5 » → « tft18 »). */
 /** Familles OTA connues (famille de la release ← préfixe du firmware déclaré). Un firmware absent de cette table n'est JAMAIS éligible. */
-export const OTA_FAMILIES: Readonly<Record<string, string>> = { tft18: "esp8266-tft18", eink29bwr: "esp8266-eink29bwr", multiscreen: "esp8266-multiscreen" };
+export const OTA_FAMILIES: Readonly<Record<string, string>> = { tft18: "esp8266-tft18", eink29bwr: "esp8266-eink29bwr", multiscreen: "esp8266-multiscreen", multibwr: "esp8266-multibwr" };
 export const familyOfFirmware = (fw: string): string => { const p = /^([a-z0-9]+)-\d+\.\d+/.exec(String(fw).trim().toLowerCase())?.[1] ?? ""; return Object.prototype.hasOwnProperty.call(OTA_FAMILIES, p) ? OTA_FAMILIES[p] : ""; };
 
 /** État vu par le serveur : le canal d'un appareil n'est pas déclaré aujourd'hui, c'est l'appartenance (canaryDevices / vague) qui décide ; une séquence installée inconnue vaut 0 (l'appareil refuse lui-même un « pas plus récent »). */

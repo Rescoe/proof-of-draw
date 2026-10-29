@@ -265,7 +265,7 @@ test("publication hors ligne : release signée, contrôlée, relue par le regist
 test("annonce : réservée aux firmwares QUI LISENT `ota` (tft18 >= 2.7) et aux appareils ayant une clé publique ; un ancien firmware reçoit exactement la réponse d'avant", () => {
   for (const fw of ["tft18-2.6", "tft18-2.4", "tft18-1.9", "tft18-2.7abc", "tft18-2.7-x", "multiscreen-2.5", "r4tft28-2.7", ""]) assert.equal(ann({ device: device({ firmware: fw }) }), null, fw);
   for (const fw of ["tft18-2.7", "tft18-2.10", "tft18-3.0", "tft18-2.7.1", "multiscreen-2.6", "multiscreen-2.10"]) assert.ok(otaClientCapable(fw), fw);
-  assert.deepEqual(OTA_CLIENT_FIRMWARE, { tft18: [2, 7], eink29bwr: [2, 4], multiscreen: [2, 6] }, "toute nouvelle famille cliente est une décision explicite (BWR 2,9″ le 23/10/2026, multiscreen e-ink 2,7″ + OLED le 23/10/2026 sur demande du porteur)");
+  assert.deepEqual(OTA_CLIENT_FIRMWARE, { tft18: [2, 7], eink29bwr: [2, 4], multiscreen: [2, 6], multibwr: [2, 1] }, "toute nouvelle famille cliente est une décision explicite (BWR 2,9″ le 23/10/2026, multiscreen e-ink 2,7″ + OLED le 23/10/2026 sur demande du porteur)");
   assert.equal(ann({ device: device({ publicKey: undefined }) }), null, "sans clé publique : l'appareil ne pourrait pas signer son téléchargement");
   assert.equal(ann({ device: device({ publicKey: "zz" }) }), null);
 });

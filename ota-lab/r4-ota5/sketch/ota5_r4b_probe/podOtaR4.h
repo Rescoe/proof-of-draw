@@ -67,10 +67,17 @@ static inline bool firmwareOk(const uint8_t* s, size_t n, char* prefix, uint32_t
 static inline bool voteCapable(const char* prefix, uint32_t major, uint32_t minor) {
   static const struct { const char* p; uint8_t maj, min; } T[] = {
     {"r4tft28", 2, 5}, {"r4eink29", 1, 1}, {"r4eink27", 1, 1}, {"r4multiscreen", 1, 1}, {"r4tft18", 1, 1},
-    {"multiscreen", 2, 5}, {"eink27bw", 2, 1}, {"eink29bwr", 2, 3}, {"tft18", 2, 4}};
+    {"multiscreen", 2, 5}, {"multibwr", 2, 1}, {"eink27bw", 2, 1}, {"eink29bwr", 2, 3}, {"tft18", 2, 4}};
   for (size_t i = 0; i < sizeof(T) / sizeof(T[0]); i++) if (eq(prefix, T[i].p)) return major > T[i].maj || (major == T[i].maj && minor >= T[i].min);
   return false;
 }
+
+/** Familles R4 (miroir de R4_FAMILIES) : écran TFT 2,8″, écran TFT 1,8″ avec capteurs, station capteur seule (sans vote). */
+static inline bool familyOk(const uint8_t* s, size_t n) {
+  return (n == 17 && (memcmp(s, "uno-r4-wifi-tft28", 17) == 0 || memcmp(s, "uno-r4-wifi-tft18", 17) == 0)) || (n == 18 && memcmp(s, "uno-r4-wifi-sensor", 18) == 0);
+}
+/** Cette famille vote-t-elle ? (la station capteur est exemptée du contrôle « firmware capable de voter »). */
+static inline bool familyVotes(const char* family) { return strcmp(family, "uno-r4-wifi-sensor") != 0; }
 
 /** Analyse STRICTE (miroir de parseR4Manifest). Ne lit jamais hors de [raw, raw+n). */
 static inline bool parse(const uint8_t* raw, size_t n, Manifest& m) {
@@ -93,8 +100,8 @@ static inline bool parse(const uint8_t* raw, size_t n, Manifest& m) {
   const uint8_t* sg = raw + pos + 4; size_t sl = e - pos - 4;
   static const char SCHEMA[] = "pod-ota-manifest-r4-v1";
   if (vlen[0] != sizeof(SCHEMA) - 1 || memcmp(val[0], SCHEMA, vlen[0]) != 0) return false;
-  if (vlen[1] != 17 || memcmp(val[1], "uno-r4-wifi-tft28", 17) != 0) return false;
-  memcpy(m.family, val[1], 17);
+  if (!familyOk(val[1], vlen[1])) return false;
+  memcpy(m.family, val[1], vlen[1]);
   char pre[17]; uint32_t maj, mnr; if (vlen[2] >= sizeof m.firmware || !firmwareOk(val[2], vlen[2], pre, maj, mnr)) return false;
   memcpy(m.firmware, val[2], vlen[2]);
   uint64_t seq, size, nb; if (!uintOk(val[3], vlen[3], seq) || !uintOk(val[5], vlen[5], size) || !uintOk(val[7], vlen[7], nb)) return false;
@@ -123,7 +130,7 @@ static inline Why evaluate(const uint8_t* raw, size_t n, const Keys& keys, const
   if (!good) return W_SIGNATURE;
   if (!eq(m.family, d.family)) return W_FAMILY;
   if (eq(m.channel, "development") || !eq(m.channel, d.channel)) return W_CHANNEL;
-  { char pre[17]; uint32_t a, b; if (!firmwareOk((const uint8_t*)m.firmware, strlen(m.firmware), pre, a, b) || !voteCapable(pre, a, b)) return W_VOTE_INCOMPAT; }
+  { char pre[17]; uint32_t a, b; if (!firmwareOk((const uint8_t*)m.firmware, strlen(m.firmware), pre, a, b) || (familyVotes(m.family) && !voteCapable(pre, a, b))) return W_VOTE_INCOMPAT; }
   if (m.seq <= d.installedSeq) return W_NOT_NEWER;
   if (m.notbefore > d.now) return W_NOT_ACTIVE;
   return W_OK;

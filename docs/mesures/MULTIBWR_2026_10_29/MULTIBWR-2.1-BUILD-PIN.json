@@ -1,0 +1,47 @@
+{
+  "note": "Pin de build SUIVI et sans secret du profil exact multibwr-2.1 (multiscreen e-ink BWR 2,9 + OLED 0,96 + DHT22). Faits PUBLICS ; binaires sous canary-builds/ (ignore par git). Compile seulement : jamais flashe, jamais publie, jamais essaye sur la carte.",
+  "fqbn": "esp8266:esp8266:nodemcuv2:eesz=4M2M",
+  "cli": "arduino-cli de l IDE Arduino 2.x (esp8266 core 3.1.2)",
+  "builder": "node ota-lab/esp8266-canary/tools/build-bwr.mjs --ota --seq 16 --version multibwr-2.1 --sensor --oled --display --chunk --define POD_OLED_ANIM=1 --define POD_MULTI_OLED=1 --src esp8266/esp_eink_2.9BWR",
+  "buildExtraFlags": "-DPOD_WIFI_FROM_RECORD=1 -DPOD_WIFI_PORTAL=1 -DPOD_SENSOR_DHT22=1 -DPOD_OLED_STATUS=1 -DPOD_SENSOR_DISPLAY=1 -DPOD_FRAME_CHUNK=1 -DPOD_OLED_ANIM=1 -DPOD_MULTI_OLED=1 -DPOD_OTA=1 -DPOD_OTA_CLIENT=1 -DPOD_OTA_SEQ=16",
+  "sketchSource": "esp8266/esp_eink_2.9BWR/esp_eink_2.9BWR.ino",
+  "sketchSha256Lf": "79170e74575cff228f443453b3155503f02c557c2293cb14578f6773a14b6d43",
+  "embedded": {
+    "firmwareVersion": "multibwr-2.1",
+    "otaFamily": "esp8266-multibwr",
+    "otaSeq": 16,
+    "screens": [
+      "eink29bwr",
+      "oled096"
+    ],
+    "sensors": [
+      "temp",
+      "hum"
+    ]
+  },
+  "image": {
+    "bytes": 558592,
+    "sha256": "f6db0289f1130dd54cb34b7b54cd78aaab06785e93b0a480faa968ba061a752e",
+    "ramStatic": 35736
+  },
+  "signedFile": {
+    "bytes": 558916,
+    "sha256": "4624072f76a0c2463479a1b8dce473cac8035a294e10b0014bcdfa6624470ea5"
+  },
+  "signedRegion": {
+    "bytes": 558656,
+    "sha256": "1c85f1e731a110bd1742b59e71b0810f549510257bd241e6eb3c23d39dcf1935"
+  },
+  "manifest": {
+    "releaseId": "eink29bwr-2.15-ota16",
+    "family": "esp8266-eink29bwr",
+    "firmwareVersion": "eink29bwr-2.15",
+    "otaSeq": 16,
+    "channel": "canary",
+    "canaryDevices": [
+      "dev_T46HBXG1"
+    ],
+    "keyId": "ota-a"
+  },
+  "why": "le client installe (eink29bwr-2.13) n accepte que sa famille et un prefixe de version connu de sa table de vote : le manifeste/trailer porte esp8266-eink29bwr / eink29bwr-2.15 ; le binaire installe se declare multibwr-2.1 / esp8266-multibwr"
+}

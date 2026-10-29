@@ -151,10 +151,28 @@
 #if POD_OLED_ANIM && !POD_OLED_STATUS
 #error "POD_OLED_ANIM exige POD_OLED_STATUS = 1"
 #endif
+// POD_MULTI_OLED = 1 (29/10/2026) : MULTISCREEN e-ink BWR 2,9″ + OLED 0,96″ + DHT22. L'OLED n'est plus un « auxiliaire » : la carte déclare DEUX écrans réels (eink29bwr, oled096) et UNE seule identité / UNE seule voix de vote.
+// L'e-ink reçoit les œuvres fixes (plans noir/rouge, morceaux, cartel, OTA : inchangés) ; l'OLED reçoit ses propres frames (image 1 024 o, comme le multiscreen 2,7″) et le pointeur des animations (clip en flash brute, lecture
+// en flux : pod_oled_*), et affiche les mesures du DHT22 entre deux animations. Exige l'OLED, ses animations et le DHT22. 0 par défaut : le firmware est alors celui d'avant, au texte près.
+#ifndef POD_MULTI_OLED
+#define POD_MULTI_OLED 0
+#endif
+#if POD_MULTI_OLED && !(POD_OLED_STATUS && POD_OLED_ANIM && POD_SENSOR_DHT22)
+#error "POD_MULTI_OLED exige POD_OLED_STATUS = 1, POD_OLED_ANIM = 1 et POD_SENSOR_DHT22 = 1"
+#endif
+#if POD_MULTI_OLED
+#define POD_SCREEN_QS "&screen=eink29bwr"
+#else
+#define POD_SCREEN_QS ""
+#endif
 #if POD_OLED_ANIM
 #include "pod_oled_flash.h"
 #include "pod_oled_stream.h"
 static bool podoaActive();
+#if POD_MULTI_OLED
+static String g_lastFrameIdOled = "";                // frame de l'OLED déjà affichée (l'e-ink garde lastFrameId)
+static bool doFetchFrameOled(const String& frameId, const String& frameSource);
+#endif
 static void podoaOnPull(const char* hash, uint32_t bytes);
 static void podoaAfterFrame(bool fetchOk);
 static void podoaOnRead(bool ok, int t10, int h10);
@@ -185,6 +203,10 @@ static void podoaService();
 #define POD_OTA_CLIENT 1   // PROFIL DE DISTRIBUTION (29/10/2026) : client OTA Internet (TLS authentifié) ; exige le Wi-Fi hors binaire
 #endif
 #define POD_OTA_FAMILY "esp8266-eink29bwr"
+#if POD_MULTI_OLED
+#undef POD_OTA_FAMILY
+#define POD_OTA_FAMILY "esp8266-multibwr"   // nouvelle variante : les mises à jour suivantes ciblent cette famille (la migration depuis eink29bwr est signée avec l'ancienne)
+#endif
 #ifndef FIRMWARE_VERSION
 #define FIRMWARE_VERSION "eink29bwr-2.13"
 #endif
@@ -1248,11 +1270,25 @@ void displayQR(const String& onboardUrl, const String& code, const String& mac) 
   refreshDisplay();
 }
 
+// POD_BWR_BEGIN
+#if POD_MULTI_OLED
+bool ackFrame(const String& frameId, const char* screen = nullptr) {
+  String body = "{\"deviceId\":\"" + deviceId + "\",\"frameId\":\"" + frameId + "\"";
+  if (screen) { body += ",\"screen\":\""; body += screen; body += "\""; }
+  body += "}";
+  String resp;
+  return httpPost("/api/ack-frame", body, resp);
+}
+#else
+// POD_BWR_END
 bool ackFrame(const String& frameId) {
   String body = "{\"deviceId\":\"" + deviceId + "\",\"frameId\":\"" + frameId + "\"}";
   String resp;
   return httpPost("/api/ack-frame", body, resp);
 }
+// POD_BWR_BEGIN
+#endif
+// POD_BWR_END
 
 void displayKeyMaterialOnce() {
   memset(blackBuf, 0xFF, BUF_SIZE);
@@ -1304,14 +1340,22 @@ bool doRegister() {
 
   String pubHex     = keysLoaded ? bytesToHex(publicKey, 32) : "";
   String ownedHashes = loadOwnedHashesJson();  // ex: ["abc...","def..."] ou []
+// POD_BWR_BEGIN
+#if POD_MULTI_OLED
+  String body = "{\"mac\":\"" + mac + "\",\"screens\":[\"eink29bwr\",\"oled096\"],"
+#else
+// POD_BWR_END
   String body = "{\"mac\":\"" + mac + "\",\"screens\":[\"" + SCREEN_TYPE + "\"],"
+// POD_BWR_BEGIN
+#endif
+// POD_BWR_END
 // POD_BWR_BEGIN
 #if POD_SENSOR_DHT22
                 "\"sensors\":[\"temp\",\"hum\"],"                                              // grandeurs déclarées : sans elles /api/sensor refuse (400) cet appareil
 #endif
 // POD_BWR_END
 // POD_BWR_BEGIN
-#if POD_OLED_ANIM
+#if POD_OLED_ANIM && !POD_MULTI_OLED
                 "\"caps\":[\"anim-oled\"],"                                                    // OLED auxiliaire qui joue les animations : le serveur ne livre le pointeur du clip qu'à une carte qui le déclare
 #endif
 // POD_BWR_END
@@ -1497,7 +1541,7 @@ static int fetchFrameChunked() {
     {   // une session TLS par morceau, détruite à la sortie du bloc (tampon de réception réduit)
       WiFiClientSecure client; client.setInsecure(); client.setBufferSizes(POD_TLS_RX, 512);
       HTTPClient http;
-      const String url = String(SERVER_URL) + "/api/pull-frame?deviceId=" + deviceId + "&fmt=bin&off=" + String((unsigned)off) + "&len=" + String((unsigned)len);
+      const String url = String(SERVER_URL) + "/api/pull-frame?deviceId=" + deviceId + POD_SCREEN_QS + "&fmt=bin&off=" + String((unsigned)off) + "&len=" + String((unsigned)len);
       if (http.begin(client, url)) {
         http.setTimeout(20000); http.useHTTP10(true);
         const int code = http.GET();
@@ -1561,7 +1605,15 @@ bool doFetchFrame(const String& frameId, const String& frameSource) {
     client.setInsecure();
     HTTPClient http;
 
+// POD_BWR_BEGIN
+#if POD_MULTI_OLED
+    String url = String(SERVER_URL) + "/api/pull-frame?deviceId=" + deviceId + "&screen=eink29bwr&fmt=bin";
+#else
+// POD_BWR_END
     String url = String(SERVER_URL) + "/api/pull-frame?deviceId=" + deviceId + "&fmt=bin";
+// POD_BWR_BEGIN
+#endif
+// POD_BWR_END
     if (!http.begin(client, url)) {
       Serial.println(F("[FETCHFRAME] begin() failed"));
       free(blackBuf); blackBuf = nullptr;
@@ -1769,6 +1821,11 @@ bool doPull() {
   String newFrameId     = "";
   String newFrameSource = "none";
   int    pullRetryAfter = 60;  // valeur par défaut, remplacée par doc["retryAfter"]
+// POD_BWR_BEGIN
+#if POD_MULTI_OLED
+  String newScreen      = "";
+#endif
+// POD_BWR_END
 
   {
     WiFiClientSecure client;
@@ -1848,6 +1905,11 @@ bool doPull() {
     pullRetryAfter = doc["retryAfter"]  | 60;
     if (pullRetryAfter <= 0) pullRetryAfter = 60;
 // POD_BWR_BEGIN
+#if POD_MULTI_OLED
+    newScreen      = doc["screen"]      | "";
+#endif
+// POD_BWR_END
+// POD_BWR_BEGIN
 #if POD_OTA_CLIENT
     {
       JsonObject ot = doc["ota"];
@@ -1862,6 +1924,9 @@ bool doPull() {
     }
 // POD_BWR_BEGIN
 #if POD_OLED_ANIM
+#if POD_MULTI_OLED
+    if (newScreen == "oled096")                    // le pointeur n'accompagne que la frame de l'OLED : un pull portant une frame e-ink ou aucune frame ne touche jamais à l'animation en cours
+#endif
     { JsonObject an = doc["anim"]; podoaOnPull(an.isNull() ? "" : (const char*)(an["hash"] | ""), an.isNull() ? 0 : (uint32_t)(an["bytes"] | 0)); }   // pointeur du clip (absent = image fixe)
 #endif
 // POD_BWR_END
@@ -1915,7 +1980,17 @@ bool doPull() {
   // Ajuste l'intervalle de pull selon l'activité réseau signalée par le serveur
   // Frame déjà affichée (même frameId) sans candidat : rien à faire → retryAfter, comme « aucune frame »
   // (sinon une frame personnelle acquittée, qui reste dans /api/pull, imposait un pull toutes les 60 s).
+// POD_BWR_BEGIN
+#if POD_MULTI_OLED
+  const bool forOled = (newScreen == "oled096");
+  const String& shownId = forOled ? g_lastFrameIdOled : lastFrameId;      // un identifiant mémorisé PAR écran
+  bool sameFrameIdle = newFrameId.length() > 0 && newFrameId == shownId;
+#else
+// POD_BWR_END
   bool sameFrameIdle = newFrameId.length() > 0 && newFrameId == lastFrameId;
+// POD_BWR_BEGIN
+#endif
+// POD_BWR_END
   if ((newFrameSource == "none" || sameFrameIdle) && newCandId.length() == 0) {
     // Réseau idle → on respecte le retryAfter du serveur (typiquement 300s)
     nextPullIntervalMs = (unsigned long)pullRetryAfter * 1000UL;
@@ -1945,18 +2020,36 @@ bool doPull() {
     return true;
   }
 
+// POD_BWR_BEGIN
+#if POD_MULTI_OLED
+  if (newFrameId == shownId) {
+    Serial.println(F("[PULL] Frame déjà affichée (frameId identique)"));
+    frameReady = true;
+    return true;
+  }
+  if (forOled) {
+    Serial.printf_P(PSTR("[PULL] Nouvelle frame OLED frameId=%s source=%s → fetch\n"), newFrameId.c_str(), newFrameSource.c_str());
+    const bool oledOk = doFetchFrameOled(newFrameId, newFrameSource);
+    if (!oledOk) Serial.println(F("[PULL] frame OLED non affichée — prochaine tentative au prochain pull"));
+    return true;                                  // l'animation (si pointeur) est rapatriée par podoaService, réseau libre
+  }
+#else
+// POD_BWR_END
   if (newFrameId == lastFrameId) {
     Serial.println(F("[PULL] Frame déjà affichée (frameId identique)"));
     frameReady = true;
     return true;
   }
+// POD_BWR_BEGIN
+#endif
+// POD_BWR_END
 
   Serial.printf_P(PSTR("[PULL] Nouvelle frame frameId=%s source=%s → fetch\n"),
                 newFrameId.c_str(), newFrameSource.c_str());
 
   bool fetchOk = doFetchFrame(newFrameId, newFrameSource);
 // POD_BWR_BEGIN
-#if POD_OLED_ANIM
+#if POD_OLED_ANIM && !POD_MULTI_OLED
   podoaAfterFrame(fetchOk);                          // image fixe affichée sans pointeur : l'animation précédente s'arrête
 #endif
 // POD_BWR_END
@@ -2322,6 +2415,9 @@ struct St {
   bool playing = false;                          // l'OLED est occupé par l'animation (l'écran d'état ne le repeint pas)
   int16_t t10 = 0, h10 = 0; uint32_t readAtMs = 0; bool haveRead = false; bool readFailed = false;   // dernière lecture du DHT22 (pour l'écran capteur)
   uint32_t drawnMs = 0; bool needSensor = true;
+#if POD_MULTI_OLED
+  uint32_t holdUntilMs = 0;                      // image fixe de l'OLED : les mesures ne la remplacent qu'après ce délai
+#endif
 };
 static St g;
 }  // namespace podoa
@@ -2452,7 +2548,11 @@ static void podoaOnRead(bool ok, int t10, int h10) {
   podoa::St& s = podoa::g;
   if (ok) { s.t10 = (int16_t)t10; s.h10 = (int16_t)h10; s.readAtMs = millis(); s.haveRead = true; s.readFailed = false; } else if (!s.haveRead) s.readFailed = true;
   s.needSensor = true;
+#if POD_MULTI_OLED
+  if (!s.playing && (int32_t)(s.holdUntilMs - millis()) <= 0) podoaSensorScreen();
+#else
   if (!s.playing) podoaSensorScreen();
+#endif
 }
 
 /** Une tâche réseau (pull, vote, observation, capteur, OTA) arrive dans moins de 2 s, ou la carte n'est pas prête : l'animation s'efface devant elle. */
@@ -2512,8 +2612,58 @@ static void podoaService() {
     return;
   }
   // 3. pas d'animation : l'écran capteur (âge de la mesure) se rafraîchit chaque minute
+#if POD_MULTI_OLED
+  if ((int32_t)(s.holdUntilMs - now) > 0) return;                       // une image fixe de l'OLED est affichée : mesures plus tard
+#endif
   if (s.needSensor || (now - s.drawnMs) >= 60000UL) podoaSensorScreen();
 }
+#if POD_MULTI_OLED
+/** Flux interne de l'image de l'OLED : télécharge (TLS), affiche, acquitte POUR l'écran oled096. Les plans e-ink sont DÉJÀ libérés par l'appelant (aucun retour anticipé d'ici ne les concerne). L'identifiant n'est mémorisé QU'APRÈS un ACK HTTP réussi. */
+static bool oledFrameFlow(const String& frameId, const String& frameSource) {
+  if (!ensureOLEDReady()) return false;
+  uint8_t* px = oled.getBuffer();                                         // image lue DIRECTEMENT dans le tampon SSD1306 de la bibliothèque (1 024 o, page-majeur) : aucune allocation pendant le TLS
+  bool got = false;
+  {
+    WiFiClientSecure client; client.setInsecure(); client.setBufferSizes(POD_TLS_RX, 512);
+    HTTPClient http;
+    const String url = String(SERVER_URL) + "/api/pull-frame?deviceId=" + deviceId + "&screen=oled096&fmt=bin";
+    if (!http.begin(client, url)) { Serial.println(F("[FETCHFRAME-OLED] begin() impossible")); return false; }
+    http.setTimeout(20000); http.useHTTP10(true);
+    const int code = http.GET();
+    Serial.printf_P(PSTR("[HTTP GET] /api/pull-frame (OLED) → %d\n"), code);
+    if (code == 404) { http.end(); Serial.println(F("[FETCHFRAME-OLED] pas de frame")); return true; }
+    if (code != 200 || http.getSize() != 1024) { Serial.printf_P(PSTR("[FETCHFRAME-OLED] HTTP %d, %d o\n"), code, http.getSize()); http.end(); return false; }
+    WiFiClient* st = http.getStreamPtr(); size_t n = 0; const unsigned long t0 = millis();
+    while (n < 1024 && millis() - t0 < 15000) { if (st->available()) { const size_t r = st->readBytes(px + n, 1024 - n); if (r > 0) n += r; } else delay(10); }
+    http.end();
+    got = (n == 1024);
+    if (!got) Serial.printf_P(PSTR("[FETCHFRAME-OLED] incomplet : %u / 1024\n"), (unsigned)n);
+  }                                                                       // TLS fermé ici
+  podoa::St& s = podoa::g;
+  if (!got) { s.needSensor = true; return false; }                       // tampon partiellement écrit : l'écran capteur le repeint
+  podoaAfterFrame(true);                                                 // image fixe sans pointeur : l'animation précédente s'arrête (avec pointeur, le clip arrive ensuite)
+  Wire.begin(D6, D4); Wire.setClock(100000);
+  oled.display();
+  s.drawnMs = millis(); s.needSensor = false; s.holdUntilMs = millis() + 300000UL;
+  if (!ackFrame(frameId, "oled096")) {                                   // ACK contrôlé : sans lui la frame n'est PAS terminée et le serveur la reproposera au prochain pull
+    Serial.printf_P(PSTR("[FETCHFRAME-OLED] ACK refuse ou impossible frameId=%s — frame reproposee au prochain pull\n"), frameId.c_str());
+    return false;
+  }
+  g_lastFrameIdOled = frameId;
+  Serial.printf_P(PSTR("[FETCHFRAME-OLED] affichee et acquittee frameId=%s source=%s\n"), frameId.c_str(), frameSource.c_str());
+  return true;
+}
+/** Image de l'OLED, appelée par doPull : AUCUN plan e-ink vivant pendant le TLS de l'OLED ni pendant l'ACK (invariant mémoire de l'ESP8266, marge étroite de ce montage) ; les deux plans sont réalloués et initialisés sur TOUTES les sorties
+ *  (le flux interne n'a aucune sortie qui les concerne) ; échec de la réallocation = journal puis redémarrage fermé. */
+static bool doFetchFrameOled(const String& frameId, const String& frameSource) {
+  free(blackBuf); blackBuf = nullptr; free(redBuf); redBuf = nullptr;
+  const bool shown = oledFrameFlow(frameId, frameSource);
+  blackBuf = (uint8_t*)malloc(BUF_SIZE); redBuf = (uint8_t*)malloc(BUF_SIZE);
+  if (!blackBuf || !redBuf) { Serial.println(F("[FETCHFRAME-OLED] malloc des plans apres l'OLED impossible — redemarrage")); ESP.restart(); }
+  memset(blackBuf, 0xFF, BUF_SIZE); memset(redBuf, 0xFF, BUF_SIZE);
+  return shown;
+}
+#endif
 #endif
 /** Dessine un QR de côté P pixels (modules de largeur entière variable, bornes floor(i·P/n) : P exact, quelle que soit la version) dont le coin haut-gauche LOGIQUE est (x0, y0) ; renvoie P (0 si impossible). */
 static int portalDrawQr(uint8_t* buf, int x0, int y0, int P, const char* text) {

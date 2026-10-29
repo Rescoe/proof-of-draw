@@ -88,6 +88,7 @@ Le serveur reconnaît une famille par le **préfixe de la version déclarée** �
 | `tft18` | 2.4 | 2.7 | 2.9 | oui (bloc #111, 22/10) | oui : 2.7 → 2.8 ; 2.9 → 2.10 **non aboutie** |
 | `eink29bwr` | 2.3 | 2.4 | 2.13 | oui (#101, 14/10 ; #114, 24/10) | oui : 2.4 → 2.5 ; 2.12 → 2.13 (cousin, 27/10) |
 | `multiscreen` | 2.5 | 2.6 | 2.7 | oui (#103, 14/10) | oui : 2.6 → 2.7 (marge 608 o) |
+| `multibwr` | 2.1 | 2.1 | — (pas encore dans le téléchargement public) | **non** (compilé seulement, 29/10/2026) | non : migration depuis `eink29bwr-2.13` préparée, jamais publiée |
 | `eink27bw` | 2.1 | — | 2.1 | **non** (jamais essayé en V2) | non |
 | `r4tft28` | 2.5 | — | 2.5 | oui (#100 et #103, 14/10) | non (pas de client OTA applicatif) |
 | `r4eink29` | 1.1 | — | 1.2 | oui (#100 et #101, 14/10) | non |

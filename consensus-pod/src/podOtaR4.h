@@ -67,7 +67,7 @@ static inline bool firmwareOk(const uint8_t* s, size_t n, char* prefix, uint32_t
 static inline bool voteCapable(const char* prefix, uint32_t major, uint32_t minor) {
   static const struct { const char* p; uint8_t maj, min; } T[] = {
     {"r4tft28", 2, 5}, {"r4eink29", 1, 1}, {"r4eink27", 1, 1}, {"r4multiscreen", 1, 1}, {"r4tft18", 1, 1},
-    {"multiscreen", 2, 5}, {"eink27bw", 2, 1}, {"eink29bwr", 2, 3}, {"tft18", 2, 4}};
+    {"multiscreen", 2, 5}, {"multibwr", 2, 1}, {"eink27bw", 2, 1}, {"eink29bwr", 2, 3}, {"tft18", 2, 4}};
   for (size_t i = 0; i < sizeof(T) / sizeof(T[0]); i++) if (eq(prefix, T[i].p)) return major > T[i].maj || (major == T[i].maj && minor >= T[i].min);
   return false;
 }

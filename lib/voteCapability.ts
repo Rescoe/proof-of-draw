@@ -20,6 +20,7 @@ export const VOTE_V2_FIRMWARE: Record<string, [number, number]> = {
   r4tft18: [1, 1],          // UNO R4 + TFT 1,8″
   multiscreen: [2, 5],      // ESP8266 + e-ink 2,7″ + OLED
   eink27bw: [2, 1],         // ESP8266 + e-ink 2,7″
+  multibwr: [2, 1],         // ESP8266 + e-ink 2,9″ BWR + OLED 0,96″ + DHT22 (deux écrans réels, UNE voix ; 29/10/2026)
   eink29bwr: [2, 3],        // ESP8266 + e-ink 2,9″ BWR (le 14/10/2026 : « 2.2 » nu devient « eink29bwr-2.3 », reconnaissable)
   tft18: [2, 4],            // ESP8266 + TFT 1,8″
 };

@@ -22,7 +22,7 @@ inline bool idOk(const char* s, size_t max) { size_t n = 0; while (s[n] != 0 && 
 struct VoteMin { const char* prefix; uint8_t major, minor; };
 static const VoteMin VOTE_V2[] = {
   {"r4tft28", 2, 5}, {"r4eink29", 1, 1}, {"r4eink27", 1, 1}, {"r4multiscreen", 1, 1}, {"r4tft18", 1, 1},
-  {"multiscreen", 2, 5}, {"eink27bw", 2, 1}, {"eink29bwr", 2, 3}, {"tft18", 2, 4},
+  {"multiscreen", 2, 5}, {"multibwr", 2, 1}, {"eink27bw", 2, 1}, {"eink29bwr", 2, 3}, {"tft18", 2, 4},
 };
 inline char lower(char c) { return (c >= 'A' && c <= 'Z') ? (char)(c + 32) : c; }
 /** ^([a-z0-9]+)-(\d+)\.(\d+)(?:\.\d+)?$ (insensible à la casse), puis version >= minimum du préfixe. */

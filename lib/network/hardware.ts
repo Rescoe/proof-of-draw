@@ -7,7 +7,7 @@ export function hardwareOfFirmware(firmware: string | null | undefined): Hardwar
   const f = String(firmware ?? "").trim().toLowerCase();
   if (!f) return "unknown";
   if (/^r4/.test(f) || /uno[ -]?r4/.test(f)) return "uno-r4";
-  if (/^(multiscreen|tft18|eink27bw|eink29bwr)-/.test(f)) return "esp8266";
+  if (/^(multiscreen|multibwr|tft18|eink27bw|eink29bwr)-/.test(f)) return "esp8266";
   if (/^\d+\.\d+$/.test(f)) return "esp8266";
   return "unknown";
 }

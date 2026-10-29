@@ -23,7 +23,7 @@ export const ANIM_POINTER_FIRMWARE: Record<string, { prefix: string; min: [numbe
   tft28: { prefix: "r4tft28", min: [2, 4] },
   // r4tft18-2.3 : UNO R4 WiFi + TFT 1,8″ (clip PBC1 sur la microSD, lecture en flux — arduino_uno_r4/pod_uno_r4_tft18_env)
   tft18: { prefix: "tft18", min: [2, 2], alt: [{ prefix: "r4tft18", min: [2, 3] }] },
-  oled096: { prefix: "multiscreen", min: [2, 2] },
+  oled096: { prefix: "multiscreen", min: [2, 2], alt: [{ prefix: "multibwr", min: [2, 1] }] },   // multibwr : e-ink BWR 2,9″ + OLED (clip en flash brute)
 };
 
 /**
