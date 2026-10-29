@@ -111,3 +111,5 @@ esp8266/**/public.key
 arduino_uno_r4/**/pod_ota_r4_keys.h
 arduino_uno_r4/**/pod_build_flags.h
 arduino_uno_r4/**/pod_lab_ca.h
+# suite de viewports (Playwright) : captures et traces locales
+/tests/ui/.output
