@@ -84,10 +84,15 @@ code { font-family: "JetBrains Mono", monospace; }
 .site-nav__links {
   margin-left: auto;
   display: flex;
-  gap: 0.6rem;
-  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: nowrap;                    /* UX jalon 1 : jamais de retour à la ligne (la bascule en hamburger se fait à 1024 px) */
+  white-space: nowrap;
 }
 .site-nav__link {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;                     /* cible tactile / pointeur confortable */
   padding: 0.45rem 0.85rem;
   border: 1px solid var(--border);
   border-radius: 0.75rem;
@@ -106,11 +111,19 @@ code { font-family: "JetBrains Mono", monospace; }
   border-color: rgba(124,107,255,0.5);
   background: rgba(124,107,255,0.1);
 }
-/* Menu « Plus » (bureau) : <details> natif, sans script */
-.site-nav__more { position: relative; }
-.site-nav__more > summary { list-style: none; cursor: pointer; }
-.site-nav__more > summary::-webkit-details-marker { display: none; }
-.site-nav__more-menu {
+/* « Créer une œuvre » : appel à l'action principal de la barre */
+.site-nav__link--cta {
+  color: #fff;
+  font-weight: 600;
+  border-color: rgba(124,107,255,0.7);
+  background: linear-gradient(135deg, rgba(124,107,255,0.55), rgba(255,107,157,0.35));
+}
+.site-nav__link--cta:hover { border-color: rgba(255,255,255,0.5); }
+.site-nav__link--cta.site-nav__link--active { box-shadow: 0 0 0 2px rgba(124,107,255,0.45); }
+/* Menu « Communauté » (bureau) : bouton + liste, Échap et clic extérieur gérés par NavMenu */
+.site-nav__menu { position: relative; }
+.site-nav__menu-btn { font: inherit; font-size: 0.88rem; cursor: pointer; gap: 0.3rem; }
+.site-nav__menu-list {
   position: absolute; right: 0; top: calc(100% + 6px); z-index: 60; min-width: 220px;
   display: flex; flex-direction: column; gap: 2px; padding: 8px;
   background: var(--bg2); border: 1px solid var(--border); border-radius: 12px; box-shadow: 0 8px 32px rgba(0,0,0,0.45);
@@ -893,7 +906,10 @@ code { font-family: "JetBrains Mono", monospace; }
   .network-panel__grid {
     grid-template-columns: 1fr;
   }
-  /* Desktop links hidden on mobile — burger takes over */
+}
+
+/* UX jalon 1 : la barre à sept entrées ne tient pas en dessous de 1025 px sans retour à la ligne → navigation compacte (tiroir groupé) jusqu'à 1024 px inclus */
+@media (max-width: 1024px) {
   .site-nav__links { display: none !important; }
   .nav-burger { display: flex !important; }
 }
@@ -901,6 +917,8 @@ code { font-family: "JetBrains Mono", monospace; }
 /* ── Hamburger button ──────────────────────────────────────── */
 .nav-burger {
   display: none;
+  width: 44px;
+  height: 44px;
   align-items: center;
   justify-content: center;
   background: none;
@@ -940,7 +958,7 @@ code { font-family: "JetBrains Mono", monospace; }
 }
 .nav-drawer {
   position: fixed;
-  top: 57px;
+  top: 76px;                           /* hauteur mesurée de la barre : 75,2 px (0,95 rem × 2 + 44 px + bordure) */
   right: 0;
   z-index: 50;
   background: var(--bg2);
@@ -951,11 +969,18 @@ code { font-family: "JetBrains Mono", monospace; }
   display: flex;
   flex-direction: column;
   gap: 2px;
-  min-width: 200px;
+  width: min(340px, 100%);
+  max-height: calc(100dvh - 76px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
   box-shadow: -6px 8px 32px rgba(0,0,0,0.45);
 }
+.nav-drawer__home { font-weight: 700; }
+.nav-drawer__group { display: flex; flex-direction: column; gap: 2px; }
 .nav-drawer__link {
-  display: block;
+  display: flex;
+  align-items: center;
+  min-height: 44px;
   padding: 11px 16px;
   border-radius: 8px;
   color: var(--text2);

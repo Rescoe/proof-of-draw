@@ -106,26 +106,3 @@ export function allNavHrefs(): string[] {
   return [...hrefs];
 }
 
-// ── HÉRITAGE TEMPORAIRE (retiré au commit 3, quand NavMenu.tsx passe à NAV_ENTRIES / DRAWER_GROUPS) ──
-export const PRIMARY_LINKS: NavLink[] = [
-  { href: "/draw",    label: "Créer",              match: ["/draw", "/animer", "/draw-lab"] },
-  { href: "/gallery", label: "Découvrir",          match: ["/gallery", "/artists", "/gallery-ana", "/gallery-anim"] },
-  { href: "/profile", label: "Mes écrans",         match: ["/profile", "/my-devices"] },
-  { href: "/learn?path=install#installer", label: "Installer un écran", match: ["/learn", "/firmware"] },
-];
-
-export const MORE_LINKS: NavLink[] = [
-  { href: "/",                       label: "Accueil" },
-  { href: "/network",                label: "Réseau en direct" },
-  { href: "/gallery?type=animation", label: "Animations" },
-  { href: "/gallery-ana",            label: "Agents IA" },
-  { href: "/artists",                label: "Artistes" },
-  { href: "/circles",                label: "Cercles privés" },
-  { href: "/onboard",                label: "Connecter mon écran" },
-  { href: "/learn",                  label: "Apprendre et documentation" },
-];
-
-/** Entrée « Plus » active si l'une de ses destinations l'est (hors accueil, déjà reconnu par le logo). */
-export function isMoreActive(pathname: string): boolean {
-  return MORE_LINKS.some((l) => l.href !== "/" && isActive(l, pathname)) && !PRIMARY_LINKS.some((l) => isActive(l, pathname));
-}

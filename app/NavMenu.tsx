@@ -1,23 +1,67 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+// app/NavMenu.tsx — navigation du site (UX jalon 1, 29/10/2026). Deux présentations d'UNE architecture (lib/navLinks.ts) :
+//   • barre « bureau » (≥ 1025 px) : sept entrées sur une seule ligne, « Communauté » est un menu ;
+//   • tiroir « tablette / téléphone » (≤ 1024 px) : Accueil + quatre groupes PARTICIPER · EXPLORER · MON COMPTE · AIDE.
+// Accessibilité : aria-current sur le lien actif, Échap et clic extérieur pour « Communauté ». (Focus piégé du tiroir : commit suivant.)
+// useSearchParams() exige une frontière Suspense (pages statiques) : le repli rend la même navigation sans règle de requête.
+import { Suspense, useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useSearchParams } from "next/navigation";
 
-import { MORE_LINKS, PRIMARY_LINKS, isActive, isMoreActive } from "@/lib/navLinks";
+import { DRAWER_GROUPS, DRAWER_HOME, NAV_ENTRIES, activeEntryId, isActive, type NavLink } from "@/lib/navLinks";
 
-export function NavMenu() {
-  const pathname = usePathname();
-  const [open, setOpen] = useState(false);
-  const close = useCallback(() => setOpen(false), []);
+function CommunityMenu({ id, label, links, pathname, search, active }: { id: string; label: string; links: NavLink[]; pathname: string; search: string; active: boolean }) {
+  const pageKey = `${pathname}${search}`;
+  const [openKey, setOpenKey] = useState<string | null>(null);   // clé de la page où le menu a été ouvert : changer de page le referme sans effet de bord
+  const open = openKey === pageKey;
+  const wrapRef = useRef<HTMLDivElement>(null);
+  const btnRef = useRef<HTMLButtonElement>(null);
+  const close = useCallback((restore = false) => { setOpenKey(null); if (restore) btnRef.current?.focus(); }, []);
 
-  // Close on route change
   useEffect(() => {
-    close();
-    document.querySelectorAll(".site-nav__more").forEach((d) => d.removeAttribute("open"));   // ferme aussi le menu « Plus » du bureau
-  }, [pathname, close]);
+    if (!open) return;
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") close(true); };
+    const onDown = (e: MouseEvent | TouchEvent) => { if (wrapRef.current && !wrapRef.current.contains(e.target as Node)) close(); };
+    document.addEventListener("keydown", onKey);
+    document.addEventListener("mousedown", onDown);
+    document.addEventListener("touchstart", onDown);
+    return () => { document.removeEventListener("keydown", onKey); document.removeEventListener("mousedown", onDown); document.removeEventListener("touchstart", onDown); };
+  }, [open, close]);
 
-  // Close on Escape
+  return (
+    <div className="site-nav__menu" ref={wrapRef}>
+      <button ref={btnRef} type="button" id={`nav-${id}-btn`} className={`site-nav__link site-nav__menu-btn${active ? " site-nav__link--active" : ""}`}
+        aria-haspopup="menu" aria-expanded={open} aria-controls={`nav-${id}-menu`} aria-current={active ? "page" : undefined} onClick={() => setOpenKey(open ? null : pageKey)}>
+        {label} <span aria-hidden>▾</span>
+      </button>
+      {open && (
+        <div className="site-nav__menu-list" id={`nav-${id}-menu`} role="menu" aria-labelledby={`nav-${id}-btn`}>
+          {links.map((l) => {
+            const on = isActive(l, pathname, search);
+            return <Link key={l.href} href={l.href} role="menuitem" className={`nav-drawer__link${on ? " nav-drawer__link--active" : ""}`} aria-current={on ? "page" : undefined} onClick={() => close()}>{l.label}</Link>;
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function NavMenuView({ search }: { search: string }) {
+  const pathname = usePathname();
+  const pageKey = `${pathname}${search}`;
+  const [openKey, setOpenKey] = useState<string | null>(null);   // idem : le tiroir se referme quand la page change
+  const open = openKey === pageKey;
+  const close = useCallback(() => setOpenKey(null), []);
+  const activeId = activeEntryId(pathname, search);
+
+  // Défilement du corps verrouillé tant que le tiroir est ouvert
+  useEffect(() => {
+    document.body.style.overflow = open ? "hidden" : "";
+    return () => { document.body.style.overflow = ""; };
+  }, [open]);
+
+  // Échap ferme le tiroir
   useEffect(() => {
     if (!open) return;
     const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") close(); };
@@ -25,44 +69,24 @@ export function NavMenu() {
     return () => document.removeEventListener("keydown", onKey);
   }, [open, close]);
 
-  // Lock body scroll when open
-  useEffect(() => {
-    document.body.style.overflow = open ? "hidden" : "";
-    return () => { document.body.style.overflow = ""; };
-  }, [open]);
+  const cur = (l: NavLink) => isActive(l, pathname, search);
 
   return (
     <>
-      {/* Desktop */}
+      {/* Bureau */}
       <div className="site-nav__links">
-        {PRIMARY_LINKS.map((link) => (
-          <Link
-            key={link.href}
-            href={link.href}
-            className={`site-nav__link${isActive(link, pathname) ? " site-nav__link--active" : ""}`}
-          >
-            {link.label}
+        {NAV_ENTRIES.map((e) => e.kind === "link" ? (
+          <Link key={e.id} href={e.link.href} aria-current={activeId === e.id ? "page" : undefined}
+            className={`site-nav__link${e.cta ? " site-nav__link--cta" : ""}${activeId === e.id ? " site-nav__link--active" : ""}`}>
+            {e.link.label}
           </Link>
+        ) : (
+          <CommunityMenu key={e.id} id={e.id} label={e.label} links={e.links} pathname={pathname} search={search} active={activeId === e.id} />
         ))}
-        <details className="site-nav__more">
-          <summary className={`site-nav__link${isMoreActive(pathname) ? " site-nav__link--active" : ""}`}>Plus ▾</summary>
-          <div className="site-nav__more-menu">
-            {MORE_LINKS.map((link) => (
-              <Link key={link.href} href={link.href} className={`nav-drawer__link${isActive(link, pathname) ? " nav-drawer__link--active" : ""}`}>
-                {link.label}
-              </Link>
-            ))}
-          </div>
-        </details>
       </div>
 
-      {/* Mobile hamburger */}
-      <button
-        className="nav-burger"
-        onClick={() => setOpen((v) => !v)}
-        aria-label={open ? "Fermer le menu" : "Menu"}
-        aria-expanded={open}
-      >
+      {/* Tablette / téléphone */}
+      <button className="nav-burger" onClick={() => setOpenKey(open ? null : pageKey)} aria-label={open ? "Fermer le menu" : "Ouvrir le menu"} aria-expanded={open} aria-controls="nav-drawer">
         <span className={`nav-burger__icon${open ? " nav-burger__icon--open" : ""}`}>
           <span className="nav-burger__bar" />
           <span className="nav-burger__bar" />
@@ -70,35 +94,39 @@ export function NavMenu() {
         </span>
       </button>
 
-      {/* Mobile drawer */}
       {open && (
         <>
           <div className="nav-overlay" onClick={close} aria-hidden="true" />
-          <nav className="nav-drawer" aria-label="Navigation">
-            {PRIMARY_LINKS.map((link) => (
-              <Link
-                key={link.href}
-                href={link.href}
-                className={`nav-drawer__link${isActive(link, pathname) ? " nav-drawer__link--active" : ""}`}
-                onClick={close}
-              >
-                {link.label}
-              </Link>
-            ))}
-            <div className="nav-drawer__sep">Plus</div>
-            {MORE_LINKS.map((link) => (
-              <Link
-                key={link.href}
-                href={link.href}
-                className={`nav-drawer__link${isActive(link, pathname) ? " nav-drawer__link--active" : ""}`}
-                onClick={close}
-              >
-                {link.label}
-              </Link>
+          <nav className="nav-drawer" id="nav-drawer" aria-label="Navigation">
+            <Link href={DRAWER_HOME.href} className={`nav-drawer__link nav-drawer__home${cur(DRAWER_HOME) ? " nav-drawer__link--active" : ""}`} aria-current={cur(DRAWER_HOME) ? "page" : undefined} onClick={() => close()}>
+              {DRAWER_HOME.label}
+            </Link>
+            {DRAWER_GROUPS.map((g) => (
+              <div key={g.id} role="group" aria-labelledby={`nav-g-${g.id}`} className="nav-drawer__group">
+                <div className="nav-drawer__sep" id={`nav-g-${g.id}`}>{g.label}</div>
+                {g.links.map((l) => (
+                  <Link key={l.href} href={l.href} className={`nav-drawer__link${cur(l) ? " nav-drawer__link--active" : ""}`} aria-current={cur(l) ? "page" : undefined} onClick={() => close()}>
+                    {l.label}
+                  </Link>
+                ))}
+              </div>
             ))}
           </nav>
         </>
       )}
     </>
+  );
+}
+
+function NavMenuWithSearch() {
+  const sp = useSearchParams();
+  return <NavMenuView search={sp ? `?${sp.toString()}` : ""} />;
+}
+
+export function NavMenu() {
+  return (
+    <Suspense fallback={<NavMenuView search="" />}>
+      <NavMenuWithSearch />
+    </Suspense>
   );
 }
