@@ -58,6 +58,7 @@ next-env.d.ts
 # local temp files
 *.swp
 *.swo
+scripts/_watch_*.ts
 
 #Claude
 .claude

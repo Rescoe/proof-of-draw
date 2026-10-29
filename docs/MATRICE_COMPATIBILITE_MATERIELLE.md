@@ -1,5 +1,7 @@
 # Matrice de compatibilité matérielle PoD
 
+> **AVERTISSEMENT DE LECTURE — 29/10/2026.** Ce fichier est un registre cumulatif de preuves et d'étapes de recherche. Certaines lignes conservent volontairement un état ancien puis ses mises à jour plus bas ; il ne doit plus être lu linéairement comme une photographie homogène du présent. Pour reprendre le projet, lire d'abord `ETAT_ACTUEL_CANONIQUE.md` et `TAXONOMIE_FAMILLES_COMPOSITIONS_MATERIELLES.md`, puis utiliser cette matrice pour retrouver le détail et les preuves. En cas de contradiction, le code de `origin/main` et l'état canonique priment. Toute nouvelle preuve doit désormais mettre à jour une synthèse courante explicite, et non seulement ajouter un paragraphe chronologique en fin de fichier.
+
 > État rétrospectif au **24/10/2026**, établi depuis les commits, les procédures et les journaux archivés dans ce dépôt.  
 > **Relue le 24/10/2026 par Claude contre Git (`main` = `9fa5701`, PR #7), les relevés serveur publics et les mesures de session** — corrections listées en fin de document. Les références de commits ne citent que des commits présents sur GitHub.
 > Elle remplace les formulations imprécises du type « cela devrait marcher ». Une ligne décrit un **profil matériel reproductible**, jamais une carte personnelle ni une promesse sur un montage improvisé.
