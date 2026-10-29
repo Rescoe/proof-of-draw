@@ -1,6 +1,6 @@
 # Lot MULTIBWR — multiscreen e-ink BWR 2,9″ + OLED 0,96″ + DHT22 (29/10/2026)
 
-Statut : **compilé + testé sur l'hôte, signé, JAMAIS publié, jamais flashé.** Définition validée par le porteur : `dev_T46HBXG1` est un **vrai multiscreen** (deux écrans réseau, une identité, une voix), pas un « BWR avec OLED auxiliaire ». Le montage « OLED auxiliaire » (`eink29bwr-2.13`) était une erreur de définition de ma part ; elle explique l'OLED figé et la mise à jour 2.14 qui ne pouvait pas arriver au bon résultat.
+Statut (mis à jour le 29/10/2026 soir) : **compilé + testé sur l'hôte, signé, release de migration PUBLIÉE (`eink29bwr-2.15-ota16`, cible unique `dev_T46HBXG1`), carte hors ligne : migration non observée, non validée sur carte** — voir `SUIVI_CANARI_MULTIBWR_EN_ATTENTE_2026_10_29.md`. Jamais flashé par câble. Définition validée par le porteur : `dev_T46HBXG1` est un **vrai multiscreen** (deux écrans réseau, une identité, une voix), pas un « BWR avec OLED auxiliaire ». Le montage « OLED auxiliaire » (`eink29bwr-2.13`) était une erreur de définition de ma part ; elle explique l'OLED figé et la mise à jour 2.14 qui ne pouvait pas arriver au bon résultat.
 
 ## Produit
 **Multiscreen — e-ink BWR 2,9″ + OLED + DHT22.** Firmware `multibwr-2.1`, famille OTA `esp8266-multibwr`, écrans déclarés `["eink29bwr","oled096"]`, capteurs `temp`,`hum`. Aucune capacité `anim-oled` : l'OLED est un écran du réseau, pas un auxiliaire (`oled096aux` reste servi aux firmwares déjà distribués).

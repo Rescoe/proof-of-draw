@@ -120,7 +120,7 @@ Cette table décrit la classification, pas le niveau de preuve. Les preuves rest
 | e-ink 2,9″ BWR | ESP8266 | Mono-écran | éventuellement DHT22 | profil BWR seul |
 | e-ink 2,7″ BW | ESP8266 | Mono-écran | — | profil simple |
 | e-ink 2,7″ BW + OLED | ESP8266 | Multiscreen | éventuellement DHT22 | multiscreen historique |
-| e-ink 2,9″ BWR + OLED + DHT22 | ESP8266 | **Multiscreen** | DHT22 | montage de Claude2 ; profil `esp8266-multiscreen-eink29bwr-oled096-dht22`, firmware `multibwr-2.1`, famille OTA `esp8266-multibwr` (compilé, migration signée non publiée) |
+| e-ink 2,9″ BWR + OLED + DHT22 | ESP8266 | **Multiscreen** | DHT22 | montage de Claude2 ; profil `esp8266-multiscreen-eink29bwr-oled096-dht22`, firmware `multibwr-2.1`, famille OTA `esp8266-multibwr` (compilé ; migration signée publiée le 29/10/2026, en attente de reconnexion de la carte — non validée sur carte) |
 | TFT 1,8″ + DHT22 + SGP40 | UNO R4 WiFi | Mono-écran | DHT22, SGP40, microSD | station R4 actuelle |
 | e-ink 2,7″ BW + OLED | UNO R4 WiFi | Multiscreen | selon profil | profil R4 multiscreen |
 | e-ink 2,9″ BWR | UNO R4 WiFi | Mono-écran | selon profil | profil R4 BWR |
