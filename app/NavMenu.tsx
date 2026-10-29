@@ -3,13 +3,15 @@
 // app/NavMenu.tsx — navigation du site (UX jalon 1, 29/10/2026). Deux présentations d'UNE architecture (lib/navLinks.ts) :
 //   • barre « bureau » (≥ 1025 px) : sept entrées sur une seule ligne, « Communauté » est un menu ;
 //   • tiroir « tablette / téléphone » (≤ 1024 px) : Accueil + quatre groupes PARTICIPER · EXPLORER · MON COMPTE · AIDE.
-// Accessibilité : aria-current sur le lien actif, Échap et clic extérieur pour « Communauté ». (Focus piégé du tiroir : commit suivant.)
+// Accessibilité : aria-current sur le lien actif, Échap et clic extérieur pour « Communauté » ; tiroir avec focus piégé (Tab / Maj+Tab restent dedans), focus sur le premier lien à l'ouverture et rendu au bouton à la fermeture, reste de la page inerte.
 // useSearchParams() exige une frontière Suspense (pages statiques) : le repli rend la même navigation sans règle de requête.
 import { Suspense, useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { usePathname, useSearchParams } from "next/navigation";
 
 import { DRAWER_GROUPS, DRAWER_HOME, NAV_ENTRIES, activeEntryId, isActive, type NavLink } from "@/lib/navLinks";
+
+const FOCUSABLE = 'a[href], button:not([disabled]), [tabindex]:not([tabindex="-1"])';
 
 function CommunityMenu({ id, label, links, pathname, search, active }: { id: string; label: string; links: NavLink[]; pathname: string; search: string; active: boolean }) {
   const pageKey = `${pathname}${search}`;
@@ -52,19 +54,33 @@ function NavMenuView({ search }: { search: string }) {
   const pageKey = `${pathname}${search}`;
   const [openKey, setOpenKey] = useState<string | null>(null);   // idem : le tiroir se referme quand la page change
   const open = openKey === pageKey;
-  const close = useCallback(() => setOpenKey(null), []);
+  const burgerRef = useRef<HTMLButtonElement>(null);
+  const drawerRef = useRef<HTMLElement>(null);
+  const close = useCallback((restore = false) => { setOpenKey(null); if (restore) burgerRef.current?.focus(); }, []);
   const activeId = activeEntryId(pathname, search);
 
-  // Défilement du corps verrouillé tant que le tiroir est ouvert
-  useEffect(() => {
-    document.body.style.overflow = open ? "hidden" : "";
-    return () => { document.body.style.overflow = ""; };
-  }, [open]);
-
-  // Échap ferme le tiroir
+  // Défilement du corps verrouillé, reste de la page inerte (le focus clavier ne peut pas s'y échapper), focus sur le premier lien
   useEffect(() => {
     if (!open) return;
-    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") close(); };
+    document.body.style.overflow = "hidden";
+    const main = document.querySelector<HTMLElement>(".site-main");
+    main?.setAttribute("inert", "");
+    drawerRef.current?.querySelector<HTMLElement>(FOCUSABLE)?.focus();
+    return () => { document.body.style.overflow = ""; main?.removeAttribute("inert"); };
+  }, [open]);
+
+  // Échap ferme et rend le focus ; Tab / Maj+Tab restent dans le tiroir (bouton compris)
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") { close(true); return; }
+      if (e.key !== "Tab" || !drawerRef.current) return;
+      const items = [burgerRef.current, ...Array.from(drawerRef.current.querySelectorAll<HTMLElement>(FOCUSABLE))].filter((x): x is HTMLElement => !!x);
+      if (items.length === 0) return;
+      const first = items[0], last = items[items.length - 1], cur = document.activeElement;
+      if (e.shiftKey && cur === first) { e.preventDefault(); last.focus(); }
+      else if (!e.shiftKey && cur === last) { e.preventDefault(); first.focus(); }
+    };
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
   }, [open, close]);
@@ -86,7 +102,7 @@ function NavMenuView({ search }: { search: string }) {
       </div>
 
       {/* Tablette / téléphone */}
-      <button className="nav-burger" onClick={() => setOpenKey(open ? null : pageKey)} aria-label={open ? "Fermer le menu" : "Ouvrir le menu"} aria-expanded={open} aria-controls="nav-drawer">
+      <button ref={burgerRef} className="nav-burger" onClick={() => setOpenKey(open ? null : pageKey)} aria-label={open ? "Fermer le menu" : "Ouvrir le menu"} aria-expanded={open} aria-controls="nav-drawer">
         <span className={`nav-burger__icon${open ? " nav-burger__icon--open" : ""}`}>
           <span className="nav-burger__bar" />
           <span className="nav-burger__bar" />
@@ -96,8 +112,8 @@ function NavMenuView({ search }: { search: string }) {
 
       {open && (
         <>
-          <div className="nav-overlay" onClick={close} aria-hidden="true" />
-          <nav className="nav-drawer" id="nav-drawer" aria-label="Navigation">
+          <div className="nav-overlay" onClick={() => close(true)} aria-hidden="true" />
+          <nav className="nav-drawer" id="nav-drawer" aria-label="Navigation" ref={drawerRef}>
             <Link href={DRAWER_HOME.href} className={`nav-drawer__link nav-drawer__home${cur(DRAWER_HOME) ? " nav-drawer__link--active" : ""}`} aria-current={cur(DRAWER_HOME) ? "page" : undefined} onClick={() => close()}>
               {DRAWER_HOME.label}
             </Link>

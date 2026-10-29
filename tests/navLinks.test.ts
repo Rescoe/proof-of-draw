@@ -64,3 +64,10 @@ test("accessibilité : aria-current, Échap + clic extérieur sur « Communauté
   assert.match(nav, /role="group" aria-labelledby=/);
   assert.match(nav, /<Suspense fallback=\{<NavMenuView search="" \/>\}>/, "useSearchParams derrière une frontière Suspense");
 });
+
+test("tiroir : focus piégé (Tab / Maj+Tab), premier lien focalisé à l'ouverture, focus rendu au bouton, reste de la page inerte", () => {
+  const nav = read("app/NavMenu.tsx");
+  for (const needle of ['main?.setAttribute("inert", "")', 'main?.removeAttribute("inert")', 'e.key !== "Tab"', "e.shiftKey && cur === first", "last.focus()", "burgerRef.current?.focus()", "?.focus()", "aria-controls=\"nav-drawer\""]) {
+    assert.ok(nav.includes(needle), needle);
+  }
+});
