@@ -80,12 +80,13 @@ function AirNote({ points }: { points: { t: number; x: number }[] }) {
 const TABLE_MAX_ROWS = 288;
 
 /** `measures` : du plus récent au plus ancien. `showTable` : tableau horaire (profil). */
-export function MeasuresChart({ measures, kinds, showTable = false }: { measures: Measure[]; kinds: MeasureKind[]; showTable?: boolean }) {
+export function MeasuresChart({ measures, kinds, showTable = false, tableOnly = false }: { measures: Measure[]; kinds: MeasureKind[]; showTable?: boolean; tableOnly?: boolean }) {
   const [kind, setKind] = useState<MeasureKind>(kinds[0] ?? "temp");
   const own = useMemo(() => measures.filter((m) => m.v[kind] !== undefined), [measures, kind]);
   const sum = useMemo(() => summarize(measures, kind), [measures, kind]);
   const points = useMemo(() => [...own].sort((a, b) => a.t - b.t).map((m) => ({ t: m.t, x: m.v[kind] as number })), [own, kind]);
   const info = MEASURE_KINDS[kind];
+  if (tableOnly) return <MeasuresTable measures={measures} kinds={kinds} />;
   return (
     <div>
       {kinds.length > 1 && (
@@ -103,19 +104,40 @@ export function MeasuresChart({ measures, kinds, showTable = false }: { measures
       </div>
       {kind === "vocidx" && <AirNote points={points} />}
       <Chart points={points} kind={kind} />
-      {showTable && (
-        <div style={{ overflowX: "auto" }}><table style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.8rem", marginTop: 8 }}>
-          <thead><tr style={{ textAlign: "left", color: "var(--text3)" }}><th>Heure</th>{kinds.map((k) => <th key={k}>{MEASURE_KINDS[k].label}</th>)}</tr></thead>
-          <tbody>
-            {measures.filter((m) => kinds.some((k) => m.v[k] !== undefined)).slice(0, TABLE_MAX_ROWS).map((m) => (
-              <tr key={m.t} style={{ borderTop: "1px solid var(--border)" }}>
-                <td style={{ padding: "3px 0" }}>{fmtMeasureDate(m.t)}</td>
-                {kinds.map((k) => <td key={k}>{m.v[k] !== undefined ? formatMeasure(k, m.v[k] as number) : "—"}</td>)}
-              </tr>
-            ))}
-          </tbody>
-        </table></div>
-      )}
+      {showTable && <MeasuresTable measures={measures} kinds={kinds} />}
+    </div>
+  );
+}
+
+/** Relevés bruts (les plus récents) : tableau à partir de 600 px ; UNE carte par relevé en dessous (jamais de tableau coupé sur téléphone). */
+export function MeasuresTable({ measures, kinds }: { measures: Measure[]; kinds: MeasureKind[] }) {
+  const rows = measures.filter((m) => kinds.some((k) => m.v[k] !== undefined)).slice(0, TABLE_MAX_ROWS);
+  return (
+    <div className="mtable">
+      <table>
+        <thead><tr><th>Heure</th>{kinds.map((k) => <th key={k}>{MEASURE_KINDS[k].label}</th>)}</tr></thead>
+        <tbody>
+          {rows.map((m) => (
+            <tr key={m.t}>
+              <td data-label="Heure">{fmtMeasureDate(m.t)}</td>
+              {kinds.map((k) => <td key={k} data-label={MEASURE_KINDS[k].label}>{m.v[k] !== undefined ? formatMeasure(k, m.v[k] as number) : "—"}</td>)}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      <style>{`
+        .mtable { overflow-x: auto; margin-top: 8px; }
+        .mtable table { width: 100%; border-collapse: collapse; font-size: 0.8rem; }
+        .mtable th { text-align: left; color: var(--text3); font-weight: 600; }
+        .mtable td { padding: 3px 0; border-top: 1px solid var(--border); }
+        @media (max-width: 600px) {
+          .mtable thead { display: none; }
+          .mtable tbody, .mtable tr, .mtable td { display: block; }
+          .mtable tr { border: 1px solid var(--border); border-radius: 10px; padding: 8px 10px; margin-bottom: 8px; }
+          .mtable td { border-top: 0; padding: 2px 0; display: flex; justify-content: space-between; gap: 12px; }
+          .mtable td::before { content: attr(data-label); color: var(--text3); }
+        }
+      `}</style>
     </div>
   );
 }

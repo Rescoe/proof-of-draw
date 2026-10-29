@@ -161,13 +161,23 @@ export interface MeasuresExplorerProps {
   ownerName?: string;
   /** Grandeurs déclarées ; sans température ni humidité, rien à explorer ici. */
   kinds: MeasureKind[];
+  /** UX jalon 4 : historique DÉJÀ chargé par le parent (useDeviceMeasures) — aucune lecture ici. Absent : le composant lit lui-même, comme avant (migration appelant par appelant). */
+  measures?: Measure[];
+  /** Instant de référence (secondes) du chargement, fourni avec `measures`. */
+  nowSec?: number;
+  /** Période pilotée par le parent (une seule période pour toutes les grandeurs) ; le sélecteur interne est alors masqué. */
+  range?: VizRange;
+  onRangeChange?: (r: VizRange) => void;
   /** PROPRIÉTAIRE : lit son historique privé (cookie de session, même route, même coût Redis : 1 LRANGE) au lieu de la vue publique ; mêmes graphique, œuvre et interprétation (29/10/2026). */
   owner?: boolean;
 }
 
-export function MeasuresExplorer({ deviceId, sensorLabel, ownerName, kinds, owner = false }: MeasuresExplorerProps) {
+export function MeasuresExplorer({ deviceId, sensorLabel, ownerName, kinds, owner = false, measures: given, nowSec: givenNow, range: controlledRange, onRangeChange }: MeasuresExplorerProps) {
   const [mode, setMode] = useState<Mode>("chart");
-  const [range, setRange] = useState<VizRange>("day");
+  const [ownRange, setOwnRange] = useState<VizRange>("day");
+  const controlled = controlledRange !== undefined;
+  const range = controlledRange ?? ownRange;
+  const setRange = (r: VizRange) => { if (onRangeChange) onRangeChange(r); if (!controlled) setOwnRange(r); };
   const [load, setLoad] = useState<Load>({ kind: "loading" });
   const [nowSec, setNowSec] = useState(0);   // renseigné au chargement (jamais d'horloge pendant le rendu serveur)
   const [big, setBig] = useState(false);
@@ -187,7 +197,7 @@ export function MeasuresExplorer({ deviceId, sensorLabel, ownerName, kinds, owne
       .catch(() => setLoad({ kind: "error", message: "Impossible de charger les mesures (erreur réseau ou serveur)." }));
   }, [deviceId, owner]);
   // eslint-disable-next-line react-hooks/set-state-in-effect -- une seule lecture à l'ouverture (et à chaque changement d'appareil)
-  useEffect(() => { if (relevant) fetchData(); }, [relevant, fetchData]);
+  useEffect(() => { if (relevant && given === undefined) fetchData(); }, [relevant, fetchData, given]);
   useEffect(() => {
     if (!big) return;
     const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") setBig(false); };
@@ -196,20 +206,22 @@ export function MeasuresExplorer({ deviceId, sensorLabel, ownerName, kinds, owne
     return () => { document.removeEventListener("keydown", onKey); document.body.style.overflow = prev; };
   }, [big]);
 
-  const measures = load.kind === "ready" ? load.measures : null;
-  const buckets = useMemo(() => (measures ? aggregate(measures, range, nowSec, tz) : []), [measures, range, nowSec, tz]);
-  const summary = useMemo(() => (measures ? summarizePeriod(measures, range, nowSec, tz) : null), [measures, range, nowSec, tz]);
+  const refNow = given !== undefined ? (givenNow ?? nowSec) : nowSec;
+  const effLoad: Load = given !== undefined ? { kind: "ready", measures: given } : load;
+  const measures = effLoad.kind === "ready" ? effLoad.measures : null;
+  const buckets = useMemo(() => (measures ? aggregate(measures, range, refNow, tz) : []), [measures, range, refNow, tz]);
+  const summary = useMemo(() => (measures ? summarizePeriod(measures, range, refNow, tz) : null), [measures, range, refNow, tz]);
 
   if (!relevant) return <p style={muted}>Ce capteur ne mesure ni la température ni l’humidité.</p>;
 
   const spec = VIZ_RANGES[range];
-  const end = buckets.length ? buckets[buckets.length - 1].end - 1 : nowSec;
+  const end = buckets.length ? buckets[buckets.length - 1].end - 1 : refNow;
   const periodText = buckets.length ? `du ${fmtDay(buckets[0].start, tz)} au ${fmtDay(end, tz)}` : "";
 
   const body = (() => {
-    if (load.kind === "loading") return <p style={muted} role="status">Chargement des mesures…</p>;
-    if (load.kind === "error") return <div role="alert"><p style={{ ...muted, marginBottom: 6 }}>{load.message}</p><button type="button" style={pill(false)} onClick={fetchData}>Réessayer</button></div>;
-    if (load.kind === "unavailable") return <p style={muted}>Aucune mesure publique : le propriétaire garde ce capteur privé, ou aucune mesure n’a encore été reçue.</p>;
+    if (effLoad.kind === "loading") return <p style={muted} role="status">Chargement des mesures…</p>;
+    if (effLoad.kind === "error") return <div role="alert"><p style={{ ...muted, marginBottom: 6 }}>{effLoad.message}</p><button type="button" style={pill(false)} onClick={fetchData}>Réessayer</button></div>;
+    if (effLoad.kind === "unavailable") return <p style={muted}>Aucune mesure publique : le propriétaire garde ce capteur privé, ou aucune mesure n’a encore été reçue.</p>;
     if (!hasData(buckets)) return <p style={muted}>Aucune mesure sur cette période ({periodText}). {range !== "month" ? "Essaie une période plus longue." : ""}</p>;
     return (
       <>
@@ -242,10 +254,12 @@ export function MeasuresExplorer({ deviceId, sensorLabel, ownerName, kinds, owne
         </div>
         <button type="button" style={pill(false)} onClick={() => setBig((v) => !v)} aria-label={big ? "Réduire" : "Agrandir pour explorer"}>{big ? "✕ Fermer" : "⤢ Agrandir"}</button>
       </div>
-      <div role="group" aria-label="Période" style={{ display: "flex", gap: 6 }}>
-        {VIZ_RANGE_IDS.map((r) => <button key={r} type="button" aria-pressed={range === r} style={pill(range === r)} onClick={() => setRange(r)}>{VIZ_RANGES[r].label}</button>)}
-        <span style={{ ...muted, alignSelf: "center" }}>{periodText}</span>
-      </div>
+      {!controlled && (
+        <div role="group" aria-label="Période" style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+          {VIZ_RANGE_IDS.map((r) => <button key={r} type="button" aria-pressed={range === r} style={pill(range === r)} onClick={() => setRange(r)}>{VIZ_RANGES[r].label}</button>)}
+        </div>
+      )}
+      {periodText && <span style={muted}>{periodText}</span>}
       {stats}
       {body}
     </div>
