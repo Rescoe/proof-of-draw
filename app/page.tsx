@@ -31,13 +31,13 @@ export default async function HomePage() {
         </Link>
         <Link href="/gallery" className="home-action">
           <span className="home-action__icon" aria-hidden>🖼️</span>
-          <strong>Découvrir</strong>
-          <span>Les œuvres validées, les artistes et les écrans du réseau.</span>
+          <strong>Voir la galerie</strong>
+          <span>Les œuvres validées par le réseau, puis les artistes et les appareils qui les affichent.</span>
         </Link>
         <Link href="/learn?path=install#installer" className="home-action">
           <span className="home-action__icon" aria-hidden>🔌</span>
-          <strong>Connecter mon écran</strong>
-          <span>Installer un écran, puis l’associer à ton profil avec son code.</span>
+          <strong>Connecter un appareil</strong>
+          <span>Installer un appareil, puis l’associer à ton profil avec son code.</span>
         </Link>
       </section>
 

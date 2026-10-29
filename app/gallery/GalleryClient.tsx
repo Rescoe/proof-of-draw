@@ -318,8 +318,9 @@ export function GalleryClient() {
         <Link href="/" className="gc-back">← Accueil</Link>
         <h1 className="gc-title">
           <span className="gc-title-icon">◈</span>
-          Block Explorer
+          Galerie
         </h1>
+        <p className="gc-subtitle" style={{ margin: 0, color: "var(--text2)", fontSize: "0.9rem" }}>Œuvres validées par le réseau</p>
       </div>
 
       {/* Tab bar */}
@@ -328,13 +329,13 @@ export function GalleryClient() {
           className={`gc-tab${tab === "blocks" ? " gc-tab--active" : ""}`}
           onClick={() => setTab("blocks")}
         >
-          Blocs validés
+          Œuvres validées
         </button>
         <button
           className={`gc-tab${tab === "rejected" ? " gc-tab--active" : ""}`}
           onClick={() => setTab("rejected")}
         >
-          Rejetés
+          Œuvres rejetées
         </button>
       </div>
 
@@ -377,7 +378,7 @@ export function GalleryClient() {
           </div>
 
           {/* Nature : dessins et animations suivent le même consensus et vivent dans la même galerie */}
-          <div role="group" aria-label="Type de bloc" style={{ display: "flex", gap: 6, margin: "0.2rem 0 0.8rem", flexWrap: "wrap" }}>
+          <div role="group" aria-label="Type d’œuvre" style={{ display: "flex", gap: 6, margin: "0.2rem 0 0.8rem", flexWrap: "wrap" }}>
             {([["", "Tout"], ["draw", "✏️ Dessins"], ["animation", "🎞 Animations"]] as const).map(([v, text]) => (
               <button
                 key={v || "all"} type="button" onClick={() => setKind(v)} aria-pressed={kind === v}
@@ -387,6 +388,8 @@ export function GalleryClient() {
                 {text}
               </button>
             ))}
+            {/* Les dessins d’agents IA vivent dans leur propre galerie : le lien garde cette destination atteignable depuis la Galerie */}
+            <Link href="/gallery-ana" className="gc-page-btn" style={{ textDecoration: "none" }}>🤖 Créations IA</Link>
           </div>
 
           {/* Stats */}

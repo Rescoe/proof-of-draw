@@ -113,7 +113,7 @@ export function BlockGalleryClient({ blocks }: { blocks: BlockWithImage[] }) {
       <div className="block-gallery__header">
         <h2 className="block-gallery__title">
           <span className="block-gallery__icon">◈</span>
-          Blocs récents
+          Œuvres récentes
         </h2>
         <span className="block-gallery__count">{blocks.length} bloc{blocks.length > 1 ? "s" : ""}</span>
         <Link href="/gallery" className="block-gallery__explorer-link">

@@ -818,7 +818,7 @@ export default function ProfilePage() {
                 {/* Stats */}
                 <div className="profile-stats" style={{ display: "flex", gap: "1.5rem", marginTop: "0.5rem", flexWrap: "wrap" }}>
                   {[
-                    { label: "ESP liés",          value: linkedDevices.length },
+                    { label: "Appareils liés",    value: linkedDevices.length },
                     { label: "En ligne",           value: onlineCount },
                     { label: "Frames envoyées",    value: totalFrames },
                     { label: "Blocs minés",        value: minedBlocks.length },
@@ -853,7 +853,7 @@ export default function ProfilePage() {
                 textAlign: "center",
               }}
             >
-              + Ajouter un ESP
+              + Associer un appareil
             </a>
             {profile && (
               <button

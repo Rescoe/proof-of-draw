@@ -54,7 +54,7 @@ export const STATIC_CATALOG: CatalogEntry[] = [
     ["premier démarrage", "attendre", "15 minutes", "rien ne s’affiche", "écran blanc", "lent", "patience", "clés", "ed25519"]),
   e("install", "i-moniteur-serie", "Voir ce qui se passe dans le Moniteur série", "Lire les messages de la carte pour comprendre son état et diagnostiquer.", "guide", "pratiquer",
     ["moniteur série", "serial", "115200", "logs", "journal", "debug", "messages"]),
-  e("install", "onboard", "Associer l’écran et afficher le premier dessin", "Relier l’écran à son profil avec le code affiché (« Connecter mon écran »), puis dessiner.", "guide", "pratiquer",
+  e("install", "onboard", "Associer l’écran et afficher le premier dessin", "Relier l’écran à son profil avec le code affiché (page « Associer un appareil »), puis dessiner.", "guide", "pratiquer",
     ["connecter mon écran", "onboard", "appairage", "pairing", "code", "qr", "profil", "associer", "jumelage", "premier dessin"]),
   e("install", "i-checklist", "L’écran ne fonctionne pas ? Checklist de dépannage", "Une liste de vérifications dans l’ordre pour retrouver un écran qui ne répond pas.", "depannage", "pratiquer",
     ["panne", "ne marche pas", "écran noir", "écran blanc", "pas d’affichage", "problème", "dépannage", "erreur"]),

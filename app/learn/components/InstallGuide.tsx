@@ -468,7 +468,7 @@ const char* WIFI_PASSWORD = "Mot de passe de votre Wi-Fi";
       <InstallStep number={8} title="Associer l’écran et afficher le premier dessin" icon={<Wifi size={20} />} id="install-step-8">
         <div id="onboard" className={styles.anchorOffset} />
         <p>
-          Scannez le QR code affiché ou ouvrez la page <Link href="/onboard">Onboard</Link> et saisissez le code d’appairage.
+          Scannez le QR code affiché ou ouvrez la <Link href="/onboard">page d’association</Link> et saisissez le code d’appairage.
           Choisissez ensuite votre nom d’artiste. L’appareil apparaîtra dans votre <Link href="/profile">profil</Link>.
         </p>
         <div className={styles.finishActions} id="draw">

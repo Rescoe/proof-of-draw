@@ -383,7 +383,7 @@ export default function ArtistDetailPage() {
           {/* Stats */}
           <div style={{ display: "flex", gap: "1.5rem", flexWrap: "wrap" }}>
             {[
-              { label: "ESP liés",   value: devices.length },
+              { label: "Appareils liés", value: devices.length },
               { label: "En ligne",   value: onlineDevices },
               { label: "Dessins",    value: artistBlocks.length },
               { label: "Blocs minés", value: minedBlocks.length + artistBlocks.filter(b => b.isMiner).length },

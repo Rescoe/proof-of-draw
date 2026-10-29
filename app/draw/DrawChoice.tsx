@@ -68,7 +68,7 @@ export function DrawChoice() {
           <>
             <p style={{ margin: "0 0 0.5rem", color: "var(--text2)" }}>Tu n’as pas encore d’écran relié à ce navigateur.</p>
             <p style={muted}>
-              <Link href="/onboard" style={{ color: "var(--accent)" }}>Connecter mon écran</Link> avec le code affiché dessus, ou
+              <Link href="/onboard" style={{ color: "var(--accent)" }}>Associer un appareil</Link> avec le code affiché dessus, ou
               {" "}<Link href="/learn?path=install#installer" style={{ color: "var(--accent)" }}>installer un écran</Link>.
               Déjà un profil sur un autre appareil ? Utilise « Autoriser un autre équipement » dans <Link href="/profile" style={{ color: "var(--accent)" }}>Mes écrans</Link>.
             </p>

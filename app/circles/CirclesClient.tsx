@@ -63,7 +63,7 @@ export function CirclesClient() {
     <div style={{ maxWidth: 620, margin: "2rem auto", ...card }}>
       <h1 style={{ margin: "0 0 0.5rem", fontSize: "1.4rem" }}>Cercles privés</h1>
       <p style={{ color: "var(--text2)" }}>Les cercles sont réservés aux artistes qui ont un profil. Connecte d’abord un écran : ton profil est créé avec lui.</p>
-      <Link href="/onboard" style={{ color: "var(--accent)" }}>Connecter mon écran →</Link>
+      <Link href="/onboard" style={{ color: "var(--accent)" }}>Associer un appareil →</Link>
     </div>
   );
   if (state === "error") return (
