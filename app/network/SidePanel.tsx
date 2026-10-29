@@ -4,9 +4,8 @@ import { useEffect, useRef, useState } from "react";
 import type { NetworkDevice, NetworkPreview } from "@/lib/networkSnapshot";
 import { eink29bwrToCanvas, eink27bwToCanvas, oled096ToCanvas } from "@/lib/screenToCanvas";
 import { DeviceShownNow, type DisplaysMap } from "./LiveDisplays";
-import { MEASURE_GROUPS, MEASURE_KINDS, formatMeasure, kindsOfGroup, type Measure } from "@/lib/measures";
-import { MeasuresChart } from "../MeasuresChart";
-import { MeasuresExplorer } from "../MeasuresExplorer";
+import { MEASURE_GROUPS, MEASURE_KINDS, formatMeasure, kindsOfGroup } from "@/lib/measures";
+import { MeasuresPanel } from "../measures/MeasuresPanel";
 
 // ─── Types locaux (évite d'importer des modules serveur) ─────────────────────
 
@@ -705,16 +704,7 @@ function EspDeviceLog({
 // ── Mesures d'un capteur (public) : dernières valeurs du snapshot (séparées : environnement / connexion) + historique 48 h chargé à la demande (1 LRANGE, mis en cache par le CDN) ──
 function DeviceMeasuresSection({ device }: { device: NetworkDevice }) {
   const m = device.measures!;
-  const [history, setHistory] = useState<Measure[] | null>(null);
-  const [state, setState] = useState<"idle" | "loading" | "error">("idle");
-  const [explore, setExplore] = useState(false);   // l'explorateur (graphique · œuvre · interprétation) ne lit rien tant qu'il n'est pas ouvert
-  const hasLink = kindsOfGroup(m.kinds, "link").length > 0;
-  const load = () => {
-    setState("loading");
-    fetch(`/api/sensor?deviceId=${encodeURIComponent(device.deviceId)}&public=1`)
-      .then(async (r) => { if (!r.ok) throw new Error(); const j = await r.json(); setHistory(j.measures as Measure[]); setState("idle"); })
-      .catch(() => setState("error"));
-  };
+  const [explore, setExplore] = useState(false);   // UX jalon 4 : le panneau partagé (UNE lecture, UNE période) ne lit rien tant qu'il n'est pas ouvert
   const last = m.latest;
   return (
     <>
@@ -733,26 +723,15 @@ function DeviceMeasuresSection({ device }: { device: NetworkDevice }) {
                 {g.id === "env" && <div className="nv2-metric"><span>Mesuré</span><strong>{formatRelativeTime(last.t * 1000)}</strong></div>}
               </div>
             )}
-            {g.id === "env" && (
-              <>
-                <button type="button" className="nv2-tab" aria-expanded={explore} onClick={() => setExplore((v) => !v)}>
-                  {explore ? "Masquer les mesures" : "Explorer : graphique · œuvre · interprétation"}
-                </button>
-                {explore && <div style={{ marginTop: 8 }}><MeasuresExplorer deviceId={device.deviceId} sensorLabel={device.publicId.slice(0, 12)} ownerName={device.artistName} kinds={m.kinds} /></div>}
-              </>
-            )}
-            {g.id !== "env" && history && history.length > 0 && <MeasuresChart measures={history} kinds={gk} />}
           </div>
         );
       })}
-      {last && hasLink && !history && (
-        <div className="nv2-panel__section">
-          <button type="button" className="nv2-tab" onClick={load} disabled={state === "loading"}>
-            {state === "loading" ? "Chargement…" : "Voir la connexion sur 48 h"}
-          </button>
-          {state === "error" && <p className="nv2-muted nv2-small">Historique indisponible.</p>}
-        </div>
-      )}
+      <div className="nv2-panel__section">
+        <button type="button" className="nv2-tab" aria-expanded={explore} onClick={() => setExplore((v) => !v)}>
+          {explore ? "Masquer les mesures" : "Explorer : graphiques · qualité de l’air · connexion"}
+        </button>
+        {explore && <div style={{ marginTop: 8 }}><MeasuresPanel deviceId={device.deviceId} sensorLabel={device.publicId.slice(0, 12)} ownerName={device.artistName} kinds={m.kinds} /></div>}
+      </div>
     </>
   );
 }

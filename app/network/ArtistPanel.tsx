@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { MeasuresExplorer } from "../MeasuresExplorer";
+import { MeasuresPanel } from "../measures/MeasuresPanel";
 import { HARDWARE_LABEL } from "@/lib/network/hardware";
 import type { NetworkDevice } from "@/lib/networkSnapshot";
 import type { DisplaysMap } from "./LiveDisplays";
@@ -64,7 +64,7 @@ export function ArtistPanel({ artist, displays, isolated, onToggleIsolation, onS
                 </button>
                 {openSensor === d.deviceId && (
                   <div className="ap__explorer">
-                    <MeasuresExplorer deviceId={d.deviceId} sensorLabel={d.publicId.slice(0, 12)} ownerName={artist.label} kinds={d.measures!.kinds} />
+                    <MeasuresPanel deviceId={d.deviceId} sensorLabel={d.publicId.slice(0, 12)} ownerName={artist.label} kinds={d.measures!.kinds} />
                   </div>
                 )}
               </li>

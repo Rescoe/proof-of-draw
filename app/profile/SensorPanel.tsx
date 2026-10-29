@@ -5,11 +5,10 @@
 
 import { useEffect, useMemo, useState } from "react";
 import type { OwnedDevice } from "@/lib/deviceStore";
-import { MEASURE_GROUPS, MEASURE_KINDS, MEASURE_MAX_HOURS, formatMeasure, kindsOfGroup, measureKindsOf, type Measure, type MeasureKind } from "@/lib/measures";
-import { MeasuresChart, fmtMeasureDate } from "../MeasuresChart";
-import { MeasuresExplorer } from "../MeasuresExplorer";
-
-const PERIODS = [{ h: 24, label: "24 h" }, { h: 168, label: "7 jours" }, { h: MEASURE_MAX_HOURS, label: "31 jours" }];
+import { MEASURE_GROUPS, MEASURE_KINDS, formatMeasure, kindsOfGroup, measureKindsOf, type MeasureKind } from "@/lib/measures";
+import { fmtMeasureDate } from "../MeasuresChart";
+import { MeasuresPanel } from "../measures/MeasuresPanel";
+import { useDeviceMeasures } from "../measures/useDeviceMeasures";
 
 /** Valeurs de la dernière mesure, sur la carte de l'appareil (carte sans écran). */
 export function SensorSummary({ d }: { d: OwnedDevice }) {
@@ -50,18 +49,10 @@ export function SensorButton({ d }: { d: OwnedDevice }) {
 }
 
 function SensorModal({ d, onClose }: { d: OwnedDevice; onClose: () => void }) {
-  const [all, setAll] = useState<Measure[] | null>(null);
-  const [err, setErr] = useState<string | null>(null);
-  const [hours, setHours] = useState(168);
   const kinds = useMemo(() => measureKindsOf(d), [d]);
-
-  useEffect(() => {
-    let alive = true;
-    fetch(`/api/sensor?deviceId=${encodeURIComponent(d.deviceId)}&hours=${MEASURE_MAX_HOURS}`, { credentials: "same-origin" })
-      .then(async (r) => { const j = await r.json(); if (!alive) return; if (!r.ok) setErr(typeof j.error === "string" ? j.error : "Erreur"); else setAll(j.measures as Measure[]); })
-      .catch(() => alive && setErr("Erreur réseau"));
-    return () => { alive = false; };
-  }, [d.deviceId]);   // UNE seule lecture par ouverture : jamais relancée par un re-rendu du parent (quota Redis)
+  // UNE lecture par ouverture (cache de session partagé avec MeasuresPanel : aucune seconde requête) ; jamais relancée par un re-rendu du parent (quota Redis)
+  const data = useDeviceMeasures(d.deviceId, { owner: true });
+  const all = data.state === "ready" ? data.measures : null;
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
@@ -69,7 +60,6 @@ function SensorModal({ d, onClose }: { d: OwnedDevice; onClose: () => void }) {
     return () => document.removeEventListener("keydown", onKey);
   }, [onClose]);
 
-  const shown = useMemo(() => (all && all.length > 0 ? all.filter((m) => m.t >= all[0].t - hours * 3600) : []), [all, hours]);
   const last = all?.[0];
   // dernière valeur connue de chaque grandeur (le débit n'est pas dans toutes les lectures)
   const lastOf = (k: MeasureKind) => all?.find((m) => m.v[k] !== undefined);
@@ -81,53 +71,27 @@ function SensorModal({ d, onClose }: { d: OwnedDevice; onClose: () => void }) {
         style={{ background: "var(--bg2, var(--bg))", border: "1px solid var(--border)", borderRadius: 12, padding: "1.1rem", width: "min(860px, 100%)", maxHeight: "90vh", overflowY: "auto" }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 12 }}>
           <h2 style={{ margin: 0, fontSize: "1.05rem" }}>📈 {d.deviceName || d.deviceId}</h2>
-          <button type="button" onClick={onClose} aria-label="Fermer" style={{ background: "none", border: "none", color: "var(--text2)", fontSize: "1.2rem", cursor: "pointer" }}>✕</button>
+          <button type="button" onClick={onClose} aria-label="Fermer" style={{ background: "none", border: "none", color: "var(--text2)", fontSize: "1.2rem", cursor: "pointer", minWidth: 44, minHeight: 44 }}>✕</button>
         </div>
-        {err && <p role="alert" style={{ color: "#f87171" }}>{err}</p>}
-        {!err && all === null && <p style={{ color: "var(--text3)" }}>Chargement…</p>}
-        {all && all.length === 0 && <p style={{ color: "var(--text3)" }}>Aucune mesure pour l&apos;instant. La carte envoie ses lectures toutes les heures (la première peu après son démarrage, une fois appairée).</p>}
-        {all && last && (
-          <>
-            <div role="group" aria-label="Période" style={{ display: "flex", gap: 6, margin: "0.6rem 0 0.2rem" }}>
-              {PERIODS.map((p) => (
-                <button key={p.h} type="button" aria-pressed={hours === p.h} onClick={() => setHours(p.h)}
-                  style={{ padding: "0.25rem 0.7rem", borderRadius: 999, fontSize: "0.76rem", cursor: "pointer", border: `1px solid ${hours === p.h ? "var(--accent)" : "var(--border)"}`, background: "var(--bg)", color: hours === p.h ? "var(--accent)" : "var(--text2)" }}>
-                  {p.label}
-                </button>
-              ))}
-            </div>
+        {last && (
+          <div style={{ display: "flex", flexDirection: "column", gap: 4, margin: "0.4rem 0 0.9rem" }}>
             {MEASURE_GROUPS.map((g) => {
-              const gk = kindsOfGroup(kinds, g.id);
+              const gk = kindsOfGroup(kinds, g.id).filter((k) => lastOf(k));
               if (gk.length === 0) return null;
               return (
-                <section key={g.id} style={{ marginTop: "1rem", paddingTop: "0.8rem", borderTop: "1px solid var(--border)" }}>
-                  <h3 style={{ margin: "0 0 0.4rem", fontSize: "0.92rem" }}>{g.id === "env" ? "🌡" : "📶"} {g.label}</h3>
-                  <div style={{ display: "flex", alignItems: "baseline", gap: 16, flexWrap: "wrap", marginBottom: 6 }}>
-                    {gk.map((k, i) => { const m = lastOf(k); return m ? (
-                      <span key={k} style={{ fontSize: g.id === "env" && i === 0 ? "1.8rem" : "1rem", fontWeight: g.id === "env" && i === 0 ? 700 : 500, color: g.id === "env" && i === 0 ? "inherit" : "var(--text2)" }}>
-                        {(g.id === "link" || i > 0) && MEASURE_KINDS[k].icon + " "}{formatMeasure(k, m.v[k] as number)}
-                      </span>
-                    ) : null; })}
-                    <span style={{ color: "var(--text3)", fontSize: "0.76rem" }}>{fmtMeasureDate((lastOf(gk[0]) ?? last).t)}</span>
-                  </div>
-                  {g.id === "env" && (gk.includes("temp") || gk.includes("hum")) ? (
-                    // 29/10/2026 : MÊME explorateur que le profil public (Graphique · Œuvre · Interprétation), sur l'historique PRIVÉ du propriétaire ; le tableau reste disponible en dessous
-                    <>
-                      <MeasuresExplorer deviceId={d.deviceId} sensorLabel={d.deviceName || d.deviceId} ownerName={d.artistName} kinds={kinds} owner />
-                      {gk.some((k) => k !== "temp" && k !== "hum") && <MeasuresChart measures={shown} kinds={gk.filter((k) => k !== "temp" && k !== "hum")} />}
-                      <details style={{ marginTop: 10 }}>
-                        <summary style={{ cursor: "pointer", fontSize: "0.82rem", color: "var(--text2)" }}>Tableau des relevés ({hours >= 720 ? "31 jours" : hours >= 168 ? "7 jours" : "24 h"}, les plus récents d&apos;abord)</summary>
-                        <MeasuresChart measures={shown} kinds={gk} showTable />
-                      </details>
-                    </>
-                  ) : (
-                    <MeasuresChart measures={shown} kinds={gk} showTable />
-                  )}
-                </section>
+                <div key={g.id} style={{ display: "flex", alignItems: "baseline", gap: 16, flexWrap: "wrap" }}>
+                  {gk.map((k, i) => (
+                    <span key={k} style={{ fontSize: g.id === "env" && i === 0 ? "1.6rem" : "0.95rem", fontWeight: g.id === "env" && i === 0 ? 700 : 500, color: g.id === "env" && i === 0 ? "inherit" : "var(--text2)" }}>
+                      {(g.id === "link" || i > 0) && MEASURE_KINDS[k].icon + " "}{formatMeasure(k, lastOf(k)!.v[k] as number)}
+                    </span>
+                  ))}
+                  <span style={{ color: "var(--text3)", fontSize: "0.76rem" }}>{fmtMeasureDate(lastOf(gk[0])!.t)}</span>
+                </div>
               );
             })}
-          </>
+          </div>
         )}
+        <MeasuresPanel deviceId={d.deviceId} sensorLabel={d.deviceName || d.deviceId} ownerName={d.artistName} kinds={kinds} owner showTable measuresPublic={d.measuresPublic !== false} />
       </div>
     </div>
   );

@@ -123,10 +123,13 @@ test("VUE RÉSEAU : snapshot = + 1 SMEMBERS + un pipeline de LINDEX ; pseudo-éc
 });
 
 test("INTERFACE : une seule lecture à l'ouverture (jamais relancée par un re-rendu), aucun minuteur", () => {
+  // UX jalon 4 : la lecture vit dans le hook partagé (UN seul fetch, Promise partagée, aucun minuteur) ; SensorPanel ne lit plus rien lui-même
+  const hook = read("app/measures/useDeviceMeasures.ts");
+  assert.doesNotMatch(hook, /setInterval|setTimeout|usePolling/);
+  assert.equal((hook.match(/fetch\(/g) ?? []).length, 1);
   const ui = read("app/profile/SensorPanel.tsx");
-  assert.match(ui, /\}, \[d\.deviceId\]\);/);
-  assert.doesNotMatch(ui, /setInterval|setTimeout|usePolling/);
-  assert.equal((ui.match(/fetch\(/g) ?? []).length, 1);
+  assert.doesNotMatch(ui, /setInterval|setTimeout|usePolling|fetch\(/);
+  assert.match(ui, /useDeviceMeasures\(d\.deviceId, \{ owner: true \}\)/);
 });
 
 test("FIRMWARE capteur : copies identiques des fichiers partagés, aucun canari, aucune clé, drapeaux sans objet", () => {
