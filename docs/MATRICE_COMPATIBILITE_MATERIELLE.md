@@ -86,11 +86,11 @@ Le serveur reconnaît une famille par le **préfixe de la version déclarée** �
 | Famille | Vote V2 dès (serveur) | Client OTA dès (serveur) | Version dans le téléchargement | A voté en V2 sur carte | OTA prouvée |
 |---|---|---|---|---|---|
 | `tft18` | 2.4 | 2.7 | 2.9 | oui (bloc #111, 22/10) | oui : 2.7 → 2.8 ; 2.9 → 2.10 **non aboutie** |
-| `eink29bwr` | 2.3 | 2.4 | 2.5 | oui (#101, 14/10 ; #114, 24/10) | oui : 2.4 → 2.5 |
+| `eink29bwr` | 2.3 | 2.4 | 2.13 | oui (#101, 14/10 ; #114, 24/10) | oui : 2.4 → 2.5 ; 2.12 → 2.13 (cousin, 27/10) |
 | `multiscreen` | 2.5 | 2.6 | 2.7 | oui (#103, 14/10) | oui : 2.6 → 2.7 (marge 608 o) |
 | `eink27bw` | 2.1 | — | 2.1 | **non** (jamais essayé en V2) | non |
 | `r4tft28` | 2.5 | — | 2.5 | oui (#100 et #103, 14/10) | non (pas de client OTA applicatif) |
-| `r4eink29` | 1.1 | — | 1.1 | oui (#100 et #101, 14/10) | non |
+| `r4eink29` | 1.1 | — | 1.2 | oui (#100 et #101, 14/10) | non |
 | `r4eink27`, `r4multiscreen`, `r4tft18` | 1.1 | — | 1.1 | **non** (compilés seulement) | non |
 | `r4dht22` (capteur seul) | ne vote pas | — | 1.3 | sans objet | non |
 
@@ -164,3 +164,5 @@ Interdit de faire passer une case de `C` à `M`, `V2` ou `OTA` sans journal mat�
 - `ANIM_V1_VOTE` (vote v1 « écho » admis pour les animations seulement) est **transitoire** et ne valide pas le contenu du clip.
 
 - **29/10/2026 — station `r4tft18-2.6`** (compilée, non flashée) : échelle de temps sur les courbes de l'écran (trait par heure, 00/06/12/18, heure locale France). Le vote reste celui des lignes `r4tft18-2.4`/`2.5` ; l'écran avec échelle n'a **pas** été vu sur la carte. OTA : `POD_OTA_R4 = 0` sur la carte, donc câble. Détail : `docs/CAPTEUR_TEMPERATURE_R4_DHT22.md`.
+
+- **29/10/2026 — BWR téléchargeable remis au profil de distribution** : le code proposé au téléchargement était resté en `eink29bwr-2.3` (OTA et portail Wi-Fi éteints, Wi-Fi dans le binaire), donc sans mise à jour à distance. Il porte désormais `eink29bwr-2.13` avec `POD_WIFI_FROM_RECORD`, `POD_WIFI_PORTAL`, `POD_OTA`, `POD_OTA_CLIENT` et `POD_FRAME_CHUNK` à 1 par défaut ; capteur DHT22, OLED et affichage capteur restent à 0. Compilé (cœur 3.1.2, nodemcuv2 4M2M) : 529 424 o, RAM statique 34 176 o, deux clés publiques de publication présentes, aucun identifiant Wi-Fi. **Jamais flashé tel quel** : seule la combinaison avec capteur/OLED a traversé un canari.

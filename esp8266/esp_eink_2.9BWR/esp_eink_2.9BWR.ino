@@ -70,13 +70,13 @@
 // POD_WIFI_PORTAL = 1 (avec FROM_RECORD) : sans enregistrement, après un échec de connexion, bouton FLASH 2 s ou commande série WIFI-PORTAL : point d'accès « PoD-XXXX » + page locale.
 // Défaut 0 : NON essayé sur cette carte. docs/PORTAIL_WIFI_PREMIERE_CONNEXION_2026_10_22.md
 #ifndef POD_WIFI_FROM_RECORD
-#define POD_WIFI_FROM_RECORD 0
+#define POD_WIFI_FROM_RECORD 1   // PROFIL DE DISTRIBUTION (29/10/2026) : aucun identifiant Wi-Fi dans le binaire (portail de première connexion)
 #endif
 #ifndef POD_WIFI_MIGRATE
 #define POD_WIFI_MIGRATE 0
 #endif
 #ifndef POD_WIFI_PORTAL
-#define POD_WIFI_PORTAL 0
+#define POD_WIFI_PORTAL 1   // PROFIL DE DISTRIBUTION (29/10/2026) : portail de première connexion (deux QR)
 #endif
 #if POD_WIFI_PORTAL && !POD_WIFI_FROM_RECORD
   #error "POD_WIFI_PORTAL exige POD_WIFI_FROM_RECORD = 1"
@@ -164,7 +164,7 @@ static void podoaService();
 // POD_FRAME_CHUNK = 1 : la frame (9 472 o) est téléchargée en 4 morceaux de POD_FRAME_CHUNK_LEN octets (/api/pull-frame?off=&len=) avec un tampon TLS de réception de POD_TLS_RX octets au lieu de 16 Ko :
 // ≈ 12 Ko de tas en plus pendant le téléchargement (sonde du 24/10/2026 : tas minimal avec les plans alloués 9,8 Ko -> 22,1 Ko). Si le serveur ne connaît pas encore les morceaux, repli AUTOMATIQUE sur le téléchargement d'un seul tenant.
 #ifndef POD_FRAME_CHUNK
-#define POD_FRAME_CHUNK 0
+#define POD_FRAME_CHUNK 1   // PROFIL DE DISTRIBUTION (29/10/2026) : frame téléchargée par morceaux (tas TLS étroit du BWR)
 #endif
 #define POD_FRAME_CHUNK_LEN 2368u   // 4 736 / 2 : un morceau ne traverse jamais la frontière noir / rouge
 #define POD_TLS_RX          4096    // tampon de réception TLS : un morceau + ses en-têtes tiennent largement (mesuré : un corps de 4 Ko passe avec 3 072)
@@ -176,14 +176,17 @@ static void podoaService();
 // POD_OTA = 1 : socle de mise à jour signée (enregistrement d'état EEPROM 420..447, anti-downgrade, vérificateur RSA, trailer signé). POD_OTA_CLIENT = 1 (exige POD_OTA = 1 ET le Wi-Fi hors binaire) : client Internet
 // authentifié (TLS aux racines épinglées, jamais setInsecure) qui suit l'annonce `ota` de /api/pull. Famille liée à la signature : une image d'un autre écran est refusée. NON essayé sur la carte.
 #ifndef POD_OTA
-#define POD_OTA 0
+#define POD_OTA 1   // PROFIL DE DISTRIBUTION (29/10/2026) : mises à jour signées (clés PUBLIQUES de publication dans pod_ota_keys.h)
 #endif
 #ifndef POD_OTA_SEQ
 #define POD_OTA_SEQ 1
 #endif
+#ifndef POD_OTA_CLIENT
+#define POD_OTA_CLIENT 1   // PROFIL DE DISTRIBUTION (29/10/2026) : client OTA Internet (TLS authentifié) ; exige le Wi-Fi hors binaire
+#endif
 #define POD_OTA_FAMILY "esp8266-eink29bwr"
 #ifndef FIRMWARE_VERSION
-#define FIRMWARE_VERSION "eink29bwr-2.3"
+#define FIRMWARE_VERSION "eink29bwr-2.13"
 #endif
 #if defined(POD_OTA_CLIENT) && POD_OTA_CLIENT && !POD_WIFI_FROM_RECORD
 #error "POD_OTA_CLIENT exige POD_WIFI_FROM_RECORD = 1 (jamais d'identifiant Wi-Fi dans un binaire OTA)"
