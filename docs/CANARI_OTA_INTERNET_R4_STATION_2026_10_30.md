@@ -10,8 +10,8 @@ Un SEUL dernier flash USB installe la station complète : portail Wi-Fi, enregis
 |---|---|
 | Firmware | `r4tft18-2.8` (portail), famille `uno-r4-wifi-tft18`, canal `canary` |
 | Séquence compilée | **14** (> 13, plus haute séquence connue sur `dev_I25D9Z7A`) |
-| Taille / flash / RAM | 191 188 o ; flash 191 180 o (72 %) ; RAM globale 18 452 o (56 %) ; maximum d'une image OTA R4 : 245 760 o |
-| SHA-256 | `30f1a1d0478e1270888ecb00a0517025f8009d5d1ddfdf462accd4ea65a8ac08` |
+| Taille / flash / RAM | 191548 o ; flash 191540 o (73 %) ; RAM globale 18452 o (56 %) ; maximum d'une image OTA R4 : 245 760 o |
+| SHA-256 | `39d8e4fbe8de08342dc3678ef59d915be99078d6e9a294b377ad9b8315b4be61` (inclut la commande série `FLASH-DUMP`, lecture seule) |
 | Options compilées | `POD_SENSORS=1` (DHT22 + SGP40 + indice COV), `POD_ENV_DISPLAY=1` (écran de station), `POD_SD_CS_PIN=4` (microSD, animations), `POD_OTA_R4=1`, `POD_WIFI_PORTAL=1`, `OTAR4_COMPILED_SEQ=14` ; TLS vers le site de production ; vote v2 universel et ACK par défaut |
 | Clés publiques OTA | `r4-a` `dbf04c04…8efc`, `r4-b` `dd310cbb…2ed0` (présentes dans l'image, hexadécimal texte) |
 | Wi-Fi | **aucun** : `secrets.h` n'est jamais copié dans le build ; mode « enregistrement » ; ancien SSID et ancien mot de passe **absents des octets** de l'image (contrôle d'octets, 2/2 valeurs) ; marqueur `PODWIFI:record-v1` présent, `PODWIFI:compiled-v1` absent |
@@ -20,6 +20,15 @@ Carte de la data flash et procédure de récupération USB : `CARTE_DATA_FLASH_S
 
 ## Tests (hôte) — `tests/r4StationPortal.test.ts`
 Aucune zone de la data flash ne se chevauche · le portail n'écrit que `[512, 617)` · aucune constante SSID/mot de passe, `secrets.h` jamais inclus en mode portail · portail rouvrable (commande série ; automatique si la box ne répond plus) · l'écran du portail n'affiche jamais les identifiants de la box · capacités conservées · copies du portail identiques aux sources · contrôle d'octets : 6 mutants refusés (SSID présent, mot de passe présent, nouveau Wi-Fi seul fourni, marqueur compilé, marqueur absent, liste vide) et aucune valeur secrète dans les sorties · publication et build bloquants. **Limite : le portail de la station n'a jamais tourné sur la carte** (seul celui de la UNO R4 e-ink 2,9″ l'a fait, le 25/10/2026).
+
+## Décision du porteur (30/10/2026) : rotation du Wi-Fi différée
+Le risque d'exposition publique des identifiants actuels est connu et **accepté temporairement** ; la rotation du Wi-Fi est une **action de clôture du chantier, encore nécessaire, qui ne bloque PAS le canari**. Les valeurs actuelles (dans `~/.pod-wifi-forbidden.txt`) sont les valeurs de référence interdites dans tout binaire : `wifi-guard` prouve leur absence de A. Le porteur saisira localement les MÊMES identifiants sur le portail.
+
+## Déroulé exact avec la sonde (aucune release publiée)
+0. Pré-vol : chemins R4 de production en 404 ; suite complète sans nouvelle régression ; `wifi-guard` sur A (SSID et mot de passe actuels absents) ; sauvegarde des 8 192 o **avant toute écriture**.
+1. **Sonde (lecture seule)** : téléverser `flash_dump_probe` (programme seulement), capturer le vidage (`flash-dump-capture.ps1`), décoder (`flash-dump-decode.mjs --log … --out … --lookup` : CRC-32 de 256 lignes, clé publique, `deviceId`/appairage par recherche de la clé publique côté serveur, séquence OTA, SHA-256 des 8 192 o). Le fichier `.bin` contient la clé privée : **hors Git, hors conversation**.
+2. **Flash de A, UNE seule fois, sans retry.** Arrêt au portail.
+3. Le porteur saisit le Wi-Fi sur le portail ; redémarrage ; **vidage après** par la commande série `FLASH-DUMP` (`flash-dump-capture.ps1 -ResetAndAsk`), puis `flash-dump-decode.mjs --diff avant.bin apres.bin` : seuls l'enregistrement Wi-Fi (512..616) et la séquence OTA (blocs 2/3) ont le droit de changer ; identité, drapeaux, blocs possédés, reste du bloc 0 et autres blocs inchangés.
 
 ## Après le GO FLASH USB (aucune release publiée)
 1. Flasher A, ouvrir le port série (115 200). Premier démarrage : pas d'enregistrement Wi-Fi ⇒ le portail s'ouvre (`PoD-XXXX`, QR + nom + mot de passe de session + 192.168.4.1 sur le TFT). Saisir le **nouveau** Wi-Fi sur le téléphone (jamais dans la conversation ni dans Git).

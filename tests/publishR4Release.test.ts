@@ -23,7 +23,7 @@ function release(over: Partial<{ family: string; channel: string; firmware: stri
   writeFileSync(path.join(dir, "keys.json"), JSON.stringify({ "r4-a": kA.publicHex }));
   return dir;
 }
-const run = (args: string[]) => { try { return { ok: true, out: execFileSync(process.execPath, ["--import", "tsx", TOOL, ...args], { encoding: "utf8", cwd: ROOT, stdio: ["ignore", "pipe", "pipe"] }) }; } catch (e) { const x = e as { stderr?: Buffer | string; stdout?: Buffer | string }; return { ok: false, out: String(x.stderr ?? "") + String(x.stdout ?? "") }; } };
+const run = (args: string[], env?: NodeJS.ProcessEnv) => { try { return { ok: true, out: execFileSync(process.execPath, ["--import", "tsx", TOOL, ...args], { encoding: "utf8", cwd: ROOT, env: env ?? process.env, stdio: ["ignore", "pipe", "pipe"] }) }; } catch (e) { const x = e as { stderr?: Buffer | string; stdout?: Buffer | string }; return { ok: false, out: String(x.stderr ?? "") + String(x.stdout ?? "") }; } };
 
 test("publication : une release valide est copiée dans public/firmware-r4/<kind>/<canal>/ (et nulle part ailleurs)", () => {
   const rel = release(); const pub = mkdtempSync(path.join(tmpdir(), "r4public-"));
@@ -57,7 +57,8 @@ test("publication : wifi-guard BLOQUE — binaire avec un identifiant Wi-Fi, san
     writeFileSync(path.join(dir, "firmware.bin"), b); writeFileSync(path.join(dir, "keys.json"), JSON.stringify({ "r4-a": kA.publicHex }));
     return dir;
   };
-  const go = (rel: string, extra: string[]) => run(["--kind", "tft18", "--channel", "canary", "--release", rel, "--pub", path.join(rel, "keys.json"), "--public", pub, ...extra]);
+  const emptyHome = mkdtempSync(path.join(tmpdir(), "r4home-"));   // poste SANS liste personnelle (~/.pod-wifi-forbidden.txt) : le résultat ne dépend pas de la machine
+  const go = (rel: string, extra: string[]) => run(["--kind", "tft18", "--channel", "canary", "--release", rel, "--pub", path.join(rel, "keys.json"), "--public", pub, ...extra], { ...process.env, USERPROFILE: emptyHome, HOME: emptyHome });
   const leaked = go(withBin(Buffer.concat([bin, Buffer.from("SsidDeTest-4242")])), ["--forbid-file", FORBID]);
   assert.equal(leaked.ok, false); assert.match(leaked.out, /wifi-guard/); assert.match(leaked.out, /PRÉSENTE/); assert.ok(!leaked.out.includes("SsidDeTest-4242"), "valeur secrète affichée");
   const nomark = go(withBin(Buffer.concat([Buffer.from([0xf0, 0x7f, 0x00, 0x20]), randomBytes(500)])), ["--forbid-file", FORBID]);
@@ -65,7 +66,7 @@ test("publication : wifi-guard BLOQUE — binaire avec un identifiant Wi-Fi, san
   const compiled = go(withBin(Buffer.concat([bin, Buffer.from("PODWIFI:compiled-v1")])), ["--forbid-file", FORBID]);
   assert.equal(compiled.ok, false); assert.match(compiled.out, /COMPILÉ/);
   const nolist = go(withBin(bin), []);
-  if (!nolist.ok) assert.match(nolist.out, /aucune valeur interdite|PRÉSENTE/);   // sans liste fournie : refus fermé, sauf si le poste a un secrets.h / ~/.pod-wifi-forbidden.txt dont aucune valeur n'est dans l'image
+  assert.equal(nolist.ok, false); assert.match(nolist.out, /aucune valeur interdite chargée/);   // sans aucune liste : refus FERMÉ
   assert.equal(existsSync(path.join(pub, "firmware-r4")), false, "rien n'a été copié par un refus");
 });
 

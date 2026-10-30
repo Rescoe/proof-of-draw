@@ -19,8 +19,8 @@
 - **Contrôle bloquant** `ota-lab/r4-ota5/tools/wifi-guard.mjs` : refuse une image qui contient une valeur Wi-Fi interdite (recherche d'octets), le marqueur de Wi-Fi compilé (`PODWIFI:compiled-v1`), ou qui n'a pas le marqueur de Wi-Fi hors binaire (`PODWIFI:record-v1`), ou un `secrets.h` réel dans le dossier de build ; branché sur `publish-r4-release.mjs` (avant toute copie dans `public/`) et sur le build de la station ; valeurs interdites lues dans des fichiers locaux (`secrets.h`, `~/.pod-wifi-forbidden.txt`), jamais affichées ; échec fermé si aucune valeur n'est fournie ; mutants testés (`tests/r4StationPortal.test.ts`).
 - Station : mode portail (Wi-Fi hors binaire) pour toute image publiable.
 
-## À faire par le porteur
-1. **Changer le mot de passe Wi-Fi** (et le SSID si possible) du réseau concerné. Ajouter ensuite l'ancien ET le nouveau dans `~/.pod-wifi-forbidden.txt` (une valeur par ligne, hors dépôt) pour que le contrôle les refuse dans tout futur binaire.
+## Décision du porteur (30/10/2026) et action de clôture
+Le porteur **ne change pas les identifiants maintenant** : l'exposition publique est connue et acceptée **temporairement** ; la rotation est une **action de clôture du chantier, encore nécessaire, non bloquante pour le canari**. Les valeurs actuelles sont dans `~/.pod-wifi-forbidden.txt` (hors dépôt, jamais affichées) et servent de référence interdite : `wifi-guard` refuse tout binaire qui les contient. À la clôture : changer le mot de passe (et le SSID si possible), ajouter les nouvelles valeurs au fichier, puis exécuter le plan de purge ci-dessous si le porteur le décide.
 
 ## Plan de purge de l'historique (SÉPARÉ, NON EXÉCUTÉ — décision du porteur après rotation du Wi-Fi)
 Pré-conditions : Wi-Fi changé ; accord explicite ; fenêtre de coordination (tous les clones et worktrees à jeter ou rebaser ensuite) ; aucune PR ouverte.

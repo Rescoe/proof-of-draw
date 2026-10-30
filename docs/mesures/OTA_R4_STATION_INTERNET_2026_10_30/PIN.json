@@ -14,13 +14,14 @@
     "channel": "canary",
     "OTAR4_COMPILED_SEQ": 14,
     "options": "POD_SENSORS=1 POD_ENV_DISPLAY=1 POD_SD_CS_PIN=4 POD_OTA_R4=1 POD_WIFI_PORTAL=1 OTAR4_COMPILED_SEQ=14",
-    "bytes": 191188,
-    "flashBytes": 191180,
+    "bytes": 191548,
+    "flashBytes": 191540,
     "ramGlobalBytes": 18452,
-    "sha256": "30f1a1d0478e1270888ecb00a0517025f8009d5d1ddfdf462accd4ea65a8ac08",
+    "sha256": "39d8e4fbe8de08342dc3678ef59d915be99078d6e9a294b377ad9b8315b4be61",
     "wifiCompiledIn": false,
     "wifiPortal": true,
-    "wifiGuard": "wifi-guard OK : 2 valeur(s) interdite(s) absente(s) de l'image (191188 o) ; marqueur PODWIFI:record-v1 présent ; aucun secrets.h réel dans le build."
+    "wifiGuard": "wifi-guard OK : 2 valeur(s) interdite(s) absente(s) de l'image (191548 o) ; marqueur PODWIFI:record-v1 présent ; aucun secrets.h réel dans le build.",
+    "serialCommands": "WIFI-PORTAL, WIFI-CLEAR, WIFI-SETHEX, FLASH-DUMP (lecture seule de la data flash)"
   },
   "B": {
     "status": "non reconstruit ; séquence prévue = séquence effective de A + 1 (15) ; sans Wi-Fi",
@@ -33,5 +34,11 @@
     "removedCommit": "d76e3f0",
     "reason": "séquence 2 < 13 déjà atteinte ; binaire contenant le Wi-Fi ; publié avant GO",
     "servedSha256": "aa809140a0e40da75e012c423cf26b0743036d43be4abce73aeceae14f522755"
+  },
+  "probe": {
+    "role": "sonde de lecture seule de la data flash, téléversée AVANT A (remplace le programme, jamais la data flash)",
+    "sketch": "ota-lab/r4-ota5/sketch/flash_dump_probe",
+    "bytes": 56196,
+    "sha256": "2365a51411782c5007d459a1445314b868c68a7fb1113bde534fb6f3f2df63ce"
   }
 }

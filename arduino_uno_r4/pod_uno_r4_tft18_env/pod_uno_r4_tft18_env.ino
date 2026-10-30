@@ -2339,6 +2339,22 @@ static void __attribute__((noinline)) otaTick(bool force) {
 // POD_WIFI_BEGIN
 #if POD_WIFI_PORTAL
 static podportalr4::Ee g_ee;
+/** Vidage en LECTURE SEULE de la data flash (8 192 o) : « FD BEGIN 8192 », 256 lignes « FD aaaa <64 hex> <crc32> », « FD END ». Aucune écriture (EEPROM.read seulement). Exécuté sur la pile de travail dédiée (cadres et journal). */
+static void flashDumpImpl() {
+  static const char H[] = "0123456789abcdef";
+  uint8_t row[32]; char hex[65];
+  logf("FD BEGIN 8192");
+  for (int a = 0; a < 8192; a += 32) {
+    for (int i = 0; i < 32; i++) row[i] = (uint8_t)EEPROM.read(a + i);
+    for (int i = 0; i < 32; i++) { hex[2 * i] = H[row[i] >> 4]; hex[2 * i + 1] = H[row[i] & 15]; }
+    hex[64] = 0;
+    logf("FD %04x %s %08lx", a, hex, (unsigned long)podwifi::crc32(row, 32));
+    delay(3);
+  }
+  logf("FD END");
+  memset(row, 0, sizeof row);
+}
+static void __attribute__((noinline)) flashDump() { PodNetInfo ni; auto wk = [&]() { flashDumpImpl(); }; if (!podWorkRun(wk, &ni)) tftWorkFailed("vidage de la data flash", ni); }
 /** Fenêtre série de 1,5 s au démarrage : « WIFI-SETHEX <ssid hex>:<mdp hex> » (enregistre), « WIFI-CLEAR » (efface), « WIFI-PORTAL » (force le portail). true = ouvrir le portail quoi qu'il arrive. */
 static bool __attribute__((noinline)) wifiSerialWindow() {
   char* line = (char*)malloc(300);
@@ -2350,6 +2366,7 @@ static bool __attribute__((noinline)) wifiSerialWindow() {
       if (ch != '\n' && ch != '\r') { if (n < 299) line[n++] = ch; continue; }
       if (n == 0) continue;
       line[n] = 0; n = 0;
+      if (strcmp(line, "FLASH-DUMP") == 0) { logf("[WIFI] vidage de la data flash demande (lecture seule)"); flashDump(); continue; }
       if (strcmp(line, "WIFI-PORTAL") == 0) { force = true; logf("[WIFI] portail demande par la commande serie"); continue; }
       char ssid[podwifi::SSID_MAX + 1], pass[podwifi::PASS_MAX + 1];
       const podwifi::Cmd c = podwifi::parseCommand(line, ssid, pass);
