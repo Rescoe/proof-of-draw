@@ -95,7 +95,7 @@ Le serveur reconnaît une famille par le **préfixe de la version déclarée** �
 | `r4tft28` | 2.5 | — | 2.5 | oui (#100 et #103, 14/10) | non (pas de client OTA applicatif) |
 | `r4eink29` | 1.1 | — | 1.2 | oui (#100 et #101, 14/10) | non |
 | `r4eink27`, `r4multiscreen` | 1.1 | — | 1.1 | **non** (compilés seulement) | non |
-| `r4tft18` | 1.1 | — | 2.7 | oui (bloc #126, 29/10) | non (client présent, éteint) |
+| `r4tft18` | 1.1 | — | 2.7 | oui (bloc #126, 29/10) | non : **canari OTA Internet préparé le 30/10/2026** (A `r4tft18-2.6` seq 1 à flasher par câble, B `r4tft18-2.7` seq 2 publiée) — non essayé, `CANARI_OTA_INTERNET_R4_STATION_2026_10_30.md` |
 | `r4dht22` (capteur seul) | ne vote pas | — | 1.3 | sans objet | non |
 
 Les valeurs « dès » viennent de `lib/voteCapability.ts` (`VOTE_V2_FIRMWARE`) et `lib/otaDistribution.ts` (`OTA_CLIENT_FIRMWARE`) ; un test compare ce tableau au code.

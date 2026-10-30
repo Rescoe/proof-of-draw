@@ -1,0 +1,31 @@
+{
+  "note": "Pin PUBLIC et sans secret du test OTA Internet de la station R4 (r4tft18). Binaires et secrets.h hors Git. Compile seulement ; jamais flashe a la date du pin.",
+  "fqbn": "arduino:renesas_uno:unor4wifi",
+  "core": "arduino:renesas_uno 1.6.0",
+  "sketch": "arduino_uno_r4/pod_uno_r4_tft18_env",
+  "flagsCommon": "POD_SENSORS=1 POD_ENV_DISPLAY=1 POD_SD_CS_PIN=4 POD_OTA_R4=1 (OTAR4_TLS=1, hote = SERVER_HOST, chemin /firmware-r4/tft18/canary, verification des certificats par le module)",
+  "publicKeys": {
+    "r4-a": "dbf04c0453049cdcbd33c0839cf5e9cb3cc0e623915f1e62221fc075650d8efc",
+    "r4-b": "dd310cbb11bae1ed4d4090b02dc613467b512dd4ebc521ba589058aea81f2ed0"
+  },
+  "A": {
+    "role": "firmware installe par cable (client OTA actif, sequence compilee 1)",
+    "firmwareVersion": "r4tft18-2.6",
+    "sketchCommit": "9e9270d",
+    "OTAR4_COMPILED_SEQ": 1,
+    "bytes": 177004,
+    "sha256": "1f11b766533b340a94f5747fba8e6cc524618c142b06f7ca680add34af664287",
+    "ramGlobalBytes": 18204
+  },
+  "B": {
+    "role": "mise a jour publiee par Internet (canal canary, sequence 2, signee r4-a)",
+    "firmwareVersion": "r4tft18-2.7",
+    "sketchCommit": "23cc3c8",
+    "OTAR4_COMPILED_SEQ": 2,
+    "bytes": 177188,
+    "sha256": "aa809140a0e40da75e012c423cf26b0743036d43be4abce73aeceae14f522755",
+    "ramGlobalBytes": 18204,
+    "manifestSha256": "8354969613425d737ca0f7cf0f75324cbb79bde70a50577c8bf5bf05b9223f1a"
+  },
+  "published": "public/firmware-r4/tft18/canary/{manifest.txt,firmware.bin}"
+}
