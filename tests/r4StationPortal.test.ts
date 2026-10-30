@@ -69,7 +69,14 @@ test("mode portail : aucune constante SSID/mot de passe, secrets.h jamais inclus
   assert.match(ino, /#if POD_WIFI_PORTAL\n  wifiStartup\(\);\n#else/, "setup() passe par wifiStartup()");
   assert.ok(ino.includes('"WIFI-PORTAL"') && ino.includes("podportal::decide(have, false, false, forced)"), "portail rouvrable (commande série) et automatique si la box a changé");
   assert.ok(ino.includes("podportalr4::run(reason, mac, wifiScan, wifiApStart, wifiApStop, portalScreen, nullptr)"), "même moteur que la UNO R4 e-ink 2,9″");
-  for (const m of ["Premiere connexion", "Wi-Fi introuvable", "Wi-Fi enregistre", "CONNECTE TON WI-FI", "choisis ta box Wi-Fi"]) assert.ok(ino.includes(m), `message TFT : ${m}`);
+  for (const m of ["Premiere connexion", "Wi-Fi introuvable", "Wi-Fi enregistre", "PROOF OF DRAW", "Rejoins", "ta box et", "son code", "ou va sur 192.168.4.1"]) assert.ok(ino.includes(m), `message TFT : ${m}`);
+  // écran du portail : DEUX QR de même taille (rejoindre le Wi-Fi / ouvrir la page), AUCUN gris, adresse de secours en couleur lisible
+  const scr = ino.slice(ino.indexOf("static void portalDrawQr"), ino.indexOf("static void __attribute__((noinline)) portalScreen(const char* apName"));
+  assert.equal((scr.match(/portalDrawQr\(/g) ?? []).length, 3, "1 définition + 2 appels (deux QR)");
+  assert.match(scr, /portalDrawQr\(join, 3, 19, data\)/); assert.match(scr, /portalDrawQr\("http:\/\/192\.168\.4\.1\/", 3, 87, data\)/);
+  assert.doesNotMatch(scr, /C_GREY|0x7BEF|0x8410/, "aucun gris sur l'écran du portail");
+  assert.match(scr, /tft\.setTextColor\(CYAN, C_NAVY\);\s+tft\.setCursor\(3, 151\); tft\.print\("ou va sur 192\.168\.4\.1"\)/, "adresse de secours en cyan vif");
+  assert.doesNotMatch(ino.slice(ino.indexOf("static void tftStatusImpl"), ino.indexOf("static void tftStatusImpl") + 900), /C_GREY/, "textes d'état en blanc");
   assert.doesNotMatch(ino.slice(ino.indexOf("static void portalScreenImpl"), ino.indexOf("static void __attribute__((noinline)) portalScreen(")), /WIFI_SSID|g_wifiSsid|g_wifiPass/, "l'écran du portail n'affiche jamais les identifiants de la box");
 });
 test("capacités conservées dans le mode portail : DHT22, SGP40 et indice, écran de station, microSD, animations, vote, ACK, OTA R4 signée, canal canary", () => {

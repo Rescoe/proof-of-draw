@@ -10,8 +10,8 @@ Un SEUL dernier flash USB installe la station complète : portail Wi-Fi, enregis
 |---|---|
 | Firmware | `r4tft18-2.8` (portail), famille `uno-r4-wifi-tft18`, canal `canary` |
 | Séquence compilée | **14** (> 13, plus haute séquence connue sur `dev_I25D9Z7A`) |
-| Taille / flash / RAM | 191548 o ; flash 191540 o (73 %) ; RAM globale 18452 o (56 %) ; maximum d'une image OTA R4 : 245 760 o |
-| SHA-256 | `39d8e4fbe8de08342dc3678ef59d915be99078d6e9a294b377ad9b8315b4be61` (inclut la commande série `FLASH-DUMP`, lecture seule) |
+| Taille / flash / RAM | 191828 o ; flash 191820 o (73 %) ; RAM globale 18452 o (56 %) ; maximum d'une image OTA R4 : 245 760 o |
+| SHA-256 | `f1ab4b2a5d5b846422bf060a639447e024b2d6a16cfe56d0f4201e269b39b982` (A2 : portail à deux QR sans gris, commande série `FLASH-DUMP` en lecture seule ; remplace A `39d8e4fb…`, flashé puis remplacé le 30/10/2026) |
 | Options compilées | `POD_SENSORS=1` (DHT22 + SGP40 + indice COV), `POD_ENV_DISPLAY=1` (écran de station), `POD_SD_CS_PIN=4` (microSD, animations), `POD_OTA_R4=1`, `POD_WIFI_PORTAL=1`, `OTAR4_COMPILED_SEQ=14` ; TLS vers le site de production ; vote v2 universel et ACK par défaut |
 | Clés publiques OTA | `r4-a` `dbf04c04…8efc`, `r4-b` `dd310cbb…2ed0` (présentes dans l'image, hexadécimal texte) |
 | Wi-Fi | **aucun** : `secrets.h` n'est jamais copié dans le build ; mode « enregistrement » ; ancien SSID et ancien mot de passe **absents des octets** de l'image (contrôle d'octets, 2/2 valeurs) ; marqueur `PODWIFI:record-v1` présent, `PODWIFI:compiled-v1` absent |

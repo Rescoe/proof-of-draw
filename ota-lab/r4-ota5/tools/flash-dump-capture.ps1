@@ -7,12 +7,12 @@ param([Parameter(Mandatory = $true)][string]$Port, [Parameter(Mandatory = $true)
 $ErrorActionPreference = "Stop"
 $sp = New-Object System.IO.Ports.SerialPort $Port, 115200, "None", 8, "One"
 $sp.ReadTimeout = 200; $sp.NewLine = "`n"
-$sp.DtrEnable = $false; $sp.RtsEnable = $false
+$sp.DtrEnable = $true; $sp.RtsEnable = $false   # DTR actif : le USB natif de la R4 n envoie rien tant que l hote n a pas ouvert le port avec DTR
 $sp.Open()
 $lines = New-Object System.Collections.Generic.List[string]
 $sawBegin = $false; $sawEnd = $false
 try {
-  if ($ResetAndAsk) { Start-Sleep -Milliseconds 100; $sp.DtrEnable = $true; $sp.RtsEnable = $true; Start-Sleep -Milliseconds 200; $sp.DtrEnable = $false; $sp.RtsEnable = $false }
+  if ($ResetAndAsk) { Start-Sleep -Milliseconds 100; $sp.DtrEnable = $false; $sp.RtsEnable = $true; Start-Sleep -Milliseconds 200; $sp.RtsEnable = $false; $sp.DtrEnable = $true }
   $t0 = Get-Date; $lastSend = [datetime]::MinValue; $buf = ""
   while (((Get-Date) - $t0).TotalSeconds -lt $Seconds -and -not $sawEnd) {
     if ($ResetAndAsk -and -not $sawBegin -and ((Get-Date) - $lastSend).TotalMilliseconds -gt 300) { try { $sp.Write("FLASH-DUMP`n") } catch {}; $lastSend = Get-Date }

@@ -616,7 +616,7 @@ static void tftStatusImpl(const String& line1, const String& line2, uint16_t bg)
   tft.setTextColor(C_GOLD, bg); tft.setTextSize(2); tft.setCursor(5, 8); tft.print("PoD");
   tft.drawFastHLine(0, 28, IMG_W, C_GOLD);
   tft.setTextColor(C_WHITE, bg); tft.setTextSize(1); tft.setCursor(5, 44); tft.print(line1);
-  if (line2.length()) { tft.setTextColor(C_GREY, bg); tft.setCursor(5, 60); tft.print(line2); }
+  if (line2.length()) { tft.setTextColor(C_WHITE, bg); tft.setCursor(5, 60); tft.print(line2); }
 }
 
 #if !POD_RENDER_V1   // cartel dessiné par-dessus / image streamée d'avant : remplacés par le noyau de rendu v1
@@ -745,7 +745,7 @@ static void displayOnboardingQRImpl(const String& onboardUrl, const String& code
   tft.setTextColor(C_GOLD, C_NAVY); tft.setTextSize(2);
   int cx = max(0, (IMG_W - (int)code.length() * 12) / 2); tft.setCursor(cx, 126); tft.print(code);
   String m = mac; m.replace(":", ""); m.toUpperCase();
-  tft.setTextSize(1); tft.setTextColor(C_GREY, C_NAVY); tft.setCursor(3, 150); tft.print("MAC:" + m);
+  tft.setTextSize(1); tft.setTextColor(C_WHITE, C_NAVY); tft.setCursor(3, 150); tft.print("MAC:" + m);
 }
 
 // ─── Enveloppes d'affichage : TFT / QR sur la PILE DE TRAVAIL dédiée (podWorkRun, 2 048 o, garde + marge contrôlées) ───────────────────────
@@ -761,31 +761,49 @@ static void __attribute__((noinline)) displayKeyMaterialOnce() { PodNetInfo ni; 
 static void __attribute__((noinline)) displayOnboardingQR(const String& u, const String& c, const String& m) { PodNetInfo ni; auto wk = [&]() { displayOnboardingQRImpl(u, c, m); }; if (!podWorkRun(wk, &ni)) tftWorkFailed("QR d'appairage", ni); }
 // POD_WIFI_BEGIN
 #if POD_WIFI_PORTAL
-// Écran du portail sur le TFT 1,8″ (128 x 160) : UN QR de connexion au point d'accès (rejoindre « PoD-XXXX »), puis en clair le nom, le mot de passe de session et l'adresse de la page locale (secours si la
-// page ne s'ouvre pas toute seule). Dessiné sur la pile de travail dédiée (le QR est lourd pour la pile principale de 1 024 o). Aucun identifiant de la box n'apparaît ici.
+// Écran du portail sur le TFT 1,8″ (128 x 160, portrait) : DEUX étapes, chacune avec son QR de même taille (2 x 62 px) — 1. rejoindre le Wi-Fi PoD-XXXX de la carte ; 2. ouvrir la page locale pour choisir sa box et entrer
+// son code. Texte BLANC, or et cyan sur fond bleu nuit : AUCUN gris (illisible de biais sur un TFT). Adresse de secours en blanc. Dessiné sur la pile de travail dédiée (le QR est lourd pour la pile principale de 1 024 o).
+// Aucun identifiant de la box n'apparaît ici : seulement le point d'accès temporaire et son mot de passe de session.
+static void portalDrawQr(const char* text, int x0, int y0, uint8_t* data) {
+  memset(data, 0, 160);
+  QRCode qr;
+  const int box = 62;                                                             // (29 modules + 2 de marge) x 2 px
+  tft.fillRect(x0, y0, box, box, C_WHITE);                                         // marge blanche : le QR reste lisible sur fond sombre
+  if (qrcode_initText(&qr, data, 3, ECC_MEDIUM, text) < 0) { logf("[QR] texte trop long pour la version 3"); return; }
+  for (int y = 0; y < qr.size; y++) for (int x = 0; x < qr.size; x++)
+    if (qrcode_getModule(&qr, x, y)) tft.fillRect(x0 + 2 + x * 2, y0 + 2 + y * 2, 2, 2, C_BLACK);
+}
 static void portalScreenImpl(const char* apName, const char* apPass) {
   uint8_t* data = (uint8_t*)malloc(160);
   if (!data) { logf("[PORTAL] memoire insuffisante pour le QR"); return; }
   if (qrcode_getBufferSize(3) > 160) { free(data); logf("[QR] tampon trop petit"); return; }
-  memset(data, 0, 160);
+  const uint16_t CYAN = 0x07FF;
   tft.fillScreen(C_NAVY); tft.setTextWrap(false);
-  tft.fillRect(0, 0, IMG_W, 14, C_DARK);
-  tft.setTextSize(1); tft.setTextColor(C_GOLD, C_DARK); tft.setCursor(3, 3); tft.print("CONNECTE TON WI-FI");
+  tft.fillRect(0, 0, IMG_W, 15, C_DARK);
+  tft.setTextSize(1); tft.setTextColor(C_GOLD, C_DARK); tft.setCursor(3, 4); tft.print("PROOF OF DRAW");
+  tft.setTextColor(C_WHITE, C_DARK); tft.setCursor(IMG_W - 6 * 5 - 3, 4); tft.print("WI-FI");
+  // étape 1 : rejoindre le Wi-Fi de la carte
   char join[56]; snprintf(join, sizeof join, "WIFI:T:WPA;S:%s;P:%s;;", apName, apPass);
-  QRCode qr;
-  if (qrcode_initText(&qr, data, 3, ECC_MEDIUM, join) >= 0) {
-    const int scale = 3, px = qr.size * scale, x0 = (IMG_W - px) / 2, y0 = 20;
-    tft.fillRect(x0 - 4, y0 - 4, px + 8, px + 8, C_WHITE);
-    for (int y = 0; y < qr.size; y++) for (int x = 0; x < qr.size; x++)
-      if (qrcode_getModule(&qr, x, y)) tft.fillRect(x0 + x * scale, y0 + y * scale, scale, scale, C_BLACK);
-  } else logf("[QR] texte trop long pour la version 3");
-  memset(data, 0, 160); free(data);
+  portalDrawQr(join, 3, 19, data);
+  tft.setTextSize(2); tft.setTextColor(C_GOLD, C_NAVY); tft.setCursor(70, 19); tft.print("1");
   tft.setTextSize(1);
-  tft.setTextColor(C_WHITE, C_NAVY); tft.setCursor(3, 114); tft.print("1 SCANNE: REJOINS");
-  tft.setTextColor(C_GOLD, C_NAVY);  tft.setCursor(3, 123); tft.print(apName);
-  tft.setTextColor(C_WHITE, C_NAVY); tft.setCursor(3, 132); tft.print("MDP "); tft.print(apPass);
-  tft.setTextColor(C_GREY, C_NAVY);  tft.setCursor(3, 141); tft.print("2 PUIS 192.168.4.1");
-  tft.setCursor(3, 150); tft.print("choisis ta box Wi-Fi");
+  tft.setTextColor(C_WHITE, C_NAVY); tft.setCursor(84, 23); tft.print("Wi-Fi");
+  tft.setCursor(70, 38); tft.print("Rejoins");
+  tft.setTextColor(CYAN, C_NAVY);    tft.setCursor(70, 48); tft.print(apName);
+  tft.setTextColor(C_GOLD, C_NAVY);  tft.setCursor(70, 60); tft.print("MDP");
+  tft.setTextColor(C_WHITE, C_NAVY); tft.setCursor(70, 70); tft.print(apPass);
+  tft.drawFastHLine(3, 84, IMG_W - 6, C_GOLD);
+  // étape 2 : ouvrir la page, choisir sa box, entrer son code
+  portalDrawQr("http://192.168.4.1/", 3, 87, data);
+  tft.setTextSize(2); tft.setTextColor(C_GOLD, C_NAVY); tft.setCursor(70, 87); tft.print("2");
+  tft.setTextSize(1);
+  tft.setTextColor(C_WHITE, C_NAVY); tft.setCursor(84, 91); tft.print("Ta box");
+  tft.setCursor(70, 106); tft.print("Scanne,");
+  tft.setCursor(70, 116); tft.print("choisis");
+  tft.setCursor(70, 126); tft.print("ta box et");
+  tft.setCursor(70, 136); tft.print("son code");
+  tft.setTextColor(CYAN, C_NAVY);    tft.setCursor(3, 151); tft.print("ou va sur 192.168.4.1");
+  memset(data, 0, 160); free(data);
 }
 static void __attribute__((noinline)) portalScreen(const char* apName, const char* apPass) { ENV_DIRTY(); PodNetInfo ni; auto wk = [&]() { portalScreenImpl(apName, apPass); }; if (!podWorkRun(wk, &ni)) tftWorkFailed("écran du portail", ni); }
 #endif

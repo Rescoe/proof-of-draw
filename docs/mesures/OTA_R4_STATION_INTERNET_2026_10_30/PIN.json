@@ -14,14 +14,15 @@
     "channel": "canary",
     "OTAR4_COMPILED_SEQ": 14,
     "options": "POD_SENSORS=1 POD_ENV_DISPLAY=1 POD_SD_CS_PIN=4 POD_OTA_R4=1 POD_WIFI_PORTAL=1 OTAR4_COMPILED_SEQ=14",
-    "bytes": 191548,
-    "flashBytes": 191540,
+    "bytes": 191828,
+    "flashBytes": 191820,
     "ramGlobalBytes": 18452,
-    "sha256": "39d8e4fbe8de08342dc3678ef59d915be99078d6e9a294b377ad9b8315b4be61",
+    "sha256": "f1ab4b2a5d5b846422bf060a639447e024b2d6a16cfe56d0f4201e269b39b982",
     "wifiCompiledIn": false,
     "wifiPortal": true,
-    "wifiGuard": "wifi-guard OK : 2 valeur(s) interdite(s) absente(s) de l'image (191548 o) ; marqueur PODWIFI:record-v1 présent ; aucun secrets.h réel dans le build.",
-    "serialCommands": "WIFI-PORTAL, WIFI-CLEAR, WIFI-SETHEX, FLASH-DUMP (lecture seule de la data flash)"
+    "wifiGuard": "wifi-guard OK : 2 valeur(s) interdite(s) absente(s) de l'image (191828 o) ; marqueur PODWIFI:record-v1 présent ; aucun secrets.h réel dans le build.",
+    "serialCommands": "WIFI-PORTAL, WIFI-CLEAR, WIFI-SETHEX, FLASH-DUMP (lecture seule de la data flash)",
+    "note": "A2 : écran du portail refait (deux QR, aucun gris) ; flashé sur dev_I25D9Z7A le 30/10/2026"
   },
   "B": {
     "status": "non reconstruit ; séquence prévue = séquence effective de A + 1 (15) ; sans Wi-Fi",
