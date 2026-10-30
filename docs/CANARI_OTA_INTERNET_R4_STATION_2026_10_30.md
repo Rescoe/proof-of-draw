@@ -45,3 +45,6 @@ Portail sur la station · tenue du tas avec le portail et le produit complet · 
 - Manifeste signé `r4-a` : famille `uno-r4-wifi-tft18`, canal `canary`, seq 15, 338 o, SHA-256 du fichier `47d0b18d49d981f00d7d885a364913d251b39f7b4eb8067addfa0a02bb1d8d80`. `verify-manifest` : ACCEPTÉ pour une carte en séquence 14, REFUSÉ (rejeu) à 15.
 - `wifi-guard` : 2 valeurs interdites absentes, marqueur `PODWIFI:record-v1` présent, aucun `secrets.h` réel.
 - Fichiers hors Git : `canary-builds/r4-release-B15/{manifest.txt,firmware.bin}`. Production : `/firmware-r4/tft18/canary/*` répond 404 (rien de publié).
+
+## Résultat du canari B/15 (30/10/2026) — voir `docs/REPRISE_OTA_R4_STATION_2026_11_02.md`
+Phase 1 (port ouvert) entièrement verte : manifeste accepté, 191 828 o téléchargés en 111 s, staging relu, ticket prêt, programmation différée (hôte USB). Phase 2 (port fermé) : aucun réenregistrement en `r4tft18-2.9` en 12 min après RESET. Release retirée, 404 confirmé. État final présumé A/14, à confirmer.
