@@ -132,7 +132,7 @@ const char POD_WIFI_MODE_MARK[] __attribute__((used, retain)) = "PODWIFI:compile
 // POD_WIFI_BEGIN
 #if POD_WIFI_PORTAL
 #undef FIRMWARE_VERSION
-#define FIRMWARE_VERSION    "r4tft18-2.8"             // 2.8 = Wi-Fi par portail (VOTE_V2_FIRMWARE : r4tft18 >= 1.1, donc toujours capable de voter)
+#define FIRMWARE_VERSION    "r4tft18-2.9"             // 2.8 = Wi-Fi par portail (flashé par câble, séquence 14) ; 2.9 = texte en argent clair au lieu du gris foncé (mise à jour OTA, séquence 15) ; Wi-Fi par portail (VOTE_V2_FIRMWARE : r4tft18 >= 1.1, donc toujours capable de voter)
 #endif
 // POD_WIFI_END
 #endif

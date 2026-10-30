@@ -65,7 +65,7 @@ test("mode portail : aucune constante SSID/mot de passe, secrets.h jamais inclus
   assert.match(ino, /#ifndef POD_WIFI_PORTAL\n#define POD_WIFI_PORTAL 0\n#endif/, "0 par défaut");
   assert.match(ino, /#if POD_WIFI_PORTAL\n#include "pod_wifi_portal\.h"\nconst char POD_WIFI_MODE_MARK\[\] __attribute__\(\(used, retain\)\) = "PODWIFI:record-v1";\n#else\nconst char POD_WIFI_MODE_MARK\[\] __attribute__\(\(used, retain\)\) = "PODWIFI:compiled-v1";/);
   assert.ok(ino.includes('logf("[WIFI] mode: %s", POD_WIFI_MODE_MARK)'), "marqueur référencé (sinon éliminé par l'éditeur de liens)");
-  assert.match(ino, /#ifndef FIRMWARE_VERSION\n#define FIRMWARE_VERSION\s+"r4tft18-2\.7"\n\/\/ POD_WIFI_BEGIN\n#if POD_WIFI_PORTAL\n#undef FIRMWARE_VERSION\n#define FIRMWARE_VERSION\s+"r4tft18-2\.8"/);
+  assert.match(ino, /#ifndef FIRMWARE_VERSION\n#define FIRMWARE_VERSION\s+"r4tft18-2\.7"\n\/\/ POD_WIFI_BEGIN\n#if POD_WIFI_PORTAL\n#undef FIRMWARE_VERSION\n#define FIRMWARE_VERSION\s+"r4tft18-2.9"/);
   assert.match(ino, /#if POD_WIFI_PORTAL\n  wifiStartup\(\);\n#else/, "setup() passe par wifiStartup()");
   assert.ok(ino.includes('"WIFI-PORTAL"') && ino.includes("podportal::decide(have, false, false, forced)"), "portail rouvrable (commande série) et automatique si la box a changé");
   assert.ok(ino.includes("podportalr4::run(reason, mac, wifiScan, wifiApStart, wifiApStop, portalScreen, nullptr)"), "même moteur que la UNO R4 e-ink 2,9″");

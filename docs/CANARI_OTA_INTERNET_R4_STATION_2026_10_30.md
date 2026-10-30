@@ -38,3 +38,10 @@ Le risque d'exposition publique des identifiants actuels est connu et **accepté
 
 ## Ce qui n'est PAS prouvé
 Portail sur la station · tenue du tas avec le portail et le produit complet · téléchargement TLS d'une image de ~190 Ko depuis le site de production · séquence réellement stockée sur la carte (13 supposée minimale, à lire) · « deux essais OTA Internet R4 » rapportés par le porteur : aucune pièce rattachée.
+
+## Pin de B — `r4tft18-2.9`, séquence 15 (30/10/2026, construit, NON publié)
+- Différence avec A (`r4tft18-2.8`, séquence 14) : texte du TFT en argent clair (`C_SOFT`) au lieu du gris foncé ; version portail 2.9. Mêmes options : `POD_SENSORS=1 POD_ENV_DISPLAY=1 POD_SD_CS_PIN=4 POD_OTA_R4=1 POD_WIFI_PORTAL=1 OTAR4_COMPILED_SEQ=15`.
+- Image : 191 828 o, SHA-256 `5f5b58275ba0fd2ba7ff69babf80b85e00b1f58c227af5d681d08684d1474558` ; flash 191 820 o, RAM statique 18 452 o (identiques à A).
+- Manifeste signé `r4-a` : famille `uno-r4-wifi-tft18`, canal `canary`, seq 15, 338 o, SHA-256 du fichier `47d0b18d49d981f00d7d885a364913d251b39f7b4eb8067addfa0a02bb1d8d80`. `verify-manifest` : ACCEPTÉ pour une carte en séquence 14, REFUSÉ (rejeu) à 15.
+- `wifi-guard` : 2 valeurs interdites absentes, marqueur `PODWIFI:record-v1` présent, aucun `secrets.h` réel.
+- Fichiers hors Git : `canary-builds/r4-release-B15/{manifest.txt,firmware.bin}`. Production : `/firmware-r4/tft18/canary/*` répond 404 (rien de publié).
