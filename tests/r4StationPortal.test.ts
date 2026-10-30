@@ -142,3 +142,15 @@ test("publication et build : le contrôle est BLOQUANT et le build n'emporte jam
   assert.match(b, /POD_WIFI_PORTAL=1/); assert.match(b, /wifi-guard\.mjs/); assert.match(b, /--build-dir/);
   assert.doesNotMatch(b + pub, /\.seed|private/i, "aucune lecture de graine privée");
 });
+
+test("TFT : le gris foncé (C_GREY) n'est plus jamais une couleur de TEXTE (illisible de biais) ; traits seulement ; texte discret = argent clair C_SOFT", () => {
+  assert.match(ino, /#define C_GREY\s+0x7BEF/); assert.match(ino, /#define C_SOFT\s+0xCE7A/);
+  const textLines = ino.split("\n").filter((l) => /setTextColor\(/.test(l) || /\*col = /.test(l));
+  assert.deepEqual(textLines.filter((l) => /C_GREY|0x7BEF|0x39E7/.test(l)), [], "gris foncé en couleur de texte");
+  const strokes = ino.split("\n").filter((l) => /C_GREY/.test(l) && !/#define/.test(l));
+  assert.ok(strokes.length >= 2 && strokes.every((l) => /drawRect|drawFastVLine/.test(l)), "C_GREY réservé au contour de barre et aux graduations");
+  assert.match(ino, /drawFastVLine\(x0 - 2, y0, ph, 0x39E7\)/, "axes du graphique inchangés");
+  // C_SOFT : plus clair que le gris foncé, plus discret que le blanc (luminance RGB565 -> 8 bits)
+  const lum = (c: number) => { const r = ((c >> 11) & 31) * 255 / 31, g = ((c >> 5) & 63) * 255 / 63, b = (c & 31) * 255 / 31; return 0.2126 * r + 0.7152 * g + 0.0722 * b; };
+  assert.ok(lum(0xCE7A) > lum(0x7BEF) + 50 && lum(0xCE7A) < lum(0xFFFF) - 20);
+});

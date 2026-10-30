@@ -607,7 +607,8 @@ static int httpCall(const char* method, const String& path, const String* body, 
 #define C_NAVY  0x08C5
 #define C_GOLD  0xFEA0
 #define C_DARK  0x10C4
-#define C_GREY  0x7BEF
+#define C_GREY  0x7BEF   // gris foncé : RÉSERVÉ aux traits (contour de barre, graduations du graphique), jamais au texte
+#define C_SOFT  0xCE7A   // argent clair (200,205,210) : texte discret mais lisible de biais ; entre le gris foncé et le blanc
 #define C_RED   0xF800
 
 static void tftStatusImpl(const String& line1, const String& line2, uint16_t bg) {
@@ -1843,7 +1844,7 @@ static uint16_t envTempColor() {
   return envColor((uint8_t)((x - 128) * 2), (uint8_t)(255 - (x - 128) * 2), 0);
 }
 static uint16_t envVocColor(uint8_t cls) {
-  switch (cls) { case 1: return 0x07E0; case 2: return envColor(160, 255, 0); case 3: return C_GOLD; case 4: return envColor(255, 140, 0); case 5: return C_RED; case 6: return envColor(190, 60, 255); default: return C_GREY; }
+  switch (cls) { case 1: return 0x07E0; case 2: return envColor(160, 255, 0); case 3: return C_GOLD; case 4: return envColor(255, 140, 0); case 5: return C_RED; case 6: return envColor(190, 60, 255); default: return C_SOFT; }
 }
 /** Nom du niveau à (x, y) : taille 2 si les 10 caractères tiennent, sinon taille 1 ; la zone à sa droite est effacée (un nom plus court ne laisse pas de reste). */
 static void envPrintLevel(int x, int y, uint8_t cls) {
@@ -1886,18 +1887,18 @@ static void envDrawDataImpl(bool full) {
     tft.fillScreen(C_BLACK);
     tft.fillRect(0, 0, IMG_W, 14, C_DARK);
     tft.setTextSize(1); tft.setTextColor(C_GOLD, C_DARK); tft.setCursor(3, 3); tft.print("PoD STATION");
-    tft.setTextColor(C_GREY, C_BLACK);
+    tft.setTextColor(C_SOFT, C_BLACK);
     tft.setCursor(3, 18); tft.print("TEMPERATURE");
     tft.setCursor(3, 62); tft.print("HUMIDITE");
     tft.setCursor(3, 104); tft.print("QUALITE DE L'AIR");
   }
   const bool fresh = g_envDhtOkAt != 0 && now - g_envDhtOkAt < 30000UL;
   // temperature : 19.3 °C
-  tft.setTextSize(3); tft.setTextColor(fresh ? envTempColor() : C_GREY, C_BLACK); tft.setCursor(3, 29);
+  tft.setTextSize(3); tft.setTextColor(fresh ? envTempColor() : C_SOFT, C_BLACK); tft.setCursor(3, 29);
   if (fresh && g_lastT != NO_T) { envFmt10(b, 5, g_lastT); tft.print(b); } else tft.print("  -- ");
   tft.setTextSize(2); tft.setTextColor(C_WHITE, C_BLACK); tft.setCursor(92, 33); tft.write((uint8_t)248); tft.print("C");
   // humidite : 81.9 %
-  tft.setTextSize(2); tft.setTextColor(fresh ? 0x07FF : C_GREY, C_BLACK); tft.setCursor(3, 72);
+  tft.setTextSize(2); tft.setTextColor(fresh ? 0x07FF : C_SOFT, C_BLACK); tft.setCursor(3, 72);
   if (fresh && g_lastH != NO_H) { envFmt10(b, 5, g_lastH); tft.print(b); tft.print("%"); } else tft.print("  -- ");
   envBar(91, (fresh && g_lastH != NO_H) ? (int)(g_lastH / 10) : 0, 0x07FF);
   // air : niveau qualitatif + barre (plus elle est pleine, plus le niveau est haut) ; jamais le nombre de l'indice ni la valeur brute du capteur
@@ -1905,7 +1906,7 @@ static void envDrawDataImpl(bool full) {
   const uint16_t acol = envVocColor(cls);
   envPrintLevel(3, 113, cls);
   envBar(131, cls * 100 / 6, acol);
-  tft.setTextSize(1); tft.setTextColor(C_GREY, C_BLACK); tft.setCursor(3, 140);
+  tft.setTextSize(1); tft.setTextColor(C_SOFT, C_BLACK); tft.setCursor(3, 140);
   if (g_sgpSeen) {                                                                 // 30/10/2026 : l'indice chiffré (sortie de l'algorithme de Sensirion, 1-500) s'ajoute au niveau en toutes lettres ; jamais le brut du capteur
     tft.print("air : indice ");
     if (g_vocIdx > 0) { char nb[8]; envFmtU(nb, 3, (unsigned)g_vocIdx); tft.print(nb); tft.print("/500   "); } else tft.print("(calibrage)");
@@ -1914,7 +1915,7 @@ static void envDrawDataImpl(bool full) {
   tft.fillRect(0, 150, IMG_W, 10, C_DARK);
   tft.setTextSize(1); tft.setTextColor(C_WHITE, C_DARK); tft.setCursor(3, 151);
   if (g_envRssi < 0) { tft.print("Wi-Fi -"); envFmtU(b, 0, (unsigned)(-g_envRssi)); tft.print(b); } else tft.print("Wi-Fi ?");
-  tft.setTextColor(g_sendOk ? 0x07E0 : C_GREY, C_DARK); tft.setCursor(70, 151);
+  tft.setTextColor(g_sendOk ? 0x07E0 : C_SOFT, C_DARK); tft.setCursor(70, 151);
   if (g_sendOk) { tft.print("envoi "); envFmtU(b, 0, (unsigned)((now - g_lastSendMs) / 60000UL)); tft.print(b); tft.print("m"); } else tft.print("envoi attente");
 }
 static void __attribute__((noinline)) envDrawData(bool full) { PodNetInfo ni; auto wk = [&]() { envDrawDataImpl(full); }; if (!podWorkRun(wk, &ni)) tftWorkFailed("page relevés", ni); }
@@ -2079,7 +2080,7 @@ static void histTickDraw(void* vctx, const HistTick& tk) {
   if (tk.level >= 1) tft.drawFastVLine(x, c->y0 + c->ph, 2, tk.level == 2 ? C_WHITE : C_GREY);
   if (tk.num < 0) return;
   int lx = x - 5; if (lx < 0) lx = 0; if (lx > IMG_W - 11) lx = IMG_W - 11;                          // deux chiffres = 11 px
-  tft.setTextColor(tk.level == 2 ? C_WHITE : C_GREY, C_BLACK);
+  tft.setTextColor(tk.level == 2 ? C_WHITE : C_SOFT, C_BLACK);
   tft.setCursor(lx, c->y0 + c->ph + 2);
   tft.write((uint8_t)('0' + tk.num / 10)); tft.write((uint8_t)('0' + tk.num % 10));
 }
@@ -2095,7 +2096,7 @@ static void histDrawSeries(int y0, int h, const HistSeries& s, uint16_t col, int
   if (ax && ax->span > 0) { HistTickCtx tc; tc.x0 = x0; tc.y0 = y0; tc.ph = ph; tc.labels = ax->labels; histTicks(ax->t0, ax->span, histTickDraw, &tc); }   // traits du temps SOUS la courbe
   tft.drawFastVLine(x0 - 2, y0, ph, 0x39E7);
   tft.drawFastHLine(x0 - 2, y0 + ph - 1, HIST_BUCKETS + 2, 0x39E7);
-  if (have < 2) { tft.setTextColor(C_GREY, C_BLACK); tft.setCursor(2, y0 + h / 2 - 4); tft.print("pas assez de donnees"); return; }
+  if (have < 2) { tft.setTextColor(C_SOFT, C_BLACK); tft.setCursor(2, y0 + h / 2 - 4); tft.print("pas assez de donnees"); return; }
   int32_t lo = vmin, hi = vmax, span = vmax - vmin;
   const int32_t minSpan = labelKind == 2 ? 20 : 5;                                  // plage minimale : un bruit de mesure ne devient pas une montagne
   if (span < minSpan) { const int32_t pad = minSpan - span; lo -= pad / 2; hi += pad - pad / 2; span = hi - lo; }
@@ -2121,7 +2122,7 @@ static void histDrawSeries(int y0, int h, const HistSeries& s, uint16_t col, int
     tft.setCursor(0, y0); envFmtU(b, 3, (unsigned)(vmax > 0 ? vmax : 0)); tft.print(b);
     tft.setCursor(0, y0 + ph - 9); envFmtU(b, 3, (unsigned)(vmin > 0 ? vmin : 0)); tft.print(b);
   }
-  if (tag && tag[0]) { tft.setTextColor(C_GREY, C_BLACK); tft.setCursor(IMG_W - 6 * (int)strlen(tag) - 1, y0); tft.print(tag); }
+  if (tag && tag[0]) { tft.setTextColor(C_SOFT, C_BLACK); tft.setCursor(IMG_W - 6 * (int)strlen(tag) - 1, y0); tft.print(tag); }
 }
 static void histSetTag(char* o, uint32_t wantSec, uint32_t effSec) {          // « 24 h » quand la plage est pleine, « depuis 2h10 » sinon
   if (effSec >= wantSec) { if (wantSec == 86400UL) strcpy(o, "24 h"); else if (wantSec == 604800UL) strcpy(o, "7 jours"); else if (wantSec == 2592000UL) strcpy(o, "30 jours"); else strcpy(o, "1 an"); }
@@ -2129,7 +2130,7 @@ static void histSetTag(char* o, uint32_t wantSec, uint32_t effSec) {          //
 }
 static void histTrendLine(int kind, const HistSeries& s, uint32_t effSec, char* out, uint16_t* col, int* arrow, char* line2) {
   // kind 0/1 : pente sur les ~3 dernières heures ; kind 2 (COV) : dernières heures contre les heures précédentes (tendance GLOBALE)
-  *arrow = 0x10; *col = C_GREY; strcpy(out, "tendance : en cours"); line2[0] = 0;
+  *arrow = 0x10; *col = C_SOFT; strcpy(out, "tendance : en cours"); line2[0] = 0;
   const uint32_t binSec = effSec / HIST_BUCKETS ? effSec / HIST_BUCKETS : 1;
   if (kind != 2) {
     int bins = (int)(10800UL / binSec); if (bins < 6) bins = 6; if (bins > HIST_BUCKETS) bins = HIST_BUCKETS;
@@ -2138,7 +2139,7 @@ static void histTrendLine(int kind, const HistSeries& s, uint32_t effSec, char* 
     const int64_t perH = slope * 3600 / (int64_t)binSec;                            // millièmes d'unité (dixièmes) par heure
     const int64_t stable = kind == 0 ? 2000 : 10000;                                // 0,2 °C/h ; 1 %/h
     *arrow = perH > stable ? 0x1E : (perH < -stable ? 0x1F : 0x10);
-    *col = *arrow == 0x10 ? C_GREY : (kind == 0 ? (*arrow == 0x1E ? C_RED : 0x07FF) : (*arrow == 0x1E ? 0x07FF : C_GOLD));
+    *col = *arrow == 0x10 ? C_SOFT : (kind == 0 ? (*arrow == 0x1E ? C_RED : 0x07FF) : (*arrow == 0x1E ? 0x07FF : C_GOLD));
     char b[12]; const int t10 = (int)(perH / 1000);
     out[0] = 0;
     strcpy(out, *arrow == 0x10 ? "stable " : (*arrow == 0x1E ? "monte " : "baisse "));
@@ -2152,7 +2153,7 @@ static void histTrendLine(int kind, const HistSeries& s, uint32_t effSec, char* 
   if (!histMean(s, recent, HIST_BUCKETS, &mr) || !histMean(s, 0, recent, &mp)) return;
   const int32_t d = mr - mp;
   *arrow = d <= -8 ? 0x1F : (d >= 8 ? 0x1E : 0x10);
-  *col = d <= -8 ? 0x07E0 : (d >= 8 ? C_RED : C_GREY);
+  *col = d <= -8 ? 0x07E0 : (d >= 8 ? C_RED : C_SOFT);
   strcpy(out, d <= -8 ? "AMELIORATION" : (d >= 8 ? "DEGRADATION" : "STABLE"));
   char a[12], c[12]; envFmtU(a, 0, (unsigned)mr); envFmtU(c, 0, (unsigned)mp);
   (void)a; (void)c; line2[0] = 0;                                                  // pas de nombres de l'indice à l'écran : la flèche et le mot suffisent
@@ -2179,7 +2180,7 @@ static void histDetailImpl(int kind, uint32_t now, uint32_t wantBottom, HistSeri
   } else {
     const bool fresh = g_envDhtOkAt != 0 && millis() - g_envDhtOkAt < 30000UL;
     const bool ok = fresh && (kind == 0 ? g_lastT != NO_T : g_lastH != NO_H);
-    tft.setTextColor(ok ? (kind == 0 ? envTempColor() : 0x07FF) : C_GREY, C_BLACK); tft.setCursor(3, 18);
+    tft.setTextColor(ok ? (kind == 0 ? envTempColor() : 0x07FF) : C_SOFT, C_BLACK); tft.setCursor(3, 18);
     if (ok) { envFmt10(b, 5, kind == 0 ? g_lastT : (int)g_lastH); tft.print(b); } else tft.print("  -- ");
     tft.setTextSize(2); tft.setTextColor(C_WHITE, C_BLACK); tft.setCursor(96, 22);
     if (kind == 0) { tft.write((uint8_t)248); tft.print("C"); } else tft.print("%");
@@ -2187,7 +2188,7 @@ static void histDetailImpl(int kind, uint32_t now, uint32_t wantBottom, HistSeri
   // tendance
   histTrendLine(kind, *sa, effA, b, &tcol, &arrow, line2);
   tft.setTextSize(1); tft.setTextColor(tcol, C_BLACK); tft.setCursor(3, 46); tft.write((uint8_t)arrow); tft.print(" "); tft.print(b);
-  tft.setTextColor(C_GREY, C_BLACK); tft.setCursor(3, 56);
+  tft.setTextColor(C_SOFT, C_BLACK); tft.setCursor(3, 56);
   if (kind == 2) tft.print(line2);
   else { int32_t lo, hi; if (histMinMax(*sa, &lo, &hi) >= 2) { char c[12]; tft.print("min "); envFmt10(c, 0, (int)lo); tft.print(c); tft.print("  max "); envFmt10(c, 0, (int)hi); tft.print(c); } }
   // courbes
@@ -2204,7 +2205,7 @@ static void histDetailImpl(int kind, uint32_t now, uint32_t wantBottom, HistSeri
   } else {
     histDrawSeries(66, 80, *sa, col, lk, tag, &axA);
   }
-  tft.setTextSize(1); tft.setTextColor(C_GREY, C_BLACK); tft.setCursor(3, 150);
+  tft.setTextSize(1); tft.setTextColor(C_SOFT, C_BLACK); tft.setCursor(3, 150);
   if (g_histOldest) { char a[16]; histFmtAge(a, now > g_histOldest ? now - g_histOldest : 0); tft.print("historique : "); tft.print(a); }
 }
 /** Page de synthèse : les trois grandeurs côte à côte sur UNE plage adaptée (24 h, 7 jours, 30 jours ou 1 an selon l'historique), avec la valeur et la tendance de chacune. */
@@ -2229,7 +2230,7 @@ static void histSynthImpl(uint32_t now, uint32_t want, HistPlot* p) {
   histDrawSeries(106, 42, p->v, C_GOLD, 2, "", &axL);
   histTrendLine(2, p->v, eff, b, &tc, &ar, l2);
   tft.setTextSize(1); tft.setTextColor(tc, C_BLACK); tft.setCursor(60, 108); tft.write((uint8_t)ar);
-  tft.setTextColor(C_GREY, C_BLACK); tft.setCursor(3, 150); tft.print("T / H / COV");
+  tft.setTextColor(C_SOFT, C_BLACK); tft.setCursor(3, 150); tft.print("T / H / COV");
 }
 static bool __attribute__((noinline)) envDrawDetail(int kind, uint32_t now, uint32_t wantBottom, bool hasBottom) {
   HistSeries* const a = (HistSeries*)malloc(sizeof(HistSeries));
