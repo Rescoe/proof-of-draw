@@ -1,0 +1,53 @@
+{
+  "note": "Build du firmware TFT 1,8″ AVEC portail de première connexion Wi-Fi (POD_WIFI_PORTAL=1, wifi generic, client OTA). Faits PUBLICS ; le binaire reste sous ota-lab/**/artifacts (ignoré par git). NON essayé sur la carte (parcours utilisateur du 22/10/2026 : écrans, QR, page de fin). Non publié comme release OTA.",
+  "dir": "20261022-204540-generic",
+  "version": "tft18-2.9",
+  "seq": 6,
+  "sha": "f9eb8e7441b79af2844ba30b55d764cef8975a499f4f0d548d7d7c340aa4f617",
+  "size": 614016,
+  "ramStatic": 38884,
+  "previous": [
+    {
+      "dir": "20261022-200151-generic",
+      "sha": "89ee5a8b077edf57553c118c0224fe7cfb0486e4ddb3cc0b87b09b0b9830846c",
+      "size": 613648,
+      "note": "7e build a portail (QR 2/2 en version 4, valide au scan le 22/10/2026) ; sans QR de la page locale ni affichage du mot de passe"
+    },
+    {
+      "dir": "20261022-194558-generic",
+      "sha": "9eb9105ea17e876f2168a4823b4b720b973b77dc1a63c74943189f77a9889aab",
+      "size": 613568,
+      "note": "6e build a portail, flashe le 22/10/2026 ; QR 2/2 illisible (URL de 54 octets en version 3, bibliotheque QRCode sans controle de capacite)"
+    },
+    {
+      "dir": "20261022-185700-generic",
+      "sha": "8eb6a9b09bd8316ff1ecc1c0bed5e252764d597ab5ceda09f7c98f1f6539ca7a",
+      "size": 613504,
+      "note": "5e build a portail (parcours 1/2 - 2/2), flashe le 22/10/2026 ; texte non centre (derniere lettre coupee), demo 60 s"
+    },
+    {
+      "dir": "20261022-174447-generic",
+      "sha": "666296748a4cd71da765ab866b08a61405ef354c8ae3f45bbd789521fab7f6a4",
+      "size": 613056,
+      "note": "4e build a portail (QR reduit), flashe le 22/10/2026 (demarrage normal vert) ; remplace par le parcours 1/2 - 2/2"
+    },
+    {
+      "dir": "20261022-170728-generic",
+      "sha": "031eda7fef37a0946cbb61c4f161c9a18b186e4907f7587261cef234c5eff629",
+      "size": 612976,
+      "note": "3e build a portail (parcours utilisateur), flashe et VALIDE le 22/10/2026 (essai 2 vert, page ouverte seule d apres le porteur) ; QR trop grand pour le texte"
+    },
+    {
+      "dir": "20261022-163829-generic",
+      "sha": "936103d804523439836b102940a8b0df2e4fbd747b913c4b11bc8b9959c536ec",
+      "size": 611936,
+      "note": "2e build à portail (point d'accès seul + QR), flashé et VALIDÉ par l'utilisateur le 22/10/2026 : portail joignable, enregistrement du Wi-Fi, carte reconnectée"
+    },
+    {
+      "dir": "20261022-154917-generic",
+      "sha": "c42f07b2feb98570ebbc4317b8ab2818d31088e4403abdf053d22d6987928845",
+      "size": 611664,
+      "note": "1er build à portail, flashé le 22/10/2026 ; page injoignable (AP+STA : le canal suivait la box)"
+    }
+  ]
+}

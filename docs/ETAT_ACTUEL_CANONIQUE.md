@@ -107,7 +107,10 @@ Limites connues : Chromium principalement, pas d'audit complet lecteur d'écran/
 3. Indexation des preuves OTA R4 Internet rapportées par le porteur.
 4. Vote d'animation complet et activation progressive par famille.
 5. Scalabilité du snapshot réseau et maîtrise des quotas Redis.
-6. Nettoyage Git/documentaire pour travailler depuis plusieurs ordinateurs.
+6. Nettoyage Git/documentaire pour travailler depuis plusieurs ordinateurs : **fait le 29–30/10/2026** (branches fusionnées supprimées, sommets utiles archivés par tags `archive/…`, worktrees temporaires retirés).
+7. **Seule branche fonctionnelle encore active : `claude/r4-tft28-portail-vote`** (portail Wi-Fi du UNO R4 + TFT 2,8″, `POD_WIFI_PORTAL=0` par défaut). Elle doit être **réconciliée avec `main` puis auditée avant toute fusion** ; ne jamais la fusionner en bloc.
+8. Worktrees Codex/ANA encore attachés à des sessions : conservés, à retirer après fermeture ou archivage de ces sessions.
+9. Node : `.nvmrc` = 22.13.0 ; le clone neuf a été validé sous **22.19.0** (`npm ci`, `tsc`, 133 tests essentiels). **À tester sous 22.13.0 sur le nouveau PC.**
 
 ## 10. Raccourcis interdits
 

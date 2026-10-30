@@ -1,0 +1,9 @@
+{
+  "note": "Build ESP8266 + e-ink 2,9″ BWR AVEC portail Wi-Fi (lot A1, 22/10/2026). Faits PUBLICS ; le binaire reste sous canary-builds/ (ignoré par git). NON essayé sur la carte.",
+  "dir": "canary-builds/bwr-portal-2026-10-22/20261023-102939/out",
+  "version": "eink29bwr-2.3",
+  "sha": "14486f72dbb04fe8001e0a7e7e3193b90a2c7accb39822b712a854205311cc40",
+  "size": 489632,
+  "ramStatic": 35444,
+  "ssidAbsent": true
+}

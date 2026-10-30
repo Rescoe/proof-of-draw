@@ -8,7 +8,7 @@ git clone https://github.com/Rescoe/proof-of-draw.git
 cd proof-of-draw
 git checkout main && git log --oneline -3        # doit contenir « Merge pull request #23 »
 ```
-Node : la version est dans `.nvmrc` (**22.13.0**). Le PC actuel a `22.12.0` par défaut (nvm : 22.19.0 et 22.12.0 installés) : sur le nouveau PC, `nvm install 22.13.0 && nvm use` (ou une 22.x ≥ 22.13).
+Node : la version est dans `.nvmrc` (**22.13.0**, conservée) ; le clone neuf a été validé sous **22.19.0** — **tester 22.13.0 sur le nouveau PC** et noter le résultat. Le PC actuel a `22.12.0` par défaut (nvm : 22.19.0 et 22.12.0 installés) : sur le nouveau PC, `nvm install 22.13.0 && nvm use` (ou une 22.x ≥ 22.13).
 ```bash
 npm ci                    # le fichier package-lock.json fait foi ; ne jamais « npm install » pour reprendre
 npx tsc --noEmit          # doit être propre
