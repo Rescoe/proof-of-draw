@@ -58,7 +58,7 @@ const FIRMWARE_VARIANTS: Record<string, FirmwareVariant> = {
     label: "pod-firmware-r4-tft18",
     board: "Arduino UNO R4 WiFi",
     sources: [{ root: "arduino_uno_r4", folder: "pod_uno_r4_tft18_env" }],
-    statusWarning: "Station TFT 1,8 pouces (r4tft18-2.6) : vote réel v2 observé sur une UNO R4 (bloc #126 miné par la station, 29/10/2026) ; image, capteurs DHT22 / SGP40 et écran de station fonctionnent sur cette carte. PAS de mise à jour à distance (OTA) : le client existe mais reste éteint (aucune clé de production publiée). Capteurs et écran de station : options POD_SENSORS / POD_ENV_DISPLAY en tête du sketch (éteintes par défaut : TFT simple).",
+    statusWarning: "Station TFT 1,8 pouces (r4tft18-2.7, dérivée de la 2.6 observée : indice COV chiffré à l'écran, non vu sur la carte) : vote réel v2 observé sur une UNO R4 (bloc #126 miné par la station, 29/10/2026) ; image, capteurs DHT22 / SGP40 et écran de station fonctionnent sur cette carte. PAS de mise à jour à distance (OTA) : le client existe mais reste éteint (aucune clé de production publiée). Capteurs et écran de station : options POD_SENSORS / POD_ENV_DISPLAY en tête du sketch (éteintes par défaut : TFT simple).",
   },
   r4Tft28: {
     label: "pod-firmware-r4-tft28",

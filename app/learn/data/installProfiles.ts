@@ -196,7 +196,7 @@ export const INSTALL_PROFILES: Record<InstallProfileId, InstallProfile> = {
       { name: "Adafruit ST7735 and ST7789 Library", version: "dernière version", purpose: "Pilote du TFT 1.8\"." },
     ],
     accent: "#f59e0b", testedOnHardware: true,
-    statusNote: "Station TFT 1,8″ (r4tft18-2.6) : vote réel v2, images, capteurs et écran de station observés sur une UNO R4 WiFi (bloc #126, 29/10/2026). Pas de mise à jour à distance : le client OTA R4 est éteint tant que les clés de production ne sont pas publiées. Compilé : 52 % flash, 49 % RAM.",
+    statusNote: "Station TFT 1,8″ (r4tft18-2.7, dérivée de la 2.6 observée ; indice COV chiffré à l'écran non vu sur la carte) : vote réel v2, images, capteurs et écran de station observés sur une UNO R4 WiFi (bloc #126, 29/10/2026). Pas de mise à jour à distance : le client OTA R4 est éteint tant que les clés de production ne sont pas publiées. Compilé : 52 % flash, 49 % RAM.",
   },
   r4Tft28: {
     id: "r4Tft28", boardId: "unoR4", installScreenId: "tft28",

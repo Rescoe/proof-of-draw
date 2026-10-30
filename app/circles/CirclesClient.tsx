@@ -5,6 +5,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 
 interface Summary { id: string; name: string; ownerName: string; isOwner: boolean; memberCount: number }
+interface SystemView { id: string; name: string; description: string; href: string; member: boolean }
 interface Invite { circleId: string; circleName: string; fromName: string; at: number }
 interface View { id: string; name: string; ownerId: string; isOwner: boolean; members: { artistId: string; name: string; isOwner: boolean }[]; pending: { artistId: string; name: string; at: number }[] | null }
 interface Msg { id: string; at: number; authorId: string; authorName: string; text: string }
@@ -33,14 +34,15 @@ export function CirclesClient() {
   const [error, setError] = useState("");
   const [circles, setCircles] = useState<Summary[]>([]);
   const [invites, setInvites] = useState<Invite[]>([]);
+  const [system, setSystem] = useState<SystemView[]>([]);
   const [openId, setOpenId] = useState<string | null>(null);
   const [notice, setNotice] = useState<{ kind: "ok" | "err"; text: string } | null>(null);
   const [name, setName] = useState("");
   const [busy, setBusy] = useState(false);
 
   const load = useCallback(async () => {
-    const r = await api<{ circles: Summary[]; invites: Invite[] }>("GET", "/api/circles");
-    if (r.ok) { setCircles(r.data.circles); setInvites(r.data.invites); setState("ready"); return; }
+    const r = await api<{ circles: Summary[]; invites: Invite[]; system?: SystemView[] }>("GET", "/api/circles");
+    if (r.ok) { setCircles(r.data.circles); setInvites(r.data.invites); setSystem(r.data.system ?? []); setState("ready"); return; }
     if (r.status === 401 && r.code === "no_profile") { setState("noprofile"); return; }
     setError(r.error); setState("error");
   }, []);
@@ -96,6 +98,22 @@ export function CirclesClient() {
                 <button type="button" disabled={busy} style={btn(true)} onClick={() => act(() => api("POST", `/api/circles/${i.circleId}/respond`, { accept: true }), `Tu as rejoint « ${i.circleName} ».`)}>Accepter</button>
                 <button type="button" disabled={busy} style={btn()} onClick={() => act(() => api("POST", `/api/circles/${i.circleId}/respond`, { accept: false }), "Invitation refusée.")}>Refuser</button>
               </div>
+            </div>
+          ))}
+        </section>
+      )}
+
+      {system.length > 0 && (
+        <section aria-labelledby="net-h" style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+          <h2 id="net-h" style={{ margin: 0, fontSize: "1.1rem" }}>Cercles du réseau</h2>
+          {system.map((c) => (
+            <div key={c.id} style={{ ...card, display: "flex", justifyContent: "space-between", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+              <div style={{ minWidth: 0, flex: "1 1 240px" }}>
+                <b>{c.name}</b> <span style={{ ...muted, color: c.member ? "var(--accent)" : undefined }}>· {c.member ? "tu en fais partie" : "tu l’as quitté"}</span>
+                <p style={muted}>{c.description}</p>
+                {c.member && <p style={muted}><Link href={c.href} style={{ color: "var(--accent)" }}>Voir les créations →</Link></p>}
+              </div>
+              <button type="button" disabled={busy} style={btn(!c.member)} onClick={() => act(() => api("POST", "/api/circles/system", { id: c.id, member: !c.member }), c.member ? `Tu as quitté « ${c.name} ».` : `Tu as rejoint « ${c.name} ».`)}>{c.member ? "Quitter" : "Rejoindre"}</button>
             </div>
           ))}
         </section>

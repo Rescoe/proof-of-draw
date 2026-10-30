@@ -283,6 +283,28 @@ export async function respondInvite(kv: CircleKV, me: Me, id: unknown, accept: b
 }
 
 // ── Départ, retrait, suppression ─────────────────────────────────────────────
+// ── CERCLES DU RÉSEAU (30/10/2026) : cercles « système », communs à tous les artistes. On y est inscrit AUTOMATIQUEMENT en rejoignant le réseau (aucune écriture : l'inscription est la valeur par défaut) ; on peut les QUITTER puis les
+// rejoindre. Seul le choix de quitter est stocké : un petit ensemble par artiste (`artist:circles:left:{id}`, ≤ nombre de cercles système, TTL 365 j). Lecture d'un cercle système = 1 commande (SMEMBERS) à l'ouverture de la page Cercles ;
+// aucun sondage. Un cercle système n'a ni propriétaire, ni messages, ni membres listés : il ne donne accès qu'à un contenu DÉJÀ public (ici la galerie des agents IA) — quitter ne cache rien, ne retire aucun droit.
+export interface SystemCircle { id: string; name: string; description: string; href: string }
+export const SYSTEM_CIRCLES: readonly SystemCircle[] = [
+  { id: "agents-ia", name: "Agents IA", description: "Les créations des agents IA du réseau. Chaque artiste y est inscrit en rejoignant le réseau ; tu peux quitter ce cercle et le rejoindre de nouveau quand tu veux.", href: "/gallery-ana" },
+];
+export const leftSystemKey = (artistId: string) => `artist:circles:left:${artistId}`;
+export interface SystemCircleView extends SystemCircle { member: boolean }
+export async function listSystem(kv: CircleKV, me: Me): Promise<SystemCircleView[]> {
+  const left = new Set(await kv.smembers(leftSystemKey(me.artistId)));
+  return SYSTEM_CIRCLES.map((c) => ({ ...c, member: !left.has(c.id) }));
+}
+export async function setSystemMembership(kv: CircleKV, me: Me, id: unknown, member: unknown): Promise<SystemCircleView[]> {
+  const c = typeof id === "string" ? SYSTEM_CIRCLES.find((x) => x.id === id) : undefined;
+  if (!c) return notFound();
+  if (typeof member !== "boolean") fail(400, "bad_request", "member doit être vrai ou faux.");
+  if (member) await kv.srem(leftSystemKey(me.artistId), c.id);
+  else { await kv.sadd(leftSystemKey(me.artistId), c.id); await kv.expire(leftSystemKey(me.artistId), TTL_CIRCLE_SEC); }
+  return listSystem(kv, me);
+}
+
 export async function leaveCircle(kv: CircleKV, me: Me, id: unknown): Promise<void> {
   const { meta, isOwner } = await requireMember(kv, me, id);
   if (isOwner) fail(409, "owner_cannot_leave", "Le propriétaire ne peut pas quitter son cercle : supprime-le.");

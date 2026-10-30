@@ -50,7 +50,7 @@ function detected(file: "pod_oled_stream.h" | "pod_oled_flash.h", from: string, 
   const dir = fs.mkdtempSync(path.join(tmp, "m-"));
   for (const f of fs.readdirSync(FW)) if (/\.h$/.test(f)) fs.copyFileSync(path.join(FW, f), path.join(dir, f));
   const p = path.join(dir, file);
-  const src = fs.readFileSync(p, "utf8");
+  const src = fs.readFileSync(p, "utf8").replace(/\r\n/g, "\n");   // sous Windows (autocrlf) les ancres multi-lignes du test ne correspondent qu'en LF
   assert.equal(src.split(from).length - 1, 1, `mutation « ${from} » : exactement une occurrence attendue dans ${file}`);
   fs.writeFileSync(p, src.replace(from, () => to));
   const exe = path.join(dir, process.platform === "win32" ? "h.exe" : "h");

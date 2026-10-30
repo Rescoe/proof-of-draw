@@ -190,7 +190,7 @@ export function summarize(measures: Measure[], kind: MeasureKind): MeasureSummar
 }
 
 // ── Qualité de l'air : niveaux de l'indice COV Sensirion (29/10/2026) ───────────────────────────────────────────────────────
-/** Niveau qualitatif d'un indice COV (1..500). Choix de visualisation du projet PoD, PAS des seuils sanitaires. L'interface n'affiche jamais le nombre : niveau, couleur, tendance. */
+/** Niveau qualitatif d'un indice COV (1..500). Choix de visualisation du projet PoD, PAS des seuils sanitaires. 30/10/2026 : l'interface affiche le niveau, la couleur, la tendance ET l'indice chiffré (sortie de l'algorithme de Sensirion, 1–500) ; le brut du capteur (`voc`) reste masqué. */
 export interface VocLevel { level: 1 | 2 | 3 | 4 | 5 | 6; label: string; color: string }
 const VOC_LEVELS: { max: number; l: VocLevel }[] = [
   { max: 50, l: { level: 1, label: "Très faible", color: "#22c55e" } },
@@ -211,9 +211,9 @@ export function vocTrend(values: number[]): "up" | "down" | "stable" | null {
   return d >= 8 ? "up" : d <= -8 ? "down" : "stable";
 }
 
-/** « 21,5 °C » depuis des dixièmes. Qualité de l'air : le niveau en toutes lettres (jamais le nombre). */
+/** « 21,5 °C » depuis des dixièmes. Qualité de l'air : le niveau en toutes lettres ET l'indice Sensirion entre parenthèses (« Modéré (120) »). */
 export function formatMeasure(kind: MeasureKind, stored: number): string {
-  if (kind === "vocidx") return vocLevel(stored).label;
+  if (kind === "vocidx") return `${vocLevel(stored).label} (${Math.round(stored)})`;
   const info = MEASURE_KINDS[kind];
   if (kind === "dl" && stored >= 1000) return `${(stored / 1000).toFixed(1).replace(".", ",")} Mbit/s`;
   return info.scale === 10 ? `${(stored / 10).toFixed(1).replace(".", ",")} ${info.unit}` : `${stored} ${info.unit}`;

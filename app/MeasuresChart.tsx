@@ -44,8 +44,8 @@ function Chart({ points, kind }: { points: { t: number; x: number }[]; kind: Mea
           </g>); })}
         <line x1={P} y1={H - P} x2={W - P} y2={H - P} stroke="var(--border)" />
         <line x1={P} y1={P} x2={P} y2={H - P} stroke="var(--border)" />
-        {kind !== "vocidx" && <text x={4} y={P + 4} fontSize="10" fill="var(--text3)">{(hi / sc).toFixed(0)}</text>}
-        {kind !== "vocidx" && <text x={4} y={H - P} fontSize="10" fill="var(--text3)">{(lo / sc).toFixed(0)}</text>}
+        <text x={4} y={P + 4} fontSize="10" fill="var(--text3)">{(hi / sc).toFixed(0)}</text>
+        <text x={4} y={H - P} fontSize="10" fill="var(--text3)">{(lo / sc).toFixed(0)}</text>
         <path d={d} fill="none" stroke="var(--accent)" strokeWidth="2" strokeLinejoin="round" />
         {sel && (<>
           <line x1={px(sel.t)} x2={px(sel.t)} y1={P} y2={H - P} stroke="var(--text3)" strokeDasharray="3 3" />
@@ -59,7 +59,7 @@ function Chart({ points, kind }: { points: { t: number; x: number }[]; kind: Mea
   );
 }
 
-/** Qualité de l'air : niveau actuel (couleur), tendance et bouton « ⓘ » qui explique l'indice Sensirion en une phrase. Jamais le nombre. */
+/** Qualité de l'air : niveau actuel (couleur) avec l'indice chiffré, tendance et bouton « ⓘ » qui explique l'indice Sensirion en une phrase. */
 function AirNote({ points }: { points: { t: number; x: number }[] }) {
   const [open, setOpen] = useState(false);
   const last = points.length ? points[points.length - 1].x : null;
@@ -67,7 +67,7 @@ function AirNote({ points }: { points: { t: number; x: number }[] }) {
   const lv = last !== null ? vocLevel(last) : null;
   return (
     <div style={{ fontSize: "0.78rem", color: "var(--text2)", marginBottom: 4 }}>
-      {lv && <span>Actuellement : <b style={{ color: lv.color }}>{lv.label}</b></span>}
+      {lv && last !== null && <span>Actuellement : <b style={{ color: lv.color }}>{lv.label} ({Math.round(last)})</b></span>}
       {trend && <span> · tendance : {trend === "up" ? "↗ en hausse" : trend === "down" ? "↘ en baisse" : "→ stable"}</span>}
       <button type="button" aria-expanded={open} aria-label="Comment lire cet indice ?" onClick={() => setOpen((v) => !v)}
         style={{ marginLeft: 8, width: 22, height: 22, borderRadius: 999, border: "1px solid var(--border)", background: "transparent", color: "var(--text2)", cursor: "pointer", fontSize: "0.75rem", lineHeight: 1 }}>ⓘ</button>

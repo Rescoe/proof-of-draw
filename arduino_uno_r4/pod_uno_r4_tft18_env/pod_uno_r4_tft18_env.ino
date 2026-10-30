@@ -99,7 +99,7 @@
 #define SERVER_HOST         "proof-of-draw.vercel.app"
 #define SCREEN_TYPE         "tft18"
 #ifndef FIRMWARE_VERSION
-#define FIRMWARE_VERSION    "r4tft18-2.6"
+#define FIRMWARE_VERSION    "r4tft18-2.7"
 #endif
 #ifndef POD_SENSORS
 #define POD_SENSORS 0                                // 1 : DHT22 (D2) + SGP40 (I2C) lus toutes les 30 min, envoyés toutes les heures à /api/sensor (comme la station)
@@ -1783,7 +1783,10 @@ static void envDrawDataImpl(bool full) {
   envPrintLevel(3, 113, cls);
   envBar(131, cls * 100 / 6, acol);
   tft.setTextSize(1); tft.setTextColor(C_GREY, C_BLACK); tft.setCursor(3, 140);
-  if (g_sgpSeen) tft.print("air : indice relatif   "); else tft.print("capteur absent         ");
+  if (g_sgpSeen) {                                                                 // 30/10/2026 : l'indice chiffré (sortie de l'algorithme de Sensirion, 1-500) s'ajoute au niveau en toutes lettres ; jamais le brut du capteur
+    tft.print("air : indice ");
+    if (g_vocIdx > 0) { char nb[8]; envFmtU(nb, 3, (unsigned)g_vocIdx); tft.print(nb); tft.print("/500   "); } else tft.print("(calibrage)");
+  } else tft.print("capteur absent         ");
   // pied
   tft.fillRect(0, 150, IMG_W, 10, C_DARK);
   tft.setTextSize(1); tft.setTextColor(C_WHITE, C_DARK); tft.setCursor(3, 151);
@@ -1988,9 +1991,12 @@ static void histDrawSeries(int y0, int h, const HistSeries& s, uint16_t col, int
   if (minX >= 0) tft.fillCircle(minX, minY > y0 + ph - 4 ? y0 + ph - 4 : minY, 2, C_WHITE);
   char b[12];
   tft.setTextColor(col, C_BLACK);
-  if (labelKind != 2) {                                                            // courbe de l'indice COV : aucun nombre sur l'axe (seulement les repères blancs min / max)
+  if (labelKind != 2) {
     tft.setCursor(0, y0); envFmt10(b, 4, (int)vmax); tft.print(b);
     tft.setCursor(0, y0 + ph - 9); envFmt10(b, 4, (int)vmin); tft.print(b);
+  } else {                                                                         // courbe de l'indice COV (entiers, pas des dixièmes) : repères chiffrés min / max depuis le 30/10/2026
+    tft.setCursor(0, y0); envFmtU(b, 3, (unsigned)(vmax > 0 ? vmax : 0)); tft.print(b);
+    tft.setCursor(0, y0 + ph - 9); envFmtU(b, 3, (unsigned)(vmin > 0 ? vmin : 0)); tft.print(b);
   }
   if (tag && tag[0]) { tft.setTextColor(C_GREY, C_BLACK); tft.setCursor(IMG_W - 6 * (int)strlen(tag) - 1, y0); tft.print(tag); }
 }
@@ -2039,13 +2045,14 @@ static void histDetailImpl(int kind, uint32_t now, uint32_t wantBottom, HistSeri
   tft.fillScreen(C_BLACK);
   tft.fillRect(0, 0, IMG_W, 14, C_DARK);
   tft.setTextSize(1); tft.setTextColor(C_GOLD, C_DARK); tft.setCursor(3, 3); tft.print(kind == 0 ? "TEMPERATURE" : (kind == 1 ? "HUMIDITE" : "AIR - INDICE COV"));
+  if (kind == 2 && g_vocIdx > 0) { char nb[8]; envFmtU(nb, 0, (unsigned)g_vocIdx); tft.print(" "); tft.print(nb); }   // l'indice chiffré à côté du titre
   char b[24], line2[28]; uint16_t tcol; int arrow;
   // valeur
   tft.setTextSize(3);
   if (kind == 2) {
     const uint8_t cls = envVocClass();
     tft.setTextColor(envVocColor(cls), C_BLACK); tft.setCursor(3, 18);
-    envPrintLevel(3, 20, cls);                                                      // le niveau, jamais le nombre
+    envPrintLevel(3, 20, cls);                                                      // le niveau en toutes lettres (l'indice chiffré est dans l'en-tête)
   } else {
     const bool fresh = g_envDhtOkAt != 0 && millis() - g_envDhtOkAt < 30000UL;
     const bool ok = fresh && (kind == 0 ? g_lastT != NO_T : g_lastH != NO_H);
