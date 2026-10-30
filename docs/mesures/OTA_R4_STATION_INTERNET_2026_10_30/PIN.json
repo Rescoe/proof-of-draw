@@ -1,5 +1,5 @@
 {
-  "note": "Pin PUBLIC du plan OTA R4 de la station, RÉVISÉ le 30/10/2026 : la release seq 2 a été retirée. A seq 14 est local (contient le Wi-Fi, ne jamais publier). B non reconstruit.",
+  "note": "Pin PUBLIC et sans secret du bootstrap A de la station R4 (Wi-Fi hors binaire, séquence 14). Binaire hors Git. Compilé seulement ; jamais flashé. B non reconstruit.",
   "fqbn": "arduino:renesas_uno:unor4wifi",
   "core": "arduino:renesas_uno 1.6.0",
   "sketch": "arduino_uno_r4/pod_uno_r4_tft18_env",
@@ -8,24 +8,25 @@
     "r4-b": "dd310cbb11bae1ed4d4090b02dc613467b512dd4ebc521ba589058aea81f2ed0"
   },
   "A": {
-    "role": "firmware à flasher par câble (client OTA actif) — LOCAL, contient le Wi-Fi",
-    "firmwareVersion": "r4tft18-2.6",
-    "sketchCommit": "9e9270d",
+    "role": "firmware à flasher par câble (portail Wi-Fi, client OTA actif)",
+    "firmwareVersion": "r4tft18-2.8",
     "family": "uno-r4-wifi-tft18",
     "channel": "canary",
     "OTAR4_COMPILED_SEQ": 14,
-    "bytes": 177004,
-    "sha256": "b3af4241dab905138f164f274364b38b020bfb5bf33d395bba3d327bcfc7e942",
-    "ramGlobalBytes": 18204,
-    "flashPercent": 67,
-    "options": "POD_SENSORS=1 POD_ENV_DISPLAY=1 POD_SD_CS_PIN=4 POD_OTA_R4=1 OTAR4_COMPILED_SEQ=14",
-    "wifiPortal": false,
-    "wifiCompiledIn": true
+    "options": "POD_SENSORS=1 POD_ENV_DISPLAY=1 POD_SD_CS_PIN=4 POD_OTA_R4=1 POD_WIFI_PORTAL=1 OTAR4_COMPILED_SEQ=14",
+    "bytes": 191188,
+    "flashBytes": 191180,
+    "ramGlobalBytes": 18452,
+    "sha256": "30f1a1d0478e1270888ecb00a0517025f8009d5d1ddfdf462accd4ea65a8ac08",
+    "wifiCompiledIn": false,
+    "wifiPortal": true,
+    "wifiGuard": "wifi-guard OK : 2 valeur(s) interdite(s) absente(s) de l'image (191188 o) ; marqueur PODWIFI:record-v1 présent ; aucun secrets.h réel dans le build."
   },
   "B": {
-    "status": "non reconstruit ; séquence prévue = séquence effective de A + 1 (15)",
+    "status": "non reconstruit ; séquence prévue = séquence effective de A + 1 (15) ; sans Wi-Fi",
     "published": false
   },
+  "invalidatedBuilds": "tous les A/B construits avant le 30/10/2026 soir contenaient l'ancien Wi-Fi : invalides, jamais à publier ni à flasher",
   "retired": {
     "release": "r4tft18-2.7 seq 2",
     "publishedCommit": "0ae60a9",

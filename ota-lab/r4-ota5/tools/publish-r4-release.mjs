@@ -12,6 +12,9 @@ if (!kind || !FAMILY[kind]) die("--kind sensor|tft18|tft28"); if (!["canary", "s
 if (!rel || !existsSync(join(rel, "manifest.txt")) || !existsSync(join(rel, "firmware.bin"))) die("--release : dossier avec manifest.txt et firmware.bin"); if (!pub || !existsSync(pub)) die("--pub keys.json (clés PUBLIQUES de publication)");
 const v = spawnSync(process.execPath, [join(HERE, "verify-manifest.mjs"), join(rel, "manifest.txt"), "--bin", join(rel, "firmware.bin"), "--pub", pub, "--family", FAMILY[kind], "--channel", channel], { encoding: "utf8" });
 if (v.status !== 0) die("vérificateur indépendant : " + (v.stdout || v.stderr).trim());
+// CONTRÔLE BLOQUANT (30/10/2026) : aucun identifiant Wi-Fi dans l'image publiée (recherche d'octets + marqueurs ; valeurs interdites lues dans des FICHIERS locaux, jamais affichées). --build-dir : dossier du sketch compilé (refus si un vrai secrets.h s'y trouve).
+{ const bd = arg("--build-dir"); const g = spawnSync(process.execPath, [join(HERE, "wifi-guard.mjs"), "--bin", join(rel, "firmware.bin"), ...(bd ? ["--build-dir", bd] : []), ...process.argv.slice(2).flatMap((x, i, all) => (x === "--forbid-file" || x === "--forbid-secrets" ? [x, all[i + 1]] : []))], { encoding: "utf8" });
+  if (g.status !== 0) die("wifi-guard : " + (g.stderr || g.stdout).trim()); console.log((g.stdout || "").trim()); }
 const dest = join(pubDir, "firmware-r4", kind, channel); mkdirSync(dest, { recursive: true });
 copyFileSync(join(rel, "manifest.txt"), join(dest, "manifest.txt")); copyFileSync(join(rel, "firmware.bin"), join(dest, "firmware.bin"));
 console.log(v.stdout.trim()); console.log(`copié dans ${dest} (${readFileSync(join(dest, "firmware.bin")).length} o). Rien n'est commité ni déployé : fusionner = envoyer la mise à jour aux cartes du canal « ${channel} ».`);

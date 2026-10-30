@@ -14,7 +14,9 @@
 | `../CLAUDE.md` | mémoire technique longue et historique, jamais prioritaire sur les documents précédents |
 | `ETAT_GIT_ET_REPRISE_MULTI_PC.md` | procédure de travail propre entre plusieurs ordinateurs |
 | `PROCEDURE_NOUVEAU_PC_2026_10_29.md` | clone, Node, secrets, artefacts privés et inventaire des worktrees avant tout nettoyage |
-| `CANARI_OTA_INTERNET_R4_STATION_2026_10_30.md` | station R4 : OTA Internet ANNULÉE avant essai (release retirée : séquence et Wi-Fi dans le binaire), plan révisé |
+| `CANARI_OTA_INTERNET_R4_STATION_2026_10_30.md` | station R4 : A propre (portail, séquence 14) prêt, release retirée, en attente du GO flash |
+| `CARTE_DATA_FLASH_STATION_R4_2026_10_30.md` | carte de la data flash de la station R4 (sans chevauchement) et récupération USB |
+| `INCIDENT_WIFI_DANS_BINAIRE_R4_2026_10_30.md` | identifiants Wi-Fi dans un binaire R4 publié : faits, contrôles, plan de purge séparé |
 | `SUIVI_CANARI_MULTIBWR_EN_ATTENTE_2026_10_29.md` | canari Multibwr publié, carte hors ligne : état, contrôles à la reconnexion, verdict à compléter |
 | `LOT_MULTIBWR_MIGRATION_2026_10_29.md` | multiscreen e-ink BWR + OLED + DHT22 (`multibwr-2.1`) : construction, migration OTA signée non publiée, protocole du canari |
 | `INVENTAIRE_LOCAL_A_PRESERVER_2026_10_29.md` | inventaire de l'ancien checkout et des artefacts à trier sans perte |

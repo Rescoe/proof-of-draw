@@ -87,6 +87,32 @@
 // POD_RENDER_V1_END
 
 // ─── CONFIG ────────────────────────────────────────────────────────────────
+// POD_WIFI_BEGIN
+// ─── Première connexion sans fil (30/10/2026) — INACTIF PAR DÉFAUT ──────────────────────────────────────────────────────────
+// 0 (défaut) : comportement d'avant (Wi-Fi compilé depuis secrets.h).
+// 1 : le Wi-Fi vient EXCLUSIVEMENT d'un ENREGISTREMENT de la flash de données (octets 512..616, format pod_wifi_cfg.h, identique à la UNO R4 e-ink 2,9″ et aux ESP8266) ; aucun SSID ni mot de passe n'est
+//     compilé (secrets.h n'est même pas inclus). Sans enregistrement, ou si la connexion échoue (changement de box), la carte ouvre le point d'accès temporaire « PoD-XXXX » (mot de passe aléatoire affiché
+//     sur le TFT, QR de connexion) et la page locale (pod_wifi_portal.h + pod_wifi_portal_r4.h : UNE seule architecture de provisionnement). Fenêtre série de 1,5 s au démarrage : WIFI-SETHEX / WIFI-CLEAR / WIFI-PORTAL.
+// Un binaire destiné à la PUBLICATION (OTA) doit être construit ainsi : le marqueur « PODWIFI:record-v1 » y est exigé et « PODWIFI:compiled-v1 » interdit par le contrôle de publication (ota-lab/r4-ota5/tools/wifi-guard.mjs).
+#ifndef POD_WIFI_PORTAL
+#define POD_WIFI_PORTAL 0
+#endif
+#if POD_WIFI_PORTAL
+#include "pod_wifi_portal.h"
+const char POD_WIFI_MODE_MARK[] __attribute__((used, retain)) = "PODWIFI:record-v1";
+#else
+const char POD_WIFI_MODE_MARK[] __attribute__((used, retain)) = "PODWIFI:compiled-v1";
+#endif
+// POD_WIFI_END
+
+// POD_WIFI_BEGIN
+#if POD_WIFI_PORTAL
+  static char g_wifiSsid[podwifi::SSID_MAX + 1];       // remplis par wifiStartup() depuis l'enregistrement ; jamais journalisés
+  static char g_wifiPass[podwifi::PASS_MAX + 1];
+  const char* WIFI_SSID     = g_wifiSsid;
+  const char* WIFI_PASSWORD = g_wifiPass;
+#else
+// POD_WIFI_END
 #if __has_include("secrets.h")
   #include "secrets.h"
   const char* WIFI_SSID     = SECRET_WIFI_SSID;
@@ -95,11 +121,20 @@
   const char* WIFI_SSID     = "";            // ← renseigner (ou créer secrets.h)
   const char* WIFI_PASSWORD = "";
 #endif
+// POD_WIFI_BEGIN
+#endif
+// POD_WIFI_END
 
 #define SERVER_HOST         "proof-of-draw.vercel.app"
 #define SCREEN_TYPE         "tft18"
 #ifndef FIRMWARE_VERSION
 #define FIRMWARE_VERSION    "r4tft18-2.7"
+// POD_WIFI_BEGIN
+#if POD_WIFI_PORTAL
+#undef FIRMWARE_VERSION
+#define FIRMWARE_VERSION    "r4tft18-2.8"             // 2.8 = Wi-Fi par portail (VOTE_V2_FIRMWARE : r4tft18 >= 1.1, donc toujours capable de voter)
+#endif
+// POD_WIFI_END
 #endif
 #ifndef POD_SENSORS
 #define POD_SENSORS 0                                // 1 : DHT22 (D2) + SGP40 (I2C) lus toutes les 30 min, envoyés toutes les heures à /api/sensor (comme la station)
@@ -447,6 +482,45 @@ static String __attribute__((noinline)) wifiIpString() {
   if (!ran) { wifiFailed("localIP", ni); return String("?"); }
   return ip;
 }
+// POD_WIFI_BEGIN
+#if POD_WIFI_PORTAL
+// Balayage des réseaux et point d'accès : comme tous les appels au module Wi-Fi, sur la pile Wi-Fi dédiée (podWifiRun). Résultats chez l'APPELANT ; échec fermé. (Copie du portail R4 e-ink 2,9″ validé sur carte.)
+static int __attribute__((noinline)) wifiScan(podportal::Net* nets, int cap) {
+  int n = 0; PodNetInfo ni;
+  auto wx = [&]() {
+    const int8_t found = WiFi.scanNetworks();
+    for (int i = 0; i < found; i++) {
+      const char* sid = WiFi.SSID((uint8_t)i); const size_t L = sid ? strlen(sid) : 0;
+      if (L < 1 || L > (size_t)podwifi::SSID_MAX) continue;
+      const int8_t rssi = (int8_t)WiFi.RSSI((uint8_t)i); const bool secure = WiFi.encryptionType((uint8_t)i) != ENC_TYPE_NONE;
+      bool dup = false;
+      for (int k = 0; k < n; k++) if (strcmp(nets[k].ssid, sid) == 0) { dup = true; if (rssi > nets[k].rssi) nets[k].rssi = rssi; }
+      if (dup) continue;
+      int slot = -1;
+      if (n < cap) slot = n++;
+      else { int w = 0; for (int k = 1; k < n; k++) if (nets[k].rssi < nets[w].rssi) w = k; if (rssi > nets[w].rssi) slot = w; }
+      if (slot < 0) continue;
+      memset(&nets[slot], 0, sizeof nets[slot]); memcpy(nets[slot].ssid, sid, L); nets[slot].rssi = rssi; nets[slot].secure = secure;
+    }
+  };
+  if (!podWifiRun(wx, &ni)) { wifiFailed("scanNetworks", ni); return 0; }
+  for (int a = 0; a < n; a++) for (int b = a + 1; b < n; b++) if (nets[b].rssi > nets[a].rssi) { podportal::Net t = nets[a]; nets[a] = nets[b]; nets[b] = t; }
+  return n;
+}
+static bool __attribute__((noinline)) wifiApStart(const char* name, const char* pass) {
+  uint8_t st = 0; PodNetInfo ni;
+  auto wx = [&]() { WiFi.disconnect(); st = WiFi.beginAP(name, pass, 6); };
+  if (!podWifiRun(wx, &ni)) { wifiFailed("beginAP", ni); return false; }
+  return st == WL_AP_LISTENING || st == WL_AP_CONNECTED;
+}
+static void __attribute__((noinline)) wifiApStop() {
+  PodNetInfo ni;
+  auto wx = [&]() { WiFi.disconnect(); };
+  if (!podWifiRun(wx, &ni)) wifiFailed("disconnect", ni);
+}
+#include "pod_wifi_portal_r4.h"
+#endif
+// POD_WIFI_END
 
 // ─── Clés Ed25519 ──────────────────────────────────────────────────────────
 // Entropie : bruit des entrées analogiques flottantes + gigue d'horloge + MAC + RSSI, condensés par SHA-256.
@@ -685,6 +759,37 @@ static void __attribute__((noinline)) drawCartel() { PodNetInfo ni; auto wk = [&
 #endif
 static void __attribute__((noinline)) displayKeyMaterialOnce() { PodNetInfo ni; auto wk = [&]() { displayKeyMaterialOnceImpl(); }; if (!podWorkRun(wk, &ni)) tftWorkFailed("clés à l'écran", ni); }
 static void __attribute__((noinline)) displayOnboardingQR(const String& u, const String& c, const String& m) { PodNetInfo ni; auto wk = [&]() { displayOnboardingQRImpl(u, c, m); }; if (!podWorkRun(wk, &ni)) tftWorkFailed("QR d'appairage", ni); }
+// POD_WIFI_BEGIN
+#if POD_WIFI_PORTAL
+// Écran du portail sur le TFT 1,8″ (128 x 160) : UN QR de connexion au point d'accès (rejoindre « PoD-XXXX »), puis en clair le nom, le mot de passe de session et l'adresse de la page locale (secours si la
+// page ne s'ouvre pas toute seule). Dessiné sur la pile de travail dédiée (le QR est lourd pour la pile principale de 1 024 o). Aucun identifiant de la box n'apparaît ici.
+static void portalScreenImpl(const char* apName, const char* apPass) {
+  uint8_t* data = (uint8_t*)malloc(160);
+  if (!data) { logf("[PORTAL] memoire insuffisante pour le QR"); return; }
+  if (qrcode_getBufferSize(3) > 160) { free(data); logf("[QR] tampon trop petit"); return; }
+  memset(data, 0, 160);
+  tft.fillScreen(C_NAVY); tft.setTextWrap(false);
+  tft.fillRect(0, 0, IMG_W, 14, C_DARK);
+  tft.setTextSize(1); tft.setTextColor(C_GOLD, C_DARK); tft.setCursor(3, 3); tft.print("CONNECTE TON WI-FI");
+  char join[56]; snprintf(join, sizeof join, "WIFI:T:WPA;S:%s;P:%s;;", apName, apPass);
+  QRCode qr;
+  if (qrcode_initText(&qr, data, 3, ECC_MEDIUM, join) >= 0) {
+    const int scale = 3, px = qr.size * scale, x0 = (IMG_W - px) / 2, y0 = 20;
+    tft.fillRect(x0 - 4, y0 - 4, px + 8, px + 8, C_WHITE);
+    for (int y = 0; y < qr.size; y++) for (int x = 0; x < qr.size; x++)
+      if (qrcode_getModule(&qr, x, y)) tft.fillRect(x0 + x * scale, y0 + y * scale, scale, scale, C_BLACK);
+  } else logf("[QR] texte trop long pour la version 3");
+  memset(data, 0, 160); free(data);
+  tft.setTextSize(1);
+  tft.setTextColor(C_WHITE, C_NAVY); tft.setCursor(3, 114); tft.print("1 SCANNE: REJOINS");
+  tft.setTextColor(C_GOLD, C_NAVY);  tft.setCursor(3, 123); tft.print(apName);
+  tft.setTextColor(C_WHITE, C_NAVY); tft.setCursor(3, 132); tft.print("MDP "); tft.print(apPass);
+  tft.setTextColor(C_GREY, C_NAVY);  tft.setCursor(3, 141); tft.print("2 PUIS 192.168.4.1");
+  tft.setCursor(3, 150); tft.print("choisis ta box Wi-Fi");
+}
+static void __attribute__((noinline)) portalScreen(const char* apName, const char* apPass) { ENV_DIRTY(); PodNetInfo ni; auto wk = [&]() { portalScreenImpl(apName, apPass); }; if (!podWorkRun(wk, &ni)) tftWorkFailed("écran du portail", ni); }
+#endif
+// POD_WIFI_END
 // ─── ACK / image ───────────────────────────────────────────────────────────
 static bool ackFrame(const String& frameId) {
   if (frameId.length() == 0) return false;
@@ -2231,12 +2336,73 @@ static void __attribute__((noinline)) otaTick(bool force) {
 #endif
 
 // ─── SETUP / LOOP ──────────────────────────────────────────────────────────
+// POD_WIFI_BEGIN
+#if POD_WIFI_PORTAL
+static podportalr4::Ee g_ee;
+/** Fenêtre série de 1,5 s au démarrage : « WIFI-SETHEX <ssid hex>:<mdp hex> » (enregistre), « WIFI-CLEAR » (efface), « WIFI-PORTAL » (force le portail). true = ouvrir le portail quoi qu'il arrive. */
+static bool __attribute__((noinline)) wifiSerialWindow() {
+  char* line = (char*)malloc(300);
+  if (!line) return false;
+  bool force = false; size_t n = 0; const uint32_t t0 = millis();
+  while (millis() - t0 < 1500UL) {
+    while (Serial.available()) {
+      const char ch = (char)Serial.read();
+      if (ch != '\n' && ch != '\r') { if (n < 299) line[n++] = ch; continue; }
+      if (n == 0) continue;
+      line[n] = 0; n = 0;
+      if (strcmp(line, "WIFI-PORTAL") == 0) { force = true; logf("[WIFI] portail demande par la commande serie"); continue; }
+      char ssid[podwifi::SSID_MAX + 1], pass[podwifi::PASS_MAX + 1];
+      const podwifi::Cmd c = podwifi::parseCommand(line, ssid, pass);
+      if (c == podwifi::CMD_SET) { const bool ok = podwifi::store(g_ee, ssid, pass); logf("[WIFI] enregistrement par commande serie : %s (ssid %u o, mdp %u o)", ok ? "OK" : "ECHEC", (unsigned)strlen(ssid), (unsigned)strlen(pass)); }
+      else if (c == podwifi::CMD_CLEAR) { logf("[WIFI] effacement de l'enregistrement : %s", podwifi::clear(g_ee) ? "OK" : "ECHEC"); }
+      else if (c == podwifi::CMD_BAD) logf("[WIFI] commande serie invalide");
+      memset(ssid, 0, sizeof ssid); memset(pass, 0, sizeof pass);
+    }
+    delay(2);
+  }
+  memset(line, 0, 300); free(line);
+  return force;
+}
+/** Wi-Fi au démarrage : enregistrement valide -> connexion ; sinon (ou échec de connexion : nouvelle box) -> portail. Ne revient QUE connecté ; sinon la carte redémarre. */
+static void __attribute__((noinline)) wifiStartup() {
+  const uint8_t st0 = wifiStatusT("status (module present ?)");
+  if (st0 == WL_NO_MODULE) { logf("[WIFI] module absent"); tftStatus("Module Wi-Fi absent", "", C_RED); while (true) delay(1000); }
+  const String fwModule = wifiFirmware();
+  logf("[WIFI] firmware du module: %s", fwModule.c_str());
+  const bool forced = wifiSerialWindow();
+  const bool have = podwifi::load(g_ee, g_wifiSsid, g_wifiPass);
+  logf("[WIFI] enregistrement %s", have ? "valide" : "absent ou invalide");
+  podportal::Reason reason = podportal::decide(have, false, false, forced);
+  if (reason == podportal::R_NONE) {
+    for (int attempt = 0; attempt < 4 && wifiStatus() != WL_CONNECTED; attempt++) {
+      wifiBegin(); for (int i = 0; i < 20; i++) { if (wifiStatus() == WL_CONNECTED) break; delay(500); }
+    }
+    if (wifiStatus() == WL_CONNECTED) {
+      for (int i = 0; i < 20 && wifiIpString() == "0.0.0.0"; i++) delay(250);     // l'adresse arrive un instant après la connexion
+      return;
+    }
+    logf("[WIFI] connexion impossible au reseau enregistre");
+    reason = podportal::R_CONNECT_FAILED;
+  }
+  memset(g_wifiSsid, 0, sizeof g_wifiSsid); memset(g_wifiPass, 0, sizeof g_wifiPass);
+  uint8_t mac[6]; if (!wifiMac(mac)) { logf("[PORTAL] adresse MAC indisponible : redemarrage"); tftStatus("Wi-Fi: MAC illisible", "Redemarrage...", C_RED); delay(3000); NVIC_SystemReset(); }
+  tftStatus(reason == podportal::R_CONNECT_FAILED ? "Wi-Fi introuvable" : "Premiere connexion", "Ouverture du portail");
+  const podportalr4::Exit r = podportalr4::run(reason, mac, wifiScan, wifiApStart, wifiApStop, portalScreen, nullptr);
+  logf("[PORTAL] sortie : %s", r == podportalr4::EXIT_SAVED ? "enregistre" : r == podportalr4::EXIT_TIMEOUT ? "fin de session" : "echec");
+  if (r == podportalr4::EXIT_SAVED) tftStatus("Wi-Fi enregistre", "Redemarrage...");
+  else tftStatus(r == podportalr4::EXIT_TIMEOUT ? "Portail expire" : "Portail en echec", "Redemarrage...", C_RED);
+  delay(r == podportalr4::EXIT_SAVED ? 1500 : 5000);
+  NVIC_SystemReset();
+}
+#endif
+// POD_WIFI_END
 void setup() {
   paintStack();
   Serial.begin(115200);
   while (!Serial && millis() < 2500) {}
   logf("\n[BOOT] Proof-of-Draw UNO R4 WiFi + TFT 1.8\" — %s", FIRMWARE_VERSION);
   logf("[WARNING] PRODUIT R4 TFT 1,8 ENV : COMPILE SEULEMENT, JAMAIS ESSAYE SUR LA CARTE (26/10/2026)");
+  logf("[WIFI] mode: %s", POD_WIFI_MODE_MARK);   // référence le marqueur (sinon l'éditeur de liens l'élimine) : record-v1 = Wi-Fi lu de la flash, compiled-v1 = Wi-Fi compilé
 #if POD_SENSORS && !defined(POD_NO_WIRE_BEGIN)
   Wire.begin();
 #endif
@@ -2253,6 +2419,11 @@ void setup() {
   sdInit();
 #endif
 
+// POD_WIFI_BEGIN
+#if POD_WIFI_PORTAL
+  wifiStartup();
+#else
+// POD_WIFI_END
   if (wifiStatusT("status (module present ?)") == WL_NO_MODULE) { logf("[WIFI] module absent"); while (true) delay(1000); }
   logf("[WIFI] firmware du module: %s", wifiFirmware().c_str());
   if (strlen(WIFI_SSID) == 0) logf("[WIFI] SSID vide : créer secrets.h (voir secrets.h.example)");
@@ -2262,6 +2433,9 @@ void setup() {
     for (int i = 0; i < 20 && wifiStatus() != WL_CONNECTED; i++) delay(500);
   }
   if (wifiStatus() != WL_CONNECTED) { logf("[WIFI] échec — redémarrage"); tftStatus("Wi-Fi impossible", "Redemarrage...", C_RED); delay(3000); NVIC_SystemReset(); }
+// POD_WIFI_BEGIN
+#endif
+// POD_WIFI_END
   logf("[WIFI] IP: %s", wifiIpString().c_str());
   tftStatus("Wi-Fi connecte", wifiIpString());
 
