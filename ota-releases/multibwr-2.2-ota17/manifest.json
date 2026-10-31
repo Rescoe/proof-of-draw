@@ -1,0 +1,31 @@
+{
+  "schema": "pod-ota-manifest-v2",
+  "releaseId": "multibwr-2.2-ota17",
+  "family": "esp8266-multibwr",
+  "profile": {
+    "board": "esp8266",
+    "screen": "multibwr",
+    "flash": "4M2M"
+  },
+  "channel": "canary",
+  "firmwareVersion": "multibwr-2.2",
+  "otaSeq": 17,
+  "minOtaSeq": 1,
+  "revokedSeqs": [],
+  "url": "/firmware/multibwr-2.2-ota17/image.bin",
+  "size": 560000,
+  "sha256": "f09f75de15c0208f45d45deb32dd80b16d7709bdb0c74968e9181dd7dd11287c",
+  "wave": {
+    "of": 100,
+    "upTo": 100
+  },
+  "canaryDevices": [
+    "dev_T46HBXG1"
+  ],
+  "notes": "multibwr-2.2 : vote lu par morceaux (pile et tas), OLED en cycle oeuvre/temperature/humidite ; canari dev_T46HBXG1",
+  "signature": {
+    "alg": "rsa2048-pkcs1-sha256",
+    "keyId": "ota-a",
+    "sig": "pvLKNGL5kSlQBUo1/aGemSS85DkMRX6acHALPg6kDxrg2/kR71+1smiaIuIeXRPl+9uj40ScYz7ViT4kzXSPWeg/o+XJZSzt2WpoS73k7Na/Q9KuhCzE2KjntXyQMhc4X/kex4I6GkO/N7tWfMo+XdOnP5qkYhYjDEEPHrfD+JKVOxdDS9rjJ2OCaY4ZEp3cwtwtBvfWEi3QDvfj320S2HYhwD0WA4jbfMbrFz7ReoumPfOHyTNFR3eDGWY5iF4xoBXx/+QPz1BKrMLDSMgfD68Fsa1tz00XSuenq1A/Y1j4AwSJLeD949/0T1w2X3G4XjdF9LV9kjj8tgzDl7sqJA=="
+  }
+}
