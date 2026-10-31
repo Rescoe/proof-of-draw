@@ -83,6 +83,7 @@
 #endif
 #if POD_WIFI_FROM_RECORD
   #include "pod_wifi_cfg.h"
+  static const char kPodWifiMarker[] PROGMEM __attribute__((used)) = "PODWIFI:record-v1";   // marqueur lu par le contrôle de publication : le Wi-Fi vient de la flash, jamais du binaire
   #if POD_WIFI_PORTAL
     #include "pod_wifi_portal_esp.h"
   #endif
@@ -2409,6 +2410,10 @@ static const uint32_t MIN_TLS_HEAP = 20000, MIN_TLS_BLOCK = 12000;   // avant le
 static const uint32_t MIN_PLAY_HEAP = 6000;     // pour une tranche de lecture : un tampon de 256 o
 static const uint32_t SLICE_MS = 2500;          // une tranche ne dépasse jamais cette durée (puis loop() reprend la main)
 static const uint8_t  MAX_TRIES = 4;            // essais de téléchargement par clip annoncé
+#if POD_MULTI_OLED
+static const uint32_t PAGE_MS = 6000UL;         // durée d'une page de mesure (température, puis humidité)
+static const uint32_t ART_MS  = 30000UL;        // durée de l'animation entre deux passages des pages
+#endif
 struct Flash {                                   // flash brute de l'ESP8266 (adresses absolues, comme la frame sauvegardée de la surimpression)
   bool erase(uint32_t sector) { return ESP.flashEraseSector(sector); }
   bool write(uint32_t addr, const uint8_t* p, size_t n) { return ESP.flashWrite(addr, (uint32_t*)p, n); }
@@ -2473,6 +2478,9 @@ static void podoaBegin() {
   if (!podoaValidate(slot, h.bytes, podoa::g.info)) { Serial.println(F("[OANIM] clip de la flash incoherent : efface")); podoled::dropSlot(fl, slot); return; }
   podoa::St& s = podoa::g;
   s.slot = slot; s.seq = h.seq; s.bytes = h.bytes; memcpy(s.hash, h.hash, 64); s.hash[64] = 0; s.on = true; s.pl.reset(s.info);
+#if POD_MULTI_OLED
+  s.pg = 0; s.nextPagesMs = millis() + podoa::ART_MS;   // premier cycle : animation 30 s, température 6 s, humidité 6 s, reprise à l'image 0
+#endif
   Serial.printf_P(PSTR("[OANIM] clip trouve en flash (emplacement %d, bloc %.12s..., %u o, %u images) : lecture en boucle\n"), slot, s.hash, (unsigned)s.bytes, (unsigned)s.info.frames);
 }
 
@@ -2525,6 +2533,9 @@ static bool podoaAcquire() {
   if (!ok) { s.tries++; Serial.println(F("[OANIM] ecriture de l'en-tete impossible")); return false; }
   const int old = s.slot;
   s.slot = target; s.seq = seq; strlcpy(s.hash, s.pendHash, sizeof s.hash); s.bytes = n; s.info = info; s.on = true; s.playing = false; s.pl.reset(info); s.tries = 0;
+#if POD_MULTI_OLED
+  s.pg = 0; s.nextPagesMs = millis() + podoa::ART_MS;   // nouveau clip : 30 s d'animation avant les pages
+#endif
   if (old >= 0) podoled::dropSlot(fl, old);                              // l'ancien clip n'est plus nécessaire : son en-tête est effacé (le nouveau est actif et validé)
   Serial.printf_P(PSTR("[OANIM] clip recu en %lu ms (emplacement %d, %u images) : lecture en boucle\n"), millis() - t0, target, (unsigned)info.frames);
   return true;
@@ -2556,8 +2567,6 @@ static void podoaSensorScreen() {
   s.drawnMs = millis(); s.needSensor = false;
 }
 #if POD_MULTI_OLED
-static const uint32_t PODOA_PAGE_MS = 6000UL;    // durée d'une page de mesure
-static const uint32_t PODOA_ART_MS  = 30000UL;   // durée de l'animation entre deux passages des pages
 /** Page de mesure plein écran de l'OLED : 1 = température, 2 = humidité (grands chiffres), âge de la mesure et Wi-Fi en bas. Rien n'est inventé : appelée seulement quand une mesure existe. */
 static void podoaSensorPage(uint8_t page) {
   if (!ensureOLEDReady()) return;
@@ -2579,24 +2588,24 @@ static void podoaSensorPage(uint8_t page) {
   oled.display();
   s.drawnMs = millis(); s.needSensor = false;
 }
-/** Cycle de l'OLED (appelé à chaque tour, réseau libre) : avec une animation, elle tourne PODOA_ART_MS puis température et humidité passent PODOA_PAGE_MS chacune, puis l'animation REPART de l'image 0 (son tampon a été
+/** Cycle de l'OLED (appelé à chaque tour, réseau libre) : avec une animation, elle tourne podoa::ART_MS puis température et humidité passent podoa::PAGE_MS chacune, puis l'animation REPART de l'image 0 (son tampon a été
  *  repeint). Sans animation, une fois le délai de l'image fixe écoulé, les deux pages alternent. Retourne vrai quand une page occupe l'écran (le service ne dessine alors rien d'autre). Sans mesure : faux. */
 static bool podoaPages(uint32_t now) {
   podoa::St& s = podoa::g;
   if (!s.haveRead) return false;
   if (s.pg != 0) {
     if ((int32_t)(now - s.pageUntilMs) < 0) return true;
-    if (s.pg == 1) { s.pg = 2; s.pageUntilMs = now + PODOA_PAGE_MS; podoaSensorPage(2); return true; }
-    if (!s.on) { s.pg = 1; s.pageUntilMs = now + PODOA_PAGE_MS; podoaSensorPage(1); return true; }    // sans animation : les deux pages alternent
-    s.pg = 0; s.nextPagesMs = now + PODOA_ART_MS; s.pl.reset(s.info); s.playing = true;               // l'animation repart de l'image 0
+    if (s.pg == 1) { s.pg = 2; s.pageUntilMs = now + podoa::PAGE_MS; podoaSensorPage(2); return true; }
+    if (!s.on) { s.pg = 1; s.pageUntilMs = now + podoa::PAGE_MS; podoaSensorPage(1); return true; }    // sans animation : les deux pages alternent
+    s.pg = 0; s.nextPagesMs = now + podoa::ART_MS; s.pl.reset(s.info); s.playing = true;               // l'animation repart de l'image 0
     return false;
   }
   if (s.on) {
     if ((int32_t)(now - s.nextPagesMs) < 0) return false;
-    s.playing = false; s.pg = 1; s.pageUntilMs = now + PODOA_PAGE_MS; podoaSensorPage(1); return true;
+    s.playing = false; s.pg = 1; s.pageUntilMs = now + podoa::PAGE_MS; podoaSensorPage(1); return true;
   }
   if ((int32_t)(s.holdUntilMs - now) > 0) return false;                                               // une image fixe de l'OLED est affichée : mesures plus tard
-  s.pg = 1; s.pageUntilMs = now + PODOA_PAGE_MS; podoaSensorPage(1); return true;
+  s.pg = 1; s.pageUntilMs = now + podoa::PAGE_MS; podoaSensorPage(1); return true;
 }
 #endif
 static void podoaOnRead(bool ok, int t10, int h10) {
@@ -2899,6 +2908,7 @@ void setup() {
 // POD_BWR_BEGIN
 #if POD_WIFI_FROM_RECORD
   resumeResetBanner();
+  Serial.print(F("[WIFI] mode: ")); Serial.println(FPSTR(kPodWifiMarker));   // lit le marqueur : l'éditeur de liens ne peut pas l'écarter
 #if POD_WIFI_PORTAL
   { uint32_t m[2] = {0, 0}; const rst_info* ri = ESP.getResetInfoPtr(); if (ESP.rtcUserMemoryRead(16, m, sizeof m) && m[0] == 0x45494E4Bu && m[1] == ~0x45494E4Bu && ri && ri->reason == 4) { lastRefreshMs = millis(); Serial.println(F("[EINK] rafraichi juste avant ce redemarrage : 180 s d attente avant le prochain")); } const uint32_t z[2] = {0, 0}; ESP.rtcUserMemoryWrite(16, (uint32_t*)z, sizeof z); }
 #endif

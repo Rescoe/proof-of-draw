@@ -54,12 +54,15 @@ inline bool podFetchAndCheckChunked(const String& url, PodScreenKind kind, size_
   memset(out, 0, sizeof(*out));
   uint32_t t0 = millis();
   if (expectBytes == 0 || expectBytes > POD_MAX_CONTENT) return false;
-  PodFeeder feeder;
+  // ESPACES DE TRAVAIL STATIQUES (audit du 31/10/2026) : la pile « cont » de l'ESP8266 ne fait que 4 Ko ; le contexte du lecteur (≈ 420 o), le SHA-256 (≈ 112 o) et le tampon de lecture ne doivent pas y revenir
+  // (même raison que POD_VOTE_STATIC_WORK pour la lecture d'une traite). Le firmware est mono-tâche et ne réentre jamais ici (un vote à la fois) : NON réentrant par construction.
+  static PodFeeder feeder;
   if (!feeder.begin(kind, scratch, scratchLen) || feeder.rawBytes() != expectBytes) return false;
-  br_sha256_context sha;
+  static br_sha256_context sha;
   br_sha256_init(&sha);
-  uint8_t chunk[256];
+  static uint8_t chunk[128];
   size_t total = 0;
+  Serial.printf_P(PSTR("[VOTE-NET] début : pile-cont-libre=%u libre=%u bloc=%u\n"), (unsigned)ESP.getFreeContStack(), (unsigned)ESP.getFreeHeap(), (unsigned)ESP.getMaxFreeBlockSize());
   while (total < expectBytes) {
     const size_t want = (expectBytes - total) < POD_VOTE_CHUNK_LEN ? (expectBytes - total) : (size_t)POD_VOTE_CHUNK_LEN;
     WiFiClientSecure client;
@@ -71,7 +74,7 @@ inline bool podFetchAndCheckChunked(const String& url, PodScreenKind kind, size_
     http.useHTTP10(true);
     const int code = http.GET();
     out->http = code;
-    Serial.printf_P(PSTR("[VOTE-NET] morceau %u+%u -> %d libre=%u bloc=%u\n"), (unsigned)total, (unsigned)want, code, (unsigned)ESP.getFreeHeap(), (unsigned)ESP.getMaxFreeBlockSize());
+    Serial.printf_P(PSTR("[VOTE-NET] morceau %u+%u -> %d libre=%u bloc=%u pile-cont-libre=%u\n"), (unsigned)total, (unsigned)want, code, (unsigned)ESP.getFreeHeap(), (unsigned)ESP.getMaxFreeBlockSize(), (unsigned)ESP.getFreeContStack());
     if (code != 200) { http.end(); out->bytes = total; return false; }
     if (http.getSize() != (int)want) { Serial.printf_P(PSTR("[VOTE-NET] morceau refusé : Content-Length=%d au lieu de %u (serveur sans morceaux ?)\n"), http.getSize(), (unsigned)want); http.end(); out->bytes = total; return false; }   // un serveur qui ignore off/len renverrait tout : on s'abstient plutôt que de signer un contenu faux
     WiFiClient* stream = http.getStreamPtr();
@@ -95,11 +98,12 @@ inline bool podFetchAndCheckChunked(const String& url, PodScreenKind kind, size_
     if (part != want) { out->bytes = total; return false; }
   }
   out->bytes = total;
-  uint8_t digest[32];
+  static uint8_t digest[32];
   br_sha256_out(&sha, digest);
   static const char HEXCH[] = "0123456789abcdef";
   for (int i = 0; i < 32; i++) { out->hash[2 * i] = HEXCH[digest[i] >> 4]; out->hash[2 * i + 1] = HEXCH[digest[i] & 15]; }
   out->hash[64] = 0;
+  Serial.printf_P(PSTR("[VOTE-NET] fin : pile-cont-libre=%u libre=%u\n"), (unsigned)ESP.getFreeContStack(), (unsigned)ESP.getFreeHeap());
   if (!feeder.finish(&out->m)) return false;
   out->uniformTft = feeder.isUniformTft();
   out->tft = kind == POD_TFT18 || kind == POD_TFT28;

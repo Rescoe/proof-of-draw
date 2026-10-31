@@ -8,6 +8,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { DEFAULT_CLI, FQBN, ROOT, LAB, RELEASE_KEYS_DIR } from "../canary/build.mjs";
 import { renderKeysHeader } from "../../esp8266-ota2/tools/configure.mjs";
+import { checkImage, buildDirFindings, defaultForbidden } from "../../r4-ota5/tools/wifi-guard.mjs";
 
 const arg = (n) => { const i = process.argv.indexOf(n); return i > 0 ? process.argv[i + 1] : undefined; };
 // --target ms27 : multiscreen ESP8266 e-ink 2,7″ + OLED (esp_eink_2.7BW_OLED) ; défaut bwr : e-ink 2,9″ BWR
@@ -56,10 +57,20 @@ const bin = fs.readFileSync(path.join(out, TG.ino + ".bin"));
 const ram = /Variables and constants in RAM \(global, static\), used (\d+)/.exec(log)?.[1];
 let ssidAbsent = null;
 try { const s = /SECRET_WIFI_SSID\s+"([^"]+)"/.exec(fs.readFileSync(path.join(SRC, "secrets.h"), "utf8"))?.[1]; ssidAbsent = s ? !bin.includes(Buffer.from(s)) : null; } catch { /* secrets.h absent */ }
+// CONTRÔLE WI-FI FERMÉ (audit du 31/10/2026) : pour le BWR (hors build de migration), l'absence des identifiants doit être ÉTABLIE — valeurs interdites (secrets.h connus + ~/.pod-wifi-forbidden.txt) absentes des octets, marqueur « Wi-Fi hors binaire » présent,
+// marqueur « Wi-Fi compilé » absent, aucun secrets.h réel dans le dossier compilé. Résultat indéterminé = ÉCHEC (aucune valeur n'est jamais affichée).
+let wifiGuard = null; const wifiFindings = [];
+if (!MIG && (arg("--target") ?? "bwr") === "bwr") {
+  const r = checkImage(bin, defaultForbidden(ROOT));
+  wifiFindings.push(...r.findings, ...buildDirFindings(sk));
+  wifiGuard = wifiFindings.length === 0; if (wifiGuard) ssidAbsent = true;   // ssidAbsent n'est vrai que si le contrôle fermé est passé (jamais déduit d'un secrets.h illisible)
+}
 const sha = createHash("sha256").update(bin).digest("hex");
 const keysPresent = OTA ? bin.includes(Buffer.from("BEGIN PUBLIC KEY")) : null;
 console.log(`BWR ${OTA ? `portail + client OTA (${VERSION}, séquence ${SEQ})` : "avec portail"} : ${bin.length} o, RAM statique ${ram} o, SHA-256 ${sha}\nSSID absent du binaire : ${ssidAbsent === null ? "NON ÉTABLI (secrets.h illisible)" : ssidAbsent ? "oui" : "NON — IDENTIFIANT PRÉSENT"}${OTA ? `\nclés publiques de publication présentes : ${keysPresent ? "oui" : "NON"}` : ""}\ndossier : ${path.relative(ROOT, out).replace(/\\/g, "/")}`);
+if (wifiGuard === false) { console.log("REFUSÉ (wifi-guard) :\n  - " + wifiFindings.join("\n  - ")); process.exit(2); }
 if ((ssidAbsent === false && !MIG) || (OTA && !keysPresent)) process.exit(2);
+if (OTA && !MIG && wifiGuard !== true) { console.log("REFUSÉ : l'absence des identifiants Wi-Fi n'est pas établie (wifiGuard=" + wifiGuard + ") — aucune release n'est fabriquée"); process.exit(2); }
 if (MIG) console.log("⚠ BUILD DE MIGRATION : le binaire CONTIENT le Wi-Fi (secrets.h) — local, par câble, jamais publié ni partagé");
 const note = OTA ? "Build ESP8266 + e-ink 2,9″ BWR avec portail Wi-Fi ET client OTA Internet (lot B1, 22/10/2026). Faits PUBLICS ; binaire sous canary-builds/ (ignoré par git). NON essayé sur la carte." : "Build ESP8266 + e-ink 2,9″ BWR AVEC portail Wi-Fi (lot A1, 22/10/2026). Faits PUBLICS ; le binaire reste sous canary-builds/ (ignoré par git). NON essayé sur la carte.";
-fs.writeFileSync(path.join(LAB, (OTA ? `${TG.pin}-OTA` : TG.pin) + (MIG ? "-MIG" : "") + (SENS ? "-DHT" : "") + (OLED ? "-OLED" : "") + (DISP ? "-DISP" : "") + (process.argv.includes("--chunk") ? "-CHUNK" : "") + "-BUILD-PIN.json"), JSON.stringify({ note, dir: path.relative(ROOT, out).replace(/\\/g, "/"), version: OTA ? VERSION : (/#define FIRMWARE_VERSION\s+"([^"]+)"/.exec(fs.readFileSync(path.join(SRC, TG.ino), "utf8"))?.[1] ?? "?"), ...(OTA ? { otaSeq: SEQ } : {}), sha, size: bin.length, ramStatic: Number(ram), ssidAbsent }, null, 2) + "\n");
+fs.writeFileSync(path.join(LAB, (OTA ? `${TG.pin}-OTA` : TG.pin) + (MIG ? "-MIG" : "") + (SENS ? "-DHT" : "") + (OLED ? "-OLED" : "") + (DISP ? "-DISP" : "") + (process.argv.includes("--chunk") ? "-CHUNK" : "") + "-BUILD-PIN.json"), JSON.stringify({ note, dir: path.relative(ROOT, out).replace(/\\/g, "/"), version: OTA ? VERSION : (/#define FIRMWARE_VERSION\s+"([^"]+)"/.exec(fs.readFileSync(path.join(SRC, TG.ino), "utf8"))?.[1] ?? "?"), ...(OTA ? { otaSeq: SEQ } : {}), sha, size: bin.length, ramStatic: Number(ram), ssidAbsent, wifiGuard }, null, 2) + "\n");
