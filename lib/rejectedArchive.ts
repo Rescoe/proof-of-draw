@@ -14,6 +14,7 @@
 // Coût Redis : création +1 commande (EVAL), fin de vie +1 (EVAL), réconciliation +2/+3 (GET pointeur, GET courant, GET copie, EVAL) par dessin ; rien en dehors de ces événements (budget du repos inchangé).
 // Tout est « au mieux » côté appelant : un échec d'archive n'interrompt JAMAIS le minage ni le dépôt (les appels sont rattrapés).
 // Les scripts lisent/suppriment `candidate:archive:<id>` dont l'id vient d'une entrée de liste (clé construite dans le script : Redis NON clusterisé, comme Upstash ; voir docs).
+import { quorumNeeded } from "@/lib/quorumNeeded";
 import type { Candidate } from "@/lib/chain";
 import { poolSummaryText, readPoolSummary } from "@/lib/electorate";
 
@@ -130,8 +131,7 @@ export async function recordRejected(kv: ArchiveKV, candidate: CandidateLike, re
 export function expiredReason(c: CandidateLike, now: number): string {
   const parts: string[] = [];
   if (typeof c.poolSize === "number" && c.poolSize >= 0) {
-    const ratio = parseFloat(process.env.QUORUM_RATIO ?? "0.51");
-    parts.push(`réseau de ${c.poolSize} validateur(s), ${Math.max(1, Math.ceil(c.poolSize * ratio))} vote(s) nécessaire(s)`);
+    parts.push(`réseau de ${c.poolSize} validateur(s), ${quorumNeeded(c.poolSize)} vote(s) nécessaire(s)`);
   }
   const pool = readPoolSummary((c as { pool?: unknown }).pool);
   if (pool) parts.push(`électorat au dépôt : ${poolSummaryText(pool)}`);

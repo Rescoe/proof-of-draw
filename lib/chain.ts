@@ -30,6 +30,7 @@
 //
 // NOTE : chain:index:{n} est abandonné — remplacé par chain:recent + chain-walk.
 
+import { quorumNeeded } from "@/lib/quorumNeeded";
 import { unstable_cache } from "next/cache";
 import { redis } from "@/lib/redis";
 import { sha256Hex, computeDisplayTime } from "@/lib/crypto";
@@ -217,7 +218,6 @@ const KEY_OBS_PENDING = "chain:obs:pending";   // drapeau « la file d'observati
 const GENESIS_HASH      = "0".repeat(64);
 // 30 min (600 avant le mode actif/dormant) : un écran dormant tire toutes les 15 min, il doit pouvoir voir le candidat à temps (lib/pullBudget.ts).
 const CANDIDATE_TTL_SEC = parseInt(process.env.CANDIDATE_TTL_SEC ?? "1800");
-const QUORUM_RATIO      = parseFloat(process.env.QUORUM_RATIO ?? "0.51");
 const RECENT_MAX        = 100; // blocs dans chain:recent
 
 // ─── Helpers de migration ─────────────────────────────────────────────────────
@@ -461,7 +461,7 @@ const minV2Approvals = (): number => { const raw = process.env.MIN_V2_APPROVALS;
 function voteSummary(voteMap: VoteMap, candidate: Candidate, added: boolean) {
   // Seules les APPROBATIONS comptent pour le quorum ; un refus signé (vote v2) est conservé mais ne finalise rien.
   const voteCount = countAccepts(voteMap);
-  const needed    = Math.ceil(candidate.poolSize * QUORUM_RATIO);
+  const needed    = quorumNeeded(candidate.poolSize);
   const v2Ok      = !candidate.v2 || countV2Accepts(voteMap) >= minV2Approvals();
   return { quorumReached: added && voteCount >= Math.max(1, needed) && v2Ok, voteCount, needed, rejectCount: countRejects(voteMap), map: voteMap, added };
 }

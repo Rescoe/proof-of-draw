@@ -3,6 +3,7 @@
 // Protégé par INTERNAL_API_SECRET (header x-internal-secret OU query ?secret=...).
 // Usage : GET /api/debug/chain?secret=<INTERNAL_API_SECRET>
 
+import { quorumNeeded } from "@/lib/quorumNeeded";
 import { NextRequest, NextResponse } from "next/server";
 import { redis } from "@/lib/redis";
 import { getChainHead, getChainLength, getCurrentCandidate, getVotes } from "@/lib/chain";
@@ -78,7 +79,7 @@ export async function GET(req: NextRequest) {
             poolSize:     candidate.poolSize,
             expiresIn:    Math.ceil((candidate.expiresAt - now) / 1000),
             voteCount:    voteMap ? Object.keys(voteMap.votes).length : 0,
-            needed:       Math.max(1, Math.ceil(candidate.poolSize * 0.51)),
+            needed:       quorumNeeded(candidate.poolSize),
           }
         : null,
       activeDeviceCount: activeCount,

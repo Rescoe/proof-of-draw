@@ -6,6 +6,7 @@
 // est visible AVANT son expiration ; (3) chaque entrée porte `candidateId` : l'image se charge à la demande par /api/rejected-image.
 // Coût Redis : lecture CDN 20 s ; au plus 3 GET (pointeur, courant, copie) pour la réconciliation + 1 LRANGE + 2 GET (courant, votes) — tous les 20 s au plus quel que soit le nombre de lecteurs.
 
+import { quorumNeeded } from "@/lib/quorumNeeded";
 import { NextRequest, NextResponse } from "next/server";
 import { redis } from "@/lib/redis";
 import { getCurrentCandidate, getVotes } from "@/lib/chain";
@@ -39,9 +40,6 @@ export interface PendingCandidate {
   votes: PendingVote[];
 }
 
-function quorumNeeded(poolSize: number, ratio = parseFloat(process.env.QUORUM_RATIO ?? "0.51")): number {
-  return Math.max(1, Math.ceil(poolSize * ratio));
-}
 
 async function pendingCandidate(): Promise<PendingCandidate | null> {
   const cand = await getCurrentCandidate().catch(() => null);
