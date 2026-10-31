@@ -9,6 +9,7 @@
 import { NextResponse } from "next/server";
 import type { Candidate } from "@/lib/chain";
 import { METRICS_VERSION, isPodScreen, rawContent } from "@/lib/podMetrics";
+import { parseFrameSlice } from "@/lib/frameSlice";
 
 export const CANDIDATE_FRAME_CACHE_OK = "public, s-maxage=1800, max-age=1800, immutable";
 export const CANDIDATE_FRAME_CACHE_ERROR = "no-store";
@@ -20,7 +21,7 @@ function fail(message: string, status: number) {
 }
 
 /** `loadCurrent` : lecture du candidat courant (injectée pour les tests ; appelée seulement si l'identifiant est valide). */
-export async function candidateFrameResponse(candidateId: string, loadCurrent: () => Promise<Candidate | null>): Promise<NextResponse> {
+export async function candidateFrameResponse(candidateId: string, loadCurrent: () => Promise<Candidate | null>, off: string | null = null, len: string | null = null): Promise<NextResponse> {
   if (!UUID_RE.test(candidateId)) return fail("candidateId invalide", 400);
 
   const candidate = await loadCurrent();
@@ -32,11 +33,16 @@ export async function candidateFrameResponse(candidateId: string, loadCurrent: (
   try { body = rawContent(screen, candidate.payload as { buffer?: string; black?: string; red?: string }); }
   catch { return fail("contenu illisible", 500); }
 
-  return new NextResponse(Buffer.from(body), {
+  // 31/10/2026 : ?off=&len= (≤ 4 096 o) renvoie un MORCEAU, comme /api/pull-frame : un ESP8266 au tas étroit (BWR + OLED) ne peut pas réserver 16 Ko de tampon TLS pour lire les 9 472 o d une traite
+  // (le vote plantait la carte, qui redémarrait avant de voter). Sans off ni len : réponse COMPLÈTE, inchangée. X-Raw-Hash reste celui du contenu ENTIER.
+  const sl = parseFrameSlice(off, len, body.length);
+  if (!sl.ok) return fail(sl.error, 400);
+  const out = sl.whole ? body : body.subarray(sl.off, sl.end);
+  return new NextResponse(Buffer.from(out), {
     status: 200,
     headers: {
       "Content-Type": "application/octet-stream",
-      "Content-Length": String(body.length),
+      "Content-Length": String(out.length),
       "Cache-Control": CANDIDATE_FRAME_CACHE_OK,
       "X-Screen-Type": screen,
       "X-Raw-Hash": candidate.v2.rawHash,

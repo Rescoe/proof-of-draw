@@ -16,5 +16,6 @@ import { candidateFrameResponse } from "@/lib/candidateFrameResponse";
 export const dynamic = "force-dynamic";
 
 export async function GET(req: NextRequest) {
-  return candidateFrameResponse(req.nextUrl.searchParams.get("candidateId") ?? "", getCurrentCandidate);
+  const q = req.nextUrl.searchParams;
+  return candidateFrameResponse(q.get("candidateId") ?? "", getCurrentCandidate, q.get("off"), q.get("len"));
 }

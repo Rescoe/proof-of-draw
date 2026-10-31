@@ -40,6 +40,74 @@ inline bool podKindFromName(const String& name, PodScreenKind* k) {
   return false;
 }
 
+// 31/10/2026 — LECTURE PAR MORCEAUX (fonction en ligne : n'existe dans le binaire que si le sketch l'appelle, les autres firmwares sont inchangés). Pourquoi : le serveur n'accepte aucune taille de fragment TLS, donc lire les 9 472 o d'un
+// candidat e-ink 2,9″ d'une traite réserve 16 Ko de tampon TLS ; avec le tampon de 4 736 o déjà alloué, le BWR + OLED (tas le plus étroit) n'a plus la place : le cœur abort() dans la poignée de
+// main, la carte redémarre (« register » dans son journal) et ne vote JAMAIS. Ici : des réponses de ≤ POD_VOTE_CHUNK_LEN o (/api/candidate-frame?off=&len=), tampon de réception TLS de POD_VOTE_TLS_RX o,
+// une connexion par morceau ; le SHA-256 et les métriques sont calculés sur la concaténation, dans le même ordre : mêmes résultats que la lecture d'une traite.
+#ifndef POD_VOTE_CHUNK_LEN
+#define POD_VOTE_CHUNK_LEN 2368u
+#endif
+#ifndef POD_VOTE_TLS_RX
+#define POD_VOTE_TLS_RX 4096
+#endif
+inline bool podFetchAndCheckChunked(const String& url, PodScreenKind kind, size_t expectBytes, uint8_t* scratch, size_t scratchLen, PodCheck* out) {
+  memset(out, 0, sizeof(*out));
+  uint32_t t0 = millis();
+  if (expectBytes == 0 || expectBytes > POD_MAX_CONTENT) return false;
+  PodFeeder feeder;
+  if (!feeder.begin(kind, scratch, scratchLen) || feeder.rawBytes() != expectBytes) return false;
+  br_sha256_context sha;
+  br_sha256_init(&sha);
+  uint8_t chunk[256];
+  size_t total = 0;
+  while (total < expectBytes) {
+    const size_t want = (expectBytes - total) < POD_VOTE_CHUNK_LEN ? (expectBytes - total) : (size_t)POD_VOTE_CHUNK_LEN;
+    WiFiClientSecure client;
+    client.setInsecure();
+    client.setBufferSizes(POD_VOTE_TLS_RX, 512);
+    HTTPClient http;
+    if (!http.begin(client, url + "&off=" + String((unsigned)total) + "&len=" + String((unsigned)want))) { out->bytes = total; return false; }
+    http.setTimeout(20000);
+    http.useHTTP10(true);
+    const int code = http.GET();
+    out->http = code;
+    Serial.printf_P(PSTR("[VOTE-NET] morceau %u+%u -> %d libre=%u bloc=%u\n"), (unsigned)total, (unsigned)want, code, (unsigned)ESP.getFreeHeap(), (unsigned)ESP.getMaxFreeBlockSize());
+    if (code != 200) { http.end(); out->bytes = total; return false; }
+    if (http.getSize() != (int)want) { Serial.printf_P(PSTR("[VOTE-NET] morceau refusé : Content-Length=%d au lieu de %u (serveur sans morceaux ?)\n"), http.getSize(), (unsigned)want); http.end(); out->bytes = total; return false; }   // un serveur qui ignore off/len renverrait tout : on s'abstient plutôt que de signer un contenu faux
+    WiFiClient* stream = http.getStreamPtr();
+    size_t part = 0;
+    unsigned long start = millis();
+    while (part < want && millis() - start < POD_FETCH_TIMEOUT_MS) {
+      int avail = stream->available();
+      if (avail > 0) {
+        size_t n = (size_t)avail < sizeof(chunk) ? (size_t)avail : sizeof(chunk);
+        if (n > want - part) n = want - part;
+        size_t got = stream->readBytes(chunk, n);
+        if (got > 0) { br_sha256_update(&sha, chunk, got); feeder.feed(chunk, got); part += got; }
+        yield();
+      } else {
+        if (!stream->connected()) break;
+        delay(5);
+      }
+    }
+    http.end();
+    total += part;
+    if (part != want) { out->bytes = total; return false; }
+  }
+  out->bytes = total;
+  uint8_t digest[32];
+  br_sha256_out(&sha, digest);
+  static const char HEXCH[] = "0123456789abcdef";
+  for (int i = 0; i < 32; i++) { out->hash[2 * i] = HEXCH[digest[i] >> 4]; out->hash[2 * i + 1] = HEXCH[digest[i] & 15]; }
+  out->hash[64] = 0;
+  if (!feeder.finish(&out->m)) return false;
+  out->uniformTft = feeder.isUniformTft();
+  out->tft = kind == POD_TFT18 || kind == POD_TFT28;
+  out->ms = millis() - t0;
+  out->ok = true;
+  return true;
+}
+
 inline bool podFetchAndCheck(const String& url, PodScreenKind kind, size_t expectBytes, uint8_t* scratch, size_t scratchLen, PodCheck* out) {
   memset(out, 0, sizeof(*out));
   uint32_t t0 = millis();

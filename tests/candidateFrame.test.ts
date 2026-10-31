@@ -61,3 +61,28 @@ test("500 (contenu illisible) et écran non géré : no-store", async () => {
   assert.equal(r404.status, 404);
   assert.equal(r404.headers.get("Cache-Control"), "no-store");
 });
+
+test("morceaux ?off=&len= (31/10/2026) : la concaténation redonne EXACTEMENT le contenu entier, X-Raw-Hash du contenu entier, cache immuable", async () => {
+  const c = oledCandidate();
+  const whole = Buffer.from(await (await candidateFrameResponse(ID, async () => c)).arrayBuffer());
+  const parts: Buffer[] = [];
+  for (let off = 0; off < whole.length; off += 300) {
+    const r = await candidateFrameResponse(ID, async () => c, String(off), "300");
+    assert.equal(r.status, 200);
+    assert.equal(r.headers.get("X-Raw-Hash"), c.v2!.rawHash);
+    assert.match(r.headers.get("Cache-Control") ?? "", /immutable/);
+    const b = Buffer.from(await r.arrayBuffer());
+    assert.equal(Number(r.headers.get("Content-Length")), b.length);
+    parts.push(b);
+  }
+  assert.ok(Buffer.concat(parts).equals(whole));
+});
+
+test("morceaux : paramètres invalides refusés (400, no-store) ; off et len vont ensemble", async () => {
+  const c = oledCandidate();
+  for (const [off, len] of [["0", null], [null, "100"], ["x", "100"], ["0", "0"], ["0", "4097"], [String(METRIC_GRID.oled096.rawBytes), "10"]] as Array<[string | null, string | null]>) {
+    const r = await candidateFrameResponse(ID, async () => c, off, len);
+    assert.equal(r.status, 400, `${off}/${len}`);
+    assert.equal(r.headers.get("Cache-Control"), "no-store");
+  }
+});

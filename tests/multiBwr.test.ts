@@ -59,7 +59,7 @@ test("3. OLED : frame propre (1 024 o lus dans le tampon SSD1306), ACK POUR l'é
 test("3 bis. mesures entre les animations : l'écran capteur ne remplace une image fixe de l'OLED qu'après 5 minutes, jamais une animation", () => {
   assert.ok(code.includes("s.holdUntilMs = millis() + 300000UL"));
   assert.match(code, /if \(\(int32_t\)\(s\.holdUntilMs - now\) > 0\) return;/);
-  assert.match(code, /if \(!s\.playing && \(int32_t\)\(s\.holdUntilMs - millis\(\)\) <= 0\) podoaSensorScreen\(\);/);
+  assert.match(code, /if \(!s\.haveRead && !s\.playing && \(int32_t\)\(s\.holdUntilMs - millis\(\)\) <= 0\) podoaSensorScreen\(\);/);   // avec une mesure, podoaPages() prend la main (31/10/2026)
 });
 
 test("4. DHT22 : D3 + envoi au serveur déjà validés, exigés par la variante ; les grandeurs sont déclarées à l'enregistrement", () => {

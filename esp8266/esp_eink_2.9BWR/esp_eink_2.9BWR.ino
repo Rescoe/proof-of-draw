@@ -185,6 +185,11 @@ static void podoaService();
 #define POD_FRAME_CHUNK 1   // PROFIL DE DISTRIBUTION (29/10/2026) : frame téléchargée par morceaux (tas TLS étroit du BWR)
 #endif
 #define POD_FRAME_CHUNK_LEN 2368u   // 4 736 / 2 : un morceau ne traverse jamais la frontière noir / rouge
+// POD_VOTE_CHUNK = 1 (31/10/2026) : le contenu du candidat à voter est lu par morceaux (/api/candidate-frame?off=&len=), tampon TLS de 4 Ko. Sans cela, le BWR + OLED (tas le plus étroit) plantait
+// dans la poignée de main TLS du vote (16 Ko de tampon + 4 736 o de travail) et redémarrait SANS voter. 0 = lecture d une traite d avant.
+#ifndef POD_VOTE_CHUNK
+#define POD_VOTE_CHUNK 1
+#endif
 #define POD_TLS_RX          4096    // tampon de réception TLS : un morceau + ses en-têtes tiennent largement (mesuré : un corps de 4 Ko passe avec 3 072)
 #if POD_SENSOR_DISPLAY && !POD_SENSOR_DHT22
 #error "POD_SENSOR_DISPLAY exige POD_SENSOR_DHT22 = 1"
@@ -2092,7 +2097,11 @@ bool doValidateV2(const String& candidateId, const String& screenName, size_t by
   }
   logHeapState("VALIDATE2-BEFORE");
   PodCheck chk;
+#if POD_VOTE_CHUNK
+  bool ok = podFetchAndCheckChunked(String(SERVER_URL) + "/api/candidate-frame?candidateId=" + candidateId, kind, bytes, scratch, scratchLen, &chk);
+#else
   bool ok = podFetchAndCheck(String(SERVER_URL) + "/api/candidate-frame?candidateId=" + candidateId, kind, bytes, scratch, scratchLen, &chk);
+#endif
   free(scratch);
   if (!ok) {
     Serial.printf_P(PSTR("[VALIDATE2] lecture/calcul impossible (http=%d, %u/%u octets)\n"), chk.http, (unsigned)chk.bytes, (unsigned)bytes);
@@ -2417,6 +2426,8 @@ struct St {
   uint32_t drawnMs = 0; bool needSensor = true;
 #if POD_MULTI_OLED
   uint32_t holdUntilMs = 0;                      // image fixe de l'OLED : les mesures ne la remplacent qu'après ce délai
+  uint8_t  pg = 0;                               // page mesure affichée : 0 aucune, 1 température, 2 humidité (cycle : œuvre, température, humidité, comme le TFT 1,8″)
+  uint32_t pageUntilMs = 0, nextPagesMs = 0;     // fin de la page courante ; prochain passage des pages quand une animation tourne
 #endif
 };
 static St g;
@@ -2544,12 +2555,56 @@ static void podoaSensorScreen() {
   oled.display();
   s.drawnMs = millis(); s.needSensor = false;
 }
+#if POD_MULTI_OLED
+static const uint32_t PODOA_PAGE_MS = 6000UL;    // durée d'une page de mesure
+static const uint32_t PODOA_ART_MS  = 30000UL;   // durée de l'animation entre deux passages des pages
+/** Page de mesure plein écran de l'OLED : 1 = température, 2 = humidité (grands chiffres), âge de la mesure et Wi-Fi en bas. Rien n'est inventé : appelée seulement quand une mesure existe. */
+static void podoaSensorPage(uint8_t page) {
+  if (!ensureOLEDReady()) return;
+  podoa::St& s = podoa::g;
+  oled.clearDisplay(); oled.cp437(true); oled.setTextColor(SSD1306_WHITE);
+  char b[24];
+  const int v = page == 1 ? s.t10 : s.h10;
+  snprintf(b, sizeof b, "%d.%d", (int)(v / 10), (int)abs(v % 10));
+  oled.setTextSize(4); oled.setCursor(0, 8); oled.print(b);
+  if (page == 1) { oled.setTextSize(2); oled.setCursor(104, 8); oled.write((uint8_t)248); oled.print(F("C")); } else { oled.setTextSize(2); oled.setCursor(104, 8); oled.print(F("%")); }
+  oled.setTextSize(1); oled.setCursor(0, 42); oled.print(page == 1 ? F("temperature") : F("humidite"));
+  const uint32_t ageMin = (millis() - s.readAtMs) / 60000UL;
+  oled.setCursor(0, 49);
+  if (ageMin < 1) oled.print(F("mesure a l'instant"));
+  else if (ageMin < 90) { snprintf(b, sizeof b, "mesure il y a %lu min", (unsigned long)ageMin); oled.print(b); }
+  else { snprintf(b, sizeof b, "mesure il y a %lu h", (unsigned long)(ageMin / 60UL)); oled.print(b); }
+  oled.setCursor(0, 57);
+  if (WiFi.status() == WL_CONNECTED) { snprintf(b, sizeof b, "wifi %d dBm  bloc #%d", (int)WiFi.RSSI(), currentBlockIndex); oled.print(b); } else oled.print(F("wifi : deconnecte"));
+  oled.display();
+  s.drawnMs = millis(); s.needSensor = false;
+}
+/** Cycle de l'OLED (appelé à chaque tour, réseau libre) : avec une animation, elle tourne PODOA_ART_MS puis température et humidité passent PODOA_PAGE_MS chacune, puis l'animation REPART de l'image 0 (son tampon a été
+ *  repeint). Sans animation, une fois le délai de l'image fixe écoulé, les deux pages alternent. Retourne vrai quand une page occupe l'écran (le service ne dessine alors rien d'autre). Sans mesure : faux. */
+static bool podoaPages(uint32_t now) {
+  podoa::St& s = podoa::g;
+  if (!s.haveRead) return false;
+  if (s.pg != 0) {
+    if ((int32_t)(now - s.pageUntilMs) < 0) return true;
+    if (s.pg == 1) { s.pg = 2; s.pageUntilMs = now + PODOA_PAGE_MS; podoaSensorPage(2); return true; }
+    if (!s.on) { s.pg = 1; s.pageUntilMs = now + PODOA_PAGE_MS; podoaSensorPage(1); return true; }    // sans animation : les deux pages alternent
+    s.pg = 0; s.nextPagesMs = now + PODOA_ART_MS; s.pl.reset(s.info); s.playing = true;               // l'animation repart de l'image 0
+    return false;
+  }
+  if (s.on) {
+    if ((int32_t)(now - s.nextPagesMs) < 0) return false;
+    s.playing = false; s.pg = 1; s.pageUntilMs = now + PODOA_PAGE_MS; podoaSensorPage(1); return true;
+  }
+  if ((int32_t)(s.holdUntilMs - now) > 0) return false;                                               // une image fixe de l'OLED est affichée : mesures plus tard
+  s.pg = 1; s.pageUntilMs = now + PODOA_PAGE_MS; podoaSensorPage(1); return true;
+}
+#endif
 static void podoaOnRead(bool ok, int t10, int h10) {
   podoa::St& s = podoa::g;
   if (ok) { s.t10 = (int16_t)t10; s.h10 = (int16_t)h10; s.readAtMs = millis(); s.haveRead = true; s.readFailed = false; } else if (!s.haveRead) s.readFailed = true;
   s.needSensor = true;
 #if POD_MULTI_OLED
-  if (!s.playing && (int32_t)(s.holdUntilMs - millis()) <= 0) podoaSensorScreen();
+  if (!s.haveRead && !s.playing && (int32_t)(s.holdUntilMs - millis()) <= 0) podoaSensorScreen();   // avec une mesure, podoaPages() prend la main (température puis humidité)
 #else
   if (!s.playing) podoaSensorScreen();
 #endif
@@ -2587,6 +2642,9 @@ static void podoaService() {
     return;
   }
   if (podoaNetDueSoon()) return;
+#if POD_MULTI_OLED
+  if (podoaPages(now)) return;
+#endif
   // 2. lecture
   if (s.on) {
     if (!ensureOLEDReady() || ESP.getFreeHeap() < podoa::MIN_PLAY_HEAP) return;
@@ -2644,7 +2702,7 @@ static bool oledFrameFlow(const String& frameId, const String& frameSource) {
   podoaAfterFrame(true);                                                 // image fixe sans pointeur : l'animation précédente s'arrête (avec pointeur, le clip arrive ensuite)
   Wire.begin(D6, D4); Wire.setClock(100000);
   oled.display();
-  s.drawnMs = millis(); s.needSensor = false; s.holdUntilMs = millis() + 300000UL;
+  s.drawnMs = millis(); s.needSensor = false; s.holdUntilMs = millis() + 300000UL; s.pg = 0;
   if (!ackFrame(frameId, "oled096")) {                                   // ACK contrôlé : sans lui la frame n'est PAS terminée et le serveur la reproposera au prochain pull
     Serial.printf_P(PSTR("[FETCHFRAME-OLED] ACK refuse ou impossible frameId=%s — frame reproposee au prochain pull\n"), frameId.c_str());
     return false;
