@@ -1,5 +1,5 @@
 {
-  "note": "Build ESP8266 multiscreen e-ink 2,7″ BW + OLED (sans DHT22) avec portail Wi-Fi ET client OTA Internet, vote par morceaux (01/11/2026). Faits PUBLICS ; binaire sous canary-builds/ (ignoré par git). NON essayé sur la carte.",
+  "note": "Build ESP8266 multiscreen e-ink 2,7″ BW + OLED 0,96″ (sans DHT22) avec portail Wi-Fi ET client OTA Internet et vote par morceaux (01/11/2026). Description corrigee le 01/11/2026 (audit) : l outil ecrivait par erreur BWR 2,9 ; le binaire n a PAS ete reconstruit. Faits PUBLICS ; binaire sous canary-builds/ (ignore par git). NON essaye sur la carte.",
   "dir": "canary-builds/bwr-portal-2026-10-22/20261101-110806-ota/out",
   "version": "multiscreen-2.9",
   "otaSeq": 18,
