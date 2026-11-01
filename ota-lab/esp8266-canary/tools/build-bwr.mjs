@@ -60,7 +60,7 @@ try { const s = /SECRET_WIFI_SSID\s+"([^"]+)"/.exec(fs.readFileSync(path.join(SR
 // CONTRÔLE WI-FI FERMÉ (audit du 31/10/2026) : pour le BWR (hors build de migration), l'absence des identifiants doit être ÉTABLIE — valeurs interdites (secrets.h connus + ~/.pod-wifi-forbidden.txt) absentes des octets, marqueur « Wi-Fi hors binaire » présent,
 // marqueur « Wi-Fi compilé » absent, aucun secrets.h réel dans le dossier compilé. Résultat indéterminé = ÉCHEC (aucune valeur n'est jamais affichée).
 let wifiGuard = null; const wifiFindings = [];
-if (!MIG && (arg("--target") ?? "bwr") === "bwr") {
+if (!MIG) {
   const r = checkImage(bin, defaultForbidden(ROOT));
   wifiFindings.push(...r.findings, ...buildDirFindings(sk));
   wifiGuard = wifiFindings.length === 0; if (wifiGuard) ssidAbsent = true;   // ssidAbsent n'est vrai que si le contrôle fermé est passé (jamais déduit d'un secrets.h illisible)

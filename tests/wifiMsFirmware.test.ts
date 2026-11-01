@@ -19,7 +19,10 @@ export function stripMs(src: string): string {
     if (skip) { if (line.includes("POD_MS_END")) skip = false; continue; }
     out.push(line);
   }
-  return out.join("\n").replace('#define FIRMWARE_VERSION "multiscreen-2.7"', '#define FIRMWARE_VERSION "multiscreen-2.5"');   // seule différence voulue hors marqueurs : la version déclarée
+  return out.join("\n")
+    .replace(/#if POD_VOTE_CHUNK\n[^\n]*podFetchAndCheckChunked[^\n]*\n#else\n([^\n]*\n)#endif\n/, "$1")   // 01/11/2026 : vote par morceaux, ramené à la lecture d'avant
+    .replace(/#if POD_WIFI_FROM_RECORD\n  Serial\.print\(F\("\[WIFI\] mode: "\)\)[^\n]*\n#endif\n/, "")
+    .replace('#define FIRMWARE_VERSION "multiscreen-2.7"', '#define FIRMWARE_VERSION "multiscreen-2.5"');   // seule différence voulue hors marqueurs : la version déclarée
 }
 export function msViolations(i: string): string[] {
   const v: string[] = [];

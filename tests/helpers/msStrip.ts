@@ -7,6 +7,10 @@ export function stripMs(src: string): string {
     if (skip) { if (line.includes("POD_MS_END")) skip = false; continue; }
     out.push(line);
   }
-  return out.join("\n").replace('#define FIRMWARE_VERSION "multiscreen-2.7"', '#define FIRMWARE_VERSION "multiscreen-2.5"');
+  // 01/11/2026 : lecture du candidat par morceaux (POD_VOTE_CHUNK) et ligne de marqueur Wi-Fi au démarrage : ramenées au texte d'avant
+  return out.join("\n")
+    .replace(/#if POD_VOTE_CHUNK\n[^\n]*podFetchAndCheckChunked[^\n]*\n#else\n([^\n]*\n)#endif\n/, "$1")
+    .replace(/#if POD_WIFI_FROM_RECORD\n  Serial\.print\(F\("\[WIFI\] mode: "\)\)[^\n]*\n#endif\n/, "")
+    .replace('#define FIRMWARE_VERSION "multiscreen-2.7"', '#define FIRMWARE_VERSION "multiscreen-2.5"');
 }
 export const isMsIno = (p: string): boolean => p.split("\\").join("/").endsWith("esp8266/esp_eink_2.7BW_OLED/esp_eink_2.7BW_OLED.ino");

@@ -116,6 +116,10 @@
 #define POD_OTA_SEQ 7
 #endif
 #define POD_OTA_FAMILY "esp8266-multiscreen"
+// POD_VOTE_CHUNK = 1 (01/11/2026) : le candidat à voter est lu par morceaux (/api/candidate-frame?off=&len=), tampon TLS de 4 Ko (même correctif que multibwr-2.2). 0 = lecture d'une traite d'avant. NON essayé sur la carte.
+#ifndef POD_VOTE_CHUNK
+#define POD_VOTE_CHUNK 1
+#endif
 #if POD_WIFI_PORTAL && !POD_WIFI_FROM_RECORD
   #error "POD_WIFI_PORTAL exige POD_WIFI_FROM_RECORD = 1"
 #endif
@@ -125,6 +129,7 @@
 #define POD_WIFI_REC_OFF 1540          // avant l'inclusion de pod_wifi_cfg.h : enregistrement Wi-Fi à 1540..1644 (zone réservée jusqu'à 1667)
 #if POD_WIFI_FROM_RECORD
   #include "pod_wifi_cfg.h"
+  static const char kPodWifiMarker[] PROGMEM __attribute__((used)) = "PODWIFI:record-v1";   // marqueur lu par le contrôle de publication : le Wi-Fi vient de la flash, jamais du binaire
   #if POD_WIFI_PORTAL
     #include "pod_wifi_portal_esp.h"
   #endif
@@ -2255,7 +2260,11 @@ bool doValidateV2(const String& candidateId, const String& screenName, size_t by
     scratch = (uint8_t*)malloc(scratchLen);
     if (!scratch) { Serial.println(F("[VALIDATE2] malloc scratch impossible")); return false; }
   }
+#if POD_VOTE_CHUNK
+  bool ok = podFetchAndCheckChunked(String(SERVER_URL) + "/api/candidate-frame?candidateId=" + candidateId, kind, bytes, scratch, scratchLen, &chk);
+#else
   bool ok = podFetchAndCheck(String(SERVER_URL) + "/api/candidate-frame?candidateId=" + candidateId, kind, bytes, scratch, scratchLen, &chk);
+#endif
   free(scratch);
   if (!ok) {
     Serial.printf_P(PSTR("[VALIDATE2] lecture/calcul impossible (http=%d, %u/%u octets)\n"), chk.http, (unsigned)chk.bytes, (unsigned)bytes);
@@ -2598,6 +2607,9 @@ static void sensorService() {
 void setup() {
   Serial.begin(115200);
   Serial.println(F("\n[BOOT] Proof-of-Draw multiscreen v2.0"));
+#if POD_WIFI_FROM_RECORD
+  Serial.print(F("[WIFI] mode: ")); Serial.println(FPSTR(kPodWifiMarker));   // lit le marqueur : l'éditeur de liens ne peut pas l'écarter
+#endif
 #if POD_RENDER_V1 && POD_CANARY
   canaryBoot();
 #endif
