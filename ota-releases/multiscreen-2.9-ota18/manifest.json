@@ -1,0 +1,31 @@
+{
+  "schema": "pod-ota-manifest-v2",
+  "releaseId": "multiscreen-2.9-ota18",
+  "family": "esp8266-multiscreen",
+  "profile": {
+    "board": "esp8266",
+    "screen": "multiscreen",
+    "flash": "4M2M"
+  },
+  "channel": "canary",
+  "firmwareVersion": "multiscreen-2.9",
+  "otaSeq": 18,
+  "minOtaSeq": 1,
+  "revokedSeqs": [],
+  "url": "/firmware/multiscreen-2.9-ota18/image.bin",
+  "size": 586768,
+  "sha256": "f5d1ac8a518abccfc9a062e6907faf2f1041342c9f9e4e952bfc3d255c7cd212",
+  "wave": {
+    "of": 100,
+    "upTo": 100
+  },
+  "canaryDevices": [
+    "dev_KAD6PKC4"
+  ],
+  "notes": "Vote par morceaux (candidat lu avec un tampon TLS de 4 Ko) pour le multiscreen e-ink 2,7 + OLED, sans code capteur.",
+  "signature": {
+    "alg": "rsa2048-pkcs1-sha256",
+    "keyId": "ota-a",
+    "sig": "E4lbxptVUTAN6NR9C3XsK43PhXS4Ek4UnVc5hJd8wVrzm1cFppOKyxvDhAN8pFV6fiVR1aiJkxnRzcjtm5Erk+L0egfgHC5HHXuTyaqer4h1E50LoCvF0hZDBTHjLp9QiW6QjtfOa+FsmN8KzA6YIFMk1EKLbv1maPAaZ1U0oq3d54J3coItBwzjoxCgS/yQRCBkP1pTKmlvSDvrzay4KwT/sN6k55XhczuJzHil0lkG0G4WmVEcc5+kKducbnudHOYBu1f78NMxG7NedJ0AuOTiIOrmHsS8YLNy7ynvEPm0C522dsUef7SGk2kY882X8GQq5THXPa5dNezdv4zVfw=="
+  }
+}
