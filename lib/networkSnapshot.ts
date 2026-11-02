@@ -10,6 +10,7 @@ import { readShownRecords, type DisplayKV } from "@/lib/displayState";
 import { animCapable, animOledAuxCapable } from "@/lib/anim/pointer";
 import { publicDeviceId } from "@/lib/network/publicId";
 import { hardwareOfFirmware, type Hardware } from "@/lib/network/hardware";
+import { filterPublicLatest, publicKindsOf } from "@/lib/measurePrivacy";
 import { MEASURE_INDEX_KEY, MEASURE_ONLINE_MS, SENSOR_SCREEN, measKey, measureKindsOf, showsMeasures, toDeviceMeasures, type DeviceMeasures } from "@/lib/measures";
 
 // Ré-exporté pour compatibilité avec les composants qui importent ScreenType
@@ -160,9 +161,10 @@ export function toNetworkDevice(
 ): NetworkDevice {
   // « sensor » est un pseudo-écran (carte sans écran) : jamais un écran de la vue réseau
   const screens = (Array.isArray(device.screens) ? device.screens : []).filter((s) => s !== SENSOR_SCREEN);
-  const kinds = measureKindsOf(device);
+  const kinds = publicKindsOf(device);   // 02/11/2026 : SEULES les grandeurs publiques sortent (lib/measurePrivacy.ts) ; le reste du module ne voit jamais une grandeur privée
   // Mesures : PUBLIQUES par défaut ; si le propriétaire a décoché « Mesures publiques » (measuresPublic === false), rien n'est exposé dans la vue réseau, pas même l'heure de la dernière mesure.
-  const measures = kinds.length > 0 && device.measuresPublic !== false ? toDeviceMeasures(kinds, latestMeasureRaw) : undefined;
+  const measures = kinds.length > 0 ? toDeviceMeasures(kinds, latestMeasureRaw) : undefined;
+  if (measures) measures.latest = filterPublicLatest(measures.latest, kinds);   // la dernière mesure brute porte TOUTES les grandeurs : on la réduit aux publiques
   const showMeasures = showsMeasures(device, !!measures?.latest);   // une déclaration de capteur sans mesure reçue (aucun capteur branché) n'affiche rien
   // Un capteur est en ligne s'il a MESURÉ récemment (sa fiche n'est réécrite que toutes les 12 h)
   const measuredAtMs = measures?.latest ? measures.latest.t * 1000 : 0;

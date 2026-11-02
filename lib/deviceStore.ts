@@ -8,6 +8,7 @@ import { decrementDeviceCount, incrementDeviceCount } from "@/lib/rateLimit";
 import type { SceneCapability } from "@/lib/scene/spec";
 import { generateLinkCode, type LinkCodeStatus } from "@/lib/linkCode";
 import { isSensorScreens, measureKindsOf, type MeasureKind } from "@/lib/measures";
+import { chosenPublicKinds } from "@/lib/measurePrivacy";
 import { fixedWorksScreensOf } from "@/lib/fixedWorks";
 import { participatesInVoteNetwork } from "@/lib/voteCapability";
 import { summarizePool, type PoolSummary } from "@/lib/electorate";
@@ -25,6 +26,7 @@ export interface Device {
   lastVoteAt?: number;             // dernier vote enregistré
   timezone?: string;               // fuseau IANA choisi par le propriétaire (heure du cartel et des mesures) ; absent = Europe/Paris
   measuresPublic?: boolean;        // mesures (capteurs) visibles dans la vue réseau et l'historique public ; absent ou true = PUBLIQUES (défaut), false = privées (le propriétaire décoche)
+  measuresPublicKinds?: string[];   // grandeurs PUBLIQUES choisies par le propriétaire (liste blanche, lib/measurePrivacy.ts) ; absent = défaut du registre (température et humidité). Sans effet si measuresPublic === false.
   artistId?:  string;              // lien vers ArtistProfile
   pairCode:   string;   // sensible — jamais exposé publiquement
   lastSeen:   number;
@@ -132,6 +134,7 @@ export interface OwnedDevice {
   deviceName?: string;
   timezone?: string;
   measuresPublic?: boolean;
+  measuresPublicKinds?: string[];
   artistId?:  string;
   screens:    string[];
   firmware:   string;
@@ -215,6 +218,7 @@ export function toOwnedDevice(d: Device): OwnedDevice {
     deviceName:         d.deviceName,
     timezone:           d.timezone,
     measuresPublic:     d.measuresPublic !== false,
+    measuresPublicKinds: chosenPublicKinds(d),
     artistId:           d.artistId,
     screens:            d.screens,
     firmware:           d.firmware,
@@ -830,6 +834,15 @@ export async function setMeasuresPublic(deviceId: string, enabled: boolean): Pro
   const device = await getDevice(deviceId);
   if (!device) return null;
   device.measuresPublic = enabled;
+  await saveDevice(device);
+  return device;
+}
+
+/** Choisit les grandeurs PUBLIQUES de l'appareil (liste blanche nettoyée par l'appelant : lib/measurePrivacy.sanitizePublicKinds). Réglage du propriétaire. */
+export async function setMeasuresPublicKinds(deviceId: string, kinds: string[]): Promise<Device | null> {
+  const device = await getDevice(deviceId);
+  if (!device) return null;
+  device.measuresPublicKinds = kinds;
   await saveDevice(device);
   return device;
 }

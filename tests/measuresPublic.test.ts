@@ -31,7 +31,7 @@ test("vue réseau : si le propriétaire a décoché (measuresPublic = false), AU
 test("route capteur : l'historique public répond 404 identique pour « privé » et « jamais mesuré », accepte ?hours= jusqu'à 31 jours, sans identifiant d'artiste", () => {
   const route = read("app", "api", "sensor", "route.ts");
   const pub = route.slice(route.indexOf('sp.get("public") === "1"'), route.indexOf("if (!(await sessionOwnsDevice(deviceId)))"));
-  assert.match(pub, /!indexed \|\| !device \|\| device\.measuresPublic === false/);
+  assert.match(pub, /!indexed \|\| !device \|\| allowed\.length === 0/);   // 02/11/2026 : par grandeur (publicKindsOf inclut l'interrupteur général)
   assert.match(pub, /aucune mesure"[^)]*status: 404/);
   assert.match(pub, /PUBLIC_MAX_HOURS/);
   assert.match(route, /const PUBLIC_MAX_HOURS = 744/);

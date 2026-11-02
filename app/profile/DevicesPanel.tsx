@@ -18,7 +18,8 @@ import { animCapable, ANIM_POINTER_FIRMWARE } from "@/lib/anim/pointer";
 import { InlineEdit } from "./InlineEdit";
 import { GiveDeviceModal } from "./GiveDeviceModal";
 import { SensorButton, SensorSummary } from "./SensorPanel";
-import { isSensorScreens, showsMeasures } from "@/lib/measures";
+import { MEASURE_KINDS, isSensorScreens, showsMeasures } from "@/lib/measures";
+import { isShareable } from "@/lib/measurePrivacy";
 
 // ── Utilitaires ──────────────────────────────────────────────────────────────
 
@@ -324,6 +325,20 @@ function ManagePanel({ d, devices, profile, tab, setTab, onReload, onGive, onAsk
             >
               <Switch name="Mesures publiques" on={d.measuresPublic !== false} busy={busy === "meas"} onChange={() => toggle("meas", "measures-public", { enabled: d.measuresPublic === false })} />
             </SettingRow>
+          )}
+          {(d.sensors?.length ?? 0) > 0 && d.measuresPublic !== false && (
+            <div role="group" aria-label="Grandeurs publiques" style={{ padding: "0.2rem 0 0.4rem 0.9rem", borderLeft: "2px solid var(--border)", marginBottom: "0.4rem" }}>
+              <p style={{ ...muted, margin: "0 0 4px" }}>Choisissez grandeur par grandeur ce qui est public. La qualité de l&apos;air peut révéler si quelqu&apos;un est chez vous : elle est privée tant que vous ne la publiez pas. Une grandeur privée n&apos;apparaît ni dans la vue réseau, ni dans votre profil public, et vous la voyez toujours dans « Mesures ».</p>
+              {(d.sensors ?? []).filter(isShareable).map((k) => {
+                const on = (d.measuresPublicKinds ?? []).includes(k);
+                const next = on ? (d.measuresPublicKinds ?? []).filter((x) => x !== k) : [...(d.measuresPublicKinds ?? []), k];
+                return (
+                  <SettingRow key={k} title={`${MEASURE_KINDS[k].icon} ${MEASURE_KINDS[k].label}`} desc={on ? "🌐 Public : visible de tous." : "🔒 Privé : visible de vous seul."}>
+                    <Switch name={`${MEASURE_KINDS[k].label} publique`} on={on} busy={busy === `meas-${k}`} onChange={() => toggle(`meas-${k}`, "measures-public", { kinds: next })} />
+                  </SettingRow>
+                );
+              })}
+            </div>
           )}
           <div style={{ padding: "0.7rem 0", borderTop: "1px solid var(--border)" }}>
             <div style={{ fontSize: "0.85rem", fontWeight: 600 }}>Fuseau horaire de l&apos;écran</div>

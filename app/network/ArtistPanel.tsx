@@ -23,7 +23,7 @@ type Props = {
 export function ArtistPanel({ artist, displays, isolated, onToggleIsolation, onSelectDevice, onClose }: Props) {
   const summary = useMemo(() => summarizeArtist(artist, displays), [artist, displays]);
   // Capteurs publics de l'artiste (le snapshot n'expose `measures` que si le propriétaire les a laissées publiques). L'explorateur ne se monte (et ne lit rien) qu'au clic.
-  const sensors = artist.devices.filter((d) => d.measures && d.measures.kinds.some((k) => k === "temp" || k === "hum"));
+  const sensors = artist.devices.filter((d) => d.measures && d.measures.kinds.length > 0);
   const [openSensor, setOpenSensor] = useState<string | null>(null);
   const hardware = (Object.entries(artist.hardwareCounts) as [keyof typeof HARDWARE_LABEL, number][]).filter(([, count]) => count > 0);
 

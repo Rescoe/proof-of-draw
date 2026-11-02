@@ -16,19 +16,21 @@ export const measGateKey = (deviceId: string) => `meas:gate:${deviceId}`;
 
 export type MeasureKind = "temp" | "hum" | "voc" | "vocidx" | "rssi" | "lat" | "dl";
 /** Valeurs ENTIÈRES. scale : 10 = stockée en dixièmes d'unité (215 = 21,5 °C) ; 1 = entier tel quel. primary : affichée sur les nœuds du réseau ; sinon DIAGNOSTIC (panneaux seulement). */
-export interface MeasureKindInfo { label: string; unit: string; icon: string; min: number; max: number; scale: 1 | 10; primary: boolean }
+export interface MeasureKindInfo { label: string; unit: string; icon: string; min: number; max: number; scale: 1 | 10; primary: boolean;
+  /** Confidentialité PAR DÉFAUT (lib/measurePrivacy.ts) : "public" = visible de tous tant que le propriétaire n'a rien choisi ; "private" = privée jusqu'à ce qu'il la publie ; "never" = ne sort JAMAIS du profil du propriétaire. Une grandeur absente du registre est traitée comme "never". */
+  visibility: "public" | "private" | "never" }
 export const MEASURE_KINDS: Record<MeasureKind, MeasureKindInfo> = {
-  temp: { label: "Température", unit: "°C", icon: "🌡", min: -400, max: 800, scale: 10, primary: true },
-  hum:  { label: "Humidité", unit: "%", icon: "💧", min: 0, max: 1000, scale: 10, primary: true },
+  temp: { label: "Température", unit: "°C", icon: "🌡", min: -400, max: 800, scale: 10, primary: true, visibility: "public" },
+  hum:  { label: "Humidité", unit: "%", icon: "💧", min: 0, max: 1000, scale: 10, primary: true, visibility: "public" },
   // Qualité de l'air (26/10/2026) : sortie BRUTE du SGP40 (SRAW_VOC, « ticks » 0..65535, plus bas = plus de gaz organiques), compensée en température/humidité par la carte. Ce n'est PAS l'indice VOC 0..500 de Sensirion (algorithme à part, plus tard) : la valeur est relative à la puce et à son ancienneté.
-  voc:  { label: "Gaz (VOC brut)", unit: "ticks", icon: "🌫", min: 0, max: 65535, scale: 1, primary: false },
+  voc:  { label: "Gaz (VOC brut)", unit: "ticks", icon: "🌫", min: 0, max: 65535, scale: 1, primary: false, visibility: "never" },
   // Indice COV de Sensirion (28/10/2026) : sortie de l'algorithme officiel « Gas Index Algorithm » appliqué au brut du SGP40 à 1 Hz sur la carte — 1..500, 100 = air habituel du lieu (la ligne de base s'adapte sur ~12 h), plus haut = plus de gaz. 0 est absent (apprentissage).
-  vocidx: { label: "Qualité de l'air (Sensirion)", unit: "", icon: "🌫", min: 1, max: 500, scale: 1, primary: false },
+  vocidx: { label: "Qualité de l'air (Sensirion)", unit: "", icon: "🌫", min: 1, max: 500, scale: 1, primary: false, visibility: "private" },
   // Diagnostic de la liaison Wi-Fi de la carte (dans la MÊME mesure : aucune commande Redis de plus) : puissance du signal reçu et temps de réponse du serveur
-  rssi: { label: "Signal Wi-Fi", unit: "dBm", icon: "📶", min: -127, max: 0, scale: 1, primary: false },
-  lat:  { label: "Latence serveur", unit: "ms", icon: "⏱", min: 0, max: 60000, scale: 1, primary: false },
+  rssi: { label: "Signal Wi-Fi", unit: "dBm", icon: "📶", min: -127, max: 0, scale: 1, primary: false, visibility: "private" },
+  lat:  { label: "Latence serveur", unit: "ms", icon: "⏱", min: 0, max: 60000, scale: 1, primary: false, visibility: "private" },
   // Débit de téléchargement mesuré par la carte : durée de lecture d'un fichier STATIQUE de 4 Ko servi par le CDN (public/speedtest.bin : aucune commande Redis, aucune fonction serveur). Débit EFFECTIF de bout en bout (Internet + Wi-Fi + module + UART de la carte), pas la capacité de la box.
-  dl:   { label: "Débit descendant (test 4 Ko)", unit: "kbit/s", icon: "⬇", min: 0, max: 1000000, scale: 1, primary: false },
+  dl:   { label: "Débit descendant (test 4 Ko)", unit: "kbit/s", icon: "⬇", min: 0, max: 1000000, scale: 1, primary: false, visibility: "private" },
 };
 export const MEASURE_KIND_IDS = Object.keys(MEASURE_KINDS) as MeasureKind[];
 /** Groupes d'affichage : l'environnement (température, humidité) est SÉPARÉ de la qualité de la liaison (signal, latence, débit). */

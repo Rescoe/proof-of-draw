@@ -9,6 +9,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { redis } from "@/lib/redis";
 import { getDevice, writeDeviceKey } from "@/lib/deviceStore";
 import { checkRateLimit, getIP, tooManyRequests } from "@/lib/rateLimit";
+import { filterPublic, publicKindsOf } from "@/lib/measurePrivacy";
 import { sessionOwnsDevice } from "@/lib/session";
 import {
   MEASURE_KEEP, MEASURE_PRESENCE_REFRESH_MS, MEASURE_TTL_SEC, clampHours, decodeMeasures, encodeMeasure, measGateKey, measKey, measureKindsOf, MEASURE_INDEX_KEY, measureMinIntervalSec, parseMeasureBatch, MEASURE_KIND_IDS, summarize, type Measure,
@@ -75,13 +76,17 @@ export async function GET(req: NextRequest) {
       // Historique PUBLIC, sans identifiant d'artiste : sauf si le propriétaire a décoché « Mesures publiques » pour cet appareil ; 48 h par défaut, jusqu'à 31 jours (?hours=).
       // Réponse identique (404) pour « jamais mesuré » et « mesures privées » : rien ne se déduit de la requête. Seuls les appareils DÉCLARÉS capteurs sont lisibles (index meas:devices ; 1 SISMEMBER).
       const [indexed, device] = await Promise.all([redis.sismember("meas:devices", deviceId), getDevice(deviceId)]);
-      if (!indexed || !device || device.measuresPublic === false) return NextResponse.json({ error: "aucune mesure" }, { status: 404 });
+      const allowed = device ? publicKindsOf(device) : [];   // 02/11/2026 : confidentialité PAR GRANDEUR (lib/measurePrivacy.ts) ; aucune grandeur publique = même 404 que « jamais mesuré »
+      if (!indexed || !device || allowed.length === 0) return NextResponse.json({ error: "aucune mesure" }, { status: 404 });
       const wanted = sp.get("hours") ? Math.min(clampHours(sp.get("hours")), PUBLIC_MAX_HOURS) : PUBLIC_HOURS;
       const raws = await redis.lrange(measKey(deviceId), 0, MEASURE_KEEP - 1);
       const all = decodeMeasures(raws as unknown[]);
-      const newest = all[0]?.t ?? 0;
-      const measures = all.filter((m) => m.t >= newest - wanted * 3600);
-      return NextResponse.json({ deviceId, measures }, { headers: { "Cache-Control": "public, s-maxage=120, stale-while-revalidate=300" } });
+      // le filtre s'applique AVANT la réponse et donc avant le cache partagé du CDN ; l heure de référence vient des seules mesures publiques (l'heure d'une grandeur privée ne fuit pas)
+      const pub = filterPublic(all, allowed);
+      const newestPub = pub[0]?.t ?? 0;
+      const measures = pub.filter((m) => m.t >= newestPub - wanted * 3600);
+      // pas de stale-while-revalidate : un passage en privé doit cesser d'être servi au bout de 2 min au plus (cache du CDN, non purgeable)
+      return NextResponse.json({ deviceId, kinds: allowed, measures }, { headers: { "Cache-Control": "public, s-maxage=120" } });
     }
 
     if (!(await sessionOwnsDevice(deviceId))) return NextResponse.json({ error: "Accès refusé" }, { status: 403 });
