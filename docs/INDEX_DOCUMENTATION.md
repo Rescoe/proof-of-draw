@@ -53,3 +53,7 @@ Toujours citer date, appareil, firmware, commit/release et journal lorsque dispo
 ## Exclus du Git public
 
 Secrets, cookies, clés privées, dumps complets de flash, journaux contenant un jeton, répertoires de build et sauvegardes locales non nettoyées. Les empreintes, manifests publics, verdicts nettoyés et procédures reproductibles peuvent être suivis.
+
+## Mesures des capteurs
+
+`docs/VUE_CAPTEURS_V2_2026_11_02.md` (courbes, œuvre, confidentialité par grandeur) puis `docs/AUDIT_IMPLEMENTATION_VUE_CAPTEURS_V3_2026_11_03.md` (état courant de la vue : Données / Œuvres / Lecture). Leviers de quota Redis : `docs/PLAN_REDIS_200K.md` § 8.

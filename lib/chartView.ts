@@ -79,34 +79,48 @@ export function visiblePoints(points: Pt[], w: Win): Pt[] {
 
 /** Étendue minimale de l'axe des valeurs (en unités AFFICHÉES) : évite qu'un capteur très stable ressemble à une montagne russe. */
 const MIN_SPAN_DISPLAY: Partial<Record<MeasureKind, number>> = { temp: 2, hum: 6, vocidx: 60, rssi: 10, lat: 200, dl: 20 };
+/** Domaine « complet » (unités affichées) : humidité 0–100 %, indice d'air 0–500 (plage Sensirion), température −10…40 °C, signal −100…−30 dBm ; latence et débit partent de 0. Élargi si une valeur sort du domaine. */
+const FULL_DOMAIN: Partial<Record<MeasureKind, [number, number | null]>> = { temp: [-10, 40], hum: [0, 100], vocidx: [0, 500], rssi: [-100, -30], lat: [0, null], dl: [0, null] };
 export interface ValueAxis { lo: number; hi: number; ticks: number[] }
-/** Axe « propre » en unités affichées pour des valeurs stockées (`stored`). L'indice d'air part toujours de 0 pour garder ses niveaux lisibles. */
-export function valueAxis(kind: MeasureKind, stored: number[]): ValueAxis | null {
-  if (stored.length === 0) return null;
-  const sc = MEASURE_KINDS[kind].scale;
-  let lo = Math.min(...stored) / sc, hi = Math.max(...stored) / sc;
-  if (kind === "vocidx") { lo = 0; hi = Math.max(hi, 200); }
-  const minSpan = MIN_SPAN_DISPLAY[kind] ?? 1;
-  if (hi - lo < minSpan) { const mid = (hi + lo) / 2; lo = mid - minSpan / 2; hi = mid + minSpan / 2; }
-  const pad = (hi - lo) * 0.08;
-  if (kind !== "vocidx") lo -= pad;
-  hi += pad;
+function niceTicks(lo: number, hi: number): ValueAxis {
   const raw = (hi - lo) / 4, mag = Math.pow(10, Math.floor(Math.log10(raw))), n = raw / mag;
   const step = (n <= 1 ? 1 : n <= 2 ? 2 : n <= 5 ? 5 : 10) * mag;
   const aLo = Math.floor(lo / step) * step, aHi = Math.ceil(hi / step) * step, ticks: number[] = [];
   for (let v = aLo; v <= aHi + step / 1000; v += step) ticks.push(Math.round(v * 1e6) / 1e6);
   return { lo: aLo, hi: aHi, ticks };
 }
+/** Axe « propre » en unités affichées pour des valeurs stockées (`stored`). Adaptatif (défaut) : centré sur la plage observée, marge de 8 %, étendue minimale ; l'indice d'air part toujours de 0. `full` : domaine utile de la grandeur. */
+export function valueAxis(kind: MeasureKind, stored: number[], opts: { full?: boolean } = {}): ValueAxis | null {
+  if (stored.length === 0) return null;
+  const sc = MEASURE_KINDS[kind].scale;
+  const dLo = Math.min(...stored) / sc, dHi = Math.max(...stored) / sc;
+  if (opts.full && FULL_DOMAIN[kind]) {
+    const [fl, fh] = FULL_DOMAIN[kind] as [number, number | null];
+    const hi = fh === null ? Math.max(dHi * 1.1, MIN_SPAN_DISPLAY[kind] ?? 1) : Math.max(fh, dHi);
+    const lo = Math.min(fl, dLo), ax = niceTicks(lo, hi);
+    return { lo, hi, ticks: ax.ticks.filter((v) => v >= lo - 1e-9 && v <= hi + 1e-9) };   // bornes EXACTES du domaine utile
+  }
+  let lo = dLo, hi = dHi;
+  if (kind === "vocidx") { lo = 0; hi = Math.max(hi, 200); }
+  const minSpan = MIN_SPAN_DISPLAY[kind] ?? 1;
+  if (hi - lo < minSpan) { const mid = (hi + lo) / 2; lo = mid - minSpan / 2; hi = mid + minSpan / 2; }
+  const pad = (hi - lo) * 0.08;
+  if (kind !== "vocidx") lo -= pad;
+  hi += pad;
+  return niceTicks(lo, hi);
+}
 
 // ── Amplitude du jour (vue « Amplitude ») ─────────────────────────────────────────────────────────────────────────────────
 export interface DayBand { start: number; end: number; min: number; max: number; avg: number; n: number }
-/** Min / max / moyenne de chaque jour LOCAL (décalage `tzMin` en minutes) qui porte au moins une mesure. Valeurs réelles, jamais interpolées ; un jour sans mesure n'a pas de bande. */
-export function dailyBands(points: Pt[], tzMin = 0): DayBand[] {
-  const off = tzMin * 60, byDay = new Map<number, { min: number; max: number; sum: number; n: number }>();
+/** Min / max / moyenne par TRANCHE alignée sur l'heure locale (`bucketSec` : 3 600 = heure, 86 400 = jour ; décalage `tzMin` en minutes). Valeurs réelles, jamais interpolées ; une tranche sans mesure n'a pas de bande. */
+export function bucketBands(points: Pt[], bucketSec: number, tzMin = 0): DayBand[] {
+  const off = tzMin * 60, by = new Map<number, { min: number; max: number; sum: number; n: number }>();
   for (const p of points) {
-    const d = Math.floor((p.t + off) / 86400), b = byDay.get(d);
-    if (!b) byDay.set(d, { min: p.v, max: p.v, sum: p.v, n: 1 });
+    const d = Math.floor((p.t + off) / bucketSec), b = by.get(d);
+    if (!b) by.set(d, { min: p.v, max: p.v, sum: p.v, n: 1 });
     else { if (p.v < b.min) b.min = p.v; if (p.v > b.max) b.max = p.v; b.sum += p.v; b.n++; }
   }
-  return [...byDay.entries()].sort((a, b) => a[0] - b[0]).map(([d, b]) => ({ start: d * 86400 - off, end: (d + 1) * 86400 - off, min: b.min, max: b.max, avg: Math.round(b.sum / b.n), n: b.n }));
+  return [...by.entries()].sort((a, b) => a[0] - b[0]).map(([d, b]) => ({ start: d * bucketSec - off, end: (d + 1) * bucketSec - off, min: b.min, max: b.max, avg: Math.round(b.sum / b.n), n: b.n }));
 }
+/** Amplitude du JOUR local (compatibilité). */
+export const dailyBands = (points: Pt[], tzMin = 0): DayBand[] => bucketBands(points, 86400, tzMin);

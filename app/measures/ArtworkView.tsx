@@ -8,7 +8,7 @@ import { exactLabel } from "@/lib/measureReading";
 
 const PAD_X = 22, PAD_T = 26, PAD_B = 34;
 const SCHEME_KEY = "pod.measuresArtScheme";
-const pill = (on: boolean): React.CSSProperties => ({ padding: "0.25rem 0.7rem", borderRadius: 999, fontSize: "0.76rem", cursor: "pointer", minHeight: 32, border: `1px solid ${on ? "var(--accent)" : "var(--border)"}`, background: on ? "rgba(124,107,255,0.14)" : "transparent", color: on ? "var(--accent)" : "var(--text2)" });
+const pill = (on: boolean): React.CSSProperties => ({ padding: "0.25rem 0.7rem", borderRadius: 999, fontSize: "0.76rem", cursor: "pointer", minHeight: 44, border: `1px solid ${on ? "var(--accent)" : "var(--border)"}`, background: on ? "rgba(124,107,255,0.14)" : "transparent", color: on ? "var(--accent)" : "var(--text2)" });
 
 /** Positions des petites bulles : éventail autour de la verticale (au-dessus si la température monte, en dessous si elle baisse). */
 function satellites(b: Bubble, r: number): { dx: number; dy: number }[] {

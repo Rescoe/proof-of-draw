@@ -67,7 +67,7 @@ test("un seul panneau, une seule période : les quatre appelants passent par Mea
   }
   const p = read("app/measures/MeasuresPanel.tsx");
   assert.equal((p.match(/useState<VizRange>/g) ?? []).length, 1, "UN seul état de période");
-  assert.ok(p.includes("<KindChart") && p.includes("<ArtworkView") && p.includes("<ReadingView"), "02/11/2026 : courbes, œuvre et lecture suivent la période du panneau");
+  assert.ok(p.includes("<SeriesChart") && p.includes("<WorksView") && p.includes("<ReadingView"), "02/11/2026 : courbes, œuvre et lecture suivent la période du panneau");
   assert.ok(p.includes("Relevés bruts") && p.includes("tableOnly"));
   const e = read("app/MeasuresExplorer.tsx");
   assert.ok(e.includes("{!controlled && ("), "pas de second sélecteur de période quand le parent la pilote");
@@ -76,7 +76,7 @@ test("un seul panneau, une seule période : les quatre appelants passent par Mea
 
 test("qualité de l'air : le panneau trace le niveau (vocidx) mais jamais le brut du SGP40", () => {
   const p = read("app/measures/MeasuresPanel.tsx");
-  assert.ok(p.includes('["temp", "hum", "vocidx"]'));
-  assert.ok(p.includes('k !== "voc"'), "le brut est exclu des grandeurs tracées");
+  assert.ok(p.includes("selectableKinds(kinds, all)"));
+  assert.ok(read("lib/chartCompose.ts").includes('k !== "voc"'), "le brut est exclu des grandeurs proposables");
   assert.ok(!/kinds={[[^]]*"voc"[^]]*]}/.test(p), "le brut n'est jamais passé à un tracé");
 });

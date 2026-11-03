@@ -16,7 +16,7 @@ test("le composant lit uniquement l'historique public, 24 h / 7 j / 30 j, group√
   assert.ok(comp.includes("<MeasuresPanel") && !/\bowner\b/.test(comp), "panneau en mode PUBLIC (jamais la prop owner)");
   const panel = read("app/measures/MeasuresPanel.tsx");
   assert.match(panel, /day: "24 h", week: "7 jours", month: "30 jours"/);
-  assert.ok(panel.includes("useDeviceMeasures(deviceId, { owner })") && panel.includes("owner = false") && panel.includes("const GROUPS"));
+  assert.ok(panel.includes("useDeviceMeasures(deviceId, { owner })") && panel.includes("owner = false") && panel.includes("selectableKinds(kinds, all)"));
   assert.ok(read("app/measures/useDeviceMeasures.ts").includes("&public=1"), "lecture publique tant que owner est faux");
 });
 test("la page n'ouvre l'onglet Capteurs que s'il existe un capteur public", () => {
