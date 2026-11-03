@@ -9,14 +9,14 @@ const comp = read("app/artists/[artistId]/ArtistSensors.tsx");
 const page = read("app/artists/[artistId]/page.tsx");
 
 test("l'API n'expose les grandeurs que si l'interrupteur « mesures publiques » n'est pas coupé", () => {
-  assert.ok(api.includes("d.measuresPublic !== false && measureKindsOf(d).length > 0 ? { sensors: measureKindsOf(d) }"));
+  assert.ok(api.includes("publicKindsOf(d).length > 0 ? { sensors: publicKindsOf(d) }"));
 });
 test("le composant lit uniquement l'historique public, 24 h / 7 j / 30 j, groupé par grandeur", () => {
   // UX jalon 4 : le profil public passe par le panneau partagé (UNE lecture publique, UNE période 24 h / 7 jours / 30 jours pour toutes les grandeurs, sections par grandeur)
   assert.ok(comp.includes("<MeasuresPanel") && !/\bowner\b/.test(comp), "panneau en mode PUBLIC (jamais la prop owner)");
   const panel = read("app/measures/MeasuresPanel.tsx");
   assert.match(panel, /day: "24 h", week: "7 jours", month: "30 jours"/);
-  assert.ok(panel.includes("useDeviceMeasures(deviceId, { owner })") && panel.includes("owner = false") && panel.includes("kindsOfGroup(kinds, \"link\")"));
+  assert.ok(panel.includes("useDeviceMeasures(deviceId, { owner })") && panel.includes("owner = false") && panel.includes("const GROUPS"));
   assert.ok(read("app/measures/useDeviceMeasures.ts").includes("&public=1"), "lecture publique tant que owner est faux");
 });
 test("la page n'ouvre l'onglet Capteurs que s'il existe un capteur public", () => {

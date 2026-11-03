@@ -1,90 +1,118 @@
 "use client";
-// app/measures/MeasuresPanel.tsx — UN panneau de mesures pour Mon espace, le profil public, le panneau réseau et le panneau artiste (UX jalon 4, 29/10/2026).
-//  • UNE lecture de l'historique (useDeviceMeasures : cache de session, Promise partagée, aucun polling) ;
-//  • UNE période (24 h / 7 jours / 30 jours) qui s'applique à TOUTES les grandeurs : température et humidité, qualité de l'air, connexion de la carte, relevés bruts ;
-//  • les tracés actuels sont conservés (MeasuresExplorer pour température / humidité, MeasuresChart pour le reste) : l'extraction d'un cœur de tracé commun viendra APRÈS (audit Codex).
-// Qualité de l'air : toujours le niveau (jamais le nombre) ; le brut du SGP40 n'est jamais affiché.
+// app/measures/MeasuresPanel.tsx — UN panneau de mesures pour Mon espace, le profil public, le panneau réseau et le panneau artiste (refonte du 02/11/2026 ; version précédente : archive/2026-11-02_vue-capteurs-v1).
+//  • UNE lecture de l'historique (useDeviceMeasures : cache de session, Promise partagée, aucun polling) ; le serveur ne renvoie au public QUE les grandeurs publiques (lib/measurePrivacy.ts) ;
+//  • TROIS lectures des mêmes mesures : Courbes (toutes les grandeurs, zoom / déplacement / valeur exacte), Œuvre (une bulle par mesure), Lecture (constats + grille jours × heures) ;
+//  • UNE période (24 h / 7 jours / 30 jours) : fenêtre initiale des courbes, et mesures retenues pour l'œuvre et la lecture.
 import { useMemo, useState } from "react";
-import { MEASURE_KINDS, kindsOfGroup, type Measure, type MeasureKind } from "@/lib/measures";
+import { MEASURE_KINDS, type Measure, type MeasureKind } from "@/lib/measures";
 import { VIZ_RANGES, VIZ_RANGE_IDS, type VizRange } from "@/lib/measureViz";
+import { clampWin, fullWindow, lastHours, sameWin, zoomAt, type Win } from "@/lib/chartView";
 import { MeasuresChart } from "../MeasuresChart";
-import { MeasuresExplorer } from "../MeasuresExplorer";
 import { useDeviceMeasures } from "./useDeviceMeasures";
+import { KindChart } from "./SeriesChart";
+import { ArtworkView } from "./ArtworkView";
+import { ReadingView } from "./ReadingView";
 
+type Mode = "curves" | "art" | "reading";
+const MODES: { id: Mode; label: string }[] = [{ id: "curves", label: "Courbes" }, { id: "art", label: "Œuvre" }, { id: "reading", label: "Lecture" }];
 const PERIOD_LABEL: Record<VizRange, string> = { day: "24 h", week: "7 jours", month: "30 jours" };
+const GROUPS: { id: string; label: string; kinds: MeasureKind[] }[] = [
+  { id: "env", label: "Environnement", kinds: ["temp", "hum", "vocidx"] },
+  { id: "link", label: "Connexion de la carte", kinds: ["rssi", "lat", "dl"] },
+];
 const muted: React.CSSProperties = { color: "var(--text3)", fontSize: "0.82rem", margin: 0 };
-const section: React.CSSProperties = { borderTop: "1px solid var(--border)", paddingTop: "0.8rem", display: "flex", flexDirection: "column", gap: 8 };
+const tool: React.CSSProperties = { minWidth: 36, minHeight: 32, borderRadius: 8, border: "1px solid var(--border)", background: "transparent", color: "var(--text2)", cursor: "pointer", fontSize: "0.95rem" };
 
 export interface MeasuresPanelProps {
   deviceId: string;
   /** Nom de l'appareil / du capteur (attribution et titres). */
   sensorLabel: string;
   ownerName?: string;
-  /** Grandeurs déclarées par l'appareil. */
+  /** Grandeurs déclarées par l'appareil (pour le public : déjà réduites aux grandeurs publiques). */
   kinds: MeasureKind[];
   /** PROPRIÉTAIRE : historique privé ; sinon public. */
   owner?: boolean;
-  /** Relevés bruts (tableau / cartes) dans un volet repliable. */
+  /** Relevés bruts (tableau) dans un volet repliable. */
   showTable?: boolean;
   /** Mesures publiques ? (propriétaire seulement) : affiche si l'historique est visible par tous ou par soi seul. */
   measuresPublic?: boolean;
 }
 
 export function MeasuresPanel({ deviceId, sensorLabel, ownerName, kinds, owner = false, showTable = false, measuresPublic }: MeasuresPanelProps) {
-  const [range, setRange] = useState<VizRange>("day");
+  const [mode, setMode] = useState<Mode>("curves");
+  const [range, setRange] = useState<VizRange>("week");
+  const [custom, setCustom] = useState<Win | null>(null);   // fenêtre choisie par zoom / déplacement ; null = fenêtre de la période
+  const [sel, setSel] = useState<number | null>(null);
   const data = useDeviceMeasures(deviceId, { owner });
-  const hasTH = kinds.includes("temp") || kinds.includes("hum");
-  const air = kinds.includes("vocidx");
-  const link = kindsOfGroup(kinds, "link");
+  const tz = useMemo(() => -new Date().getTimezoneOffset(), []);
+  const pickRange = (r: VizRange) => { setRange(r); setCustom(null); };   // changer de période remet la fenêtre de cette période
 
-  const inRange = useMemo(() => {
-    if (data.state !== "ready") return [] as Measure[];
-    const since = data.nowSec - VIZ_RANGES[range].hours * 3600;
-    return data.measures.filter((m) => m.t >= since);
-  }, [data, range]);
-
-  const rawKinds = useMemo(() => [...kindsOfGroup(kinds, "env"), ...link], [kinds, link]);
+  const all: Measure[] = useMemo(() => (data.state === "ready" ? data.measures : []), [data]);
+  // le brut du SGP40 (`voc`) n'est jamais affiché ; seules les grandeurs qui ont des mesures sont tracées
+  const present = useMemo(() => kinds.filter((k) => k !== "voc" && all.some((m) => m.v[k] !== undefined)), [kinds, all]);
+  const full = useMemo(() => fullWindow(all), [all]);
+  const preset = useMemo(() => (full ? lastHours(full, VIZ_RANGES[range].hours) : null), [full, range]);
+  const win = custom ?? preset;
+  const inRange = useMemo(() => (data.state === "ready" ? all.filter((m) => preset && m.t >= preset.t0) : []), [data, all, preset]);
 
   if (data.state === "loading") return <p style={muted} role="status">Chargement des mesures…</p>;
   if (data.state === "error") return <div role="alert"><p style={{ ...muted, marginBottom: 6 }}>{data.message}</p><button type="button" className="pod-btn pod-btn--sm" onClick={data.reload}>Réessayer</button></div>;
   if (data.state === "unavailable") return <p style={muted}>Aucune mesure publique : le propriétaire garde ce capteur privé, ou aucune mesure n’a encore été reçue.</p>;
-  if (data.measures.length === 0) return <p style={muted}>Aucune mesure pour l’instant. La carte envoie ses lectures régulièrement (la première peu après son démarrage, une fois appairée).</p>;
+  if (all.length === 0 || !full || !win || !preset) return <p style={muted}>Aucune mesure pour l’instant. La carte envoie ses lectures régulièrement (la première peu après son démarrage, une fois appairée).</p>;
+
+  const shared = { win, full, setWin: (w: Win) => setCustom(sameWin(w, preset) ? null : w), sel, setSel, tz };
+  const jump = (t: number, k: MeasureKind | null) => { setSel(t); setCustom(clampWin({ t0: t - 12 * 3600, t1: t + 12 * 3600 }, full)); setMode("curves"); void k; };
+  const rawKinds = present;
+  const days = range === "day" ? 2 : range === "week" ? 7 : 30;
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: "0.9rem" }}>
+    <div style={{ display: "flex", flexDirection: "column", gap: "0.8rem" }}>
       {owner && measuresPublic !== undefined && (
-        <p style={muted}>{measuresPublic ? "🌐 Mesures publiques : visibles par tout le monde." : "🔒 Mesures privées : visibles par vous seul."}</p>
+        <p style={muted}>{measuresPublic ? "🌐 Les grandeurs réglées « publiques » sont visibles par tous ; les autres restent à vous seul (Gérer › Réglages)." : "🔒 Mesures privées : visibles par vous seul."}</p>
       )}
-      <div className="pod-pills" role="group" aria-label="Période">
-        {VIZ_RANGE_IDS.map((r) => (
-          <button key={r} type="button" className="pod-pill" aria-pressed={range === r} onClick={() => setRange(r)}>{PERIOD_LABEL[r]}</button>
-        ))}
+      <div style={{ display: "flex", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
+        <div className="pod-pills" role="group" aria-label="Lecture">
+          {MODES.map((m) => <button key={m.id} type="button" className="pod-pill" aria-pressed={mode === m.id} onClick={() => setMode(m.id)}>{m.label}</button>)}
+        </div>
+        <div className="pod-pills" role="group" aria-label="Période">
+          {VIZ_RANGE_IDS.map((r) => <button key={r} type="button" className="pod-pill" aria-pressed={range === r} onClick={() => pickRange(r)}>{PERIOD_LABEL[r]}</button>)}
+        </div>
       </div>
 
-      {hasTH && (
-        <section aria-label="Température et humidité" style={section}>
-          <h3 style={{ margin: 0, fontSize: "0.92rem" }}>🌡 Température et humidité</h3>
-          <MeasuresExplorer deviceId={deviceId} sensorLabel={sensorLabel} ownerName={ownerName} kinds={kinds} owner={owner} measures={data.measures} nowSec={data.nowSec} range={range} onRangeChange={setRange} />
-        </section>
+      {mode === "curves" && (
+        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+            <button type="button" style={tool} aria-label="Zoom avant" onClick={() => shared.setWin(zoomAt(win, full, 0.5, 0.6))}>＋</button>
+            <button type="button" style={tool} aria-label="Zoom arrière" onClick={() => shared.setWin(zoomAt(win, full, 0.5, 1.6))}>−</button>
+            <button type="button" style={{ ...tool, padding: "0 10px", fontSize: "0.76rem" }} onClick={() => setCustom(full)}>Tout l’historique</button>
+            <button type="button" style={{ ...tool, padding: "0 10px", fontSize: "0.76rem" }} onClick={() => setCustom(null)}>↺ Période</button>
+            <span style={{ ...muted, fontSize: "0.72rem" }}>Molette ou pincement : zoom · glisser : déplacer · toucher : valeur exacte</span>
+          </div>
+          {GROUPS.map((g) => {
+            const ks = g.kinds.filter((k) => present.includes(k));
+            if (ks.length === 0) return null;
+            return (
+              <section key={g.id} aria-label={g.label} style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                <h3 style={{ margin: 0, fontSize: "0.8rem", color: "var(--text3)", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.04em" }}>{g.label}</h3>
+                {ks.map((k) => <KindChart key={k} kind={k} measures={all} shared={shared} />)}
+              </section>
+            );
+          })}
+          {present.length === 0 && <p style={muted}>Aucune grandeur à tracer.</p>}
+        </div>
       )}
-      {air && (
-        <section aria-label="Qualité de l'air" style={section}>
-          <h3 style={{ margin: 0, fontSize: "0.92rem" }}>{MEASURE_KINDS.vocidx.icon} Qualité de l’air</h3>
-          {inRange.some((m) => m.v.vocidx !== undefined) ? <MeasuresChart measures={inRange} kinds={["vocidx"]} /> : <p style={muted}>Aucune mesure d’air sur cette période.</p>}
-        </section>
-      )}
-      {link.length > 0 && (
-        <section aria-label="Connexion de la carte" style={section}>
-          <h3 style={{ margin: 0, fontSize: "0.92rem" }}>📶 Connexion de la carte</h3>
-          {inRange.some((m) => link.some((k) => m.v[k] !== undefined)) ? <MeasuresChart measures={inRange} kinds={link} /> : <p style={muted}>Aucune mesure de connexion sur cette période.</p>}
-        </section>
-      )}
+      {mode === "art" && <ArtworkView measures={inRange} tz={tz} />}
+      {mode === "reading" && <ReadingView measures={inRange} tz={tz} days={days} onJump={jump} />}
+
       {showTable && rawKinds.length > 0 && (
-        <details style={section}>
+        <details style={{ borderTop: "1px solid var(--border)", paddingTop: "0.8rem" }}>
           <summary style={{ cursor: "pointer", fontSize: "0.85rem", color: "var(--text2)", minHeight: 44, display: "flex", alignItems: "center" }}>Relevés bruts ({PERIOD_LABEL[range]}, les plus récents)</summary>
           <MeasuresChart measures={inRange} kinds={rawKinds} tableOnly />
         </details>
       )}
+      <p style={{ ...muted, fontSize: "0.72rem" }}>
+        {MEASURE_KINDS.temp.label}, {MEASURE_KINDS.hum.label.toLowerCase()}{present.includes("vocidx") ? ", qualité de l’air" : ""} : mesures de <b>{sensorLabel}</b>{ownerName ? <> · {ownerName}</> : null}. Les courbes relient les mesures reçues, sans lissage ; un trou reste un trou.
+      </p>
     </div>
   );
 }
