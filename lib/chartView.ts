@@ -97,3 +97,16 @@ export function valueAxis(kind: MeasureKind, stored: number[]): ValueAxis | null
   for (let v = aLo; v <= aHi + step / 1000; v += step) ticks.push(Math.round(v * 1e6) / 1e6);
   return { lo: aLo, hi: aHi, ticks };
 }
+
+// ── Amplitude du jour (vue « Amplitude ») ─────────────────────────────────────────────────────────────────────────────────
+export interface DayBand { start: number; end: number; min: number; max: number; avg: number; n: number }
+/** Min / max / moyenne de chaque jour LOCAL (décalage `tzMin` en minutes) qui porte au moins une mesure. Valeurs réelles, jamais interpolées ; un jour sans mesure n'a pas de bande. */
+export function dailyBands(points: Pt[], tzMin = 0): DayBand[] {
+  const off = tzMin * 60, byDay = new Map<number, { min: number; max: number; sum: number; n: number }>();
+  for (const p of points) {
+    const d = Math.floor((p.t + off) / 86400), b = byDay.get(d);
+    if (!b) byDay.set(d, { min: p.v, max: p.v, sum: p.v, n: 1 });
+    else { if (p.v < b.min) b.min = p.v; if (p.v > b.max) b.max = p.v; b.sum += p.v; b.n++; }
+  }
+  return [...byDay.entries()].sort((a, b) => a[0] - b[0]).map(([d, b]) => ({ start: d * 86400 - off, end: (d + 1) * 86400 - off, min: b.min, max: b.max, avg: Math.round(b.sum / b.n), n: b.n }));
+}

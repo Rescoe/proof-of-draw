@@ -35,3 +35,6 @@ Lecture : inchangé (réglage dans la fiche déjà lue : 0 commande de plus). Ch
 
 ## Reste à faire
 Regarder le rendu (papier/nuit, mobile) ; premier appareil réel avec SGP40 ; `app/MeasuresExplorer.tsx` et `lib/measureViz.ts` (v1) gardés pour `/measures-lab?view=v1` et leurs tests ; `tests/measuresPanel.test.ts` figeait l'ancienne structure du panneau si adapté.
+
+## Ajout du 03/11 — vision des courbes
+Bouton « Vision » au-dessus des courbes : **Points réels** (défaut), **Amplitude du jour** (bande min–max de chaque jour local en transparence + moyenne du jour, comme l'ancienne vue de production) ou **Les deux**. `dailyBands` (`lib/chartView.ts`) : valeurs réelles, pas de bande pour un jour sans mesure.

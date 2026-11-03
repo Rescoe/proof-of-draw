@@ -5,7 +5,7 @@
 // • clavier : ← → point précédent / suivant, + − zoom, Début / Fin ; aucune requête : les données viennent du parent (UNE lecture, voir useDeviceMeasures).
 import { useEffect, useMemo, useRef } from "react";
 import { MEASURE_KINDS, formatMeasure, type Measure, type MeasureKind } from "@/lib/measures";
-import { clampWin, medianStep, panBy, segments, seriesOf, valueAxis, visiblePoints, zoomAt, type Pt, type Win } from "@/lib/chartView";
+import { clampWin, dailyBands, medianStep, panBy, segments, seriesOf, valueAxis, visiblePoints, zoomAt, type Pt, type Win } from "@/lib/chartView";
 import { nearestPointIndex, timeAxisTicks } from "@/lib/timeAxis";
 import { VOC_BANDS, KIND_COLOR } from "./palette";
 import { exactLabel } from "@/lib/measureReading";
@@ -13,17 +13,19 @@ import { exactLabel } from "@/lib/measureReading";
 const W = 720, H = 156, PL = 46, PR = 12, PT = 12, PB = 22;
 const NO_SELECT: React.CSSProperties = { userSelect: "none", WebkitUserSelect: "none", WebkitTouchCallout: "none" };
 
-export interface ChartShared { win: Win; full: Win; setWin: (w: Win) => void; sel: number | null; setSel: (t: number | null) => void; tz: number }
+export type CurveView = "points" | "band" | "both";
+export interface ChartShared { view: CurveView; win: Win; full: Win; setWin: (w: Win) => void; sel: number | null; setSel: (t: number | null) => void; tz: number }
 
 export function KindChart({ kind, measures, shared }: { kind: MeasureKind; measures: Measure[]; shared: ChartShared }) {
-  const { win, full, setWin, sel, setSel, tz } = shared;
+  const { view, win, full, setWin, sel, setSel, tz } = shared;
   const info = MEASURE_KINDS[kind], color = KIND_COLOR[kind];
   const pts = useMemo(() => seriesOf(measures, kind), [measures, kind]);
   const step = useMemo(() => medianStep(pts), [pts]);
   const segs = useMemo(() => segments(pts, step), [pts, step]);
+  const bands = useMemo(() => dailyBands(pts, tz), [pts, tz]);
   const times = useMemo(() => pts.map((p) => p.t), [pts]);
   const vis = useMemo(() => visiblePoints(pts, win), [pts, win]);
-  const axis = useMemo(() => valueAxis(kind, (vis.length ? vis : pts).map((p) => p.v)), [kind, vis, pts]);
+  const axis = useMemo(() => valueAxis(kind, view === "points" ? (vis.length ? vis : pts).map((p) => p.v) : bands.filter((b) => b.end >= win.t0 && b.start <= win.t1).flatMap((b) => [b.min, b.max]).concat((vis.length ? vis : pts).map((p) => p.v))), [kind, view, vis, pts, bands, win]);
   const svgRef = useRef<SVGSVGElement>(null);
   const live = useRef({ win, full, setWin });
   useEffect(() => { live.current = { win, full, setWin }; });
@@ -122,12 +124,14 @@ export function KindChart({ kind, measures, shared }: { kind: MeasureKind; measu
           {ticks.map((t) => <g key={t.t}><line x1={x(t.t)} x2={x(t.t)} y1={PT} y2={H - PB} stroke="var(--border)" opacity={t.major ? 0.7 : 0.25} /><text x={x(t.t)} y={H - 6} fontSize="10" textAnchor="middle" fill={t.major ? "var(--text2)" : "var(--text3)"}>{t.label}</text></g>)}
           <text x={4} y={PT + 4} fontSize="10" fill="var(--text3)">{info.unit}</text>
           <g clipPath={`url(#clip-${kind})`}>
-            {segs.map((s, i) => {
+            {view !== "points" && bands.map((b) => (b.end < win.t0 || b.start > win.t1) ? null : <rect key={b.start} x={x(b.start) + 1} width={Math.max(1, x(b.end) - x(b.start) - 2)} y={y(b.max)} height={Math.max(2, y(b.min) - y(b.max))} rx={3} fill={color} opacity={0.22}><title>{`Amplitude du jour : ${formatMeasure(kind, b.min)} à ${formatMeasure(kind, b.max)} (moyenne ${formatMeasure(kind, b.avg)}, ${b.n} mesures)`}</title></rect>)}
+            {view === "band" && bands.length > 0 && <path d={bands.filter((b) => b.end >= win.t0 && b.start <= win.t1).map((b, k) => `${k ? "L" : "M"}${x((b.start + b.end) / 2).toFixed(1)},${y(b.avg).toFixed(1)}`).join(" ")} fill="none" stroke={color} strokeWidth={2} strokeLinejoin="round" />}
+            {view !== "band" && segs.map((s, i) => {
               const v = visiblePoints(s, win);
               if (v.length === 0) return null;
               return <path key={i} d={v.map((p, k) => `${k ? "L" : "M"}${x(p.t).toFixed(1)},${y(p.v).toFixed(1)}`).join(" ")} fill="none" stroke={color} strokeWidth={2} strokeLinejoin="round" strokeLinecap="round" />;
             })}
-            {(dots || vis.length === 1) && vis.map((p) => <circle key={p.t} cx={x(p.t)} cy={y(p.v)} r={3} fill={color} />)}
+            {view !== "band" && (dots || vis.length === 1) && vis.map((p) => <circle key={p.t} cx={x(p.t)} cy={y(p.v)} r={3} fill={color} />)}
             {selPt && <>
               <line x1={x(selPt.t)} x2={x(selPt.t)} y1={PT} y2={H - PB} stroke="var(--text)" strokeDasharray="3 3" opacity={0.7} />
               <circle cx={x(selPt.t)} cy={y(selPt.v)} r={6} fill={color} stroke="var(--bg)" strokeWidth={2} />

@@ -104,3 +104,33 @@ Non, pas pour cet usage.
 ### 8.3 Nouveau modèle (estimation)
 Pull au repos : ≈ 1,4 commande ; 20 h dormantes à 15 min (80 pulls) + 4 h chaudes à 5 min (48 pulls) = **≈ 180 commandes / jour / écran** (1 440 au départ). Par bloc et par écran ≈ 9.
 10 écrans, 10 blocs / jour : pulls ≈ 1 800 + blocs ≈ 900 + web/divers → **≈ 3 à 4 k / jour ≈ 100 k / mois**, très sous la cible (200 k) et sous le gratuit (500 k). Estimation à confirmer par la console Upstash.
+
+
+## 8. Point du 03/11/2026 — consommation constatée et leviers pour ajouter du matériel (ESTIMATIONS, rien n'est mis en place)
+
+**Constat (captures de la console Upstash, communiquées par le porteur)** : dimanche 9 964 commandes (3,3 k eu-central-1 + 6,6 k eu-west-2), lundi 8 793 (journée en cours). ≈ 11 k / jour sur les deux derniers jours, soit ≈ 330 k / 30 jours (66 % du plafond gratuit de **500 k / mois**) ; le porteur situait les jours précédents vers 15 k par 2 jours (≈ 7,5 k / jour — lecture à confirmer). Le saut est cohérent avec les capteurs plus bavards (station R4 toutes les 30 min), les essais OTA et les redémarrages de cartes ; **cause non mesurée**.
+
+**Coût par appareil (modèle tiré du code, non mesuré)** :
+
+| Appareil | Commandes / jour | / mois |
+|---|---|---|
+| Écran au repos, réseau « chaud » (pull 5 min, ≈ 1,5 commande) | ≈ 430 | ≈ 13 k |
+| Écran au repos, réseau « dormant » (pull 15 min) | ≈ 145 | ≈ 4,3 k |
+| Capteur, un envoi par heure (8 commandes : limite IP 2 + appareil 1 + anti-rafale 1 + LPUSH/LTRIM/EXPIRE/SADD 4) | ≈ 190 | ≈ 5,8 k |
+| Station R4, un envoi par 30 min (+ ses pulls) | ≈ 385 + pulls | ≈ 11,5 k + pulls |
+| Par bloc, pour 5 écrans (pulls à 60 s, votes, minage) | ≈ 150 – 200 au total | — |
+
+**Marge restante** (plafond 500 k = 16,7 k / jour ; base 11 k / jour ; sécurité à 80 % = 13,3 k / jour) : jusqu'au plafond +13 écrans chauds ou +29 capteurs horaires ou +14 stations 30 min ; jusqu'à 80 % +5 écrans ou +12 capteurs ou +6 stations. Avec une base réelle de 7,5 k / jour : ≈ +20 écrans à 80 %.
+
+**Leviers, classés gain / risque** :
+
+1. **Plan Upstash à l'usage avec plafond de dépense** : 0,20 $ / 100 k commandes (1 M ≈ 2 $ / mois ; tarifs relevés le 05/10/2026, à revérifier). Aucun développement ; filet de sécurité, pas une réduction.
+2. **Envoi de capteur de 8 à 4–5 commandes, côté serveur seul** (≈ −40 à −50 % sur ce poste) : plus de `SADD` d'index à chaque POST (suffisant à l'enregistrement), limite IP échantillonnée comme le pull. Aucun reflash.
+3. **Envoi des capteurs toutes les 2 h** au lieu de 30 min / 1 h (÷ 2 ; les lectures restent en tampon, les courbes gardent leur finesse). Demande un reflash.
+4. **Repos des écrans 5 → 10 min quand le réseau est chaud** (÷ 2 sur le poste dominant, sans reflash). Contrepartie : latence d'apparition d'une œuvre ; `CANDIDATE_TTL_SEC` à relever. Décision de latence contre quota.
+5. **Fenêtre « chaud » plus courte** (`HOT_TTL_SEC`, 30 min) : plus d'écrans retombent à 15 min.
+6. **Séparer Redis de développement et de production** : serveurs locaux, essais OTA et cartes d'essai comptent aujourd'hui dans le même quota (hypothèse à mesurer).
+7. **Pull à deux étages** (état global mis en cache au CDN, vrai pull seulement si changement) : utile au-delà de ≈ 20 écrans ; demande de reflasher tous les firmwares.
+
+Lot « vue capteurs v2 » du 02/11 : lecture inchangée (0 commande de plus) ; retrait de `stale-while-revalidate` sur `/api/sensor?public=1` (jusqu'à 3 commandes par appareil et par 2 min si la page est consultée).
+**À mesurer avant de décider** : relevé quotidien de la console Upstash, liste des appareils actifs et de leurs cadences, journaux Vercel par route.

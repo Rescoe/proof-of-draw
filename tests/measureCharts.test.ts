@@ -137,3 +137,15 @@ test("lecture : grille jours × heures, moyenne par heure, case vide sans mesure
   assert.match(whenLabel(T0 + 14 * 3600, 0), /^lun\. 02\/11 14 h$/);
   assert.match(exactLabel(T0 + 14 * 3600 + 300, 0), /^lun\. 02\/11\/2026 à 14:05$/);
 });
+
+test("amplitude du jour : min / max / moyenne réels par jour local, un jour sans mesure n'a pas de bande, le fuseau décale les jours", async () => {
+  const { dailyBands } = await import("../lib/chartView");
+  const pts = [{ t: T0 + 3600, v: 100 }, { t: T0 + 7200, v: 200 }, { t: T0 + 10800, v: 150 }, { t: T0 + 3 * 86400 + 3600, v: 50 }];
+  const b = dailyBands(pts, 0);
+  assert.equal(b.length, 2, "deux jours avec mesures, les jours vides n'ont pas de bande");
+  assert.deepEqual([b[0].min, b[0].max, b[0].avg, b[0].n], [100, 200, 150, 3]);
+  assert.equal(b[0].end - b[0].start, 86400);
+  const shifted = dailyBands([{ t: T0 + 23 * 3600 + 1800, v: 1 }, { t: T0 + 24 * 3600 + 1800, v: 9 }], 60);
+  assert.equal(shifted.length, 1, "à +1 h, 23:30 et 00:30 UTC tombent le même jour local");
+  assert.deepEqual(dailyBands([], 0), []);
+});

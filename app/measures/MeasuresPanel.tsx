@@ -9,13 +9,18 @@ import { VIZ_RANGES, VIZ_RANGE_IDS, type VizRange } from "@/lib/measureViz";
 import { clampWin, fullWindow, lastHours, sameWin, zoomAt, type Win } from "@/lib/chartView";
 import { MeasuresChart } from "../MeasuresChart";
 import { useDeviceMeasures } from "./useDeviceMeasures";
-import { KindChart } from "./SeriesChart";
+import { KindChart, type CurveView } from "./SeriesChart";
 import { ArtworkView } from "./ArtworkView";
 import { ReadingView } from "./ReadingView";
 
 type Mode = "curves" | "art" | "reading";
 const MODES: { id: Mode; label: string }[] = [{ id: "curves", label: "Courbes" }, { id: "art", label: "Œuvre" }, { id: "reading", label: "Lecture" }];
 const PERIOD_LABEL: Record<VizRange, string> = { day: "24 h", week: "7 jours", month: "30 jours" };
+const VIEWS: { id: CurveView; label: string; hint: string }[] = [
+  { id: "points", label: "Points réels", hint: "Une mesure = un point, reliés sans lissage" },
+  { id: "band", label: "Amplitude du jour", hint: "Bande min–max de chaque jour (transparence) et moyenne du jour" },
+  { id: "both", label: "Les deux", hint: "Bande du jour et points réels" },
+];
 const GROUPS: { id: string; label: string; kinds: MeasureKind[] }[] = [
   { id: "env", label: "Environnement", kinds: ["temp", "hum", "vocidx"] },
   { id: "link", label: "Connexion de la carte", kinds: ["rssi", "lat", "dl"] },
@@ -43,6 +48,7 @@ export function MeasuresPanel({ deviceId, sensorLabel, ownerName, kinds, owner =
   const [range, setRange] = useState<VizRange>("week");
   const [custom, setCustom] = useState<Win | null>(null);   // fenêtre choisie par zoom / déplacement ; null = fenêtre de la période
   const [sel, setSel] = useState<number | null>(null);
+  const [view, setView] = useState<CurveView>("points");
   const data = useDeviceMeasures(deviceId, { owner });
   const tz = useMemo(() => -new Date().getTimezoneOffset(), []);
   const pickRange = (r: VizRange) => { setRange(r); setCustom(null); };   // changer de période remet la fenêtre de cette période
@@ -60,7 +66,7 @@ export function MeasuresPanel({ deviceId, sensorLabel, ownerName, kinds, owner =
   if (data.state === "unavailable") return <p style={muted}>Aucune mesure publique : le propriétaire garde ce capteur privé, ou aucune mesure n’a encore été reçue.</p>;
   if (all.length === 0 || !full || !win || !preset) return <p style={muted}>Aucune mesure pour l’instant. La carte envoie ses lectures régulièrement (la première peu après son démarrage, une fois appairée).</p>;
 
-  const shared = { win, full, setWin: (w: Win) => setCustom(sameWin(w, preset) ? null : w), sel, setSel, tz };
+  const shared = { view, win, full, setWin: (w: Win) => setCustom(sameWin(w, preset) ? null : w), sel, setSel, tz };
   const jump = (t: number, k: MeasureKind | null) => { setSel(t); setCustom(clampWin({ t0: t - 12 * 3600, t1: t + 12 * 3600 }, full)); setMode("curves"); void k; };
   const rawKinds = present;
   const days = range === "day" ? 2 : range === "week" ? 7 : 30;
@@ -87,6 +93,9 @@ export function MeasuresPanel({ deviceId, sensorLabel, ownerName, kinds, owner =
             <button type="button" style={{ ...tool, padding: "0 10px", fontSize: "0.76rem" }} onClick={() => setCustom(full)}>Tout l’historique</button>
             <button type="button" style={{ ...tool, padding: "0 10px", fontSize: "0.76rem" }} onClick={() => setCustom(null)}>↺ Période</button>
             <span style={{ ...muted, fontSize: "0.72rem" }}>Molette ou pincement : zoom · glisser : déplacer · toucher : valeur exacte</span>
+          </div>
+          <div className="pod-pills" role="group" aria-label="Vision des courbes">
+            {VIEWS.map((v) => <button key={v.id} type="button" className="pod-pill" aria-pressed={view === v.id} title={v.hint} onClick={() => setView(v.id)}>{v.label}</button>)}
           </div>
           {GROUPS.map((g) => {
             const ks = g.kinds.filter((k) => present.includes(k));
