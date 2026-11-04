@@ -66,3 +66,10 @@ Règle (demandée par le porteur le 25/10/2026) : **toute demande faite pendant 
 - [ ] 28/10 — **Vote d'animation v3** : appeler le noyau de calcul depuis un sketch (station R4 d'abord), signer `pod-vote-v3-anim`, mesurer pile et tas ; mode `shadow` puis couverture (compteur `animV3` du résumé d'électorat) puis `enforce`.
 - [ ] 28/10 — **Validateurs sans écran** : écrire le firmware (famille à ajouter à `VALIDATOR_NODE_FIRMWARE`) et sa ligne de matrice.
 - [ ] 28/10 — **Synchronisation SD ↔ serveur** des mesures (rattrapage après coupure, restauration sur carte neuve) : chiffrer le coût Redis avant tout code.
+
+## Ajouts du 04/11/2026 (liaison, vote des multiscreen, témoin de vie)
+
+- [ ] 04/11 — **IMPORTANT, à faire sur tous les ESP / R4** : témoin de vie (redémarrage d'une étape bloquée + cause et étape envoyées au `register`), à généraliser après le verdict de `multibwr-2.4` : `docs/CHANTIER_TEMOIN_DE_VIE_PARTOUT_2026_11_04.md`.
+- [ ] 04/11 — **multiscreen e-ink 2,7″ + OLED** : redémarrage par chien de garde logiciel (`cause=3`) après un vote réussi et après la réception d'une frame ; cause non établie (`docs/DIAGNOSTIC_MULTISCREEN_USB_2026_11_04.md`, « Constat ouvert »).
+- [ ] 04/11 — **BWR + OLED (cousin)** : silence après `candidat GET` (4 fois sur 4) ; cause inconnue, la `multibwr-2.4` doit la localiser.
+- [ ] 04/11 — **Lecture par morceaux** : délai global borné (TFT 2,8″ ≈ 65 connexions TLS).
