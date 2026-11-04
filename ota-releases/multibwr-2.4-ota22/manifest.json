@@ -1,0 +1,31 @@
+{
+  "schema": "pod-ota-manifest-v2",
+  "releaseId": "multibwr-2.4-ota22",
+  "family": "esp8266-multibwr",
+  "profile": {
+    "board": "esp8266",
+    "screen": "multibwr",
+    "flash": "4M2M"
+  },
+  "channel": "canary",
+  "firmwareVersion": "multibwr-2.4",
+  "otaSeq": 22,
+  "minOtaSeq": 1,
+  "revokedSeqs": [],
+  "url": "/firmware/multibwr-2.4-ota22/image.bin",
+  "size": 561952,
+  "sha256": "ffa2138e5e39abfdc083b95c04fa5c672ef64b8b5b5dced7db90a90f541dc752",
+  "wave": {
+    "of": 100,
+    "upTo": 100
+  },
+  "canaryDevices": [
+    "dev_T46HBXG1"
+  ],
+  "notes": "multibwr-2.4 : temoin de vie (redemarrage si une etape de vote ou de frame depasse 300 s, cause envoyee au register) ; canari dev_T46HBXG1 ; NON essayee sur la carte",
+  "signature": {
+    "alg": "rsa2048-pkcs1-sha256",
+    "keyId": "ota-a",
+    "sig": "Vt4LGlUuk8pOdPoRGa/r4jUMi/Y1OKKkA7SoBPDi4AYRy8iEb4km/5ZiUcmw+lRXAlC2n6kDilD85sPMpBTHBJMdR0B3tpzYWm8/9axYzOlWSnK9/91i8fDZqTViKaSShpoCDZneQpqGz+HJASgPpQ0+nS6W9F1oqVs9gDxYeVtk4HDDimMZWLfDxI0rQqv4DqRBDhMCo1mdbThjvM/JGJFrrnF4eiaVTb+p/VA5HQ/1AtCjqLqNap/4tdoXJ7TNGAf0gDXZegnCra8Yfd6+QTCmMiI8iMqzgdMGgYQQcO94x3AmUOY//OWR48LexyesuB8TRFffUBBoqe4FMy/ZRQ=="
+  }
+}
