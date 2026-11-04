@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { OwnedDevice } from "@/lib/deviceStore";
 import { OwnDisplaysDebug } from "./OwnDisplaysDebug";
 import { PairingSection, PairThisBrowser } from "./PairDevice";
+import { RecoveryBackup, SessionGuard } from "./Recovery";
 import { SCREEN_PROFILES } from "@/lib/screenProfiles";
 import { BlockFrameCanvas } from "@/app/BlockFrameCanvas";
 import { InlineEdit } from "./InlineEdit";
@@ -738,6 +739,7 @@ export default function ProfilePage() {
       )}
 
       {/* ── Nouveau navigateur sans profil : appairer avec le code d'un autre appareil ── */}
+      <SessionGuard hasProfile={!!profile} loading={loadingProf} />
       {!profile && !loadingProf && <PairThisBrowser />}
 
       {/* ── Carte profil artiste ── */}
@@ -881,6 +883,7 @@ export default function ProfilePage() {
       </div>
 
       {/* ── Connexion multi-appareils ── */}
+      {profile && <RecoveryBackup />}
       {profile && <PairingSection />}
 
       {/* ── Affichage en direct : détail réservé au propriétaire ── */}

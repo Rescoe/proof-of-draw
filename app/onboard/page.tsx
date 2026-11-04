@@ -88,6 +88,10 @@ function OnboardForm() {
         <p className="text-gray-500 text-xs">
           Accès perdu (nouveau téléphone, autre navigateur) ? Entre de nouveau le <b>même code de jumelage</b> de ton ESP : tu retrouves ton profil, rien n'est perdu.
         </p>
+        <p className="text-gray-500 text-xs -mt-4">
+          Tu as un <b>lien de récupération</b> (Mon profil → « Sauvegarder mon accès ») ? <a href="/retrouver" className="underline text-gray-300">Retrouver mon accès</a>.
+          Le code de ton ESP se réaffiche aussi dans Mon profil → Gérer → Accès.
+        </p>
 
         {/* Toggle mode */}
         <div className="flex rounded overflow-hidden border border-gray-700 text-sm">

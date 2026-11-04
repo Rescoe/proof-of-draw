@@ -16,6 +16,7 @@ import { BENCH_SCREENS } from "@/lib/bench/screens";
 import { isDynamicScreen } from "@/lib/fixedWorks";
 import { animCapable, ANIM_POINTER_FIRMWARE } from "@/lib/anim/pointer";
 import { InlineEdit } from "./InlineEdit";
+import { CatchUp } from "./CatchUp";
 import { GiveDeviceModal } from "./GiveDeviceModal";
 import { SensorButton, SensorSummary } from "./SensorPanel";
 import { MEASURE_KINDS, isSensorScreens, showsMeasures } from "@/lib/measures";
@@ -242,6 +243,7 @@ function ManagePanel({ d, devices, profile, tab, setTab, onReload, onGive, onAsk
   const [busy, setBusy] = useState<string | null>(null);
   const [convScreen, setConvScreen] = useState(d.screens[0] ?? "");
   const [newCode, setNewCode] = useState<string | null>(null);
+  const [shownCode, setShownCode] = useState<string | null>(null);   // code courant réaffiché à la demande (GET /api/devices/pair-code), jamais chargé d'office
   const [copied, setCopied] = useState(false);
   const [transferTo, setTransferTo] = useState("");
   const [transferMsg, setTransferMsg] = useState("");
@@ -413,10 +415,32 @@ function ManagePanel({ d, devices, profile, tab, setTab, onReload, onGive, onAsk
           <div>
             <div style={{ fontSize: "0.85rem", fontWeight: 600 }}>Code de jumelage de l&apos;ESP</div>
             <p style={{ ...muted, marginTop: 2 }}>
-              Le code affiché sur l&apos;écran de l&apos;ESP permet de le reprendre depuis <a href="/onboard" style={{ color: "var(--accent)" }}>/onboard</a>.
-              Si vous pensez qu&apos;il a fuité, régénérez-le : l&apos;ancien cesse de fonctionner.
+              Ce code permet de reprendre l&apos;ESP (et votre profil) depuis <a href="/onboard" style={{ color: "var(--accent)" }}>/onboard</a> si vous perdez l&apos;accès depuis un téléphone ou un navigateur.
+              Notez-le en lieu sûr. Si vous pensez qu&apos;il a fuité, régénérez-le : l&apos;ancien cesse de fonctionner.
             </p>
             <div style={{ display: "flex", alignItems: "center", gap: "0.6rem", flexWrap: "wrap", marginTop: "0.5rem" }}>
+              <button
+                type="button" disabled={busy === "showcode"} style={{ ...ghostBtn, opacity: busy === "showcode" ? 0.5 : 1 }}
+                onClick={() => {
+                  if (shownCode) { setShownCode(null); return; }
+                  run("showcode", async () => {
+                    const res = await fetch(`/api/devices/pair-code?deviceId=${encodeURIComponent(d.deviceId)}`, { cache: "no-store" });
+                    const data = await res.json().catch(() => ({}));
+                    if (res.ok && typeof data.pairCode === "string") setShownCode(data.pairCode);
+                    else setErr(typeof data.error === "string" ? data.error : "Erreur");
+                  });
+                }}
+              >
+                👁 {shownCode ? "Masquer le code" : (busy === "showcode" ? "…" : "Afficher le code")}
+              </button>
+              {shownCode && (
+                <>
+                  <span style={{ fontFamily: "JetBrains Mono, monospace", fontSize: "1rem", fontWeight: 700, letterSpacing: "0.08em", color: "var(--text)" }}>{shownCode}</span>
+                  <button type="button" style={ghostBtn} onClick={async () => { try { await navigator.clipboard.writeText(shownCode); setCopied(true); setTimeout(() => setCopied(false), 1800); } catch { /* presse-papiers indisponible */ } }}>
+                    {copied ? "✓ Copié" : "Copier"}
+                  </button>
+                </>
+              )}
               <button
                 type="button" disabled={busy === "rotate"} style={{ ...ghostBtn, opacity: busy === "rotate" ? 0.5 : 1 }}
                 onClick={() => {
@@ -548,7 +572,7 @@ function DeviceCard({ d, open, onToggle, onRenamed, profile, children }: {
         </div>
         <div className="dev-actions" style={{ display: "flex", gap: "0.4rem", flexShrink: 0, flexWrap: "wrap", justifyContent: "flex-end" }}>
           {showsMeasures(d, !!d.latest) && <SensorButton d={d} />}
-          {!isSensorScreens(d.screens) && (<><DrawMenu d={d} /><DrawMenu d={d} mode="animate" /></>)}
+          {!isSensorScreens(d.screens) && (<><DrawMenu d={d} /><DrawMenu d={d} mode="animate" /><CatchUp deviceId={d.deviceId} /></>)}
           <button
             type="button" onClick={onToggle} aria-expanded={open}
             style={{ ...ghostBtn, fontWeight: 600, borderColor: open ? "var(--accent)" : "var(--border)", color: open ? "var(--accent)" : "var(--text2)" }}

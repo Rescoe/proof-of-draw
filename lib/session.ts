@@ -37,6 +37,9 @@ function getSecret(): string {
   return s;
 }
 
+/** Secret du serveur, pour les jetons dérivés (récupération d'accès, lib/recoveryToken.ts). Même exigence qu'en production : jamais de repli public. */
+export const sessionSecret = getSecret;
+
 // ─── HMAC-SHA256 via WebCrypto (dispo dans Next.js Edge + Node 18+) ──────────
 async function hmacSign(payload: string): Promise<string> {
   const secret = getSecret();
