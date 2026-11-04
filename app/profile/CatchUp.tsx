@@ -2,7 +2,7 @@
 // app/profile/CatchUp.tsx
 // Bouton « ↻ Rattraper » d'une carte d'appareil (04/11/2026). Une œuvre validée n'est livrée que pendant ~42 min : un écran hors ligne à ce moment-là
 // ne la reçoit jamais, et ne se met pas à jour tout seul à son retour (voulu : pas de rafale). Ici l'utilisateur voit ce que CET écran a manqué
-// (GET /api/my-devices/{id}/missed, 4 commandes Redis, uniquement au clic) et réaffiche l'œuvre de son choix (POST /api/send-to-screen : frame
+// (GET /api/my-devices/{id}/missed, 4 lectures métier + éventuellement 1 GET du lien propriétaire, uniquement au clic) et réaffiche l'œuvre de son choix (POST /api/send-to-screen : frame
 // personnelle, remplacée au prochain bloc validé). Rien n'est automatique : aucune requête tant que la fenêtre n'est pas ouverte.
 
 import { useEffect, useState } from "react";

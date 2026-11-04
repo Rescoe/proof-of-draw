@@ -89,13 +89,35 @@ test("CONFIDENTIALITÉ : une frame personnelle n'est jamais copiée ni décrite 
   const personal = { frameId: "frame-perso-1", payload: { screen: "oled096", buffer: "SECRET", workTitle: "Mon dessin privé" } };
   const rec = await recordDisplayed(kv, "dev_AAAA1111", "oled096", personal, "personal", undefined, 9);
   assert.equal(rec?.kind, "personal");
-  assert.equal(log.length, 1, "méta seule, aucune copie d'image");
+  assert.deepEqual(log, [
+    `GET ${shownKey("dev_AAAA1111", "oled096")}`,
+    `SET ${shownKey("dev_AAAA1111", "oled096")} EX${SHOWN_TTL_SEC}`,
+  ], "lecture du curseur consensus puis méta seule, aucune copie d'image");
   assert.ok(![...data.values()].some((v) => v.includes("SECRET")), "le buffer privé n'est écrit nulle part");
   assert.ok(![...data.values()].some((v) => v.includes("Mon dessin privé")), "pas même le titre");
   const pub = toPublicShown(rec!);
   assert.equal(pub.frameId, null);
   assert.deepEqual(Object.keys(pub).sort(), ["frameId", "hasImage", "kind", "screen", "shownAt"]);
   assert.equal(await readShownImage(kv, personal.frameId, "oled096"), null);
+});
+
+test("RATTRAPAGE : une frame personnelle conserve le dernier index consensus sans l'exposer publiquement", async () => {
+  const { kv, data, log } = fakeKV();
+  await recordDisplayed(kv, "dev_AAAA1111", "eink29bwr", humanFrame, "consensus", undefined, 100);
+  log.length = 0;
+  const personal = { frameId: "frame-catchup-1", payload: { screen: "eink29bwr", black: "SECRET" } };
+  const rec = await recordDisplayed(kv, "dev_AAAA1111", "eink29bwr", personal, "personal", undefined, 200);
+  assert.equal(rec?.lastConsensusBlockIndex, 42);
+  assert.deepEqual(log, [
+    `GET ${shownKey("dev_AAAA1111", "eink29bwr")}`,
+    `SET ${shownKey("dev_AAAA1111", "eink29bwr")} EX${SHOWN_TTL_SEC}`,
+  ]);
+  assert.equal(JSON.parse(data.get(shownKey("dev_AAAA1111", "eink29bwr"))!).lastConsensusBlockIndex, 42);
+  assert.deepEqual(toPublicShown(rec!), { frameId: null, screen: "eink29bwr", shownAt: 200, kind: "personal", hasImage: false });
+
+  // Une deuxième frame personnelle conserve encore le même curseur.
+  const again = await recordDisplayed(kv, "dev_AAAA1111", "eink29bwr", { ...personal, frameId: "frame-catchup-2" }, "personal", undefined, 300);
+  assert.equal(again?.lastConsensusBlockIndex, 42);
 });
 
 test("mode « scene » transmis par le firmware est conservé ; une valeur absente n'ajoute rien", () => {

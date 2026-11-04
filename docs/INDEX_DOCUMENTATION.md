@@ -1,6 +1,6 @@
 # Index et gouvernance de la documentation
 
-**Mis à jour le 29/10/2026.** Cet index évite qu'une note chronologique ancienne soit interprétée comme l'état actuel.
+**Mis à jour le 04/11/2026.** Cet index évite qu'une note chronologique ancienne soit interprétée comme l'état actuel.
 
 ## Sources canoniques
 
@@ -19,6 +19,9 @@
 | `INCIDENT_WIFI_DANS_BINAIRE_R4_2026_10_30.md` | identifiants Wi-Fi dans un binaire R4 publié : faits, contrôles, plan de purge séparé |
 | `SUIVI_CANARI_MULTIBWR_EN_ATTENTE_2026_10_29.md` | canari Multibwr publié, carte hors ligne : état, contrôles à la reconnexion, verdict à compléter |
 | `LOT_MULTIBWR_MIGRATION_2026_10_29.md` | multiscreen e-ink BWR + OLED + DHT22 (`multibwr-2.1`) : construction, migration OTA signée non publiée, protocole du canari |
+| `LIAISON_DURABLE_ET_RATTRAPAGE_2026_11_04.md` | récupération durable du profil/appareils et rattrapage manuel borné des œuvres manquées ; coûts Redis et limites exactes |
+| `DIAGNOSTIC_MULTISCREEN_USB_2026_11_04.md` | KAD6PKC4 : causes OTA/vote, vote v2 statique prouvé en 2.11, Soft WDT encore ouvert ; état distinct de T46 |
+| `RELEASE_MULTIBWR_2_3_PREPAREE_2026_11_04.md` | T46HBXG1 : release séquence 21 ciblée, signée en staging, non publiée et non prouvée sur carte |
 | `INVENTAIRE_LOCAL_A_PRESERVER_2026_10_29.md` | inventaire de l'ancien checkout et des artefacts à trier sans perte |
 
 ## Documents de chantier récents

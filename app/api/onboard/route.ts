@@ -3,7 +3,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { isSensorScreens } from "@/lib/measures";
 import { getArtist, getDeviceByMac, getDeviceByPairCode, setArtistName } from "@/lib/deviceStore";
 import { getSession, setSession } from "@/lib/session";
-import { ensureSessionProfile, resolveSessionArtist } from "@/lib/artistDirectory";
+import { ensureSessionProfile } from "@/lib/artistDirectory";
 import {
   checkRateLimit, isBlacklisted,
   getIP, tooManyRequests, forbidden,
@@ -50,12 +50,14 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "pairCode ou mac requis" }, { status: 400 });
     }
 
-    // Cet ESP a déjà un profil (lien permanent) : jamais reprendre ni renommer — on retrouve ce profil
-    // si la session n'en a pas (récupération après perte du cookie / nouveau téléphone).
+    // Cet ESP a déjà un profil (lien permanent) : son pairCode est une preuve de
+    // possession et restaure TOUJOURS CE profil. Ne pas préférer un autre profil
+    // déjà présent dans le navigateur : ce serait afficher l'ESP dans le mauvais
+    // compte sans modifier son lien serveur durable.
     const owner = device.artistId ? await getArtist(device.artistId) : null;
     let profile = null;
     if (owner) {
-      profile = (await resolveSessionArtist(session)) ?? owner;
+      profile = owner;
     } else {
       // Un ESP en session = un artiste : profil existant rejoint, sinon créé avec le nom saisi.
       if (!name && !device.artistName?.trim())
@@ -83,7 +85,10 @@ export async function POST(req: NextRequest) {
     });
 
     await setSession(res, {
-      deviceIds: Array.from(new Set([...session.deviceIds, device.deviceId])),
+      // En récupération, artistId suffit à retrouver tous les appareils liés.
+      // On écarte les ids directs d'un éventuel autre profil restés dans ce
+      // navigateur, au lieu de créer une session hybride entre deux comptes.
+      deviceIds: owner ? [device.deviceId] : Array.from(new Set([...session.deviceIds, device.deviceId])),
       artistId:  profile?.artistId ?? session.artistId,
     });
     return res;

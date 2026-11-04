@@ -29,7 +29,13 @@ Aucune de ces causes n'est démontrée : **la nouvelle télémétrie `stat:sessl
 
 **Sécurité** : le lien de récupération = clé d'accès au profil (comme le code d'appairage, déjà équivalent) — montré au seul propriétaire, révocable (« Nouveau lien »), 10 essais / 10 min / IP, signature de 22 caractères (≈ 132 bits), séparation de domaine avec le cookie de session. Le cookie restauré **ajoute** le profil, ne retire aucun ESP.
 
-**Coût Redis (règle primordiale)** : usage normal = **+1 MGET par visite du profil** (jeton). Restauration ≈ 3 commandes, rare. Rattrapage = 4 commandes **au clic seulement** (jamais en arrière-plan). Code d'appairage = 1 GET au clic. Télémétrie ≤ 6 commandes, 1 / heure / IP. Aucun SCAN ajouté (le cookie restauré ne contient que l'`artistId` ; `sessionOwnsDevice` accepte les ESP liés par la clé inverse).
+**Coût Redis (règle primordiale)** : au repos = **0 commande/heure**. Une ouverture de profil avec un cookie courant = **1 MGET** pour dériver le jeton (profil + epoch) ; le repli des anciens cookies peut lire le profil auparavant. Restauration = 1 MGET métier, rare, plus les garde-fous de sécurité. Rattrapage = 4 lectures métier **au clic seulement**, plus au plus 1 GET de propriété lorsque le deviceId n'est pas déjà dans le cookie ; jamais en arrière-plan. L'ACK d'une œuvre personnelle ajoute 1 GET rare pour conserver le dernier index consensus, puis garde son SET existant. Code d'appairage = 1 GET métier au clic. Télémétrie échantillonnée à 1 événement/heure/IP ; ses commandes de limite et de compteur ne tournent jamais sans perte détectée. Aucun SCAN ajouté par ces parcours.
+
+**Correction après audit** : une frame personnelle écrasait la méta du dernier affichage consensus. Après un premier rattrapage, l'interface pouvait donc considérer à tort tous les blocs récents comme manqués. Le record personnel conserve maintenant `lastConsensusBlockIndex` (privé, jamais exposé publiquement), y compris après plusieurs affichages personnels successifs.
+
+**Récupération depuis un navigateur portant déjà un autre profil** : le code d'appairage d'un appareil déjà lié restaure toujours le profil propriétaire de cet appareil. Les anciens `deviceIds` directs du navigateur ne sont pas mélangés dans ce cookie, afin d'éviter une session hybride entre deux comptes.
+
+**Portée exacte du rattrapage** : ce n'est pas un journal de livraison illimité. Au clic, le serveur inspecte au plus les 25 blocs récents et en propose au plus 5, postérieurs au dernier bloc de consensus connu pour cet écran. Cela couvre le cas visé (frame expirée pendant une déconnexion récente) sans nouvelle écriture Redis par bloc ni tâche de fond. Si un écran a déjà affiché un bloc plus récent, les blocs plus anciens ne sont pas reproposés ; un historique exhaustif exigerait un registre de réception par appareil, avec un coût Redis durable qui n'est pas introduit dans ce lot.
 
 ## 3. Ce qui est prouvé / non prouvé
 

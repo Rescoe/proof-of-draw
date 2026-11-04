@@ -1,7 +1,7 @@
 # État actuel canonique de Proof of Draw
 
-**Révision : 29/10/2026**
-**Référence Git examinée : `origin/main` à `ed441d8`**
+**Révision : 04/11/2026**
+**Référence Git examinée : `origin/main` après le lot liaison durable / rattrapage et le diagnostic multiscreen du 04/11**
 **Objet : point d'entrée unique pour reprendre le projet sans historique de conversation**
 
 ## 1. Ordre de confiance documentaire
@@ -63,7 +63,7 @@ La définition canonique est dans `TAXONOMIE_FAMILLES_COMPOSITIONS_MATERIELLES.m
 - famille fonctionnelle, plateforme, profil matériel et cible OTA sont distincts ;
 - une famille mutualise les briques, mais une release OTA cible le profil exact.
 
-Le montage de Claude2, `dev_T46HBXG1`, est donc fonctionnellement un multiscreen ESP8266 + e-ink 2,9″ BWR + OLED + DHT22. Le code publié à `ed441d8` emploie encore le modèle transitoire BWR + capacité `anim-oled`; sa migration vers deux écrans réseau réels est un chantier actif non encore intégré à `main`.
+Le montage de Claude2, `dev_T46HBXG1`, est donc fonctionnellement un multiscreen ESP8266 + e-ink 2,9″ BWR + OLED + DHT22. La migration multiscreen est installée en `multibwr-2.2` (dessins, animations, température et humidité observés). Son vote v2 statique reste toutefois non prouvé : la release corrective ciblée `multibwr-2.3`, séquence 21, est signée en staging mais non publiée.
 
 ## 6. État matériel synthétique
 
@@ -74,8 +74,8 @@ Les détails et les preuves sont dans la matrice. Cette table évite de reprendr
 | ESP8266 + TFT 1,8″ | vote, frame, ACK, portail et premier OTA Internet observés ; ancien montage matériel désormais remplacé par la station R4 |
 | ESP8266 + e-ink 2,9″ BWR | vote, affichage, ACK, portail et OTA Internet observés |
 | ESP8266 + e-ink 2,7″ BW | compilation/hôte ; preuve matérielle plus limitée |
-| ESP8266 + e-ink 2,7″ BW + OLED | multiscreen historique : affichages, ACK, vote et OTA observés ; marge mémoire OTA très faible |
-| ESP8266 + e-ink 2,9″ BWR + OLED + DHT22 | BWR, capteur et OTA ont des preuves matérielles ; OLED d'animation installé sous modèle transitoire ; release 2.14 publiée pour corriger le bus I²C, résultat matériel final à indexer ; migration multiscreen active |
+| ESP8266 + e-ink 2,7″ BW + OLED | `dev_KAD6PKC4` en `multiscreen-2.11` : affichage/ACK et vote v2 statique prouvé (bloc #135) ; Soft WDT post-vote encore ouvert ; marge mémoire étroite |
+| ESP8266 + e-ink 2,9″ BWR + OLED + DHT22 | `dev_T46HBXG1` en `multibwr-2.2` : dessin, animation, température/humidité et migration OTA observés ; vote v2 statique non prouvé ; 2.3/seq.21 préparée, non publiée |
 | R4 + e-ink 2,9″ BWR | affichage, ACK, vote et portail observés |
 | R4 + TFT 2,8″ tactile + SD | image, animation, ACK et vote observés |
 | R4 + TFT 1,8″ + DHT22 + SGP40 + SD | station réelle : capteurs, SD, réseau et votes observés ; matrice/rapport récent à consulter pour l'affichage et l'OTA exacts |
@@ -88,7 +88,7 @@ Les détails et les preuves sont dans la matrice. Cette table évite de reprendr
 
 L'OTA Internet signée est matériellement prouvée sur au moins trois profils : TFT 1,8″, e-ink 2,9″ BWR et multiscreen e-ink 2,7″ + OLED. Chaque nouvelle composition et chaque release gardent toutefois leur propre canari, notamment à cause de la fragmentation du tas et des profils de flash.
 
-`dev_T46HBXG1` a reçu plusieurs releases ciblées jusqu'au modèle BWR + OLED. La présence d'un manifeste dans `ota-releases` prouve sa publication, pas son installation. La réussite matérielle de chaque séquence doit être reliée à un rapport ou journal.
+`dev_T46HBXG1` a reçu plusieurs releases ciblées et s'est réenregistré en `multibwr-2.2`. La présence d'un manifeste dans `ota-releases` ne prouve toutefois jamais son installation à elle seule. La release 2.3 / séquence 21 reste hors `ota-releases` tant que le porteur n'a pas donné un GO OTA distinct.
 
 ### UNO R4 WiFi
 
@@ -98,19 +98,23 @@ Le dépôt contient un client OTA R4, la vérification de manifeste, le staging,
 
 Les jalons UX 1 à 5 sont dans `main` : navigation responsive, accueil recomposé, choix Dessiner/Animer selon capacités, matrice mobile, panneau de mesures partagé, dialogues accessibles et tests Playwright séparés.
 
+Le profil propose aussi un rattrapage manuel borné des œuvres manquées et une récupération durable d'accès : lien signé/révocable, code d'appairage réaffichable et saisissable depuis un autre navigateur. La relation serveur appareil ↔ artiste est durable ; la perte constatée sur ancien iPhone porte sur le cookie navigateur, pas sur l'association Redis. Voir `LIAISON_DURABLE_ET_RATTRAPAGE_2026_11_04.md` pour les coûts Redis et les limites exactes.
+
 Limites connues : Chromium principalement, pas d'audit complet lecteur d'écran/contraste, styles encore hétérogènes sur certaines pages, snapshot réseau non borné pour un réseau de très grande taille.
 
-## 9. Travaux actifs au 29/10/2026
+## 9. Travaux actifs au 04/11/2026
 
-1. Migration de Claude2 vers un vrai profil multiscreen BWR + OLED + DHT22 : firmware `multibwr-2.1` compilé et testé sur l'hôte, release de migration signée (`eink29bwr-2.15-ota16`) **publiée le 29/10/2026**, cible unique `dev_T46HBXG1`, **en attente de reconnexion — non validée sur carte** (`docs/SUIVI_CANARI_MULTIBWR_EN_ATTENTE_2026_10_29.md`, `docs/LOT_MULTIBWR_MIGRATION_2026_10_29.md`).
-2. Consolidation de la matrice et de la taxonomie dans l'application.
-3. Indexation des preuves OTA R4 Internet rapportées par le porteur.
-4. Vote d'animation complet et activation progressive par famille.
-5. Scalabilité du snapshot réseau et maîtrise des quotas Redis.
-6. Nettoyage Git/documentaire pour travailler depuis plusieurs ordinateurs : **fait le 29–30/10/2026** (branches fusionnées supprimées, sommets utiles archivés par tags `archive/…`, worktrees temporaires retirés).
-7. **Seule branche fonctionnelle encore active : `claude/r4-tft28-portail-vote`** (portail Wi-Fi du UNO R4 + TFT 2,8″, `POD_WIFI_PORTAL=0` par défaut). Elle doit être **réconciliée avec `main` puis auditée avant toute fusion** ; ne jamais la fusionner en bloc.
-8. Worktrees Codex/ANA encore attachés à des sessions : conservés, à retirer après fermeture ou archivage de ces sessions.
-9. Node : `.nvmrc` = 22.13.0 ; le clone neuf a été validé sous **22.19.0** (`npm ci`, `tsc`, 133 tests essentiels). **À tester sous 22.13.0 sur le nouveau PC.**
+1. `dev_T46HBXG1` : décider du canari OTA ciblé `multibwr-2.3` / séquence 21 ; il peut corriger la POST v2 mais ne prouve pas la cause du silence observé après le GET candidat. Journal série souhaitable.
+2. `dev_KAD6PKC4` : expliquer le Soft WDT observé après un vote réussi en 2.11 ; le vote v2 statique lui-même est prouvé.
+3. Valider la récupération de profil et le rattrapage sur le vieil iPhone ; observer la télémétrie anonyme pour départager Safari, mini-navigateur captif, navigation privée ou effacement des données.
+4. Consolidation de la matrice et de la taxonomie dans l'application.
+5. Indexation des preuves OTA R4 Internet rapportées par le porteur.
+6. Vote d'animation complet et activation progressive par famille.
+7. Scalabilité du snapshot réseau et maîtrise des quotas Redis.
+8. Nettoyage Git/documentaire pour travailler depuis plusieurs ordinateurs : **fait le 29–30/10/2026** (branches fusionnées supprimées, sommets utiles archivés par tags `archive/…`, worktrees temporaires retirés).
+9. **Seule branche fonctionnelle encore active : `claude/r4-tft28-portail-vote`** (portail Wi-Fi du UNO R4 + TFT 2,8″, `POD_WIFI_PORTAL=0` par défaut). Elle doit être **réconciliée avec `main` puis auditée avant toute fusion** ; ne jamais la fusionner en bloc.
+10. Worktrees Codex/ANA encore attachés à des sessions : conservés, à retirer après fermeture ou archivage de ces sessions.
+11. Node : `.nvmrc` = 22.13.0 ; le clone neuf a été validé sous **22.19.0** (`npm ci`, `tsc`, 133 tests essentiels). **À tester sous 22.13.0 sur le nouveau PC.**
 
 ## 10. Raccourcis interdits
 

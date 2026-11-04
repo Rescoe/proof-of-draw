@@ -15,3 +15,11 @@
 1. Bouton utilisateur « mettre à jour mes écrans » : récupérer les dessins/animations manqués pendant une déconnexion (frame expirée).
 2. Liaison appareil ↔ utilisateur qui se perd (téléphone iOS ancien) : retrouver/réappairer un appareil existant, durablement.
 3. Corriger la réception et le vote du BWR multiscreen.
+
+## Reprise et état au 04/11 après mise en œuvre
+
+- **Serveur/web livré sur `main` jusqu'à `78551ff`** : rattrapage manuel borné par écran, lien de récupération signé et révocable, restauration silencieuse lorsque le stockage local subsiste, saisie d'un code d'appairage existant et réaffichage/régénération de ce code au propriétaire. Rapport complet : `docs/LIAISON_DURABLE_ET_RATTRAPAGE_2026_11_04.md`.
+- **Cause établie au niveau applicatif** : la relation serveur (`device.artistId`, index artiste/appareil et identité MAC) reste durable ; c'est la disparition ou l'isolement du cookie `esp_session` sur le téléphone qui rend le profil invisible. Le mécanisme iOS exact (Safari, mini-navigateur captif, navigation privée ou effacement) n'est pas encore prouvé ; la télémétrie anonyme ajoutée doit le départager.
+- **Correctifs d'audit locaux, à pousser après validation** : le pairCode d'un appareil déjà lié restaure toujours son propriétaire (pas le profil déjà ouvert dans un autre navigateur), la session récupérée n'est pas hybride, et une frame personnelle conserve désormais le curseur du dernier bloc consensus pour ne pas fausser « Rattraper ».
+- **KAD6PKC4** : `multiscreen-2.11`, séquence 20, installé par USB ; vote v2 statique prouvé sur le bloc #135. Un Soft WDT post-vote a été observé et reste à expliquer. Détails : `docs/DIAGNOSTIC_MULTISCREEN_USB_2026_11_04.md`.
+- **T46HBXG1** : `multibwr-2.3`, séquence 21, compilé, signé et ciblé uniquement sur cet appareil, mais **non publié et non essayé**. Le correctif réduit le tampon TLS de la POST du vote ; il ne prouve pas la cause du silence antérieur après le GET candidat. Un GO OTA distinct reste obligatoire.

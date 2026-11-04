@@ -31,6 +31,8 @@ export interface ShownRecord {
   anaKind?:    string;     // poem | celebration | spontaneous | generative-capture
   blockHash?:  string;     // bloc galerie ANA correspondant
   blockIndex?: number;     // bloc de la chaîne humaine
+  /** Dernier bloc consensus connu avant une frame personnelle. Sert au rattrapage sans exposer la frame privée. */
+  lastConsensusBlockIndex?: number;
   mode?:       "frame" | "scene";   // ce que l'appareil a joué (firmware scene-v1 : champ `mode` de l'ACK)
   render?:     RenderReport;        // rapport de rendu de l'appareil (débogage du propriétaire seulement ; jamais exposé publiquement)
   isAnimation?: boolean;            // l'œuvre est une ANIMATION de bloc (le pointeur `anim` accompagnait la frame) : l'écran la joue en boucle
@@ -38,7 +40,7 @@ export interface ShownRecord {
 }
 
 /** Version exposée au public : une frame personnelle ne révèle rien d'autre que son existence ; le rapport de rendu (`render`) est EXCLU DU TYPE, pas seulement de la valeur. */
-export type PublicShown = Omit<ShownRecord, "frameId" | "render"> & { frameId: string | null };
+export type PublicShown = Omit<ShownRecord, "frameId" | "render" | "lastConsensusBlockIndex"> & { frameId: string | null };
 
 export interface DisplayKV {
   set(key: string, value: string, opts?: { nx?: boolean; ex?: number }): Promise<unknown>;
@@ -127,6 +129,15 @@ export async function recordDisplayed(
   try {
     const rec = buildShownRecord(frame, screen, source, now, mode, render);
     if (!rec) return null;
+    // Une frame personnelle remplace visuellement l'œuvre, mais ne doit pas
+    // effacer le curseur du dernier bloc consensus : sinon « Rattraper » croit
+    // ensuite que tous les blocs récents ont été manqués. Une seule lecture est
+    // ajoutée, uniquement à l'ACK personnel (action utilisateur rare).
+    if (source === "personal") {
+      const previous = parseRecord(await kv.get(shownKey(deviceId, screen)));
+      const idx = previous?.kind === "personal" ? previous.lastConsensusBlockIndex : previous?.blockIndex;
+      if (typeof idx === "number") rec.lastConsensusBlockIndex = idx;
+    }
     const writes: Promise<unknown>[] = [kv.set(shownKey(deviceId, screen), JSON.stringify(rec), { ex: SHOWN_TTL_SEC })];
     const img = rec.hasImage ? imagePayloadOf(frame, screen) : null;
     if (img) writes.push(kv.set(shownImageKey(rec.frameId, screen), JSON.stringify(img), { nx: true, ex: SHOWN_TTL_SEC }));

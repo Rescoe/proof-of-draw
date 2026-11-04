@@ -12,13 +12,22 @@ import { getIP, isBlacklisted, forbidden, checkRateLimit, tooManyRequests } from
 export const dynamic = "force-dynamic";
 const noStore = { "Cache-Control": "private, no-store" };
 
+/**
+ * Le cookie normal porte déjà l'artistId : ne pas relire le profil une première
+ * fois avant le MGET profil + epoch de currentRecoveryToken(). Le repli par les
+ * appareils ne sert qu'aux anciens cookies qui n'avaient pas encore artistId.
+ */
+async function recoveryArtistId(): Promise<string | null> {
+  const session = await getSession();
+  if (session.artistId) return session.artistId;
+  return (await resolveSessionArtist(session))?.artistId ?? null;
+}
+
 export async function GET() {
   try {
-    const session = await getSession();
-    if (session.deviceIds.length === 0 && !session.artistId) return NextResponse.json({ error: "Aucun profil dans ce navigateur" }, { status: 401, headers: noStore });
-    const profile = await resolveSessionArtist(session);
-    if (!profile) return NextResponse.json({ error: "Aucun profil dans ce navigateur" }, { status: 401, headers: noStore });
-    const token = await currentRecoveryToken(profile.artistId);
+    const artistId = await recoveryArtistId();
+    if (!artistId) return NextResponse.json({ error: "Aucun profil dans ce navigateur" }, { status: 401, headers: noStore });
+    const token = await currentRecoveryToken(artistId);
     if (!token) return NextResponse.json({ error: "Profil introuvable" }, { status: 404, headers: noStore });
     return NextResponse.json({ token }, { headers: noStore });
   } catch (e) {
@@ -35,14 +44,13 @@ export async function POST(req: NextRequest) {
     try { body = await req.json(); } catch { return NextResponse.json({ error: "JSON invalide" }, { status: 400 }); }
     if (body.action !== "rotate") return NextResponse.json({ error: "action inconnue" }, { status: 400 });
 
-    const session = await getSession();
-    const profile = await resolveSessionArtist(session);
-    if (!profile) return NextResponse.json({ error: "Aucun profil dans ce navigateur" }, { status: 401, headers: noStore });
+    const artistId = await recoveryArtistId();
+    if (!artistId) return NextResponse.json({ error: "Aucun profil dans ce navigateur" }, { status: 401, headers: noStore });
 
-    const rl = await checkRateLimit({ route: "recovery-rotate", id: profile.artistId, limit: 6, windowSec: 3600 });
+    const rl = await checkRateLimit({ route: "recovery-rotate", id: artistId, limit: 6, windowSec: 3600 });
     if (!rl.allowed) return tooManyRequests(rl.retryAfter);
 
-    const token = await rotateRecoveryToken(profile.artistId);
+    const token = await rotateRecoveryToken(artistId);
     if (!token) return NextResponse.json({ error: "Profil introuvable" }, { status: 404, headers: noStore });
     return NextResponse.json({ ok: true, token }, { headers: noStore });
   } catch (e) {

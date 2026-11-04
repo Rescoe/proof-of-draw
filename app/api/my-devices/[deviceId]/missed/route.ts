@@ -1,8 +1,8 @@
 // app/api/my-devices/[deviceId]/missed/route.ts
 // GET /api/my-devices/{deviceId}/missed — œuvres récentes que les écrans de CET appareil auraient dû recevoir et n'ont pas affichées
 // (hors ligne pendant la validité de la frame, ~42 min). Propriétaire seulement. Le bouton « Rattraper » du profil réaffiche ensuite l'une d'elles
-// par /api/send-to-screen. Coût : 1 GET appareil + 1 MGET des affichages + 1 LRANGE + 1 MGET des blocs = 4 commandes, à la demande de l'utilisateur
-// (jamais en arrière-plan).
+// par /api/send-to-screen. Coût métier : 1 GET appareil + 1 MGET des affichages + 1 LRANGE + 1 MGET des blocs = 4 commandes, à la demande de l'utilisateur
+// (jamais en arrière-plan), plus au plus 1 GET de propriété si le deviceId n'est pas déjà dans le cookie ; garde-fous de sécurité communs en sus.
 
 import { NextRequest, NextResponse } from "next/server";
 import { redis } from "@/lib/redis";
@@ -45,7 +45,9 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ devi
     const result: Record<string, { lastShownIndex: number | null; missed: MissedWork[] }> = {};
     for (const screen of screens) {
       const rec = shown[deviceId]?.[screen];
-      const lastShownIndex = typeof rec?.blockIndex === "number" ? rec.blockIndex : null;
+      const lastShownIndex = typeof rec?.blockIndex === "number"
+        ? rec.blockIndex
+        : (typeof rec?.lastConsensusBlockIndex === "number" ? rec.lastConsensusBlockIndex : null);
       result[screen] = {
         lastShownIndex,
         missed: pickMissedWorks(flat, {

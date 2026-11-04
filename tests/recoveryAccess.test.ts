@@ -135,9 +135,17 @@ test("routes : récupération — limite d'essais, aucun SCAN Redis, cookie sans
 
 test("routes : émission / rotation du jeton réservées à une session qui a un profil", () => {
   const r = read("app/api/artist/recovery/route.ts");
-  assert.equal((r.match(/resolveSessionArtist\(session\)/g) ?? []).length, 2);
+  assert.match(r, /if \(session\.artistId\) return session\.artistId;/);
+  assert.equal((r.match(/resolveSessionArtist\(session\)/g) ?? []).length, 1, "repli ancien cookie seulement ; pas de double lecture en usage normal");
   assert.match(r, /status: 401/);
   assert.match(r, /action !== "rotate"/);
+});
+
+test("onboard : le pairCode d'un appareil déjà lié restaure SON profil et ne fabrique pas une session hybride", () => {
+  const r = read("app/api/onboard/route.ts");
+  assert.match(r, /if \(owner\) \{\s*profile = owner;/);
+  assert.doesNotMatch(r, /resolveSessionArtist\(session\)\) \?\? owner/);
+  assert.match(r, /deviceIds: owner \? \[device\.deviceId\] : Array\.from/);
 });
 
 test("routes : code d'appairage — propriétaire seulement, jamais en cache, limite de lecture", () => {
@@ -153,6 +161,7 @@ test("routes : œuvres manquées — propriétaire seulement, lecture seule, auc
   assert.match(r, /sessionOwnsDevice\(deviceId\)/);
   assert.doesNotMatch(r, /redis\.(set|del|incr|lpush|sadd|expire)\(/);
   assert.match(r, /checkRateLimit\(\{ route: "missed"/);
+  assert.match(r, /rec\?\.lastConsensusBlockIndex/, "une frame personnelle ne fait pas perdre le curseur consensus");
 });
 
 test("routes : télémétrie de perte — échantillonnée (1/h/IP), n'échoue jamais, ne stocke ni IP ni identifiant", () => {
