@@ -717,10 +717,23 @@ size_t base64Decode(const char* src, size_t srcLen, uint8_t* dst, size_t dstMax)
 }
 
 // ─── HTTP HELPERS ──────────────────────────────────────────────────────────
+// POD_MS_BEGIN
+#if POD_VOTE_CHUNK
+// 04/11/2026 : la POST du vote vient APRÈS les lectures par morceaux, qui laissent le tas fragmenté (série de dev_KAD6PKC4 : plus gros bloc libre 16 704 o, alors qu'un TLS « normal » réclame ≈ 16,4 Ko de
+// tampon de réception d'un seul tenant) : « Echec vote » avec réponse vide, puis redémarrage. Pour CETTE requête seulement, tampon de réception de 4 Ko comme les lectures par morceaux (même serveur, mêmes enregistrements).
+// Drapeau global (pas de paramètre par défaut : le générateur de prototypes d'Arduino les duplique).
+static bool g_httpSmallRx = false;
+#endif
+// POD_MS_END
 bool httpPost(const String& path, const String& body, String& resp) {
   Serial.printf_P(PSTR("[MEM] avant TLS: libre=%u plus gros bloc=%u\n"), ESP.getFreeHeap(), ESP.getMaxFreeBlockSize());
   WiFiClientSecure client;
   client.setInsecure();
+// POD_MS_BEGIN
+#if POD_VOTE_CHUNK
+  if (g_httpSmallRx) client.setBufferSizes(4096, 512);
+#endif
+// POD_MS_END
   HTTPClient http;
   String url = String(SERVER_URL) + path;
 
@@ -2287,7 +2300,17 @@ bool doValidateV2(const String& candidateId, const String& screenName, size_t by
                 ",\"signature\":\"" + bytesToHex(sig, 64) + "\"}";
 
   String vResp;
+// POD_MS_BEGIN
+#if POD_VOTE_CHUNK
+  g_httpSmallRx = true;
+#endif
+// POD_MS_END
   bool vOk = httpPost("/api/validation-result", body, vResp);
+// POD_MS_BEGIN
+#if POD_VOTE_CHUNK
+  g_httpSmallRx = false;
+#endif
+// POD_MS_END
   bool mined = false;
   if (vOk) {
     Serial.println(F("[VALIDATE2] Vote OK"));
@@ -2802,6 +2825,14 @@ void loop() {
     }
   }
 
+// POD_MS_BEGIN
+#if POD_OTA
+  // Point d'appel SÛR de l'OTA : aucun candidat, aucune observation, banc d'essai inactif. Les tampons de ce firmware sont STATIQUES (rien à libérer) ; l'OLED est ré-initialisée après.
+  // 04/11/2026 : PLACÉ AVANT l'animation de bloc. Après l'animation il n'était JAMAIS atteint tant qu'un clip jouait (le bloc d'animation fait « return » à chaque tour) : constat série sur dev_KAD6PKC4,
+  // « [OTA] annonce acceptee » au démarrage puis plus aucune ligne [OTA] pendant 150 s, la mise à jour annoncée ne partait jamais.
+  if (pendingCandidateId.length() == 0 && pendingObsHashes.length() == 0 && !g_bench.mode) { podotaesp::maybeRun(); }
+#endif
+// POD_MS_END
   // ── Animation de bloc : jouée EN BOUCLE entre deux tâches réseau, sans aucune requête (⚠ non testé sur le matériel) ──
   if (g_anim.on && !g_bench.mode) {
     const unsigned long budget = msUntilNextTask();
@@ -2833,12 +2864,6 @@ void loop() {
     }
   }
 
-// POD_MS_BEGIN
-#if POD_OTA
-  // Point d'appel SÛR de l'OTA : aucun candidat, aucune observation, banc d'essai inactif. Les tampons de ce firmware sont STATIQUES (rien à libérer) ; l'OLED est ré-initialisée après.
-  if (pendingCandidateId.length() == 0 && pendingObsHashes.length() == 0 && !g_bench.mode) { podotaesp::maybeRun(); }
-#endif
-// POD_MS_END
   // Pas de delay fixe ici : tickerStep() gère son propre throttle (35ms).
   // Un yield() suffit pour nourrir le watchdog ESP8266 entre les tours de boucle.
   yield();

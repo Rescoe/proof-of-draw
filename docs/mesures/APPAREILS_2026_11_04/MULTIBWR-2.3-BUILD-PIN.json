@@ -1,0 +1,11 @@
+{
+  "note": "Build ESP8266 + e-ink 2,9″ BWR avec portail Wi-Fi ET client OTA Internet (lot B1, 22/10/2026). Faits PUBLICS ; binaire sous canary-builds/ (ignoré par git). NON essayé sur la carte.",
+  "dir": "canary-builds/bwr-portal-2026-10-22/20261104-123728-ota-dht-oled-disp-chunk/out",
+  "version": "multibwr-2.3",
+  "otaSeq": 21,
+  "sha": "7d04021a960b0d8f3d630c5fbdfe85c9aee1eb43cbb7c21b7e23c73df479ca94",
+  "size": 551264,
+  "ramStatic": 35880,
+  "ssidAbsent": true,
+  "wifiGuard": true
+}

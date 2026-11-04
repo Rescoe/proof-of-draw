@@ -769,9 +769,22 @@ bool podOtaSignFetch(const char* msg, size_t n, uint8_t sig[64]) {
 const char* podOtaDeviceId() { return deviceId.c_str(); }
 #endif
 // POD_BWR_END
+// POD_BWR_BEGIN
+#if POD_VOTE_CHUNK
+// 04/11/2026 : la POST du vote vient APRÈS les lectures par morceaux, qui laissent le tas fragmenté. Constat série sur le multiscreen dev_KAD6PKC4 (même chaîne de vote) : plus gros bloc libre 16 704 o, alors qu'un TLS
+// « normal » réclame ≈ 16,4 Ko de tampon de réception d'un seul tenant => « Echec vote », réponse vide, redémarrage. Pour CETTE requête seulement : tampon de réception de 4 Ko, comme les lectures par morceaux (même serveur).
+// Drapeau global, pas de paramètre par défaut (le générateur de prototypes d'Arduino les duplique). NON essayé sur la carte BWR.
+static bool g_httpSmallRx = false;
+#endif
+// POD_BWR_END
 bool httpPost(const String& path, const String& body, String& resp) {
   WiFiClientSecure client;
   client.setInsecure();
+// POD_BWR_BEGIN
+#if POD_VOTE_CHUNK
+  if (g_httpSmallRx) client.setBufferSizes(4096, 512);
+#endif
+// POD_BWR_END
 
   HTTPClient http;
   String url = String(SERVER_URL) + path;
@@ -2125,7 +2138,17 @@ bool doValidateV2(const String& candidateId, const String& screenName, size_t by
                 ",\"signature\":\"" + bytesToHex(sig, 64) + "\"}";
 
   String vResp;
+// POD_BWR_BEGIN
+#if POD_VOTE_CHUNK
+  g_httpSmallRx = true;
+#endif
+// POD_BWR_END
   bool vOk = httpPost("/api/validation-result", body, vResp);
+// POD_BWR_BEGIN
+#if POD_VOTE_CHUNK
+  g_httpSmallRx = false;
+#endif
+// POD_BWR_END
   if (vOk) {
     Serial.println(F("[VALIDATE2] Vote OK"));
     if (vResp.indexOf("\"blockMined\":true") >= 0) { Serial.println(F("[VALIDATE2] BLOC MINE")); frameReady = true; }
