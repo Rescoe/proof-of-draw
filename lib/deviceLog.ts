@@ -7,6 +7,7 @@
 // tout fait nouveau (frame, candidat, annonce OTA, tâche d'observation, erreur) est consigné à chaque fois.
 // Au mieux : un échec de journalisation n'interrompt JAMAIS la route.
 import type { NextRequest } from "next/server";
+import { describeBoot } from "@/lib/bootReport";
 import { redis } from "@/lib/redis";
 
 export const DEVLOG_KEEP = 400;
@@ -96,6 +97,7 @@ function describeRequest(route: string, b: Record<string, unknown> | null): stri
   if (typeof b.firmware === "string") parts.push(`firmware ${cleanText(b.firmware, 40)}`);
   if (Array.isArray(b.screens)) parts.push(`écrans ${b.screens.map((s) => cleanText(s, 16)).slice(0, 4).join("+")}`);
   if (Array.isArray(b.sensors)) parts.push(`capteurs ${b.sensors.map((s) => cleanText(s, 8)).slice(0, 4).join("+")}`);
+  { const boot = describeBoot(b); if (boot) parts.push(boot); }   // rapport de démarrage (témoin de vie) : cause du reset et étape où la carte s'était arrêtée
   if (typeof b.frameId === "string") parts.push(`frame ${short(b.frameId)}`);
   if (typeof b.candidateId === "string") parts.push(`candidat ${short(b.candidateId)}`);
   if (b.verdict === "accept" || b.verdict === "reject") parts.push(b.verdict === "accept" ? "vote : ACCEPTE" : "vote : REFUSE");

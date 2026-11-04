@@ -777,6 +777,41 @@ const char* podOtaDeviceId() { return deviceId.c_str(); }
 static bool g_httpSmallRx = false;
 #endif
 // POD_BWR_END
+// POD_BWR_BEGIN
+#ifndef POD_LIVENESS
+#define POD_LIVENESS 0
+#endif
+#if POD_LIVENESS
+// POD_LIVENESS = 1 (04/11/2026) : TÉMOIN DE VIE. Constat sur dev_T46HBXG1 (4 fois sur 4) : la carte disparaît juste après « candidat GET » sans redémarrer ni dire où, et n'est rétablie que par une coupure d'alimentation.
+// Ici : chaque étape qui peut bloquer pose son numéro en RTC (LiveGuard, remis à 0 à la sortie de la fonction) ; un minuteur (Ticker, 20 s) redémarre la carte si une étape dure plus de LIVE_LIMIT_MS ; au démarrage suivant le numéro
+// (et la cause du reset) sont envoyés au /api/register (champs rr, rp, rh : lib/bootReport.ts les écrit dans le journal de l'appareil). Les numéros sont ceux de BOOT_PHASE_NAMES (lib/bootReport.ts).
+// NON essayé sur la carte. RTC : mots 24..27 (le canari 8B2C utilise 0..3, l'e-ink 16..17).
+#include <Ticker.h>
+#define LIVE_LIMIT_MS 300000UL
+enum LivePhase : uint8_t { LP_IDLE = 0, LP_PULL = 1, LP_VAL_GET = 2, LP_VAL_FETCH = 3, LP_VAL_SIGN = 4, LP_VAL_POST = 5, LP_FRAME = 6 };
+static const uint32_t LIVE_MAGIC = 0x4C495645u;   // "LIVE"
+static volatile uint8_t  g_livePhase = 0;
+static volatile uint32_t g_livePhaseSince = 0;
+static uint8_t g_liveRp = 0, g_liveRh = 0, g_liveRr = 99;   // lus au démarrage, envoyés au register
+static Ticker g_liveTicker;
+static void liveWrite(uint8_t p) { const uint32_t w[4] = { LIVE_MAGIC, p, millis(), LIVE_MAGIC ^ p }; ESP.rtcUserMemoryWrite(24, (uint32_t*)w, sizeof w); }
+static void liveSet(uint8_t p) { g_livePhaseSince = millis(); g_livePhase = p; liveWrite(p); }
+struct LiveGuard { explicit LiveGuard(uint8_t p) { liveSet(p); } ~LiveGuard() { liveSet(0); } };
+static void liveTick() {   // minuteur système : jamais d'E/S longue ici
+  const uint8_t p = g_livePhase;
+  if (p != 0 && (uint32_t)(millis() - g_livePhaseSince) > LIVE_LIMIT_MS) { liveWrite((uint8_t)(p | 0x80)); ESP.restart(); }
+}
+static void liveBoot() {   // une fois, au début de setup()
+  uint32_t w[4] = { 0, 0, 0, 0 };
+  if (ESP.rtcUserMemoryRead(24, w, sizeof w) && w[0] == LIVE_MAGIC && w[3] == (LIVE_MAGIC ^ w[1])) { g_liveRp = (uint8_t)(w[1] & 0x7F); g_liveRh = (w[1] & 0x80) ? 1 : 0; }
+  const rst_info* ri = ESP.getResetInfoPtr(); g_liveRr = ri ? (uint8_t)ri->reason : 99;
+  const uint32_t z[4] = { 0, 0, 0, 0 }; ESP.rtcUserMemoryWrite(24, (uint32_t*)z, sizeof z);   // le rapport n'est donné qu'une fois
+  Serial.printf_P(PSTR("[LIVE] reset=%u derniere etape=%u%s\n"), (unsigned)g_liveRr, (unsigned)g_liveRp, g_liveRh ? " (BLOQUEE : redemarrage par le temoin de vie)" : "");
+  g_liveTicker.attach_ms(20000, liveTick);
+}
+static String liveBootJson() { return String("\"rr\":") + String((unsigned)g_liveRr) + ",\"rp\":" + String((unsigned)g_liveRp) + ",\"rh\":" + String((unsigned)g_liveRh) + ","; }
+#endif
+// POD_BWR_END
 bool httpPost(const String& path, const String& body, String& resp) {
   WiFiClientSecure client;
   client.setInsecure();
@@ -1379,6 +1414,9 @@ bool doRegister() {
 #endif
 // POD_BWR_END
 // POD_BWR_BEGIN
+#if POD_LIVENESS
+                + liveBootJson() +                                                              // rr (cause du reset), rp (étape où la carte s'était arrêtée), rh (arrêt par le témoin de vie) : lib/bootReport.ts
+#endif
 #if POD_OTA
                 "\"firmware\":\"" FIRMWARE_VERSION "\",\"publicKey\":\"" + pubHex + "\","
 #else
@@ -1586,6 +1624,11 @@ static int fetchFrameChunked() {
 // ─── FETCH FRAME (route séparée, heap propre après pull léger) ──────────────
 // ─── FETCH FRAME ─────────────────────────────────────────────────────────────
 bool doFetchFrame(const String& frameId, const String& frameSource) {
+// POD_BWR_BEGIN
+#if POD_LIVENESS
+  LiveGuard liveGuard_(LP_FRAME);
+#endif
+// POD_BWR_END
   logHeapState("FETCHFRAME-BEFORE");
 #if POD_RENDER_V1 && POD_CANARY
   canaryStep(PCP_FETCH, F("frame: debut du telechargement"));
@@ -1826,6 +1869,11 @@ static void otaAnnounceFrom(JsonObject ot) {
 #endif
 // POD_BWR_END
 bool doPull() {
+// POD_BWR_BEGIN
+#if POD_LIVENESS
+  LiveGuard liveGuard_(LP_PULL);
+#endif
+// POD_BWR_END
   free(blackBuf); blackBuf = nullptr;
   free(redBuf);   redBuf   = nullptr;
 
@@ -2111,6 +2159,11 @@ bool doValidateV2(const String& candidateId, const String& screenName, size_t by
   }
   logHeapState("VALIDATE2-BEFORE");
   PodCheck chk;
+// POD_BWR_BEGIN
+#if POD_LIVENESS
+  liveSet(LP_VAL_FETCH);
+#endif
+// POD_BWR_END
 #if POD_VOTE_CHUNK
   bool ok = podFetchAndCheckChunked(String(SERVER_URL) + "/api/candidate-frame?candidateId=" + candidateId, kind, bytes, scratch, scratchLen, &chk);
 #else
@@ -2128,6 +2181,11 @@ bool doValidateV2(const String& candidateId, const String& screenName, size_t by
                 (unsigned long)chk.m.e, (unsigned long)chk.m.t, (unsigned long)chk.m.r, (unsigned long)chk.m.s, accept ? "accept" : "reject", reason);
   Serial.println(String("[VALIDATE2] hash=") + chk.hash);
 
+// POD_BWR_BEGIN
+#if POD_LIVENESS
+  liveSet(LP_VAL_SIGN);
+#endif
+// POD_BWR_END
   String msg = podVoteMessage(deviceId, candidateId, chk.hash, chk.m, accept);
   uint8_t sig[64];
   Ed25519::sign(sig, privateKey, publicKey, (const uint8_t*)msg.c_str(), msg.length());
@@ -2138,6 +2196,11 @@ bool doValidateV2(const String& candidateId, const String& screenName, size_t by
                 ",\"signature\":\"" + bytesToHex(sig, 64) + "\"}";
 
   String vResp;
+// POD_BWR_BEGIN
+#if POD_LIVENESS
+  liveSet(LP_VAL_POST);
+#endif
+// POD_BWR_END
 // POD_BWR_BEGIN
 #if POD_VOTE_CHUNK
   g_httpSmallRx = true;
@@ -2164,6 +2227,11 @@ bool doValidateV2(const String& candidateId, const String& screenName, size_t by
 
 // ─── VALIDATION ─────────────────────────────────────────────────────────────
 bool doValidate() {
+// POD_BWR_BEGIN
+#if POD_LIVENESS
+  LiveGuard liveGuard_(LP_VAL_GET);
+#endif
+// POD_BWR_END
 #if POD_RENDER_V1 && POD_CANARY
   // LOT8B2C : le canari ne teste PAS le consensus. Aucun réseau, aucune signature, aucune requete validation-result, aucun re-register : le candidat est oublié localement (le serveur le ré-annoncera au pull suivant).
   if (pendingCandidateId.length() > 0) {
@@ -2923,6 +2991,11 @@ static void resumeIdBanner() {
 void setup() {
   Serial.begin(115200);
   Serial.println(F("\n[BOOT] Proof-of-Draw ESP v2.0"));
+// POD_BWR_BEGIN
+#if POD_LIVENESS
+  liveBoot();
+#endif
+// POD_BWR_END
 #if POD_RENDER_V1 && POD_CANARY
   canaryBoot();
 #endif
