@@ -1,0 +1,31 @@
+{
+  "schema": "pod-ota-manifest-v2",
+  "releaseId": "multibwr-2.3-ota21",
+  "family": "esp8266-multibwr",
+  "profile": {
+    "board": "esp8266",
+    "screen": "multibwr",
+    "flash": "4M2M"
+  },
+  "channel": "canary",
+  "firmwareVersion": "multibwr-2.3",
+  "otaSeq": 21,
+  "minOtaSeq": 1,
+  "revokedSeqs": [],
+  "url": "/firmware/multibwr-2.3-ota21/image.bin",
+  "size": 560032,
+  "sha256": "d064e37ef51125e25ae32d537afba3239d1352896b75d35ade4276a1051879ba",
+  "wave": {
+    "of": 100,
+    "upTo": 100
+  },
+  "canaryDevices": [
+    "dev_T46HBXG1"
+  ],
+  "notes": "multibwr-2.3 : POST du vote avec tampon TLS de 4 Ko apres la lecture par morceaux (tas fragmente) ; canari dev_T46HBXG1 ; NON essayee sur la carte",
+  "signature": {
+    "alg": "rsa2048-pkcs1-sha256",
+    "keyId": "ota-a",
+    "sig": "0GUiS365An3dgXyep4om7+RWYYdc1k5QruAATCvPWEOuV0vlZTSGLIcdwrENF1Jp6w8hmK4zW6Qp/0dwjT636R2I25M2gMdKgAvgu4Df6Z1r9AQmYXXFk0dE+Gxtbcr2QFVD19PLSSyBqf8N0PRVtknJk+VM7H9PgJPd9G6uYkY6Kw+3Hl5peh6sG6F3H/1uh6CaX8qLSlPpTQLMracZ+5CgBqrqQyaBvcUvLB4vGLt3ULfgY8gpohQ8DdzyDs14Sq/HX6VdbbDyBgWohDYa0q9bS8DsGg41HJO9gStr8UMJXvDTPXQehlLB7UZzfZ3UobrKwPyvpUA7fVdl+nmT0w=="
+  }
+}
