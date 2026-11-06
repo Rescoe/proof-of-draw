@@ -5,7 +5,10 @@ import path from "node:path";
 export const ROOT = path.resolve(__dirname, "..", "..");
 export const INO = "arduino_uno_r4/pod_uno_r4/pod_uno_r4.ino";
 export const BACKUP = "firmware-backups/2026-10-12_avant-canari-tft28/pod_uno_r4.ino";
-export const readText = (p: string) => fs.readFileSync(path.join(ROOT, p), "utf8").replace(/\r\n/g, "\n");
+/** 04/11/2026 : le sketch du TFT 2,8″ porte le portail Wi-Fi et le client OTA dans des blocs balisés POD_WIFI_BEGIN / POD_WIFI_END (drapeaux à 0 par défaut). Les tests des lots précédents lisent la vue « portail éteint »
+ *  (blocs retirés) : c'est le firmware d'avant, au texte près. Les propriétés du portail et de l'OTA ont leurs propres tests. */
+const stripWifiBlocks = (t: string) => t.replace(/\/\/ POD_WIFI_BEGIN[\s\S]*?\/\/ POD_WIFI_END\n/g, "");   // blocs en lignes entières : retirés sans laisser de ligne vide, même deux blocs contigus
+export const readText = (p: string) => { const t = fs.readFileSync(path.join(ROOT, p), "utf8").replace(/\r\n/g, "\n"); return p.replace(/\\/g, "/") === INO ? stripWifiBlocks(t) : t; };
 
 /**
  * LOT8B2E V4 : vue « POD_VOTE_CANARY = 0 » (la PRODUCTION et le canari d'affichage) : évalue `#if POD_VOTE_CANARY` (faux), `#if !POD_VOTE_CANARY` (vrai), `#else`, `#endif`, retire le bloc du drapeau ;

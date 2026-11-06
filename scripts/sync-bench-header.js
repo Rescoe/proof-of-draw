@@ -39,6 +39,9 @@ const MASTERS = {
   // Capteur DHT22 EXPÉRIMENTAL (23/10/2026) : multiscreen ESP8266 seulement
   "pod_dht22.h": "esp8266/_shared/pod_dht22.h",
   "pod_civil.h": "esp8266/_shared/pod_civil.h",
+  // Client OTA R4-B (manifeste signé) : original dans la station, copies identiques dans les produits qui l'embarquent (TFT 1,8″ environnement, TFT 2,8″ — 04/11/2026) ; noyau pur dans consensus-pod
+  "pod_ota_r4_client.h": "arduino_uno_r4/pod_uno_r4_station/pod_ota_r4_client.h",
+  "podOtaR4.h": "consensus-pod/src/podOtaR4.h",
 };
 const RENDER_ESP = ["esp8266/esp_eink_2.9BWR", "esp8266/esp_tft1.8", "esp8266/esp_eink_2.7BW", "esp8266/esp_eink_2.7BW_OLED"], RENDER_R4 = ["arduino_uno_r4/pod_uno_r4_eink29", "arduino_uno_r4/pod_uno_r4_tft18", "arduino_uno_r4/pod_uno_r4_eink27", "arduino_uno_r4/pod_uno_r4_eink27_oled"];
 const ED_STACK_R4 = [...RENDER_R4, "arduino_uno_r4/pod_uno_r4"];
@@ -65,12 +68,14 @@ const COPIES = {
   "pod_ota_keys_test.h": ["esp8266/esp_tft1.8/pod_ota_keys_test.h", "esp8266/esp_eink_2.9BWR/pod_ota_keys_test.h", "esp8266/esp_eink_2.7BW_OLED/pod_ota_keys_test.h"],
   "pod_ota_tls.h": ["esp8266/esp_tft1.8/pod_ota_tls.h", "esp8266/esp_eink_2.9BWR/pod_ota_tls.h", "esp8266/esp_eink_2.7BW_OLED/pod_ota_tls.h"],
   "pod_ota_tls_roots.h": ["esp8266/esp_tft1.8/pod_ota_tls_roots.h", "esp8266/esp_eink_2.9BWR/pod_ota_tls_roots.h", "esp8266/esp_eink_2.7BW_OLED/pod_ota_tls_roots.h"],
-  "pod_wifi_cfg.h": ["esp8266/esp_tft1.8/pod_wifi_cfg.h", "esp8266/esp_eink_2.9BWR/pod_wifi_cfg.h", "esp8266/esp_eink_2.7BW_OLED/pod_wifi_cfg.h", "arduino_uno_r4/pod_uno_r4_eink29/pod_wifi_cfg.h", "arduino_uno_r4/pod_uno_r4_tft18_env/pod_wifi_cfg.h"],
-  "pod_wifi_portal.h": ["esp8266/esp_tft1.8/pod_wifi_portal.h", "esp8266/esp_eink_2.9BWR/pod_wifi_portal.h", "esp8266/esp_eink_2.7BW_OLED/pod_wifi_portal.h", "arduino_uno_r4/pod_uno_r4_eink29/pod_wifi_portal.h", "arduino_uno_r4/pod_uno_r4_tft18_env/pod_wifi_portal.h"],
-  "pod_wifi_portal_r4.h": ["arduino_uno_r4/pod_uno_r4_tft18_env/pod_wifi_portal_r4.h"],
+  "pod_wifi_cfg.h": ["esp8266/esp_tft1.8/pod_wifi_cfg.h", "esp8266/esp_eink_2.9BWR/pod_wifi_cfg.h", "esp8266/esp_eink_2.7BW_OLED/pod_wifi_cfg.h", "arduino_uno_r4/pod_uno_r4_eink29/pod_wifi_cfg.h", "arduino_uno_r4/pod_uno_r4_tft18_env/pod_wifi_cfg.h", "arduino_uno_r4/pod_uno_r4/pod_wifi_cfg.h"],
+  "pod_wifi_portal.h": ["esp8266/esp_tft1.8/pod_wifi_portal.h", "esp8266/esp_eink_2.9BWR/pod_wifi_portal.h", "esp8266/esp_eink_2.7BW_OLED/pod_wifi_portal.h", "arduino_uno_r4/pod_uno_r4_eink29/pod_wifi_portal.h", "arduino_uno_r4/pod_uno_r4_tft18_env/pod_wifi_portal.h", "arduino_uno_r4/pod_uno_r4/pod_wifi_portal.h"],
+  "pod_wifi_portal_r4.h": ["arduino_uno_r4/pod_uno_r4_tft18_env/pod_wifi_portal_r4.h", "arduino_uno_r4/pod_uno_r4/pod_wifi_portal_r4.h"],
   "pod_wifi_portal_esp.h": ["esp8266/esp_tft1.8/pod_wifi_portal_esp.h", "esp8266/esp_eink_2.9BWR/pod_wifi_portal_esp.h", "esp8266/esp_eink_2.7BW_OLED/pod_wifi_portal_esp.h"],
   "pod_dht22.h": ["esp8266/esp_eink_2.7BW_OLED/pod_dht22.h", "esp8266/esp_eink_2.9BWR/pod_dht22.h", "esp8266/esp_tft1.8/pod_dht22.h"],
   "pod_civil.h": ["esp8266/esp_eink_2.9BWR/pod_civil.h", "arduino_uno_r4/pod_uno_r4_eink29/pod_civil.h"],
+  "pod_ota_r4_client.h": ["arduino_uno_r4/pod_uno_r4_tft18_env/pod_ota_r4_client.h", "arduino_uno_r4/pod_uno_r4/pod_ota_r4_client.h"],
+  "podOtaR4.h": ["arduino_uno_r4/pod_uno_r4_station/podOtaR4.h", "arduino_uno_r4/pod_uno_r4_tft18_env/podOtaR4.h", "arduino_uno_r4/pod_uno_r4/podOtaR4.h"],
 };
 module.exports = { MASTERS, COPIES };
 

@@ -127,7 +127,7 @@ test("matrice : le tableau « qui vote en V2, qui est mis à jour à distance »
     r4tft28: "arduino_uno_r4/pod_uno_r4/pod_uno_r4.ino", r4eink29: "arduino_uno_r4/pod_uno_r4_eink29/pod_uno_r4_eink29.ino", r4eink27: "arduino_uno_r4/pod_uno_r4_eink27/pod_uno_r4_eink27.ino", r4multiscreen: "arduino_uno_r4/pod_uno_r4_eink27_oled/pod_uno_r4_eink27_oled.ino", r4tft18: "arduino_uno_r4/pod_uno_r4_tft18_env/pod_uno_r4_tft18_env.ino" };
   for (const r of t.rows) for (const fam of (r[0].match(/`([a-z0-9]+)`/g) ?? []).map((x) => x.replace(/`/g, ""))) {
     if (!sketches[fam]) continue;
-    const v = /#define FIRMWARE_VERSION\s+"([a-z0-9]+)-(\d+\.\d+)"/.exec(read(sketches[fam]))!;
+    const v = /#define FIRMWARE_VERSION\s+"([a-z0-9]+)-(\d+\.\d+)"/.exec(fam === "r4tft28" ? read(sketches[fam]).replace(/\/\/ POD_WIFI_BEGIN[\s\S]*?\/\/ POD_WIFI_END\n/g, "") : read(sketches[fam]))!;   // r4tft28 : version du téléchargement PAR DÉFAUT, blocs portail 2,6 / OTA 2,7 (drapeaux à 0) retirés
     assert.equal(v[1], fam); assert.equal(v[2], r[3].trim(), `${fam} : version téléchargeable ${v[2]} ≠ matrice ${r[3]}`);
   }
   assert.deepEqual(parseInline("voir [le guide](/learn?path=install#wiring) ou [x](https://evil.example)").map((p) => p.kind), ["text", "link", "text"], "seuls les liens internes sont des liens");

@@ -6,7 +6,8 @@
 const fs = require("fs");
 const path = require("path");
 const root = path.join(__dirname, "..");
-const raw = fs.readFileSync(path.join(root, "arduino_uno_r4", "pod_uno_r4", "pod_uno_r4.ino"), "utf8").replace(/\r\n/g, "\n");
+// Vue « portail Wi-Fi et OTA éteints » (défaut) : les blocs balisés POD_WIFI_BEGIN / POD_WIFI_END (portail 2,6 et client OTA 2,7, tous deux à 0 par défaut) sont retirés — leurs appels au module Wi-Fi ont leur propre inventaire.
+const raw = fs.readFileSync(path.join(root, "arduino_uno_r4", "pod_uno_r4", "pod_uno_r4.ino"), "utf8").replace(/\r\n/g, "\n").replace(/\/\/ POD_WIFI_BEGIN[\s\S]*?\/\/ POD_WIFI_END\n/g, "");
 
 function effective(src, canary) {   // même évaluation que tests/helpers/tft28Source.ts
   const out = [], stack = [];
