@@ -1,0 +1,10 @@
+schema=pod-ota-manifest-r4-v1
+family=uno-r4-wifi-tft28
+firmware=r4tft28-2.7.1
+seq=2
+channel=canary
+size=181836
+sha256=209f23151a867b3b5596cac72924ba456d064b7b6ddeae722d7a2a17c6e9c48c
+notbefore=0
+keyid=r4-a
+sig=7fc4a1cb05c976617fa2655e4839f9d9e3cfba51547c4006d106bd418e120593cb6a3e0c758aa41aa649d1ed423ff5aa3cbeead27cde89253973358687b15500
