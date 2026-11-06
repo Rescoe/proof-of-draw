@@ -149,6 +149,7 @@ const char POD_WIFI_MODE_MARK[] __attribute__((used, retain)) = "PODWIFI:record-
 #define OTAR4_COMPILED_SEQ 1
 #endif
 #if POD_OTA_R4
+  static unsigned long g_otaNextMs = 90000UL;               // prochaine vérification OTA (millis) : 90 s après le démarrage, puis OTAR4_CHECK_EVERY_MS ; lue par msUntilNextTask()
   #if !POD_WIFI_PORTAL
     #error "POD_OTA_R4 exige POD_WIFI_PORTAL = 1 (Wi-Fi hors binaire : l'image distribuée par OTA est générique)"
   #endif
@@ -2405,6 +2406,11 @@ static unsigned long msUntilNextTask() {
   long r = (long)(lastPullMs + nextPullIntervalMs - millis());
   if (pendingCandidateId.length() > 0) { const long v = (long)(lastValidateMs + VALIDATE_INTERVAL - millis()); if (v < r) r = v; }
   if (pendingObsHashes.length() > 0) r = 0;
+// POD_WIFI_BEGIN
+#if POD_OTA_R4
+  { const long o = (long)(g_otaNextMs - millis()); if (o < r) r = o; }   // 06/11/2026 : l'animation résidente garde la main jusqu'à la prochaine tâche (jusqu'à 15 min) ; sans cette borne, le contrôle OTA attendait la fin de la passe
+#endif
+// POD_WIFI_END
   return r < 0 ? 0UL : (unsigned long)r;
 }
 
@@ -2552,7 +2558,6 @@ static void __attribute__((noinline)) wifiStartup() {
 // POD_WIFI_BEGIN
 #if POD_OTA_R4
 #include "pod_ota_r4_client.h"
-static unsigned long g_otaNextMs = OTAR4_CHECK_FIRST_MS;
 /** Une passe OTA (réseau + staging + éventuelle programmation). Bloque la boucle le temps du téléchargement (≈ 100 s pour 190 Ko). Jamais pendant un candidat à voter ni le banc d'essai d'animation. */
 static void __attribute__((noinline)) otaTick() {
   if (millis() < g_otaNextMs) return;

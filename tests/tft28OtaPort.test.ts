@@ -32,6 +32,8 @@ export function otaPortViolations(s: string): string[] {
   if (s.indexOf("otar4::confirmBoot();") < s.indexOf("POD_CANARY_HEAP(\"apres le register\");")) v.push("la séquence installée ne s'inscrit qu'APRÈS le register");
   if (!/const char POD_WIFI_MODE_MARK\[\] __attribute__\(\(used, retain\)\) = "PODWIFI:record-v1";/.test(s) || !s.includes('logf("[WIFI] mode: %s", POD_WIFI_MODE_MARK);')) v.push("marqueur « Wi-Fi hors binaire » absent ou non référencé (l'éditeur de liens l'éliminerait)");
   if (!/#if POD_OTA_R4\n#define FIRMWARE_VERSION  "r4tft28-2\.7"/.test(s)) v.push("version 2.7 annoncée seulement avec l'OTA");
+  const bud = s.slice(s.indexOf("static unsigned long msUntilNextTask()"), s.indexOf("static unsigned long msUntilNextTask()") + 900);
+  if (!/#if POD_OTA_R4\n\s*\{ const long o = \(long\)\(g_otaNextMs - millis\(\)\); if \(o < r\) r = o; \}/.test(bud)) v.push("l'échéance de l'OTA doit borner la durée d'un passage de l'animation (msUntilNextTask)");
   return v;
 }
 
