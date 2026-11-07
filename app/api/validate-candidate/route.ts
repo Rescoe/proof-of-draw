@@ -24,6 +24,7 @@ import { redis } from "@/lib/redis";
 import type { Device } from "@/lib/deviceStore";
 import { participatesInVoteNetwork } from "@/lib/voteCapability";
 import { parseCandidateRaw, parseVotesRaw, PULL_KEY_CANDIDATE, PULL_KEY_VOTES } from "@/lib/chain";
+import { attestationsEnabled, KEY_CLOSED, KEY_CLOSED_VOTES, parseClosed } from "@/lib/lateAttest";
 import { getIP, forbidden } from "@/lib/rateLimit";
 import { ACTIVE_WINDOW_MS, rlSampled } from "@/lib/pullBudget";
 import { eligibilityConfigFromEnv, eligibilityModeFromEnv, profileIdOf, voteGate } from "@/lib/eligibility";
@@ -43,8 +44,10 @@ async function GET_(req: NextRequest) {
   }
 
   // ── 1. Tout en un MGET : blacklists, appareil, candidat courant, votes ────
+  const attOn = attestationsEnabled();
   const raws = await redis.mget<unknown[]>(
     `bl:ip:${ip}`, `bl:dev:${deviceId}`, `device:${deviceId}`, PULL_KEY_CANDIDATE, PULL_KEY_VOTES,
+    ...(attOn ? [KEY_CLOSED, KEY_CLOSED_VOTES] : []),   // ATTESTATIONS_MODE=on : deux clés de plus dans le MÊME MGET (0 commande de plus) ; mode off : liste inchangée
   );
   if (raws[0] !== null || raws[1] !== null) return forbidden("Accès refusé");
 
@@ -70,13 +73,18 @@ async function GET_(req: NextRequest) {
   }
 
   // ── 4. Candidat courant ────────────────────────────────────────────────────
-  const candidate = parseCandidateRaw(raws[3]);
+  let candidate = parseCandidateRaw(raws[3]);
+  let voteMap = parseVotesRaw(raws[4]);
+  if (attOn && (!candidate || (voteMap && voteMap.candidateId === candidate.candidateId && voteMap.votes[deviceId]))) {
+    // Aucun candidat ouvert (ou déjà voté sur lui) : le dernier candidat CLOS peut encore être attesté (10 min) s'il est inconnu de cet appareil.
+    const closed = parseClosed(raws[5], raws[6]);
+    if (closed && !closed.votes?.votes?.[deviceId] && closed.candidate.deviceId !== deviceId) { candidate = closed.candidate; voteMap = closed.votes; }
+  }
   if (!candidate) {
     return NextResponse.json({ candidate: null });
   }
 
   // ── 5. Vérifier si déjà voté ───────────────────────────────────────────────
-  const voteMap = parseVotesRaw(raws[4]);
   if (voteMap && voteMap.candidateId === candidate.candidateId && voteMap.votes[deviceId]) {
     return NextResponse.json({
       candidate: null,

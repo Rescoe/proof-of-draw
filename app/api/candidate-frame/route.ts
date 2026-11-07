@@ -12,10 +12,13 @@
 import { NextRequest } from "next/server";
 import { getCurrentCandidate } from "@/lib/chain";
 import { candidateFrameResponse } from "@/lib/candidateFrameResponse";
+import { loadCandidateForFrame } from "@/lib/lateAttest";
 
 export const dynamic = "force-dynamic";
 
 export async function GET(req: NextRequest) {
   const q = req.nextUrl.searchParams;
-  return candidateFrameResponse(q.get("candidateId") ?? "", getCurrentCandidate, q.get("off"), q.get("len"));
+  const id = q.get("candidateId") ?? "";
+  // ATTESTATIONS_MODE=on : un candidat déjà miné reste lisible 10 minutes (copie close) ; mode off : exactement le chargeur d'avant.
+  return candidateFrameResponse(id, () => loadCandidateForFrame(id, getCurrentCandidate), q.get("off"), q.get("len"));
 }

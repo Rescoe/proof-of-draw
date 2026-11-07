@@ -27,7 +27,8 @@ import { frameKey } from "@/lib/queue";
 import { broadcastConverted, filterFixedWorks } from "@/lib/broadcast";
 import type { Device } from "@/lib/deviceStore";
 import { markHot } from "@/lib/hot";
-import { countRejects, parseCandidateRaw, parseVotesRaw, PULL_KEY_CANDIDATE, PULL_KEY_VOTES, getVotes, castVote, claimFinalization, finalizeBlock, clearCandidate, ValidationVote } from "@/lib/chain";
+import { countRejects, parseCandidateRaw, parseVotesRaw, PULL_KEY_CANDIDATE, PULL_KEY_VOTES, getVotes, castVote, claimFinalization, finalizeBlock, clearCandidate, ValidationVote, type Candidate } from "@/lib/chain";
+import { attestationsEnabled, castLateVote, readClosedFor, saveClosedCandidate } from "@/lib/lateAttest";
 import { getIP, forbidden } from "@/lib/rateLimit";
 import { verifyEd25519 } from "@/lib/ed25519";
 import { dequeueNextDraw } from "@/lib/drawQueue";
@@ -102,10 +103,19 @@ async function POST_(req: NextRequest) {
     const admission = voteAdmission(device, isV2, Date.now(), process.env, { animationCandidate: rawCandidate?.kind === "animation" && !!rawCandidate.anim && rawCandidate.candidateId === String(candidateId) });
     if (!admission.ok) return json({ error: admission.error, reason: admission.reason }, admission.status);
 
-    const candidate = rawCandidate;
+    // ATTESTATIONS TARDIVES (ATTESTATIONS_MODE=on, éteint par défaut) : si le candidat visé n'est plus le courant (bloc déjà miné), on retombe sur sa copie close (10 min). Le vote est alors
+    // vérifié comme d'habitude (signature, hash, métriques) mais enregistré comme ATTESTATION : ni quorum, ni comité, ni reçu du bloc, ni nouveau minage (lib/lateAttest.ts).
+    let candidateSel: Candidate & { blockHash?: string } | null = rawCandidate;
+    let prefetchedVotes = parseVotesRaw(raws[3]);
+    let late = false;
+    if (attestationsEnabled() && (!candidateSel || candidateSel.candidateId !== String(candidateId))) {
+      const closed = await readClosedFor(String(candidateId));
+      if (closed) { candidateSel = closed.candidate; prefetchedVotes = closed.votes; late = true; }
+    }
+    const candidate = candidateSel;
     if (!candidate) return json({ error: "Aucun candidat actif" }, 409);
-    const prefetchedVotes = parseVotesRaw(raws[3]);
     if (candidate.candidateId !== String(candidateId)) return json({ error: "candidateId ne correspond pas au candidat actif", current: candidate.candidateId }, 409);
+    if (late && !isV2) return json({ error: "Attestation tardive : vote v2 obligatoire" }, 409);
 
     // ── Éligibilité (Lot 2, ELIGIBILITY_MODE) : aucune lecture Redis de plus. « off » : aucun effet. « shadow » : journal seul. « enforce » : refus 403 (inéligible) / 409 (profil déjà représenté). ──
     const eligMode = eligibilityModeFromEnv();
@@ -124,9 +134,9 @@ async function POST_(req: NextRequest) {
 
     // ── Comité (Lot 4, COMMITTEE_MODE) : « off » = aucun effet ; « shadow » = journal ; « enforce » = seuls les membres de la fenêtre courante votent, en v2. Aucune lecture Redis de plus. ──
     const commMode = committeeModeFromEnv();
-    const committeeEnforced = commMode === "enforce" && candidate.committee?.state === "enforce";
+    const committeeEnforced = !late && commMode === "enforce" && candidate.committee?.state === "enforce";   // attestation tardive : hors comité (le bloc est déjà miné)
     let wave: 1 | 2 = 1;
-    if (commMode !== "off" && candidate.committee) {
+    if (!late && commMode !== "off" && candidate.committee) {
       wave = currentWave(candidate.committee, candidate.submittedAt, Date.now());
       const cg = committeeGate({ mode: commMode, committee: candidate.committee, profileId: voterProfileId ?? profileIdOf(device), wave, isV2 });
       if (cg.action === "shadow-refuse") console.warn(`[committee] SHADOW refuserait le vote device=${deviceId} raison=${cg.reason}`);
@@ -207,6 +217,12 @@ async function POST_(req: NextRequest) {
       ...(committeeEnforced && candidate.v2 && v2Vote?.verdict === "reject" && !rejectIsObjective({ reason: v2Vote.reason, e: v2Vote.e, t: v2Vote.t, r: v2Vote.r }, candidate.v2) ? { disputed: true as const } : {}),
       // Reçu signé du bloc (BLOCK_RECEIPTS=true seulement) : clé publique au moment du vote et, pour un vote v2, le hash brut signé
       ...(blockReceiptsEnabled() ? { ...(device.publicKey ? { pk: device.publicKey } : {}), ...(isV2 && typeof (body as Record<string, unknown>).rawHash === "string" ? { rawHash: String((body as Record<string, unknown>).rawHash) } : {}) } : {}) };
+    if (late) {
+      // Attestation tardive : enregistrée à part (candidate:closed:votes + trace durable chain:attest:<bloc>), la réponse ressemble à celle d'un vote tardif ordinaire pour ne rien casser côté firmware.
+      const a = await castLateVote(vote, candidate);
+      console.log(`[validation-result] ATTESTATION TARDIVE device=${deviceId} candidate=${candidate.candidateId} ajoutée=${a.added} total=${a.voteCount}`);
+      return json({ ok: true, blockMined: false, alreadyFinalized: true, attestation: true, attested: a.added, voteCount: a.voteCount, needed: 0 }, 200);
+    }
     const cast = await castVote(vote, candidate, prefetchedVotes);
     if (cast.added) await noteVote(candidate.candidateId, device);   // quorum vivant : mémorise le votant et réhabilite l'appareil (lib/quorumHealth.ts)
     let { quorumReached, voteCount, needed } = cast;
@@ -277,6 +293,7 @@ async function POST_(req: NextRequest) {
       } else {
         await broadcastValidatedFrame(candidate.poolScreen, candidate.payload, frameId, block.displayTime, block.blockIndex, candidate.artistName, block.blockHash);
       }
+      if (attestationsEnabled()) await saveClosedCandidate(candidate, voteMap, block.blockHash).catch((e) => console.error("[validation-result] copie du candidat clos impossible (le minage continue) :", e));   // ATTESTATIONS_MODE=on seulement
       await clearCandidate();
       await dropArchive(redis as unknown as ArchiveKV, candidate.candidateId).catch((e) => console.error("[validation-result] suppression de la copie d'archive échouée:", e));   // bloc miné : la copie n'a plus d'objet
       invalidateNetworkSnapshot();   // un bloc vient d'être miné : la vue réseau se reconstruit à la prochaine visite

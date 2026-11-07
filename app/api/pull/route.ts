@@ -12,6 +12,7 @@ import { getIP, forbidden } from "@/lib/rateLimit";
 import { benchScreenOf } from "@/lib/bench/screens";
 import { parseChainHeadRaw, parseCandidateRaw, PULL_KEY_HEAD, PULL_KEY_CANDIDATE, PULL_KEY_VOTES, PULL_KEY_OBS_PENDING, popObsTask } from "@/lib/chain";
 import type { ChainSummary } from "@/lib/chain";
+import { attestationsEnabled, KEY_CLOSED, KEY_CLOSED_VOTES, parseClosed } from "@/lib/lateAttest";
 import { maybeCheckAnaFeed } from "@/lib/anaFeed";
 import { cartelTimestampFor, timezoneOf, utcOffsetMinutes } from "@/lib/deviceTime";
 import { measureKindsOf } from "@/lib/measures";
@@ -99,12 +100,14 @@ async function GET_(req: NextRequest) {
     const FRAME_IDS = SCREEN_IDS as readonly string[];
     // OTA (20/10/2026, INACTIF par défaut) : l'interrupteur d'urgence `ota:kill` n'est lu QUE si OTA_DIST_MODE=on, comme CLÉ DE PLUS du MGET existant (0 commande de plus ; mode off : liste de clés inchangée).
     const otaOn = otaDistModeFromEnv() === "on";
+    const attOn = attestationsEnabled();   // ATTESTATIONS_MODE=on : deux clés de plus à la fin du MGET (0 commande de plus) ; mode off : liste de clés INCHANGÉE
     const raws = await redis.mget<unknown[]>(
       `bl:ip:${ip}`, blDevKey(deviceId), `device:${deviceId}`,
       ...FRAME_IDS.map((s) => frameKey(deviceId, s)),
       personalKey(deviceId), PULL_KEY_HEAD, PULL_KEY_CANDIDATE, PULL_KEY_VOTES,
       `chain:notify:${deviceId}`, `bench:mode:${deviceId}`, PULL_KEY_OBS_PENDING, HOT_KEY,
       ...(otaOn ? [OTA_KILL_KEY] : []),
+      ...(attOn ? [KEY_CLOSED, KEY_CLOSED_VOTES] : []),
     );
     if (raws[0] !== null || raws[1] !== null) return forbidden("Accès refusé");
     let device: Device | null = null;
@@ -223,6 +226,19 @@ async function GET_(req: NextRequest) {
             Math.ceil((candidate.expiresAt - Date.now()) / 1000), 0
           ),
           warning: candidate.warning ?? null,
+        };
+      }
+    }
+
+    // ATTESTATIONS TARDIVES : pas de candidat ouvert à voter pour cet appareil, mais un candidat CLOS (< 10 min) qu'il n'a pas encore vu : il est invité à l'attester (lib/lateAttest.ts).
+    if (attOn && !pendingValidation && mayVote) {
+      const closed = parseClosed(rest[8 + (otaOn ? 1 : 0)], rest[9 + (otaOn ? 1 : 0)]);
+      if (closed && closed.candidate.deviceId !== deviceId && !closed.votes?.votes?.[deviceId]) {
+        pendingValidation = {
+          candidateId: closed.candidate.candidateId,
+          poolScreen:  closed.candidate.poolScreen,
+          expiresIn:   Math.max(Math.ceil((closed.candidate.expiresAt - Date.now()) / 1000), 0),
+          warning: null,
         };
       }
     }
