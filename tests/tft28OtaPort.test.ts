@@ -65,3 +65,33 @@ test("TFT 2,8″ MUTANTS : OTA après l'animation, option à 1, sans #error, hor
   ];
   for (const [name, mutant] of muts) { assert.notEqual(mutant, src, "mutant sans effet : " + name); assert.notDeepEqual(otaPortViolations(mutant), [], "mutant survivant : " + name); }
 });
+
+// ── Orientation de l'écran (POD_ORIENT) ─────────────────────────────────────────────────────────────────────────────────────────────────
+export function orientViolations(s: string): string[] {
+  const v: string[] = [];
+  if (!/#ifndef POD_ORIENT\n#define POD_ORIENT 0\n#endif/.test(s)) v.push("POD_ORIENT doit valoir 0 par défaut");
+  if (!/#ifndef POD_ORIENT_LAB\n#define POD_ORIENT_LAB 0/.test(s)) v.push("la commande série de banc doit être éteinte par défaut");
+  for (const m of s.matchAll(/POD_ORIENT\b|g_rot\b|orientCycle|orientLoad|orientSave/g)) {
+    const before = s.slice(0, m.index!);
+    if (before.lastIndexOf("// POD_WIFI_BEGIN") <= before.lastIndexOf("// POD_WIFI_END")) { v.push("hors d'un bloc POD_WIFI : " + m[0] + " @" + m.index); break; }
+  }
+  if (!/void setRotation\(uint8_t r\) \{ Adafruit_ILI9341::setRotation\(\(uint8_t\)\(\(r \+ g_rot\) & 3\)\); \}/.test(s)) v.push("la sous-classe doit AJOUTER la rotation choisie à celle que demande le code");
+  if (!/#define EEPROM_ORIENT_MAGIC_OFF 1024\n#define EEPROM_ORIENT_VALUE_OFF 1025/.test(s)) v.push("orientation dans le bloc 1 de la data flash (octets 1024-1025) : jamais 0, 2-3, 5-6, 7");
+  if (!/g_rot = \(EEPROM\.read\(EEPROM_ORIENT_MAGIC_OFF\) == ORIENT_MAGIC && EEPROM\.read\(EEPROM_ORIENT_VALUE_OFF\) == 2\) \? 2 : 0;/.test(s)) v.push("une valeur inconnue ou un octet vierge doit donner l'orientation normale");
+  const i = s.indexOf("static void serviceTouch() {\n  if (!touchOk || !ts.touched()) return;\n  const unsigned long t0 = millis();\n  while (ts.touched() && millis() - t0 < 1500UL) { delay(5); }\n  if (ts.touched()) {");
+  if (i < 0) v.push("appui LONG (doigt toujours posé après 1,5 s) absent de serviceTouch");
+  else if (!/orientCycle\(\);[\s\S]{0,260}return;\s*\}\s*drainTouch\(\);\s*delay\(120\);\s*toggleCartel\(\);/.test(s.slice(i, i + 700))) v.push("le toucher COURT doit rester « afficher / cacher le cartel »");
+  if (!/\} else \{\s*tft\.fillScreen\(C_BLACK\);|else tft\.fillScreen\(C_BLACK\);/.test(s)) v.push("sans image mémorisée, l'écran est effacé après un retournement");
+  return v;
+}
+test("TFT 2,8″ orientation : garde-fous (option éteinte, blocs balisés, bloc 1 de la data flash, toucher court inchangé)", () => { assert.deepEqual(orientViolations(src), []); });
+test("TFT 2,8″ orientation MUTANTS : option à 1, bloc 0 de la data flash, rotation écrasée, toucher court supprimé ⇒ détectés", () => {
+  const muts: Array<[string, string]> = [
+    ["option à 1 par défaut", src.replace("#ifndef POD_ORIENT\n#define POD_ORIENT 0", "#ifndef POD_ORIENT\n#define POD_ORIENT 1")],
+    ["octets dans le bloc 0", src.replace("#define EEPROM_ORIENT_MAGIC_OFF 1024", "#define EEPROM_ORIENT_MAGIC_OFF 600")],
+    ["rotation écrasée", src.replace("((r + g_rot) & 3)", "(g_rot)")],
+    ["toucher court supprimé", src.replace("  drainTouch();\n  delay(120);\n  toggleCartel();\n  drainTouch();\n}\n#else", "  drainTouch();\n}\n#else")],
+    ["commande de banc allumée", src.replace("#ifndef POD_ORIENT_LAB\n#define POD_ORIENT_LAB 0", "#ifndef POD_ORIENT_LAB\n#define POD_ORIENT_LAB 1")],
+  ];
+  for (const [name, m] of muts) { assert.notEqual(m, src, "mutant sans effet : " + name); assert.notDeepEqual(orientViolations(m), [], "mutant survivant : " + name); }
+});

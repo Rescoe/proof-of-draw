@@ -24,6 +24,14 @@ const stamp = new Date().toISOString().replace(/[-:T]/g, "").slice(0, 14);
 const work = resolve(arg("--out", join(ROOT, "canary-builds", "r4-tft28")), stamp), sk = join(work, "pod_uno_r4"), out = join(work, "out");
 mkdirSync(sk, { recursive: true });
 for (const f of readdirSync(SRC)) { if (f === "secrets.h" || f === "pod_build_flags.h" || f === "pod_ota_r4_keys.h" || f === "pod_vote_pins.h") continue; cpSync(join(SRC, f), join(sk, f), { recursive: true }); }
+// --fw <r4tft28-X.Y[.Z]> : version annoncée de CETTE construction (essai de mise à jour : une image B se distingue de A sur le serveur) ; remplace la définition de la version OTA dans la COPIE de travail seulement.
+const fwOverride = arg("--fw");
+if (fwOverride) {
+  if (!/^r4tft28-\d+\.\d+(\.\d+)?$/.test(fwOverride)) die("--fw : r4tft28-X.Y ou r4tft28-X.Y.Z");
+  const ino = join(sk, "pod_uno_r4.ino"), t = readFileSync(ino, "utf8");
+  if (!t.includes('#define FIRMWARE_VERSION  "r4tft28-2.7"')) die("--fw : définition de version OTA introuvable dans le sketch");
+  writeFileSync(ino, t.replace('#define FIRMWARE_VERSION  "r4tft28-2.7"', `#define FIRMWARE_VERSION  "${fwOverride}"`));
+}
 writeFileSync(join(sk, "pod_ota_r4_keys.h"), `// GÉNÉRÉ par build-r4-tft28.mjs : clés PUBLIQUES de publication OTA R4 (aucune graine privée).\n#pragma once\n#define OTAR4_PUB_A_HEX "${keys["r4-a"]}"\n#define OTAR4_PUB_B_HEX "${keys["r4-b"]}"\n`);
 
 const opts = ["POD_WIFI_PORTAL=1", "POD_OTA_R4=1", `OTAR4_COMPILED_SEQ=${seq}`, ...(arg("--extra", "") ? arg("--extra").split(/\s+/) : [])];

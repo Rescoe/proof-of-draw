@@ -273,7 +273,30 @@ static_assert(podbench::W * podbench::H / 8 == BENCH_FRAME && podbench::HEADER_B
 #endif
 
 // ─── OBJETS ────────────────────────────────────────────────────────────────
+// POD_WIFI_BEGIN
+// ─── Orientation de l'écran (06/11/2026) — INACTIVE PAR DÉFAUT ──────────────────────────────────────────────────────────────────────────────────
+// POD_ORIENT = 1 : un APPUI LONG (≥ 1,5 s, doigt posé) retourne l'affichage de 180° (accrochage mural « tête en bas », prise de l'autre côté) ; le choix est gardé en data flash (octets 1024-1025, bloc 1 :
+// jamais les blocs 0 clés / Wi-Fi, 2-3 séquence OTA, 5-6 verrou de vote, 7 canari) et survit aux redémarrages et aux mises à jour. Un toucher court garde son rôle : afficher / cacher le cartel.
+// Le code appelle toujours tft.setRotation(0) : la sous-classe y AJOUTE la rotation choisie (g_rot). Le paysage (90°/270°) n'est PAS pris en charge : toute la mise en page (bandes, image, animation) suppose 240×320.
+#ifndef POD_ORIENT
+#define POD_ORIENT 0
+#endif
+#ifndef POD_ORIENT_LAB
+#define POD_ORIENT_LAB 0                  // BANC : 1 = la commande série « R » retourne l'écran comme un appui long
+#endif
+#if POD_ORIENT
+static uint8_t g_rot = 0;             // 0 = normal, 2 = retourné de 180°
+struct PodTft : public Adafruit_ILI9341 {
+  using Adafruit_ILI9341::Adafruit_ILI9341;
+  void setRotation(uint8_t r) { Adafruit_ILI9341::setRotation((uint8_t)((r + g_rot) & 3)); }
+};
+PodTft tft(TFT_CS, TFT_DC);
+#else
+// POD_WIFI_END
 Adafruit_ILI9341  tft(TFT_CS, TFT_DC);
+// POD_WIFI_BEGIN
+#endif
+// POD_WIFI_END
 Adafruit_STMPE610 ts(STMPE_CS);
 bool touchOk = false;
 bool sdOk = false;                                // carte lisible
@@ -1072,6 +1095,50 @@ static void toggleCartel() {
   auto w = [&]() { toggleCartelImpl(); };
   onSd("toggleCartel", w);
 }
+// POD_WIFI_BEGIN
+#if POD_ORIENT
+#define EEPROM_ORIENT_MAGIC_OFF 1024
+#define EEPROM_ORIENT_VALUE_OFF 1025
+#define ORIENT_MAGIC            0x5A
+static void orientLoad() {            // avant tft.begin() : tft.setRotation(0) applique alors l'orientation enregistrée
+  g_rot = (EEPROM.read(EEPROM_ORIENT_MAGIC_OFF) == ORIENT_MAGIC && EEPROM.read(EEPROM_ORIENT_VALUE_OFF) == 2) ? 2 : 0;
+#if POD_ORIENT_LAB
+  logf("[ORIENT] au démarrage : g_rot=%u (octets %02X %02X)", (unsigned)g_rot, (unsigned)EEPROM.read(EEPROM_ORIENT_MAGIC_OFF), (unsigned)EEPROM.read(EEPROM_ORIENT_VALUE_OFF));
+#endif
+}
+static void orientSave() {
+  EEPROM.update(EEPROM_ORIENT_VALUE_OFF, g_rot);
+  EEPROM.update(EEPROM_ORIENT_MAGIC_OFF, ORIENT_MAGIC);
+}
+static void orientCycleImpl() {
+  tft.setRotation(0);                                        // applique g_rot
+  if (lastFrameId.length() > 0 && sdFrameValid && restoreRows(0, SCR_H)) { if (cartelVisible) drawCartel(); }
+  else tft.fillScreen(C_BLACK);
+}
+static void orientCycle() {
+  g_rot = (g_rot == 0) ? 2 : 0;
+  orientSave();
+  logf("[ORIENT] orientation %s (enregistrée en data flash)", g_rot ? "retournée de 180°" : "normale");
+  auto w = [&]() { orientCycleImpl(); };
+  onSd("orientCycle", w);
+}
+static void serviceTouch() {
+  if (!touchOk || !ts.touched()) return;
+  const unsigned long t0 = millis();
+  while (ts.touched() && millis() - t0 < 1500UL) { delay(5); }
+  if (ts.touched()) {                                        // appui LONG : changer l'orientation (le doigt est toujours posé)
+    orientCycle();
+    while (ts.touched()) delay(10);                          // attend le relâchement
+    drainTouch(); delay(250); drainTouch();
+    return;
+  }
+  drainTouch();
+  delay(120);
+  toggleCartel();
+  drainTouch();
+}
+#else
+// POD_WIFI_END
 static void serviceTouch() {
   if (!touchOk || !ts.touched()) return;
   const unsigned long t0 = millis();
@@ -1081,6 +1148,9 @@ static void serviceTouch() {
   toggleCartel();
   drainTouch();
 }
+// POD_WIFI_BEGIN
+#endif
+// POD_WIFI_END
 static bool waitTapOrTimeout(unsigned long ms) {   // pour l'écran des clés : touché = continuer
   const unsigned long t0 = millis();
   while (millis() - t0 < ms) { if (touchOk && ts.touched()) { drainTouch(); return true; } delay(50); }
@@ -2612,6 +2682,11 @@ void setup() {
   logf("[VOTE-CANARY] ecran, tactile et carte SD NON initialises (les trois CS restent a HIGH) : aucun dessin, aucun acces SD");
 #endif
 #else
+// POD_WIFI_BEGIN
+#if POD_ORIENT
+  orientLoad();
+#endif
+// POD_WIFI_END
   tft.begin();
   tft.setRotation(0);
 #if TOUCH_ENABLED
@@ -2732,6 +2807,11 @@ void loop() {
   }
 
   serviceTouch();
+// POD_WIFI_BEGIN
+#if POD_ORIENT && POD_ORIENT_LAB
+  if (Serial.available() && Serial.peek() == 'R') { while (Serial.available()) Serial.read(); orientCycle(); }   // banc : retourner l'écran sans toucher
+#endif
+// POD_WIFI_END
 
   // Animation résidente : lue depuis la carte, en boucle, entre deux tâches réseau (jamais de requête pour elle)
   if (animOn && animPaused && millis() - animPausedSince > 60000UL) { animPaused = false; logf("[ANIM] reprise (60 s)"); }
