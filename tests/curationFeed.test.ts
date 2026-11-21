@@ -1,7 +1,7 @@
 // tests/curationFeed.test.ts — contrat public « curation » v1 (lib/curationFeed.ts)
 import test from "node:test";
 import assert from "node:assert/strict";
-import { pageWorks, toCurationWork, buildCartel } from "../lib/curationFeed";
+import { pageWorks, toCurationWork, buildCartel, walkHistory } from "../lib/curationFeed";
 import type { Block } from "../lib/chain";
 
 const H = (n: number) => n.toString(16).padStart(64, "0");
@@ -60,4 +60,20 @@ test("scores, animation et liens d'une œuvre complète", () => {
   assert.equal(draw.links.replay, `/api/v1/curation/works/${H(9)}/replay`);
   assert.deepEqual(draw.geometry, { strokes: 12, durationMs: 30000, colors: 4 });
   assert.ok(!JSON.stringify(draw).includes("SECRET"));
+});
+
+test("historique : nextFrom prolonge la fenêtre vers le passé, jusqu'au premier bloc", async () => {
+  const all = [1, 2, 3, 4, 5, 6].map((i) => block(i, { parentHash: i === 1 ? "0".repeat(64) : H(i - 1) }));
+  const recent = all.slice(3); // la fenêtre ne contient que 4, 5, 6
+  const p1 = pageWorks(recent, { limit: 10 });
+  assert.deepEqual(p1.works.map((w) => w.blockIndex), [6, 5, 4]);
+  assert.equal(p1.nextFrom, H(3)); // fenêtre épuisée : on continue par le parent du plus ancien
+  const byHash = async (h: string) => all.find((b) => b.blockHash === h) ?? null;
+  const p2 = await walkHistory(p1.nextFrom!, 2, byHash);
+  assert.deepEqual(p2.works.map((w) => w.blockIndex), [3, 2]);
+  assert.equal(p2.nextFrom, H(1));
+  const p3 = await walkHistory(p2.nextFrom!, 2, byHash);
+  assert.deepEqual(p3.works.map((w) => w.blockIndex), [1]);
+  assert.equal(p3.nextFrom, null); // premier bloc : parent nul
+  assert.equal(pageWorks(recent, { limit: 1 }).nextFrom, H(5)); // page entamée : le bloc suivant de la fenêtre
 });

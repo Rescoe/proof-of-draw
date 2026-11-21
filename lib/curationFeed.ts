@@ -44,8 +44,17 @@ export interface CurationWork {
 export interface CurationPage {
   version: number;
   works: CurationWork[];
-  /** `blockIndex` à passer en `before` pour la page suivante ; null = fin. */
+  /** `blockIndex` à passer en `before` pour la page suivante (fenêtre des 100 derniers blocs seulement) ; null = fin de cette fenêtre. */
   next: number | null;
+  /** Hash du prochain bloc à lire, à passer en `from` : suit la chaîne vers le passé au-delà de la fenêtre, jusqu'au premier bloc. null = fin de l'historique. */
+  nextFrom: string | null;
+}
+
+const isRealHash = (h: unknown): h is string => typeof h === "string" && /^[0-9a-f]{64}$/i.test(h) && !/^0+$/.test(h);
+
+/** Hash du bloc qui suit `last` dans le passé, ou null si `last` est le premier bloc. */
+function parentOf(last: Block | undefined): string | null {
+  return last && last.blockIndex > 0 && isRealHash(last.parentHash) ? last.parentHash : null;
 }
 
 const DEFAULT_TITLE = "Sans titre";
@@ -103,13 +112,38 @@ export function pageWorks(blocks: Block[], opts: { before?: number | null; limit
     .sort((a, b) => b.blockIndex - a.blockIndex);
   const works: CurationWork[] = [];
   let lastIndex: number | null = null;
+  let lastBlock: Block | undefined;
   let consumed = 0;
   for (const b of sorted) {
     if (works.length >= limit) break;
     consumed++;
     lastIndex = b.blockIndex;
+    lastBlock = b;
     const w = toCurationWork(b);
     if (w) works.push(w);
   }
-  return { version: CURATION_API_VERSION, works, next: consumed < sorted.length ? lastIndex : null };
+  const following = sorted[consumed];
+  return {
+    version: CURATION_API_VERSION,
+    works,
+    next: consumed < sorted.length ? lastIndex : null,
+    nextFrom: following ? following.blockHash : parentOf(lastBlock),
+  };
+}
+
+/** Suit la chaîne vers le passé à partir de `startHash` (inclus) : au plus `limit` blocs, un bloc absent arrête la lecture. */
+export async function walkHistory(startHash: string, limit: number, getBlock: (hash: string) => Promise<Block | null>): Promise<CurationPage> {
+  const max = Math.min(100, Math.max(1, Math.floor(limit) || 20));
+  const works: CurationWork[] = [];
+  let cursor: string | null = isRealHash(startHash) ? startHash : null;
+  let steps = 0;
+  while (cursor && steps < max) {
+    const block = await getBlock(cursor);
+    steps++;
+    if (!block) { cursor = null; break; }
+    const w = toCurationWork(block);
+    if (w) works.push(w);
+    cursor = parentOf(block);
+  }
+  return { version: CURATION_API_VERSION, works, next: null, nextFrom: cursor };
 }
