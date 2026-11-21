@@ -47,3 +47,17 @@ test("pagination : plus récent d'abord, before exclusif, next jusqu'à la fin",
   assert.deepEqual(p3.works.map((w) => w.blockIndex), [1]);
   assert.equal(p3.next, null);
 });
+
+test("scores, animation et liens d'une œuvre complète", () => {
+  const anim = toCurationWork(block(8, { kind: "animation", score: 0.123456, drawScore: 9, anim: { frames: 12, loops: 0, playMs: 1800, bytes: 4000, root: H(9) } }))!;
+  assert.deepEqual(anim.scores, { score: 0.1235, draw: 9 });
+  assert.deepEqual(anim.animation, { frames: 12, loops: 0, playMs: 1800 });
+  assert.equal(anim.links.clip, `/api/v1/curation/works/${H(8)}/clip`);
+  assert.equal(anim.links.replay, null);
+  const draw = toCurationWork(block(9, { podHashEnriched: H(5), podGeometry: { sessionDurationMs: 30000, strokeCount: 12, gridCoverage: 0.3, boundingBoxRatio: 0.5, automationRatio: 0, colorCount: 4, moveActionCount: 99 } }))!;
+  assert.equal(draw.animation, null);
+  assert.equal(draw.links.clip, null);
+  assert.equal(draw.links.replay, `/api/v1/curation/works/${H(9)}/replay`);
+  assert.deepEqual(draw.geometry, { strokes: 12, durationMs: 30000, colors: 4 });
+  assert.ok(!JSON.stringify(draw).includes("SECRET"));
+});

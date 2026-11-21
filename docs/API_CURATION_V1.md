@@ -9,16 +9,18 @@ Contrat **public, en lecture seule**, versionné (`version: 1`). Créé le 2026-
 | `GET /api/v1/curation/works?before=<blockIndex>&limit=<1..100>` | Œuvres, plus récentes d'abord. `next` = valeur à passer en `before` pour la page suivante, `null` en fin de liste. |
 | `GET /api/v1/curation/works/{hash}` | Une œuvre. 404 si absente ou si le bloc n'est pas exposable. |
 | `GET /api/v1/curation/works/{hash}/image.svg?scale=1..8` | Image pixel-art, servie en ligne (immuable, cache d'un an). |
+| `GET /api/v1/curation/works/{hash}/clip` | Animations seulement : clip binaire PBC1 (≤ 9 Ko), toutes les images, leurs délais et couleurs. Immuable, cache d'un an. |
+| `GET /api/v1/curation/works/{hash}/replay` | Dessins qui ont un replay : `{ version: 1, events: ReplayEvent[] }` (traits, couleurs, rythme). Cache d'un jour. |
 
 CORS ouvert (`*`) ; cache CDN de 60 s sur la liste.
 
 ## Objet `work`
 
-`id` (hash de bloc, 64 hex, stable), `kind` (`draw` | `animation`), `title`, `artist`, `blockIndex`, `minedAt` (ISO UTC), `screen`, `validation` (`{approvals, rejects}` ou `null`), `cartel` (`top` : « date · bloc #n », `bottom` : « Artiste — Titre »), `hashes` (`block`, `image`, `actions`), `links` (`page`, `image`, relatifs à l'origine de l'API).
+`id` (hash de bloc, 64 hex, stable), `kind` (`draw` | `animation`), `title`, `artist`, `blockIndex`, `minedAt` (ISO UTC), `screen`, `validation` (`{approvals, rejects}` ou `null`), `cartel` (`top` : « date · bloc #n », `bottom` : « Artiste — Titre »), `hashes` (`block`, `image`, `actions`), `scores` (`score`, `draw`), `animation` (`{frames, loops, playMs}` ou `null`), `geometry` (`{strokes, durationMs, colors}` ou `null`), `links` (`page`, `image`, `clip`, `replay` : relatifs à l'origine de l'API ; `clip`/`replay` valent `null` quand la donnée n'existe pas). Ajout du 2026-11-21, compatible : les clients v1 qui ignorent ces champs continuent de fonctionner.
 
 ## Ce qui n'est jamais exposé
 
-Identifiants d'appareils (`deviceId`, `minerDeviceId`, `ownerDeviceId`, `validatorIds`), propriétaire d'écran, preuves de replay. Les blocs ANA (`source: "ana-agent"`) sont exclus : ils ont leur propre flux.
+Identifiants d'appareils (`deviceId`, `minerDeviceId`, `ownerDeviceId`, `validatorIds`), propriétaire d'écran. Le replay exposé ne contient que les gestes du dessin. Les blocs ANA (`source: "ana-agent"`) sont exclus : ils ont leur propre flux.
 
 ## Limites connues
 

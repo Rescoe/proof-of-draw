@@ -31,8 +31,14 @@ export interface CurationWork {
   validation: { approvals: number; rejects: number } | null;
   cartel: CurationCartel;
   hashes: { block: string; image: string; actions: string };
-  /** URLs relatives à l'origine de l'API, à résoudre par le client. */
-  links: { page: string; image: string };
+  /** Scores du consensus : score final du bloc et score Proof-of-Draw (dessin) ; arrondis à 4 décimales. */
+  scores: { score: number; draw: number };
+  /** Animation : nombre d'images, boucles (0 = en boucle) et durée d'un tour. Absent pour un dessin. */
+  animation: { frames: number; loops: number; playMs: number } | null;
+  /** Analyse du dessin (nombre de traits, durée, couleurs) quand le replay existe ; sinon null. */
+  geometry: { strokes: number; durationMs: number; colors: number } | null;
+  /** URLs relatives à l'origine de l'API, à résoudre par le client. `clip` : animation PBC1 ; `replay` : événements du dessin. */
+  links: { page: string; image: string; clip: string | null; replay: string | null };
 }
 
 export interface CurationPage {
@@ -43,6 +49,8 @@ export interface CurationPage {
 }
 
 const DEFAULT_TITLE = "Sans titre";
+
+const r4 = (v: number): number => (Number.isFinite(v) ? Math.round(v * 10_000) / 10_000 : 0);
 
 export function isoDay(ms: number): string {
   return new Date(ms).toISOString().slice(0, 10);
@@ -71,10 +79,18 @@ export function toCurationWork(block: Block): CurationWork | null {
     validation: s ? { approvals: s.v2 + s.v1, rejects: s.rejects } : null,
     cartel: buildCartel(artist, title, block.blockIndex, block.minedAt),
     hashes: { block: block.blockHash, image: block.imageHash, actions: block.actionsHash },
+    scores: { score: r4(block.score), draw: r4(block.drawScore) },
+    animation: block.kind === "animation" && block.anim ? { frames: block.anim.frames, loops: block.anim.loops, playMs: block.anim.playMs } : null,
+    geometry: block.podGeometry
+      ? { strokes: block.podGeometry.strokeCount, durationMs: block.podGeometry.sessionDurationMs, colors: block.podGeometry.colorCount }
+      : null,
     links: {
       // La galerie PoD n'a pas encore de lien direct par bloc : on renvoie à l'explorateur.
       page: `/gallery`,
       image: `/api/v1/curation/works/${block.blockHash}/image.svg`,
+      clip: block.kind === "animation" ? `/api/v1/curation/works/${block.blockHash}/clip` : null,
+      // Un dessin a un replay quand le bloc en porte l'empreinte ; une animation n'en a pas.
+      replay: block.kind !== "animation" && block.podHashEnriched ? `/api/v1/curation/works/${block.blockHash}/replay` : null,
     },
   };
 }
